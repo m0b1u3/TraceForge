@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry } from "./schemas.js";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact } from "./schemas.js";
 
 export type RuntimeEvent =
   | { type: "case_created"; case: Case }
@@ -8,4 +8,5 @@ export type RuntimeEvent =
   | { type: "fact_created"; fact: Fact }
   | { type: "task_created"; task: Task }
   | { type: "task_updated"; task: Task }
-  | { type: "timeline_appended"; entry: TimelineEntry };
+  | { type: "timeline_appended"; entry: TimelineEntry }
+  | { type: "candidates_extracted"; caseId: string; candidates: CandidateFact[] };

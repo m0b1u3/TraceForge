@@ -76,3 +76,18 @@ export const TimelineEntrySchema = z.object({
   createdAt: z.string(),
 });
 export type TimelineEntry = z.infer<typeof TimelineEntrySchema>;
+
+// 复用 FactSchema 的 type 枚举，避免重复定义
+const FactType = FactSchema.shape.type;
+
+export const CandidateFactSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  type: FactType,
+  title: z.string(),
+  value: z.unknown(),
+  sourceRef: z.string(),
+  reasoning: z.string(),
+  confidence: z.number().default(0.5),
+});
+export type CandidateFact = z.infer<typeof CandidateFactSchema>;
