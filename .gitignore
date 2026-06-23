@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+cases/
+.venv/
+*.sqlite
+*.sqlite-journal
+.DS_Store
