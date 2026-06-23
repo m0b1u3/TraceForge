@@ -38,6 +38,11 @@ export const COMMON_FACT_TYPES = [
   "database_connection", "sensitive_path", "note",
 ] as const;
 
+// 常见事实来源通道——仅作参考提示，不是封闭集合（MCP/插件可引入新来源）。
+export const COMMON_FACT_SOURCES = [
+  "browser", "traffic", "js", "terminal", "file_read", "manual", "ai",
+] as const;
+
 export const FactSchema = z.object({
   id: z.string(),
   caseId: z.string(),
@@ -46,7 +51,9 @@ export const FactSchema = z.object({
   title: z.string(),
   value: z.unknown(),
   source: z.object({
-    type: z.enum(["browser", "traffic", "js", "terminal", "file_read", "manual", "ai"]),
+    // 开放字符串：常见来源见 COMMON_FACT_SOURCES；MCP/插件接入的新来源（如 mcp_xxx、plugin_nuclei）
+    // 可自由标注，无需改核心代码。
+    type: z.string().min(1),
     ref: z.string(),
   }),
   confidence: z.number().default(1),
