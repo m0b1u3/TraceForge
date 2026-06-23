@@ -13,17 +13,18 @@ pnpm dev:web      # 前端 :5173
 
 打开 `http://localhost:5173`：创建 Case（指定 allow hosts）→ 输入范围内 URL 点击 Open → Traffic Panel 经 WebSocket 实时显示捕获的请求。越界 URL 会被 Scope Guard 拦截（403），不产生流量。
 
-## 当前进度（阶段 0 + 1）
+## 当前进度（阶段 0 + 1 + 2）
 
 - pnpm monorepo 骨架
 - Scope Guard 安全地基（deny-by-default + 通配符，单元测试覆盖）
 - SQLite 存储（Case / Traffic，case_id 隔离）
 - WebSocket 事件总线
 - Playwright 抓包 + 实时 Traffic Panel
+- Facts / Tasks / Timeline：手动标记请求为 Fact、创建挂起（blocked）Task、Timeline 实时回放
 
 ## 测试
 
 ```bash
-pnpm test     # 14 个单元测试
+pnpm test     # 26 个单元测试
 pnpm -r build # 全量构建
 ```

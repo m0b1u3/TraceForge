@@ -8,3 +8,4 @@ Task 7: complete (commit ed80943, readme + full verify: 14 tests, all builds pas
 P2 Task 1: complete (commit c10c2d4, shared fact/task/timeline schemas)
 P2 Task 2: complete (commit 4b5a7c4, fact/task/timeline stores)
 P2 Task 3: complete (commit 78c5777, routes + linkage, inject tests)
+P2 Task 4: complete (commit 465dead, web panels, e2e verified facts+task+timeline)
