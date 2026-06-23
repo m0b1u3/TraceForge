@@ -6,3 +6,4 @@ cases/
 *.sqlite
 *.sqlite-journal
 .DS_Store
+config/llm.json
