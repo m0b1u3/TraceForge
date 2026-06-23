@@ -9,6 +9,8 @@
   "dependencies": {
     "@traceforge/shared": "workspace:*",
     "@traceforge/tool-resolver": "workspace:*",
+    "@traceforge/llm": "workspace:*",
+    "@traceforge/reasoning-core": "workspace:*",
     "fastify": "^5.0.0",
     "@fastify/websocket": "^11.0.0",
     "@fastify/cors": "^10.0.0",
