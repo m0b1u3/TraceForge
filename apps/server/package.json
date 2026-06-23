@@ -1,0 +1,24 @@
+{
+  "name": "@traceforge/server",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --import tsx --watch src/main.ts"
+  },
+  "dependencies": {
+    "@traceforge/shared": "workspace:*",
+    "@traceforge/tool-resolver": "workspace:*",
+    "fastify": "^5.0.0",
+    "@fastify/websocket": "^11.0.0",
+    "@fastify/cors": "^10.0.0",
+    "better-sqlite3": "^11.0.0",
+    "drizzle-orm": "^0.38.0",
+    "playwright": "^1.50.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "@types/better-sqlite3": "^7.6.0"
+  }
+}
