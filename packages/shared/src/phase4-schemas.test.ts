@@ -16,13 +16,12 @@ describe("ActionCardSchema", () => {
     expect(a.riskNotes).toEqual([]);
   });
 
-  it("rejects an unknown tool", () => {
-    expect(() =>
-      ActionCardSchema.parse({
-        id: "a", caseId: "c", title: "t", goal: "g", evidenceRefs: ["f"], reasoning: "r",
-        steps: [], tool: "nuke", createdAt: "now", updatedAt: "now",
-      }),
-    ).toThrow();
+  it("accepts an arbitrary tool string (open, not a closed enum)", () => {
+    const a = ActionCardSchema.parse({
+      id: "a", caseId: "c", title: "t", goal: "g", evidenceRefs: ["f"], reasoning: "r",
+      steps: [], tool: "custom_grpc_fuzzer", createdAt: "now", updatedAt: "now",
+    });
+    expect(a.tool).toBe("custom_grpc_fuzzer");
   });
 });
 

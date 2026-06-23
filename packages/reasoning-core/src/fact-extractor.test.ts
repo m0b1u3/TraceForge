@@ -23,11 +23,23 @@ describe("FactExtractor", () => {
     expect(out[0].type).toBe("api_endpoint");
   });
 
-  it("drops hallucinated candidates with an invalid type", async () => {
+  it("accepts arbitrary fact types the LLM invents (open type, not a closed enum)", async () => {
+    const provider = new MockProvider({
+      candidates: [
+        { type: "api_endpoint", title: "known type", value: {}, reasoning: "r", confidence: 0.6 },
+        { type: "graphql_subscription", title: "novel type", value: {}, reasoning: "r", confidence: 0.9 },
+      ],
+    });
+    const out = await new FactExtractor(provider).extract("case_1", entry);
+    expect(out).toHaveLength(2);
+    expect(out.map((c) => c.type)).toContain("graphql_subscription");
+  });
+
+  it("drops structurally malformed candidates (missing required fields)", async () => {
     const provider = new MockProvider({
       candidates: [
         { type: "api_endpoint", title: "good", value: {}, reasoning: "r", confidence: 0.6 },
-        { type: "totally_made_up", title: "bad", value: {}, reasoning: "r", confidence: 0.9 },
+        { type: "api_endpoint", value: {}, confidence: 0.9 }, // 缺 title / reasoning
       ],
     });
     const out = await new FactExtractor(provider).extract("case_1", entry);

@@ -12,10 +12,18 @@ describe("FactSchema", () => {
     expect(f.tags).toEqual([]);
   });
 
-  it("rejects an unknown fact type", () => {
+  it("accepts an arbitrary type the LLM may invent (open, not a closed enum)", () => {
+    const f = FactSchema.parse({
+      id: "f", caseId: "c", type: "graphql_endpoint", title: "t",
+      value: {}, source: { type: "manual", ref: "r" }, createdAt: "now",
+    });
+    expect(f.type).toBe("graphql_endpoint");
+  });
+
+  it("rejects an empty type string", () => {
     expect(() =>
       FactSchema.parse({
-        id: "f", caseId: "c", type: "not_a_type", title: "t",
+        id: "f", caseId: "c", type: "", title: "t",
         value: {}, source: { type: "manual", ref: "r" }, createdAt: "now",
       }),
     ).toThrow();

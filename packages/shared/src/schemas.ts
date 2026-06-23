@@ -28,15 +28,21 @@ export const TrafficEntrySchema = z.object({
 });
 export type TrafficEntry = z.infer<typeof TrafficEntrySchema>;
 
+// 常见事实类型——仅作 LLM prompt 的参考提示，不是封闭集合。
+// LLM 可自由表达枚举外的新类型（如 graphql_endpoint / jwt_secret / s3_bucket / websocket 等），
+// 因为漏洞挖掘的事实类型是开放的，不应被 TS 写死限制。
+export const COMMON_FACT_TYPES = [
+  "target", "page", "js_file", "api_endpoint", "login_endpoint", "parameter",
+  "credential", "token", "cookie", "session", "file_read", "source_code",
+  "config_file", "heapdump", "finding", "ssh_service", "ssh_session",
+  "database_connection", "sensitive_path", "note",
+] as const;
+
 export const FactSchema = z.object({
   id: z.string(),
   caseId: z.string(),
-  type: z.enum([
-    "target", "page", "js_file", "api_endpoint", "login_endpoint", "parameter",
-    "credential", "token", "cookie", "session", "file_read", "source_code",
-    "config_file", "heapdump", "finding", "ssh_service", "ssh_session",
-    "database_connection", "sensitive_path", "note",
-  ]),
+  // 开放字符串：非空即可，类型由 LLM 决定，TS 不限制可选值
+  type: z.string().min(1),
   title: z.string(),
   value: z.unknown(),
   source: z.object({
@@ -92,6 +98,11 @@ export const CandidateFactSchema = z.object({
 });
 export type CandidateFact = z.infer<typeof CandidateFactSchema>;
 
+// 常见动作工具——仅作 LLM prompt 参考提示，不是封闭集合。
+export const COMMON_ACTION_TOOLS = [
+  "browser", "traffic", "http_replay", "js_analyzer", "terminal", "artifact", "manual",
+] as const;
+
 export const ActionCardSchema = z.object({
   id: z.string(),
   caseId: z.string(),
@@ -104,7 +115,8 @@ export const ActionCardSchema = z.object({
   steps: z.array(z.string()),
   expectedResults: z.array(z.string()).default([]),
   riskNotes: z.array(z.string()).default([]),
-  tool: z.enum(["browser", "traffic", "http_replay", "js_analyzer", "terminal", "artifact", "manual"]),
+  // 开放字符串：常见工具见 COMMON_ACTION_TOOLS，但 LLM 可表达新工具，TS 不限制
+  tool: z.string().min(1),
   priority: z.enum(["low", "medium", "high"]).default("medium"),
   requiresHumanApproval: z.boolean().default(true),
   status: z.enum(["proposed", "approved", "modified", "rejected", "running", "succeeded", "failed"]).default("proposed"),

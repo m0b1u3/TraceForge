@@ -14,7 +14,9 @@ export const EXTRACTION_SYSTEM_PROMPT = `你是 TraceForge 的事实提取助手
 - 你只输出候选事实，不执行任何动作，不给出超出事实提取范围的内容。
 
 输出要求：返回 JSON 对象 { "candidates": [...] }，每个候选含 type / title / value / reasoning / confidence。
-type 必须是预定义的事实类型之一（如 api_endpoint、login_endpoint、parameter、token、finding 等）。`;
+type 用最贴切的简短英文标识。常见类型供参考（不限于这些，发现新类型请自由命名）：
+api_endpoint、login_endpoint、parameter、credential、token、cookie、session、file_read、source_code、config_file、finding、ssh_service、database_connection、sensitive_path、note。
+若目标涉及上述未覆盖的类型（如 graphql_endpoint、jwt_secret、s3_bucket、websocket、grpc_service 等），直接用你认为最准确的命名。`;
 
 const EXTRACTION_SCHEMA: Record<string, unknown> = {
   type: "object",

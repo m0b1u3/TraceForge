@@ -10,11 +10,10 @@ describe("CandidateFactSchema", () => {
     expect(c.confidence).toBe(0.5);
   });
 
-  it("rejects an unknown type", () => {
-    expect(() =>
-      CandidateFactSchema.parse({
-        id: "c", caseId: "c", type: "bogus", title: "t", value: {}, sourceRef: "r", reasoning: "x",
-      }),
-    ).toThrow();
+  it("accepts an arbitrary type (open, mirrors FactSchema)", () => {
+    const c = CandidateFactSchema.parse({
+      id: "c", caseId: "c", type: "s3_bucket", title: "t", value: {}, sourceRef: "r", reasoning: "x",
+    });
+    expect(c.type).toBe("s3_bucket");
   });
 });
