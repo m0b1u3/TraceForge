@@ -12,8 +12,11 @@ import { EventBus } from "./event-bus.js";
 import type { Task } from "@traceforge/shared";
 import type { LlmProvider } from "@traceforge/llm";
 import { loadLlmConfig, createProviderOrMock } from "@traceforge/llm";
-import { FactExtractor } from "@traceforge/reasoning-core";
+import { FactExtractor, ActionPlanner } from "@traceforge/reasoning-core";
 import { CandidateStore } from "./candidate-store.js";
+import { ActionCardStore } from "./stores/action-store.js";
+import { DecisionStore } from "./stores/decision-store.js";
+import { ActionCandidateStore } from "./action-candidate-store.js";
 
 export function registerRoutes(
   app: FastifyInstance,
@@ -31,6 +34,10 @@ export function registerRoutes(
   const llm: LlmProvider = provider ?? createProviderOrMock(loadLlmConfig());
   const extractor = new FactExtractor(llm);
   const candidateStore = new CandidateStore();
+  const planner = new ActionPlanner(llm);
+  const actionStore = new ActionCardStore(db);
+  const decisionStore = new DecisionStore(db);
+  const actionCandidateStore = new ActionCandidateStore();
 
   app.post("/api/cases", async (req) => {
     const body = req.body as { name: string; allowHosts: string[]; denyHosts?: string[] };
@@ -162,6 +169,54 @@ export function registerRoutes(
     const { candId } = req.params as { candId: string };
     const existed = candidateStore.delete(candId);
     if (!existed) return reply.code(404).send({ error: "candidate not found" });
+    return { ok: true };
+  });
+
+  app.post("/api/cases/:id/plan-actions", async (req) => {
+    const { id } = req.params as { id: string };
+    const facts = factStore.listByCase(id);
+    const candidates = await planner.plan(id, facts);
+    for (const c of candidates) actionCandidateStore.put(c);
+    bus.emit({ type: "action_candidates_generated", caseId: id, candidates });
+    return candidates;
+  });
+
+  app.get("/api/cases/:id/actions", async (req) => {
+    const { id } = req.params as { id: string };
+    return actionStore.listByCase(id);
+  });
+
+  app.get("/api/cases/:id/decisions", async (req) => {
+    const { id } = req.params as { id: string };
+    return decisionStore.listByCase(id);
+  });
+
+  app.post("/api/action-candidates/:acandId/approve", async (req, reply) => {
+    const { acandId } = req.params as { acandId: string };
+    const cand = actionCandidateStore.get(acandId);
+    if (!cand) return reply.code(404).send({ error: "action candidate not found" });
+    const approved = { ...cand, status: "approved" as const, updatedAt: new Date().toISOString() };
+    const action = actionStore.create(approved);
+    const decision = decisionStore.create(cand.caseId, {
+      decision: cand.title,
+      basedOn: cand.evidenceRefs,
+      reasoning: cand.reasoning,
+      actionRef: cand.id,
+      result: null,
+      newFacts: [],
+    });
+    const entry = timelineStore.append(cand.caseId, "action_approved", `Action approved: ${action.title}`, action.id);
+    bus.emit({ type: "action_approved", action });
+    bus.emit({ type: "decision_recorded", decision });
+    bus.emit({ type: "timeline_appended", entry });
+    actionCandidateStore.delete(acandId);
+    return { action, decision };
+  });
+
+  app.post("/api/action-candidates/:acandId/reject", async (req, reply) => {
+    const { acandId } = req.params as { acandId: string };
+    const existed = actionCandidateStore.delete(acandId);
+    if (!existed) return reply.code(404).send({ error: "action candidate not found" });
     return { ok: true };
   });
 }
