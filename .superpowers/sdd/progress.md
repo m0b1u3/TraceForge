@@ -15,3 +15,4 @@ P3 Task 2: complete (commit c0199e8, multi-provider llm: config+mock+anthropic+o
 P3 Task 3: complete (commit 40ec751, fact extractor + injection defense)
 P3 Task 4: complete (commit 9877e2e, extract+confirm/reject routes, config-driven provider)
 P3 Task 5: complete (commit 27eceb4, web candidate UI, e2e extract verified)
+P3 Task 6: complete (commit d278523, readme + full verify: 49 tests, all builds pass)
