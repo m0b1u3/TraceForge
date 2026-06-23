@@ -19,3 +19,4 @@ P3 Task 6: complete (commit d278523, readme + full verify: 49 tests, all builds 
 P4 Task 1: complete (commit 3efc496, actioncard/decision schemas)
 P4 Task 2: complete (commit 1a200da, action planner + evidence hard rule)
 P4 Task 3: complete (commit 0ccb33b, action/decision stores)
+P4 Task 4: complete (commit eab926f, plan-actions + approve/reject + decision)

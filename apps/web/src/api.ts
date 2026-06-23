@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact } from "@traceforge/shared";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision } from "@traceforge/shared";
 
 export async function createCase(name: string, allowHosts: string[]): Promise<Case> {
   const r = await fetch("/api/cases", {
@@ -78,4 +78,16 @@ export async function confirmCandidate(candId: string): Promise<Fact> {
 
 export async function rejectCandidate(candId: string): Promise<Response> {
   return fetch(`/api/candidates/${candId}/reject`, { method: "POST" });
+}
+
+export async function planActions(caseId: string): Promise<ActionCard[]> {
+  return (await fetch(`/api/cases/${caseId}/plan-actions`, { method: "POST" })).json();
+}
+
+export async function approveAction(acandId: string): Promise<{ action: ActionCard; decision: Decision }> {
+  return (await fetch(`/api/action-candidates/${acandId}/approve`, { method: "POST" })).json();
+}
+
+export async function rejectAction(acandId: string): Promise<Response> {
+  return fetch(`/api/action-candidates/${acandId}/reject`, { method: "POST" });
 }

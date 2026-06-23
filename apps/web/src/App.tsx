@@ -3,10 +3,15 @@ import { useStore } from "./store.js";
 import {
   createCase, openUrl, createFact, createTask, patchTask,
   extractCandidates, confirmCandidate, rejectCandidate,
+  planActions, approveAction, rejectAction,
 } from "./api.js";
 
 export function App() {
-  const { caseId, traffic, facts, tasks, timeline, candidates, setCase, removeCandidate, connectWs } = useStore();
+  const {
+    caseId, traffic, facts, tasks, timeline, candidates,
+    actionCandidates, actions, decisions,
+    setCase, removeCandidate, removeActionCandidate, connectWs,
+  } = useStore();
   const [name, setName] = useState("demo");
   const [hosts, setHosts] = useState("example.com");
   const [url, setUrl] = useState("https://example.com/");
@@ -129,6 +134,24 @@ export function App() {
           </li>
         ))}
       </ul>
+
+      <h2>Actions</h2>
+      <button onClick={() => planActions(caseId)}>生成动作</button>
+      <h3>Candidates ({actionCandidates.length})</h3>
+      <ul>
+        {actionCandidates.map((a) => (
+          <li key={a.id}>
+            [{a.priority}/{a.tool}] {a.title} — {a.goal}{" "}
+            <small>(evidence: {a.evidenceRefs.join(", ")})</small>{" "}
+            <button onClick={async () => { await approveAction(a.id); removeActionCandidate(a.id); }}>approve</button>{" "}
+            <button onClick={async () => { await rejectAction(a.id); removeActionCandidate(a.id); }}>reject</button>
+          </li>
+        ))}
+      </ul>
+      <h3>Approved ({actions.length})</h3>
+      <ul>{actions.map((a) => <li key={a.id}>[{a.status}] {a.title}</li>)}</ul>
+      <h3>Decisions ({decisions.length})</h3>
+      <ul>{decisions.map((d) => <li key={d.id}>{d.decision} ← {d.basedOn.join(", ")}</li>)}</ul>
 
       <h2>Timeline ({timeline.length})</h2>
       <ol>
