@@ -15,7 +15,7 @@
 - 沿用阶段 0-4 全部约束：Node ≥ 22、pnpm、ESM、`strict: true`、Vitest、`@traceforge/shared` 单源类型、所有业务表带 `case_id`、纯逻辑模块必须单测。
 - **通用、不内置漏洞探测器（核心约束）：** `@traceforge/tools` 中**不得出现任何特定漏洞的 payload 或探测逻辑**（不写死 `'`/`"`/`<script>`/`../` 等）。引擎只提供"重发任意请求 + 改任意参数为任意值 + 客观对比"。漏洞类型相关的测试值由调用方（未来的 AI）传入。
 - **Scope Guard 是对外动作的硬门（设计文档 26.5）：** 任何重放的目标 host 在发请求前必须经 `checkScope` 校验；越界返回 403 并发 `scope_violation` 事件，绝不发出请求。
-- **客观对比，不替 AI 下结论：** `compareResponses` 只返回客观信号（statusChanged / lengthDelta / 命中的错误特征关键词），不输出"是 SQLi/XSS"之类的漏洞判定——判定留给 AI（后续阶段）。错误特征关键词库是通用辅助信号，非漏洞专用探测。
+- **原始信号，不替 AI 下结论：** `compareResponses` 只返回 statusChanged / lengthDelta 两个原始信号，**不内置任何错误特征关键词库**。两个完整响应 body 原样返回，"是否像报错/像注入/像越权"由 AI 读 body 自行判断——引擎保持漏洞无关。
 - **纯逻辑可单测：** `compareResponses`/`modifyParam` 是纯函数；`replay` 的网络发送经注入的 `Fetcher` 完成，单测用 mock，禁止测试中真实联网。
 - **重放低风险、范围内直接发：** 不为每次重放生成 Action Card 等人工确认（对齐 3.4「低风险动作」）；Scope Guard 是唯一强制门。
 - 重放结果落 timeline（事件类型 `replay`）并 emit 事件，保持「Timeline 即历史」。
@@ -40,8 +40,8 @@
   - `type Fetcher = (req: ReplayRequest) => Promise<ReplayResponse>`
   - `replay(req, fetcher?): Promise<ReplayResponse>` —— 默认 fetcher 用 Node `fetch`；可注入 mock。
   - `modifyParam(req, param, value): ReplayRequest` —— 通用：把 URL query 中 `param` 设为 `value`（保留其它参数）；参数不存在则原样返回。**不附加任何 payload，value 完全由调用方给定。**
-  - `interface CompareResult { statusChanged: boolean; lengthDelta: number; errorSignature: string | null }` —— 纯客观信号，**无 verdict 字段**（不下漏洞结论）。
-  - `compareResponses(base, variant): CompareResult` —— 状态码是否变化、长度差、variant body 是否命中通用错误特征关键词（命中记关键词，否则 null）。
+  - `interface CompareResult { statusChanged: boolean; lengthDelta: number }` —— **纯原始信号，无 verdict、无关键词库、不下任何漏洞结论**。是否"像报错""像注入"由上层 LLM 读 body 判断，引擎不内置任何漏洞视角的关键词。
+  - `compareResponses(base, variant): CompareResult` —— 只返回状态码是否变化、响应体长度差。两个完整 body 已在 base/variant 响应对象里，LLM 自行解读。
 
 - [ ] **Step 1: 写 `packages/tools/package.json`**
 
@@ -110,16 +110,15 @@ describe("compareResponses", () => {
     expect(compareResponses(baseResp, variant).lengthDelta).toBe(80);
   });
 
-  it("captures a database error signature as an objective signal", () => {
-    const variant = { ...baseResp, body: "You have an error in your SQL syntax near ..." };
-    expect(compareResponses(baseResp, variant).errorSignature).toMatch(/SQL syntax/);
-  });
-
-  it("returns null signature and zero deltas for identical responses", () => {
+  it("returns zero deltas for identical responses (no vuln-specific judgement)", () => {
     const r = compareResponses(baseResp, { ...baseResp });
     expect(r.statusChanged).toBe(false);
     expect(r.lengthDelta).toBe(0);
-    expect(r.errorSignature).toBeNull();
+  });
+
+  it("only exposes raw signals — no errorSignature/verdict keys (LLM reads body itself)", () => {
+    const r = compareResponses(baseResp, { ...baseResp, body: "You have an error in your SQL syntax" });
+    expect(Object.keys(r).sort()).toEqual(["lengthDelta", "statusChanged"]);
   });
 });
 ```
@@ -172,23 +171,17 @@ export function modifyParam(req: ReplayRequest, param: string, value: string): R
   return { ...req, url: u.toString() };
 }
 
-// 通用错误特征关键词：仅作为客观信号供上层（AI）参考，不代表漏洞判定。
-const ERROR_PATTERNS = [
-  "SQL syntax", "ORA-", "SQLSTATE", "mysql_", "PostgreSQL", "sqlite3",
-  "Unclosed quotation", "ODBC", "Microsoft OLE DB", "Traceback (most recent call last)",
-];
-
 export interface CompareResult {
   statusChanged: boolean;
   lengthDelta: number;
-  errorSignature: string | null;
 }
 
+// 只返回原始信号。不内置任何漏洞视角的关键词库——"像报错/像注入/像越权"等判断
+// 由上层 LLM 直接读 base/variant 的完整 body 自行得出，引擎保持漏洞无关。
 export function compareResponses(base: ReplayResponse, variant: ReplayResponse): CompareResult {
   return {
     statusChanged: base.status !== variant.status,
     lengthDelta: variant.bodyLength - base.bodyLength,
-    errorSignature: ERROR_PATTERNS.find((p) => variant.body.includes(p)) ?? null,
   };
 }
 ```
@@ -205,7 +198,7 @@ export {
 - [ ] **Step 7: 运行确认通过 + tsc**
 
 Run: `pnpm vitest run packages/tools && pnpm --filter @traceforge/tools exec tsc --noEmit -p tsconfig.json`
-Expected: 6 用例全绿；tsc 退出码 0。
+Expected: 7 用例全绿（replay 1 + modifyParam 2 + compareResponses 4）；tsc 退出码 0。
 
 - [ ] **Step 8: Commit**
 
@@ -293,7 +286,8 @@ describe("replay-compare route", () => {
     expect(res.statusCode).toBe(200);
     const out = res.json();
     expect(out.compare.statusChanged).toBe(true);
-    expect(out.compare.errorSignature).toMatch(/SQL syntax/);
+    // 引擎不下漏洞结论；variant 的完整 body 原样返回，供 LLM 自行解读
+    expect(out.variant.body).toContain("SQL syntax");
   });
 
   it("rejects when either request is out of scope", async () => {
@@ -409,7 +403,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Consumes: 阶段 5 路由、`ReplayResponse`/`CompareResult`（`@traceforge/tools`）、现有 web store/api。
 - Produces：
   - `api.ts`：`replayRequest(caseId, req) → ReplayResponse`、`replayCompare(caseId, base, variant) → { base, variant, compare }`。
-  - `App.tsx`：在 Traffic 区块下方新增 Replay 区块——URL + method + 「重放」按钮（显示返回 status / 长度）；以及「对比」区：base url、variant url、「对比」按钮（显示 statusChanged / lengthDelta / errorSignature 客观信号）。结果用本地 React state。**前端不做漏洞判定**，只展示客观信号，留给未来 AI。
+  - `App.tsx`：在 Traffic 区块下方新增 Replay 区块——URL + method + 「重放」按钮（显示返回 status / 长度）；以及「对比」区：base url、variant url、「对比」按钮（显示 statusChanged / lengthDelta 原始信号 + 两个响应的 body 片段）。结果用本地 React state。**前端不做漏洞判定**，只展示原始信号与 body，留给未来 AI 解读。
 
 - [ ] **Step 1: 扩展 `apps/web/src/api.ts`**
 
@@ -463,7 +457,7 @@ import 加 `replayRequest, replayCompare`，组件内加本地 state：
       <input value={cmpVariant} onChange={(e) => setCmpVariant(e.target.value)} style={{ width: 320 }} />
       <button onClick={async () => {
         const r = await replayCompare(caseId, { url: cmpBase, method: "GET" }, { url: cmpVariant, method: "GET" });
-        setCmpResult(`statusChanged=${r.compare.statusChanged} lenΔ=${r.compare.lengthDelta} err=${r.compare.errorSignature ?? "none"}`);
+        setCmpResult(`statusChanged=${r.compare.statusChanged} lenΔ=${r.compare.lengthDelta} | variant body: ${r.variant.body.slice(0, 120)}`);
       }}>对比</button>
       <span> {cmpResult}</span>
 ```
@@ -505,7 +499,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - [ ] **Step 1: 全量测试**
 
 Run: `pnpm test`
-Expected: PASS —— 阶段 1-4（63）+ 阶段 5（tools 6、server routes-phase5 4）全绿。
+Expected: PASS —— 阶段 1-4（65）+ 阶段 5（tools 7、server routes-phase5 4）全绿。
 
 - [ ] **Step 2: 全量构建**
 
@@ -517,7 +511,7 @@ Expected: 各包无错误（新增 `@traceforge/tools`）。
 "当前进度"标题改为"阶段 0 + 1 + 2 + 3 + 4 + 5"，追加：
 
 ```markdown
-- 通用 HTTP 重放引擎：重发任意请求（改 URL/参数/header/body 任意部分）+ 客观响应对比（状态码/长度/错误特征），所有对外请求受 Scope Guard 守护（越界 403）。引擎不内置漏洞专用探测器——各类漏洞（SQLi/XSS/SSRF/越权…）的测试变体由后续 AI 阶段生成
+- 通用 HTTP 重放引擎：重发任意请求（改 URL/参数/header/body 任意部分）+ 原始响应对比（状态码/长度，body 原样返回），所有对外请求受 Scope Guard 守护（越界 403）。引擎不内置漏洞专用探测器、不内置错误关键词库——各类漏洞（SQLi/XSS/SSRF/越权…）的测试变体生成与响应解读由后续 AI 阶段完成
 ```
 
 把测试数量更新为实际值。
@@ -535,7 +529,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## 自检说明（写给计划作者，非执行步骤）
 
 - **Spec 覆盖**：对应设计文档第 21 章「阶段 5：HTTP Replay」与 11.3 工具接口（replay / modifyParam / compareResponses）。**关键修订**：按用户决定，本阶段只做**通用**重放引擎，不内置任何漏洞专用探测器（删去了原计划的 SQLi 专用 ProgressiveProber）；"针对任意漏洞类型生成测试变体并解读"由后续子阶段的 AI 完成（扩展 ActionPlanner），新漏洞类型无需改代码。
-- **通用性约束落点**：`@traceforge/tools` 不含任何 payload（无 `'`/`"`/`<script>` 等写死值）——`modifyParam` 的 value 完全由调用方给定，`compareResponses` 只返回客观信号（无 verdict、不下漏洞结论）。错误特征关键词库是通用辅助信号。Task 1 的 modifyParam 测试用 `"anything-AI-wants"` 作 value，强调值由调用方决定。
+- **通用性约束落点**：`@traceforge/tools` 不含任何 payload、也不含任何错误关键词库（无 `'`/`"`/`<script>`/`SQL syntax` 等写死值）——`modifyParam` 的 value 完全由调用方给定，`compareResponses` 只返回 statusChanged/lengthDelta 原始信号、body 原样返回供 LLM 解读。Task 1 的 modifyParam 测试用 `"anything-AI-wants"` 作 value、compareResponses 测试断言只有 `lengthDelta`/`statusChanged` 两个 key，双重强调引擎漏洞无关。
 - **类型一致性**：`ReplayRequest`/`ReplayResponse`/`Fetcher`/`CompareResult` 单源于 `@traceforge/tools`（Task 1），server（Task 2）与 web（Task 3）消费同一份。`registerRoutes` 第 5 参 `fetcher?` 在 Task 2 定义，测试注入 mock、生产用默认真实 fetcher。
 - **安全约束落点**：Scope Guard 守门——replay 与 replay-compare（两个 url 都校验）发请求前都 `checkScope`，越界 403 + emit scope_violation，由 Task 2 的两个 403 测试守住；纯逻辑（modifyParam/compareResponses）不联网，replay 经注入 Fetcher，单测全 mock。
 - **重放不走人工确认**：按用户决定，重放低风险，范围内直接发，Scope Guard 是唯一强制门（对齐 3.4）。
