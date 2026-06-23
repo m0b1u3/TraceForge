@@ -53,3 +53,35 @@ export const timeline = sqliteTable("timeline", {
   detail: text("detail").notNull(),
   createdAt: text("created_at").notNull(),
 });
+
+export const actionCards = sqliteTable("action_cards", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  title: text("title").notNull(),
+  goal: text("goal").notNull(),
+  evidenceRefsJson: text("evidence_refs_json").notNull(),
+  hypothesisRefsJson: text("hypothesis_refs_json").notNull(),
+  taskRefsJson: text("task_refs_json").notNull(),
+  reasoning: text("reasoning").notNull(),
+  stepsJson: text("steps_json").notNull(),
+  expectedResultsJson: text("expected_results_json").notNull(),
+  riskNotesJson: text("risk_notes_json").notNull(),
+  tool: text("tool").notNull(),
+  priority: text("priority").notNull(),
+  requiresHumanApproval: integer("requires_human_approval").notNull(),
+  status: text("status").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const decisions = sqliteTable("decisions", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  decision: text("decision").notNull(),
+  basedOnJson: text("based_on_json").notNull(),
+  reasoning: text("reasoning").notNull(),
+  actionRef: text("action_ref"),
+  result: text("result"),
+  newFactsJson: text("new_facts_json").notNull(),
+  createdAt: text("created_at").notNull(),
+});

@@ -17,3 +17,4 @@ P3 Task 4: complete (commit 9877e2e, extract+confirm/reject routes, config-drive
 P3 Task 5: complete (commit 27eceb4, web candidate UI, e2e extract verified)
 P3 Task 6: complete (commit d278523, readme + full verify: 49 tests, all builds pass)
 P4 Task 1: complete (commit 3efc496, actioncard/decision schemas)
+P4 Task 2: complete (commit 1a200da, action planner + evidence hard rule)
