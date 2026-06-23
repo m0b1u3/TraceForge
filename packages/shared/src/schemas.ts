@@ -91,3 +91,37 @@ export const CandidateFactSchema = z.object({
   confidence: z.number().default(0.5),
 });
 export type CandidateFact = z.infer<typeof CandidateFactSchema>;
+
+export const ActionCardSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  title: z.string(),
+  goal: z.string(),
+  evidenceRefs: z.array(z.string()),
+  hypothesisRefs: z.array(z.string()).default([]),
+  taskRefs: z.array(z.string()).default([]),
+  reasoning: z.string(),
+  steps: z.array(z.string()),
+  expectedResults: z.array(z.string()).default([]),
+  riskNotes: z.array(z.string()).default([]),
+  tool: z.enum(["browser", "traffic", "http_replay", "js_analyzer", "terminal", "artifact", "manual"]),
+  priority: z.enum(["low", "medium", "high"]).default("medium"),
+  requiresHumanApproval: z.boolean().default(true),
+  status: z.enum(["proposed", "approved", "modified", "rejected", "running", "succeeded", "failed"]).default("proposed"),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ActionCard = z.infer<typeof ActionCardSchema>;
+
+export const DecisionSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  decision: z.string(),
+  basedOn: z.array(z.string()),
+  reasoning: z.string(),
+  actionRef: z.string().nullable().default(null),
+  result: z.string().nullable().default(null),
+  newFacts: z.array(z.string()).default([]),
+  createdAt: z.string(),
+});
+export type Decision = z.infer<typeof DecisionSchema>;
