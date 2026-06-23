@@ -27,3 +27,52 @@ export const TrafficEntrySchema = z.object({
   createdAt: z.string(),
 });
 export type TrafficEntry = z.infer<typeof TrafficEntrySchema>;
+
+export const FactSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  type: z.enum([
+    "target", "page", "js_file", "api_endpoint", "login_endpoint", "parameter",
+    "credential", "token", "cookie", "session", "file_read", "source_code",
+    "config_file", "heapdump", "finding", "ssh_service", "ssh_session",
+    "database_connection", "sensitive_path", "note",
+  ]),
+  title: z.string(),
+  value: z.unknown(),
+  source: z.object({
+    type: z.enum(["browser", "traffic", "js", "terminal", "file_read", "manual", "ai"]),
+    ref: z.string(),
+  }),
+  confidence: z.number().default(1),
+  tags: z.array(z.string()).default([]),
+  createdAt: z.string(),
+});
+export type Fact = z.infer<typeof FactSchema>;
+
+export const TaskSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  title: z.string(),
+  status: z.enum([
+    "open", "blocked", "recheck_candidate", "approved", "running",
+    "done", "failed", "rejected", "out_of_scope",
+  ]).default("open"),
+  reason: z.string().default(""),
+  blockedBy: z.array(z.string()).default([]),
+  triggerWhen: z.array(z.string()).default([]),
+  relatedFacts: z.array(z.string()).default([]),
+  priority: z.enum(["low", "medium", "high"]).default("medium"),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type Task = z.infer<typeof TaskSchema>;
+
+export const TimelineEntrySchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  eventType: z.string(),
+  refId: z.string().nullable().default(null),
+  detail: z.string(),
+  createdAt: z.string(),
+});
+export type TimelineEntry = z.infer<typeof TimelineEntrySchema>;
