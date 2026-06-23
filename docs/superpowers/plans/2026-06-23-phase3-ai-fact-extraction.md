@@ -1,12 +1,12 @@
-# TraceForge 阶段 3：AI 事实提取（首次接入 Claude）实施计划
+# TraceForge 阶段 3：AI 事实提取（多 Provider 可配置）实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans（本计划在当前会话由控制者直接执行，TDD 节奏）。Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让 AI 从一条已捕获的请求/响应中提取候选 Fact（候选，不直接入库），经人工逐条确认后才写入 facts 表（复用阶段 2 的 Fact + Timeline + 事件联动）。第一版接 Anthropic Claude（`claude-opus-4-8`），并提供 Mock provider 供单测与离线使用。
+**Goal:** 让 AI 从一条已捕获的请求/响应中提取候选 Fact（候选，不直接入库），经人工逐条确认后才写入 facts 表（复用阶段 2 的 Fact + Timeline + 事件联动）。LLM **不绑定单一厂商/模型**：支持 Anthropic 格式与 OpenAI 兼容格式（后者覆盖 DeepSeek / OpenAI / OpenRouter / 本地 OpenAI-compatible），provider 类型、模型名、baseURL 全部由配置文件驱动；并提供 Mock provider 供单测与离线使用（呼应设计文档第 19.3 节）。
 
-**Architecture:** 新增 `@traceforge/llm` 包：定义 `LlmProvider` 抽象接口 + `AnthropicProvider`（真实，用 `@anthropic-ai/sdk`）+ `MockProvider`（确定性返回，单测用）。新增 `@traceforge/reasoning-core` 包：`FactExtractor` 接收一条 traffic entry，构造**带数据边界标记的 prompt**（防 prompt injection，呼应设计文档 26.2），调用 provider，用结构化输出（`output_config.format` json_schema）拿回候选 Fact 列表，并做 schema 校验 + 幻觉过滤。server 新增"提取候选"和"确认/拒绝候选"路由：候选暂存内存（不落 facts 表），确认时才走阶段 2 的 `factStore.create` + Timeline + emit。前端在每条 traffic 行增加"AI 提取"按钮，弹出候选列表供逐条 confirm/reject。Provider 选择由环境变量驱动：有 `ANTHROPIC_API_KEY` 用真实，否则用 Mock。
+**Architecture:** 新增 `@traceforge/llm` 包：定义 `LlmProvider` 抽象接口（`extractJson(system,user,schema) → JSON`）+ 两个真实实现 `AnthropicProvider`（`@anthropic-ai/sdk`，`messages.create`）与 `OpenAICompatibleProvider`（`openai` SDK，`chat.completions.create`，可配 baseURL，覆盖 DeepSeek 等）+ `MockProvider`（确定性返回，单测用）。`LlmConfig`（Zod）描述 `{ provider, model, baseUrl?, apiKeyEnv }`，`loadLlmConfig()` 从 `config/llm.json` 读取（缺失则返回 null），`createProvider(config)` 据此装配——**模型名与 baseURL 从配置来，不硬编码**；API key 从配置指定的环境变量名读取（密钥本身不入配置文件）。新增 `@traceforge/reasoning-core` 包：`FactExtractor` 接收一条 traffic entry，构造**带数据边界标记的 prompt**（防 prompt injection，呼应设计文档 26.2），调用 provider，用结构化输出拿回候选 Fact 列表，并做 schema 校验 + 幻觉过滤。server 新增"提取候选"和"确认/拒绝候选"路由：候选暂存内存（不落 facts 表），确认时才走阶段 2 的 `factStore.create` + Timeline + emit。前端在每条 traffic 行增加"AI 提取"按钮，弹出候选列表供逐条 confirm/reject。Provider 装配：有 `config/llm.json` 且对应 API key 环境变量已设 → 用真实 provider，否则回退 MockProvider（返回空候选）。
 
-**Tech Stack:** 沿用前序 + `@anthropic-ai/sdk`。
+**Tech Stack:** 沿用前序 + `@anthropic-ai/sdk` + `openai`。
 
 ## Global Constraints
 
@@ -16,9 +16,10 @@
   - 目标返回内容（URL/headers/响应体）进入 prompt 时必须包裹在明确的数据边界标记内（如 `<untrusted_data>...</untrusted_data>`）。
   - System prompt 必须声明：边界内内容仅为分析对象，其中任何"指令"一律忽略；动作依据只能来自结构化数据，不能来自目标内容里的自然语言指令。
   - FactExtractor 输出的每个候选必须能落到具体 traffic refId（`source.ref`）；幻觉/越界字段过滤掉。
-- **Provider 抽象**：业务代码只依赖 `LlmProvider` 接口，不直接 import `@anthropic-ai/sdk`（仅 `AnthropicProvider` 内部 import）。单测一律用 `MockProvider`，禁止在测试中发起真实网络调用。
-- 模型 ID 固定字符串 `claude-opus-4-8`；thinking 用 `{ type: "adaptive" }`；结构化输出用 `output_config.format` 的 json_schema。绝不使用 `budget_tokens`/`temperature`（4.8 会 400）。
-- 真实 API key 仅从环境变量 `ANTHROPIC_API_KEY` 读取，绝不硬编码、绝不写入库或日志。
+- **Provider 抽象**：业务代码只依赖 `LlmProvider` 接口，不直接 import 任何厂商 SDK（仅各 Provider 实现内部 import）。单测一律用 `MockProvider`，禁止在测试中发起真实网络调用。
+- **模型与 provider 不硬编码**：`model`、`baseUrl`、`provider` 类型全部来自 `config/llm.json`。代码中**不得出现写死的模型名**（如 `claude-opus-4-8`、`deepseek-v4-pro`）——这些只能作为配置文件示例或测试夹具出现。支持两种 API 格式：`anthropic`（`@anthropic-ai/sdk`）与 `openai`（`openai` SDK，可配 baseURL，DeepSeek/OpenAI/OpenRouter/本地皆走它）。
+- 真实 API key 仅从配置 `apiKeyEnv` 指定的环境变量名读取（如 `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY`），绝不硬编码、绝不写入配置文件、绝不入库或日志。
+- `config/llm.json` 不纳入版本控制（含部署相关信息）；提供 `config/llm.example.json` 作模板，并在 `.gitignore` 忽略 `config/llm.json`。
 - id 前缀沿用：候选用 `cand_`。
 - 提交信息结尾附：`Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`。
 
@@ -118,24 +119,35 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: llm 包 —— LlmProvider 抽象 + Mock + Anthropic 实现
+### Task 2: llm 包 —— LlmProvider 抽象 + 配置 + Mock/Anthropic/OpenAI 实现
 
 **Files:**
 - Create: `packages/llm/package.json`
 - Create: `packages/llm/tsconfig.json`
 - Create: `packages/llm/src/provider.ts`
+- Create: `packages/llm/src/config.ts`
 - Create: `packages/llm/src/mock-provider.ts`
 - Create: `packages/llm/src/anthropic-provider.ts`
+- Create: `packages/llm/src/openai-provider.ts`
+- Create: `packages/llm/src/factory.ts`
 - Create: `packages/llm/src/index.ts`
+- Create: `config/llm.example.json`
+- Modify: `.gitignore`（忽略 `config/llm.json`）
 - Test: `packages/llm/src/mock-provider.test.ts`
+- Test: `packages/llm/src/config.test.ts`
+- Test: `packages/llm/src/factory.test.ts`
 
 **Interfaces:**
-- Consumes: 无内部依赖（仅 `@anthropic-ai/sdk` 作为 AnthropicProvider 的依赖）。
+- Consumes: `@anthropic-ai/sdk`、`openai`、`zod`。
 - Produces：
-  - `interface LlmProvider { extractJson(args: { system: string; user: string; schema: object }): Promise<unknown> }` —— 抽象掉"给 system+user，按 schema 拿回 JSON"这一件事。
-  - `class MockProvider implements LlmProvider`：构造时传入一个固定返回值 `(args) => unknown` 或静态对象；`extractJson` 同步返回它。供单测注入确定性结果。
-  - `class AnthropicProvider implements LlmProvider`：构造时读 `apiKey`；`extractJson` 用 `client.messages.create({ model:"claude-opus-4-8", max_tokens, thinking:{type:"adaptive"}, output_config:{format:{type:"json_schema", schema}}, system, messages:[{role:"user",content:user}] })`，解析首个 text block 为 JSON 返回。
-  - `createProviderFromEnv(): LlmProvider` —— 有 `process.env.ANTHROPIC_API_KEY` 返回 AnthropicProvider，否则抛错（由调用方决定是否回退 Mock；见 Task 3）。
+  - `interface LlmProvider { extractJson(args: { system: string; user: string; schema: object }): Promise<unknown> }`。
+  - `LlmConfigSchema` / `LlmConfig`：`{ provider: "anthropic"|"openai", model: string, baseUrl?: string, apiKeyEnv: string }`。**model 与 baseUrl 由配置提供，代码不写死。**
+  - `loadLlmConfig(path?): LlmConfig | null`：读 `config/llm.json`（默认路径），文件不存在或解析失败 → 返回 `null`（不抛）。
+  - `class MockProvider`：构造传入静态对象或 `(args)=>unknown`；供单测。
+  - `class AnthropicProvider`：构造 `{ apiKey, model, baseUrl? }`；`extractJson` 用 `messages.create({ model, thinking:{type:"adaptive"}, output_config:{format:{type:"json_schema",schema}}, ... })`。
+  - `class OpenAICompatibleProvider`：构造 `{ apiKey, model, baseUrl? }`；`extractJson` 用 `chat.completions.create({ model, response_format:{type:"json_schema", json_schema:{name,schema}}, messages:[{role:"system"},{role:"user"}] })`，解析 `choices[0].message.content` 为 JSON。
+  - `createProvider(config: LlmConfig): LlmProvider`：按 `config.provider` 装配；从 `process.env[config.apiKeyEnv]` 取 key，缺失则抛错。
+  - `createProviderOrMock(config: LlmConfig | null): LlmProvider`：config 为 null 或 key 缺失 → 返回 `MockProvider({ candidates: [] })`（生产无配置时不崩）。
 
 - [ ] **Step 1: 写 `packages/llm/package.json`**
 
@@ -147,11 +159,15 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
   "main": "./src/index.ts",
   "exports": { ".": "./src/index.ts" },
   "scripts": { "build": "tsc -p tsconfig.json" },
-  "dependencies": { "@anthropic-ai/sdk": "^0.68.0" }
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "openai": "^4.77.0",
+    "zod": "^3.24.0"
+  }
 }
 ```
 
-> 注：`@anthropic-ai/sdk` 版本以安装时 registry 最新为准；安装后若 lockfile 锁定不同次版本号，更新此处与 lockfile 保持一致即可（API 面 `messages.create` 稳定）。
+> 注：两个 SDK 版本以安装时 registry 最新为准；安装后按 lockfile 实际版本回填此处即可（`messages.create` / `chat.completions.create` 接口稳定）。
 
 - [ ] **Step 2: 写 `packages/llm/tsconfig.json`**
 
@@ -177,7 +193,60 @@ export interface LlmProvider {
 }
 ```
 
-- [ ] **Step 4: 写失败测试 `packages/llm/src/mock-provider.test.ts`**
+- [ ] **Step 4: 写失败测试 `packages/llm/src/config.test.ts` 与 `mock-provider.test.ts`**
+
+`config.test.ts`：
+
+```ts
+import { describe, it, expect } from "vitest";
+import { LlmConfigSchema, loadLlmConfig } from "./config.js";
+import { writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+describe("LlmConfigSchema", () => {
+  it("accepts an anthropic config", () => {
+    const c = LlmConfigSchema.parse({ provider: "anthropic", model: "some-model", apiKeyEnv: "ANTHROPIC_API_KEY" });
+    expect(c.provider).toBe("anthropic");
+    expect(c.baseUrl).toBeUndefined();
+  });
+
+  it("accepts an openai-compatible config with baseUrl", () => {
+    const c = LlmConfigSchema.parse({
+      provider: "openai", model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com", apiKeyEnv: "DEEPSEEK_API_KEY",
+    });
+    expect(c.baseUrl).toBe("https://api.deepseek.com");
+  });
+
+  it("rejects an unknown provider", () => {
+    expect(() => LlmConfigSchema.parse({ provider: "grok", model: "m", apiKeyEnv: "K" })).toThrow();
+  });
+});
+
+describe("loadLlmConfig", () => {
+  it("returns null when the file does not exist", () => {
+    expect(loadLlmConfig(join(tmpdir(), "no-such-llm-config.json"))).toBeNull();
+  });
+
+  it("loads a valid config file", () => {
+    const p = join(tmpdir(), `llm-${Date.now()}.json`);
+    writeFileSync(p, JSON.stringify({ provider: "openai", model: "deepseek-chat", baseUrl: "https://api.deepseek.com", apiKeyEnv: "DEEPSEEK_API_KEY" }));
+    const c = loadLlmConfig(p);
+    expect(c?.model).toBe("deepseek-chat");
+    rmSync(p);
+  });
+
+  it("returns null on malformed json", () => {
+    const p = join(tmpdir(), `llm-bad-${Date.now()}.json`);
+    writeFileSync(p, "{ not json");
+    expect(loadLlmConfig(p)).toBeNull();
+    rmSync(p);
+  });
+});
+```
+
+`mock-provider.test.ts`：
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -186,23 +255,47 @@ import { MockProvider } from "./mock-provider.js";
 describe("MockProvider", () => {
   it("returns the configured static result", async () => {
     const mock = new MockProvider({ candidates: [{ title: "x" }] });
-    const out = await mock.extractJson({ system: "s", user: "u", schema: {} });
-    expect(out).toEqual({ candidates: [{ title: "x" }] });
+    expect(await mock.extractJson({ system: "s", user: "u", schema: {} })).toEqual({ candidates: [{ title: "x" }] });
   });
 
   it("supports a function result that sees the args", async () => {
     const mock = new MockProvider((args) => ({ echoedUser: args.user }));
-    const out = await mock.extractJson({ system: "s", user: "hello", schema: {} });
-    expect(out).toEqual({ echoedUser: "hello" });
+    expect(await mock.extractJson({ system: "s", user: "hello", schema: {} })).toEqual({ echoedUser: "hello" });
   });
 });
 ```
 
 - [ ] **Step 5: 运行确认失败**
 
-Run: `pnpm vitest run packages/llm`（需先 `pnpm install` 链接新包——见 Step 9 前置；此步预期 FAIL：模块不存在）
+Run: `pnpm install && pnpm vitest run packages/llm`
+Expected: FAIL —— config / mock-provider 模块不存在。
 
-- [ ] **Step 6: 写 `packages/llm/src/mock-provider.ts`**
+- [ ] **Step 6: 写 `packages/llm/src/config.ts`**
+
+```ts
+import { readFileSync } from "node:fs";
+import { z } from "zod";
+
+export const LlmConfigSchema = z.object({
+  provider: z.enum(["anthropic", "openai"]),
+  model: z.string(),
+  baseUrl: z.string().optional(),
+  apiKeyEnv: z.string(),
+});
+export type LlmConfig = z.infer<typeof LlmConfigSchema>;
+
+export function loadLlmConfig(path = "config/llm.json"): LlmConfig | null {
+  try {
+    const raw = readFileSync(path, "utf8");
+    const parsed = LlmConfigSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+```
+
+- [ ] **Step 7: 写 `packages/llm/src/mock-provider.ts`**
 
 ```ts
 import type { LlmProvider, ExtractJsonArgs } from "./provider.js";
@@ -220,21 +313,27 @@ export class MockProvider implements LlmProvider {
 }
 ```
 
-- [ ] **Step 7: 写 `packages/llm/src/anthropic-provider.ts`**
+- [ ] **Step 8: 写 `packages/llm/src/anthropic-provider.ts`**
 
 ```ts
 import Anthropic from "@anthropic-ai/sdk";
 import type { LlmProvider, ExtractJsonArgs } from "./provider.js";
 
+export interface AnthropicOptions {
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+}
+
 export class AnthropicProvider implements LlmProvider {
   private client: Anthropic;
-  constructor(apiKey: string) {
-    this.client = new Anthropic({ apiKey });
+  constructor(private opts: AnthropicOptions) {
+    this.client = new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseUrl });
   }
 
   async extractJson(args: ExtractJsonArgs): Promise<unknown> {
     const res = await this.client.messages.create({
-      model: "claude-opus-4-8",
+      model: this.opts.model,
       max_tokens: 4096,
       thinking: { type: "adaptive" },
       output_config: { format: { type: "json_schema", schema: args.schema } },
@@ -246,41 +345,153 @@ export class AnthropicProvider implements LlmProvider {
     return JSON.parse(text.text);
   }
 }
+```
 
-export function createProviderFromEnv(): LlmProvider {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error("ANTHROPIC_API_KEY not set");
-  return new AnthropicProvider(key);
+> 注：`output_config` 字段名取自 claude-api 文档；若安装的 SDK 类型未含该字段，`as Anthropic.MessageCreateParamsNonStreaming` 断言已兜底。`model` 来自配置，不写死。AnthropicProvider 不被单测覆盖（不发真实调用），只需 tsc 通过。
+
+- [ ] **Step 9: 写 `packages/llm/src/openai-provider.ts`**
+
+```ts
+import OpenAI from "openai";
+import type { LlmProvider, ExtractJsonArgs } from "./provider.js";
+
+export interface OpenAIOptions {
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+}
+
+export class OpenAICompatibleProvider implements LlmProvider {
+  private client: OpenAI;
+  constructor(private opts: OpenAIOptions) {
+    this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseUrl });
+  }
+
+  async extractJson(args: ExtractJsonArgs): Promise<unknown> {
+    const res = await this.client.chat.completions.create({
+      model: this.opts.model,
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "extraction", schema: args.schema },
+      },
+      messages: [
+        { role: "system", content: args.system },
+        { role: "user", content: args.user },
+      ],
+    });
+    const content = res.choices[0]?.message?.content;
+    if (!content) throw new Error("no content in response");
+    return JSON.parse(content);
+  }
 }
 ```
 
-> 注：`output_config` 是较新的 SDK 字段，若安装的 SDK 类型未含该字段导致 tsc 报错，用 `as Anthropic.MessageCreateParamsNonStreaming` 断言（已加）或在该对象上局部 `// @ts-expect-error` 并在注释说明字段名来自 claude-api 文档。AnthropicProvider 不被单测覆盖（不发真实调用），只需 tsc 通过。
+> 注：`model` 与 `baseUrl` 全来自配置（DeepSeek 用 `https://api.deepseek.com`，OpenRouter / 本地各自填）。`response_format: json_schema` 是 OpenAI 兼容端点的结构化输出方式；个别端点若不支持，可退回 `{ type: "json_object" }` 并在 system prompt 里描述结构——本阶段先用 json_schema，OpenAICompatibleProvider 不被单测覆盖。
 
-- [ ] **Step 8: 写 `packages/llm/src/index.ts`**
+- [ ] **Step 10: 写失败测试 `packages/llm/src/factory.test.ts`**
+
+```ts
+import { describe, it, expect, afterEach } from "vitest";
+import { createProvider, createProviderOrMock } from "./factory.js";
+import { MockProvider } from "./mock-provider.js";
+import { AnthropicProvider } from "./anthropic-provider.js";
+import { OpenAICompatibleProvider } from "./openai-provider.js";
+
+const KEY = "TF_TEST_LLM_KEY";
+afterEach(() => { delete process.env[KEY]; });
+
+describe("createProvider", () => {
+  it("builds an AnthropicProvider for provider=anthropic", () => {
+    process.env[KEY] = "sk-x";
+    const p = createProvider({ provider: "anthropic", model: "m", apiKeyEnv: KEY });
+    expect(p).toBeInstanceOf(AnthropicProvider);
+  });
+
+  it("builds an OpenAICompatibleProvider for provider=openai", () => {
+    process.env[KEY] = "sk-x";
+    const p = createProvider({ provider: "openai", model: "deepseek-chat", baseUrl: "https://api.deepseek.com", apiKeyEnv: KEY });
+    expect(p).toBeInstanceOf(OpenAICompatibleProvider);
+  });
+
+  it("throws when the api key env var is missing", () => {
+    expect(() => createProvider({ provider: "anthropic", model: "m", apiKeyEnv: KEY })).toThrow();
+  });
+});
+
+describe("createProviderOrMock", () => {
+  it("returns a MockProvider when config is null", () => {
+    expect(createProviderOrMock(null)).toBeInstanceOf(MockProvider);
+  });
+
+  it("returns a MockProvider when the api key is missing", () => {
+    expect(createProviderOrMock({ provider: "anthropic", model: "m", apiKeyEnv: KEY })).toBeInstanceOf(MockProvider);
+  });
+});
+```
+
+- [ ] **Step 11: 写 `packages/llm/src/factory.ts`**
+
+```ts
+import type { LlmProvider } from "./provider.js";
+import type { LlmConfig } from "./config.js";
+import { MockProvider } from "./mock-provider.js";
+import { AnthropicProvider } from "./anthropic-provider.js";
+import { OpenAICompatibleProvider } from "./openai-provider.js";
+
+export function createProvider(config: LlmConfig): LlmProvider {
+  const apiKey = process.env[config.apiKeyEnv];
+  if (!apiKey) throw new Error(`env var ${config.apiKeyEnv} not set`);
+  const opts = { apiKey, model: config.model, baseUrl: config.baseUrl };
+  return config.provider === "anthropic"
+    ? new AnthropicProvider(opts)
+    : new OpenAICompatibleProvider(opts);
+}
+
+export function createProviderOrMock(config: LlmConfig | null): LlmProvider {
+  if (!config || !process.env[config.apiKeyEnv]) {
+    return new MockProvider({ candidates: [] });
+  }
+  return createProvider(config);
+}
+```
+
+- [ ] **Step 12: 写 `packages/llm/src/index.ts`**
 
 ```ts
 export type { LlmProvider, ExtractJsonArgs } from "./provider.js";
+export { LlmConfigSchema, type LlmConfig, loadLlmConfig } from "./config.js";
 export { MockProvider } from "./mock-provider.js";
-export { AnthropicProvider, createProviderFromEnv } from "./anthropic-provider.js";
+export { AnthropicProvider } from "./anthropic-provider.js";
+export { OpenAICompatibleProvider } from "./openai-provider.js";
+export { createProvider, createProviderOrMock } from "./factory.js";
 ```
 
-- [ ] **Step 9: 安装依赖并运行测试**
+- [ ] **Step 13: 写 `config/llm.example.json` 并忽略 `config/llm.json`**
 
-Run:
-```bash
-cd "E:/learn/TraceForge" && pnpm install && pnpm vitest run packages/llm
+`config/llm.example.json`（两个示例，二选一拷成 `config/llm.json`）：
+
+```json
+{
+  "_comment_anthropic": { "provider": "anthropic", "model": "claude-opus-4-8", "apiKeyEnv": "ANTHROPIC_API_KEY" },
+  "_comment_deepseek": { "provider": "openai", "model": "deepseek-chat", "baseUrl": "https://api.deepseek.com", "apiKeyEnv": "DEEPSEEK_API_KEY" },
+  "provider": "openai",
+  "model": "deepseek-chat",
+  "baseUrl": "https://api.deepseek.com",
+  "apiKeyEnv": "DEEPSEEK_API_KEY"
+}
 ```
-Expected: 安装链接 `@anthropic-ai/sdk` 与新 workspace 包；MockProvider 2 用例 PASS。
 
-- [ ] **Step 10: 类型检查 llm 包（覆盖 AnthropicProvider）**
+在 `.gitignore` 追加一行：`config/llm.json`
 
-Run: `pnpm --filter @traceforge/llm exec tsc --noEmit -p tsconfig.json`
-Expected: 退出码 0。若 `output_config` 字段类型报错，按 Step 7 注释处理（断言已就位）后复跑。
+- [ ] **Step 14: 运行全部 llm 测试 + 类型检查**
 
-- [ ] **Step 11: Commit**
+Run: `pnpm vitest run packages/llm && pnpm --filter @traceforge/llm exec tsc --noEmit -p tsconfig.json`
+Expected: config（4）+ mock（2）+ factory（5）全绿；tsc 退出码 0（含 Anthropic/OpenAI provider 编译，`output_config` 断言已兜底）。
+
+- [ ] **Step 15: Commit**
 
 ```bash
-git add -A && git commit -m "feat(llm): add LlmProvider abstraction with Mock and Anthropic implementations
+git add -A && git commit -m "feat(llm): add config-driven multi-provider LLM abstraction (Anthropic + OpenAI-compatible)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
@@ -668,13 +879,12 @@ Expected: FAIL —— extract 路由不存在（404 但非预期 body / 或 regi
 
 ```ts
 import type { LlmProvider } from "@traceforge/llm";
-import { MockProvider } from "@traceforge/llm";
-import { AnthropicProvider } from "@traceforge/llm";
+import { loadLlmConfig, createProviderOrMock } from "@traceforge/llm";
 import { FactExtractor } from "@traceforge/reasoning-core";
 import { CandidateStore } from "./candidate-store.js";
 ```
 
-把签名改为：
+把签名改为（`provider` 可注入，便于测试；不注入时从 `config/llm.json` 装配，无配置/无 key 回退 Mock）：
 
 ```ts
 export function registerRoutes(
@@ -688,14 +898,12 @@ export function registerRoutes(
 在函数体内（现有 store 初始化之后）追加：
 
 ```ts
-  const llm: LlmProvider =
-    provider ??
-    (process.env.ANTHROPIC_API_KEY
-      ? new AnthropicProvider(process.env.ANTHROPIC_API_KEY)
-      : new MockProvider({ candidates: [] }));
+  const llm: LlmProvider = provider ?? createProviderOrMock(loadLlmConfig());
   const extractor = new FactExtractor(llm);
   const candidateStore = new CandidateStore();
 ```
+
+> 注：`loadLlmConfig()` 读默认路径 `config/llm.json`；缺失则 `createProviderOrMock(null)` 返回空候选 Mock。model/baseUrl/provider 全部来自该配置文件，路由层无任何硬编码模型名。
 
 在文件末尾 `registerRoutes` 闭合 `}` 之前追加路由：
 
@@ -846,7 +1054,7 @@ Expected: tsc 退出码 0；Vite 构建成功。
 
 - [ ] **Step 5: 端到端验证（Mock provider，无需 API key）**
 
-Run（起干净后端，确认 4000 未被占用；用 e2e.sqlite，不设 ANTHROPIC_API_KEY 故走默认 MockProvider 返回空候选——为验证完整流程，临时用一个返回候选的注入：改为起一个测试脚本）：
+Run（起干净后端，确认 4000 未被占用；用 e2e.sqlite。无 `config/llm.json` 时走默认 MockProvider 返回空候选，故此处只验证 extract 路由返回 200 且 facts 不增——有候选→confirm→fact 全链路已由 Task 4 inject 测试用 MockProvider 覆盖）：
 
 ```bash
 # 起后端（默认 MockProvider 返回空候选，无法演示候选）——因此本步用 curl 仅验证 extract 路由对真实 traffic 返回 200 且 facts 不增。
@@ -863,7 +1071,7 @@ pkill -f buildServer 2>/dev/null; pkill -f tsx 2>/dev/null
 ```
 Expected: extract code 200；facts 为 0（候选不入库）。随后清理后端与 e2e.sqlite*。
 
-> 真实 Claude 提取需配 `ANTHROPIC_API_KEY` 后在浏览器点"AI 提取"实测；浏览器内候选 confirm/reject 也需真人验证。Task 4 的 inject 测试已用 MockProvider 覆盖"有候选→confirm→fact"全链路逻辑。
+> 真实 AI 提取需配好 `config/llm.json`（选 anthropic 或 deepseek 等）并设置对应 API key 后，在浏览器点"AI 提取"实测；浏览器内候选 confirm/reject 也需真人验证。Task 4 的 inject 测试已用 MockProvider 覆盖"有候选→confirm→fact"全链路逻辑。
 
 - [ ] **Step 6: Commit**
 
@@ -895,15 +1103,26 @@ Expected: 各包无错误。
 "当前进度"小节标题改为"阶段 0 + 1 + 2 + 3"，追加：
 
 ```markdown
-- AI 事实提取：从流量提取候选 Fact（带 prompt injection 数据边界防护），人工 confirm/reject 后入库；第一版接 Claude（claude-opus-4-8），未配 ANTHROPIC_API_KEY 时回退空候选 Mock
+- AI 事实提取：从流量提取候选 Fact（带 prompt injection 数据边界防护），人工 confirm/reject 后入库。LLM 多 Provider 可配置（Anthropic / OpenAI 兼容，后者覆盖 DeepSeek 等），模型与 baseURL 由 config/llm.json 决定；无配置时回退空候选 Mock
 ```
 
-并在"开发启动"小节追加一行：
+并在"开发启动"小节追加 AI 配置说明：
 
-```markdown
-# 启用真实 AI 提取（可选）：设置环境变量后重启后端
+````markdown
+## 配置 LLM（可选，启用 AI 提取）
+
+拷贝模板并按需修改 provider/model/baseUrl，再设置对应 API key 环境变量：
+
+```bash
+cp config/llm.example.json config/llm.json
+# DeepSeek 示例：
+export DEEPSEEK_API_KEY=sk-...
+# 或 Anthropic：把 config/llm.json 改为 anthropic provider，并
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+`config/llm.json` 不纳入版本控制；未配置时 AI 提取返回空候选（其余功能不受影响）。
+````
 
 把测试数量从 26 更新为实际值。
 
@@ -922,5 +1141,6 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - **Spec 覆盖**：对应设计文档第 21 章「阶段 3：AI 事实提取」全部交付物（FactExtractor、CandidateFact Review UI、extract-facts prompt），并落实第 20.1/26.2 的 prompt injection 防护（数据边界 + system 隔离声明 + 幻觉过滤）。Planner / Action Card 属阶段 4，不在本计划。
 - **类型一致性**：`CandidateFact` 单源于 shared（Task 1），其 type 枚举用 `FactSchema.shape.type` 复用阶段 2 的 Fact 类型集合——候选与正式 Fact 类型永不漂移。`LlmProvider` 接口在 Task 2 定义、Task 3（FactExtractor）与 Task 4（routes）消费。`candidates_extracted` 事件 Task 1 定义、Task 4 emit、Task 5 消费，三处一致。
 - **安全约束落点**：(a) provider 抽象隔离 SDK，单测只用 Mock，无真实网络调用；(b) 数据/指令隔离在 FactExtractor 的 system+user prompt，由 Task 3 的两个专门测试守住；(c) 幻觉过滤由 `CandidateFactSchema.safeParse` + 丢弃逻辑实现并测试；(d) 人工确认门由 CandidateStore 内存暂存 + confirm 路由实现，Task 4 测试断言"extract 不写 facts、confirm 才写、二次 confirm 404"。
-- **API key 安全**：仅从 `process.env.ANTHROPIC_API_KEY` 读，不入库不日志；无 key 时回退 MockProvider 返回空候选，保证生产不崩。
-- **已知简化**：候选暂存在内存 Map（进程重启丢失），符合阶段 3 范围；若阶段 8 需持久化候选，再落表。`TrafficStore` 用 `listByCase().find()` 取单条，量大时再加 `getById`。SDK `output_config` 字段若类型不全用断言兜底，AnthropicProvider 不被单测覆盖只需 tsc 通过。
+- **模型与 provider 不硬编码**：`model`/`baseUrl`/`provider` 全来自 `config/llm.json`（Task 2 的 `LlmConfig` + `loadLlmConfig` + `createProvider`/`createProviderOrMock`）。代码中唯一出现模型名的地方是配置示例与测试夹具。支持 Anthropic 与 OpenAI 两种格式，DeepSeek 走 OpenAI 兼容（配 baseURL）。factory 的装配逻辑（按 provider 类型选实现、key 缺失抛错/回退 Mock）由 Task 2 的 `factory.test.ts` 守住。
+- **API key 安全**：仅从配置 `apiKeyEnv` 指定的环境变量名读取，不入库不日志；无配置或无 key 时回退 MockProvider 返回空候选，保证生产不崩。`config/llm.json` 被 `.gitignore` 忽略。
+- **已知简化**：候选暂存在内存 Map（进程重启丢失），符合阶段 3 范围；若阶段 8 需持久化候选，再落表。`TrafficStore` 用 `listByCase().find()` 取单条，量大时再加 `getById`。Anthropic 的 `output_config` 与 OpenAI 的 `response_format: json_schema` 字段若 SDK 类型不全用断言兜底；两个真实 Provider 不被单测覆盖（不发网络），只需 tsc 通过。
