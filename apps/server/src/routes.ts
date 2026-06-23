@@ -5,11 +5,18 @@ import { checkScope } from "@traceforge/tool-resolver";
 import type { Db } from "./db/client.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
+import { FactStore } from "./stores/fact-store.js";
+import { TaskStore } from "./stores/task-store.js";
+import { TimelineStore } from "./stores/timeline-store.js";
 import { EventBus } from "./event-bus.js";
+import type { Task } from "@traceforge/shared";
 
 export function registerRoutes(app: FastifyInstance, db: Db, bus: EventBus): void {
   const cases = new CaseStore(db);
   const traffic = new TrafficStore(db);
+  const factStore = new FactStore(db);
+  const taskStore = new TaskStore(db);
+  const timelineStore = new TimelineStore(db);
 
   app.post("/api/cases", async (req) => {
     const body = req.body as { name: string; allowHosts: string[]; denyHosts?: string[] };
@@ -60,5 +67,51 @@ export function registerRoutes(app: FastifyInstance, db: Db, bus: EventBus): voi
     await page.goto(url, { waitUntil: "domcontentloaded" }).catch(() => {});
     await browser.close();
     return { ok: true };
+  });
+
+  app.post("/api/cases/:id/facts", async (req) => {
+    const { id } = req.params as { id: string };
+    const input = req.body as Parameters<FactStore["create"]>[1];
+    const fact = factStore.create(id, input);
+    const entry = timelineStore.append(id, "fact_created", `Fact: ${fact.title}`, fact.id);
+    bus.emit({ type: "fact_created", fact });
+    bus.emit({ type: "timeline_appended", entry });
+    return fact;
+  });
+
+  app.get("/api/cases/:id/facts", async (req) => {
+    const { id } = req.params as { id: string };
+    return factStore.listByCase(id);
+  });
+
+  app.post("/api/cases/:id/tasks", async (req) => {
+    const { id } = req.params as { id: string };
+    const input = req.body as Parameters<TaskStore["create"]>[1];
+    const task = taskStore.create(id, input);
+    const entry = timelineStore.append(id, "task_created", `Task: ${task.title}`, task.id);
+    bus.emit({ type: "task_created", task });
+    bus.emit({ type: "timeline_appended", entry });
+    return task;
+  });
+
+  app.get("/api/cases/:id/tasks", async (req) => {
+    const { id } = req.params as { id: string };
+    return taskStore.listByCase(id);
+  });
+
+  app.patch("/api/tasks/:taskId", async (req, reply) => {
+    const { taskId } = req.params as { taskId: string };
+    const { status, reason } = req.body as { status: Task["status"]; reason?: string };
+    const task = taskStore.updateStatus(taskId, status, reason);
+    if (!task) return reply.code(404).send({ error: "task not found" });
+    const entry = timelineStore.append(task.caseId, "task_updated", `Task ${task.title} → ${status}`, task.id);
+    bus.emit({ type: "task_updated", task });
+    bus.emit({ type: "timeline_appended", entry });
+    return task;
+  });
+
+  app.get("/api/cases/:id/timeline", async (req) => {
+    const { id } = req.params as { id: string };
+    return timelineStore.listByCase(id);
   });
 }
