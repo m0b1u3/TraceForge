@@ -13,3 +13,4 @@ P2 Task 5: complete (commit 16be253, readme + full verify: 26 tests, all builds 
 P3 Task 1: complete (commit 2ecc058, candidate fact schema)
 P3 Task 2: complete (commit c0199e8, multi-provider llm: config+mock+anthropic+openai+factory)
 P3 Task 3: complete (commit 40ec751, fact extractor + injection defense)
+P3 Task 4: complete (commit 9877e2e, extract+confirm/reject routes, config-driven provider)

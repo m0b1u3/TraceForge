@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { useStore } from "./store.js";
-import { createCase, openUrl, createFact, createTask, patchTask } from "./api.js";
+import {
+  createCase, openUrl, createFact, createTask, patchTask,
+  extractCandidates, confirmCandidate, rejectCandidate,
+} from "./api.js";
 
 export function App() {
-  const { caseId, traffic, facts, tasks, timeline, setCase, connectWs } = useStore();
+  const { caseId, traffic, facts, tasks, timeline, candidates, setCase, removeCandidate, connectWs } = useStore();
   const [name, setName] = useState("demo");
   const [hosts, setHosts] = useState("example.com");
   const [url, setUrl] = useState("https://example.com/");
@@ -73,12 +76,24 @@ export function App() {
                   }}
                 >
                   Mark as Fact
-                </button>
+                </button>{" "}
+                <button onClick={() => extractCandidates(caseId, t.id)}>AI 提取</button>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      <h2>Candidates ({candidates.length})</h2>
+      <ul>
+        {candidates.map((c) => (
+          <li key={c.id}>
+            [{c.type}] {c.title} — <i>{c.reasoning}</i>{" "}
+            <button onClick={async () => { await confirmCandidate(c.id); removeCandidate(c.id); }}>confirm</button>{" "}
+            <button onClick={async () => { await rejectCandidate(c.id); removeCandidate(c.id); }}>reject</button>
+          </li>
+        ))}
+      </ul>
 
       <h2>Facts ({facts.length})</h2>
       <ul>

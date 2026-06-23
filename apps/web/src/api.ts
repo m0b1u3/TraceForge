@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry } from "@traceforge/shared";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact } from "@traceforge/shared";
 
 export async function createCase(name: string, allowHosts: string[]): Promise<Case> {
   const r = await fetch("/api/cases", {
@@ -66,4 +66,16 @@ export async function patchTask(taskId: string, status: Task["status"], reason?:
 
 export async function listTimeline(caseId: string): Promise<TimelineEntry[]> {
   return (await fetch(`/api/cases/${caseId}/timeline`)).json();
+}
+
+export async function extractCandidates(caseId: string, trafId: string): Promise<CandidateFact[]> {
+  return (await fetch(`/api/cases/${caseId}/traffic/${trafId}/extract`, { method: "POST" })).json();
+}
+
+export async function confirmCandidate(candId: string): Promise<Fact> {
+  return (await fetch(`/api/candidates/${candId}/confirm`, { method: "POST" })).json();
+}
+
+export async function rejectCandidate(candId: string): Promise<Response> {
+  return fetch(`/api/candidates/${candId}/reject`, { method: "POST" });
 }

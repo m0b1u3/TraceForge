@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { TrafficEntry, Fact, Task, TimelineEntry, RuntimeEvent } from "@traceforge/shared";
+import type { TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, RuntimeEvent } from "@traceforge/shared";
 
 interface State {
   caseId: string | null;
@@ -7,11 +7,14 @@ interface State {
   facts: Fact[];
   tasks: Task[];
   timeline: TimelineEntry[];
+  candidates: CandidateFact[];
   setCase: (id: string) => void;
   addEntry: (e: TrafficEntry) => void;
   addFact: (f: Fact) => void;
   upsertTask: (t: Task) => void;
   addTimeline: (e: TimelineEntry) => void;
+  setCandidates: (cs: CandidateFact[]) => void;
+  removeCandidate: (id: string) => void;
   connectWs: () => void;
 }
 
@@ -21,7 +24,8 @@ export const useStore = create<State>((set, get) => ({
   facts: [],
   tasks: [],
   timeline: [],
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [] }),
+  candidates: [],
+  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], candidates: [] }),
   addEntry: (e) => set((s) => ({ traffic: [...s.traffic, e] })),
   addFact: (f) => set((s) => ({ facts: [...s.facts, f] })),
   upsertTask: (t) =>
@@ -33,6 +37,8 @@ export const useStore = create<State>((set, get) => ({
       return { tasks: copy };
     }),
   addTimeline: (e) => set((s) => ({ timeline: [...s.timeline, e] })),
+  setCandidates: (cs) => set({ candidates: cs }),
+  removeCandidate: (id) => set((s) => ({ candidates: s.candidates.filter((c) => c.id !== id) })),
   connectWs: () => {
     const ws = new WebSocket(`ws://${location.host}/ws`);
     ws.onmessage = (msg) => {
@@ -43,6 +49,7 @@ export const useStore = create<State>((set, get) => ({
       else if (event.type === "task_created" && event.task.caseId === cid) get().upsertTask(event.task);
       else if (event.type === "task_updated" && event.task.caseId === cid) get().upsertTask(event.task);
       else if (event.type === "timeline_appended" && event.entry.caseId === cid) get().addTimeline(event.entry);
+      else if (event.type === "candidates_extracted" && event.caseId === cid) get().setCandidates(event.candidates);
     };
   },
 }));
