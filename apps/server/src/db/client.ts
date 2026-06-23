@@ -15,6 +15,24 @@ export function createDb(path: string) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_traffic_case ON traffic_entries(case_id);
+    CREATE TABLE IF NOT EXISTS facts (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL,
+      value_json TEXT NOT NULL, source_json TEXT NOT NULL, confidence REAL NOT NULL,
+      tags_json TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_facts_case ON facts(case_id);
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
+      reason TEXT NOT NULL, blocked_by_json TEXT NOT NULL, trigger_when_json TEXT NOT NULL,
+      related_facts_json TEXT NOT NULL, priority TEXT NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tasks_case ON tasks(case_id);
+    CREATE TABLE IF NOT EXISTS timeline (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, event_type TEXT NOT NULL,
+      ref_id TEXT, detail TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_timeline_case ON timeline(case_id);
   `);
   return drizzle(sqlite);
 }
