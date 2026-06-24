@@ -1,12 +1,15 @@
-// 端到端：真实 LLM 自主调用 http_replay 工具
+// 端到端：真实 LLM 用完整 case 工具集自主工作（看流量/重放/记 Fact）
 // 用法：先配置 config/llm.json + 对应 API key 环境变量，然后：
 //   node --import tsx scripts/e2e-agent.mts
+// 用内存 store 假实现演示 agent 闭环（生产由 server 路由用真实 store）。
+import { randomUUID } from "node:crypto";
 import { loadLlmConfig, createProvider } from "../packages/llm/src/index.js";
 import {
   ToolRegistry, ApprovalGate, AgentRuntime,
   makeHttpReplayTool, makeProposeScopeExpansionTool,
+  makeRecordFactTool,
 } from "../packages/extension/src/index.js";
-import type { ScopeRule } from "../packages/shared/src/index.js";
+import { FactSchema, type Fact, type ScopeRule } from "../packages/shared/src/index.js";
 
 const config = loadLlmConfig();
 if (!config) {
@@ -23,29 +26,40 @@ try {
   process.exit(1);
 }
 
-// 授权范围：只允许 example.com（演示 Scope Guard）
 const scopeRules: ScopeRule[] = [{ caseId: "e2e", allowHosts: ["example.com"], denyHosts: [] }];
 
-const registry = new ToolRegistry();
-registry.register(makeHttpReplayTool(scopeRules)); // 真实 fetch
-registry.register(makeProposeScopeExpansionTool((host, reason) => {
-  console.error(`  [scope proposal] ${host} — ${reason}`);
-}));
+// 内存 store 假实现
+const factArr: Fact[] = [];
+const memFacts = {
+  create: (caseId: string, input: Omit<Fact, "id" | "caseId" | "createdAt">) => {
+    const f = FactSchema.parse({ ...input, id: `fact_${randomUUID()}`, caseId, createdAt: new Date().toISOString() });
+    factArr.push(f); return f;
+  },
+  listByCase: (caseId: string) => factArr.filter((f) => f.caseId === caseId),
+};
+const memTimeline = { append: (caseId: string, eventType: string, detail: string, refId?: string) => ({ id: `tl_${randomUUID()}`, caseId, eventType, refId: refId ?? null, detail, createdAt: "now" }) };
 
-// 自动批准门（本演示无 command 类工具，不会触发；有也直接放行）
+const registry = new ToolRegistry();
+registry.register(makeHttpReplayTool(scopeRules));
+registry.register(makeRecordFactTool("e2e", memFacts, memTimeline, () => {}));
+registry.register(makeProposeScopeExpansionTool((host, reason) => console.error(`  [scope proposal] ${host} — ${reason}`)));
+
 const gate = new ApprovalGate(async () => "approved");
 
-const system = `你是一个授权渗透测试助手。你有一个 http_replay 工具可以重发 HTTP 请求并查看响应。
-当前授权范围只有 example.com。请用工具完成用户的任务。完成后用一句话总结你的发现。`;
+const system = `你是 TraceForge 的授权渗透测试 agent。授权范围只有 example.com。
+你可以用 http_replay 重放请求、用 record_fact 记录发现。完成后用一句话总结。`;
 
-const goal = "请向 https://example.com/ 发一个 GET 请求，告诉我返回的状态码和响应体长度。";
+const goal = "向 https://example.com/ 发一个 GET 请求查看响应，然后把这个端点用 record_fact 记录为一个 Fact（type 用 api_endpoint）。";
 
 console.error(`\n=== 目标 ===\n${goal}\n=== LLM 开始自主工作 ===`);
 
 await new AgentRuntime(provider, registry, gate).run(system, goal, (e) => {
-  if (e.type === "tool_call") console.error(`  → LLM 调用工具 ${e.name}(${e.content})`);
-  else if (e.type === "tool_result") console.error(`  ← 工具返回: ${e.content}`);
+  if (e.type === "tool_call") console.error(`  → LLM 调用 ${e.name}(${e.content})`);
+  else if (e.type === "tool_result") console.error(`  ← 返回: ${e.content}`);
   else if (e.type === "tool_rejected") console.error(`  ✗ 被拒: ${e.name}`);
   else if (e.type === "text") console.error(`  [LLM] ${e.content}`);
   else if (e.type === "done") console.error(`\n=== 完成 ===`);
 });
+
+console.error(`\n=== 落库的 Fact (${factArr.length}) ===`);
+for (const f of factArr) console.error(`  ${f.id} [${f.type}] ${f.title}`);
