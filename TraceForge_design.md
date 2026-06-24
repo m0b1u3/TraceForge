@@ -2805,3 +2805,47 @@ TraceForge 应该像一个有经验的渗透测试搭档：
 最终目标：
 
 > 让 AI 不是替代人工，而是成为一个能记住线索、解释判断、协助验证、执行 PoC、持续重新规划的红队推理助手。
+
+---
+
+## 31. 进度对齐与修订路线图（截至实际实现）
+
+> 本章把第 21 章的原始 MVP 阶段规划与**实际实现**对齐，并依据后来确立的最高架构原则（第 3.0 节「LLM 主导、零硬编码」）修订后续路线。第 21 章保留为历史规划，本章为现行基准。
+
+### 31.1 偏离的根因
+
+第 21 章成文于早期，部分阶段把**领域逻辑写进代码**（如阶段 5 的「SQLi 最小扰动测试」、阶段 8 的 Trigger Rules）。后来确立的最高原则（第 3.0 节）否决了这种形态：领域知识必须走 LLM 决策 + 外部扩展（MCP/插件/Skills），不得硬编码。因此实现路径有意偏离——阶段目标多数保留，但**实现形态从「内置代码」转为「LLM 主导 + 进程外扩展」**。此外，用户新增了第 21 章没有的需求：扩展地基、agent 驱动交互、人机共享浏览器、MCP 集成。
+
+### 31.2 实际进度对照
+
+| 第 21 章阶段 | 状态 | 说明 |
+|---|---|---|
+| 阶段 0 安全与上下文地基 | ✅ 贯穿 | ScopeGuard、prompt injection 数据边界、case_id 隔离 |
+| 阶段 1 工作台骨架 | ✅ | Case/Traffic/WS 事件总线/SQLite |
+| 阶段 2 Facts/Tasks/Timeline | ✅ | |
+| 阶段 3 AI 事实提取 | ⟳ 已变形 | 单轮候选确认 → 被 E1 agent 自主模式取代（FactExtractor 已移除） |
+| 阶段 4 Action Card | ✅ | 证据驱动 evidenceRefs 非空硬规则 + Decision |
+| 阶段 5 HTTP Replay | ⟳ 已变形 | 通用重放引擎（@traceforge/tools）；**移除 SQLi 专用扰动**，漏洞变体由 LLM 生成 |
+| 阶段 6 Terminal/PoC/依赖 | ❌ 待做 | 拟改为 MCP server / 工具插件形态（见 31.3） |
+| 阶段 7 Graph Panel | ❌ 待做 | 数据已齐（Facts/Tasks/Actions/Decisions/evidenceRefs），缺可视化 |
+| 阶段 8 重新评估机制 | ❌ 待做 | **Trigger Rules 须去硬编码**，改为 LLM 判断驱动（见 31.3） |
+| 阶段 9 Observer | ❌ 待做 | 监督 agent，形态基本不变 |
+
+**第 21 章之外、已额外完成**（按第 3.0 原则新增的能力）：
+- Plan A 扩展地基：ToolRegistry + 原生 tool-calling AgentRuntime + ApprovalGate（只拦 risk=command）+ Scope Guard
+- E1/E2 agent 驱动交互：后端自主多轮 + 前端对话流（取代旧候选确认 UI）
+- F1/F2 人机共享浏览器：持久有头 Chromium + 控制权锁（LLM/人接管交回）+ 浏览器工具入工具集 + 前端控制区
+- Plan C MCP 集成：动态发现外部 stdio MCP server 工具（命名空间 mcp\_\_<server>\_\_<tool>，risk=trustLevel），「领域知识走 MCP 扩展」主载体
+
+### 31.3 修订后的后续路线（现行基准）
+
+按「LLM 主导、零硬编码、可扩展」重排剩余工作，每项标注与原阶段的关系：
+
+1. **整体工作台 UI（P0，前端）** — 把已通的三大后端能力（共享浏览器、agent 自主、MCP）整合为多面板工作台，替换当前裸占位 UI。对应原阶段 1 的 BrowserPanel/TrafficPanel 升级 + 承载 7 的 Graph。**理由**：后端能力已全通，前端是最大短板。
+2. **Terminal / PoC / 依赖（原阶段 6，改形态）** — 不在核心写死命令执行逻辑，而是**作为一个本地 MCP server 或工具插件**接入（命令执行天然是 risk=command，过 ApprovalGate）。Plan C 已铺好接入通道。
+3. **Graph Panel（原阶段 7，基本不变）** — Facts/Tasks/Actions/Decisions/evidenceRefs 数据已齐，做 GraphBuilder + ReactFlow 可视化。
+4. **重新评估机制（原阶段 8，去硬编码重设计）** — 原 Trigger Rules（「新凭据→触发登录任务」等写死映射）违反第 3.0 原则。改为：新 Fact 入库时由 **LLM 判断**是否应重启/新建相关 Task，规则不写进代码。
+5. **Observer（原阶段 9，形态不变）** — 监督 agent：查无依据猜测、低效路径、过早结束，向 Manager 发纠偏建议。
+6. **Plan B 工具插件（按需）** — 仅当某关键工具无 MCP 封装时单独写；MCP 已是主扩展通道，B 降为补充。
+
+> 横切关注（第 25-30 章：上下文/证据检索、自身安全、置信度传播、多 Case 隔离、并发恢复、可观测性）随各功能推进逐步落实，不单列为阶段。
