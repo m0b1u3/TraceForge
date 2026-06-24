@@ -9,12 +9,17 @@ export async function createCase(name: string, allowHosts: string[]): Promise<Ca
   return r.json();
 }
 
-export async function openUrl(caseId: string, url: string): Promise<Response> {
-  return fetch(`/api/cases/${caseId}/open`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ url }),
-  });
+export async function startBrowser(caseId: string): Promise<Response> {
+  return fetch(`/api/cases/${caseId}/browser/start`, { method: "POST" });
+}
+export async function stopBrowser(caseId: string): Promise<Response> {
+  return fetch(`/api/cases/${caseId}/browser/stop`, { method: "POST" });
+}
+export async function takeoverBrowser(caseId: string): Promise<Response> {
+  return fetch(`/api/cases/${caseId}/browser/takeover`, { method: "POST" });
+}
+export async function releaseBrowser(caseId: string): Promise<Response> {
+  return fetch(`/api/cases/${caseId}/browser/release`, { method: "POST" });
 }
 
 export async function listTraffic(caseId: string): Promise<TrafficEntry[]> {

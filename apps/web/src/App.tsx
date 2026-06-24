@@ -1,15 +1,14 @@
 import { useEffect, useState } from "react";
 import { useStore } from "./store.js";
-import { createCase, openUrl, runAgent, resolveApproval } from "./api.js";
+import { createCase, startBrowser, stopBrowser, takeoverBrowser, releaseBrowser, runAgent, resolveApproval } from "./api.js";
 
 export function App() {
   const {
     caseId, traffic, facts, tasks, timeline, actions, decisions,
-    agentEvents, pendingApproval, setCase, connectWs, resetAgent,
+    agentEvents, pendingApproval, browserController, browserUrl, setCase, connectWs, resetAgent,
   } = useStore();
   const [name, setName] = useState("demo");
   const [hosts, setHosts] = useState("example.com");
-  const [url, setUrl] = useState("https://example.com/");
   const [goal, setGoal] = useState("看一下已抓的流量，把发现的接口记录为 Fact。");
 
   useEffect(() => { connectWs(); }, [connectWs]);
@@ -33,9 +32,25 @@ export function App() {
       <h1>TraceForge</h1>
       <p>Case: {caseId}</p>
 
-      <h2>抓流量</h2>
-      <input value={url} onChange={(e) => setUrl(e.target.value)} style={{ width: 360 }} />
-      <button onClick={() => openUrl(caseId, url)}>Open</button>
+      <h2>共享浏览器</h2>
+      <div style={{ margin: "8px 0", display: "flex", gap: 8, alignItems: "center" }}>
+        {browserController === null ? (
+          <button onClick={() => startBrowser(caseId)}>启动浏览器</button>
+        ) : (
+          <>
+            <button onClick={() => stopBrowser(caseId)}>停止</button>
+            {browserController === "llm" ? (
+              <button onClick={() => takeoverBrowser(caseId)}>接管</button>
+            ) : (
+              <button onClick={() => releaseBrowser(caseId)}>交回 LLM</button>
+            )}
+            <span style={{ padding: "2px 8px", borderRadius: 4, background: browserController === "human" ? "#ffe0b2" : "#c8e6c9" }}>
+              控制权：{browserController === "human" ? "人" : "LLM"}
+            </span>
+            <span style={{ color: "#555", fontSize: 13 }}>当前：{browserUrl || "about:blank"}</span>
+          </>
+        )}
+      </div>
       <table border={1} cellPadding={4}>
         <thead><tr><th>Method</th><th>Status</th><th>URL</th></tr></thead>
         <tbody>
