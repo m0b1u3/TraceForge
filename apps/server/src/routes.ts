@@ -17,6 +17,7 @@ import {
   makeListTrafficTool, makeGetTrafficTool,
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
   makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools,
+  McpManager, mcpToolToDescriptor,
 } from "@traceforge/extension";
 import { BrowserSession } from "./browser-session.js";
 import { ApprovalRegistry } from "./agent-approvals.js";
@@ -26,6 +27,7 @@ export function registerRoutes(
   db: Db,
   bus: EventBus,
   provider?: LlmProvider,
+  mcp?: McpManager,
 ): void {
   const cases = new CaseStore(db);
   const traffic = new TrafficStore(db);
@@ -156,6 +158,8 @@ export function registerRoutes(
     return decisionStore.listByCase(id);
   });
 
+  app.get("/api/mcp/tools", async () => (mcp ? mcp.listTools() : []));
+
   const approvals = new ApprovalRegistry();
 
   app.post("/api/cases/:id/agent/run", async (req, reply) => {
@@ -177,6 +181,11 @@ export function registerRoutes(
     const browserSession = browserSessions.get(id);
     if (browserSession) {
       for (const t of makeBrowserTools(browserSession, c.scopeRules)) registry.register(t);
+    }
+
+    // 若配置了 MCP server，把其工具（命名空间 mcp__<server>__<tool>）纳入 agent 工具集
+    if (mcp) {
+      for (const h of mcp.listTools()) registry.register(mcpToolToDescriptor(h, mcp));
     }
 
     const gate = new ApprovalGate(async (tool, input) => {

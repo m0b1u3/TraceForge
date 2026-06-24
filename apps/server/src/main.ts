@@ -4,6 +4,7 @@ import cors from "@fastify/cors";
 import { createDb } from "./db/client.js";
 import { EventBus } from "./event-bus.js";
 import { registerRoutes } from "./routes.js";
+import { McpManager, loadMcpConfig } from "@traceforge/extension";
 
 export async function buildServer(dbPath = "traceforge.sqlite") {
   const app = Fastify({ logger: true });
@@ -12,12 +13,18 @@ export async function buildServer(dbPath = "traceforge.sqlite") {
 
   const db = createDb(dbPath);
   const bus = new EventBus();
-  registerRoutes(app, db, bus);
+
+  const mcp = new McpManager();
+  await mcp.connectAll(loadMcpConfig());
+
+  registerRoutes(app, db, bus, undefined, mcp);
 
   app.get("/ws", { websocket: true }, (socket) => {
     const off = bus.subscribe((e) => socket.send(JSON.stringify(e)));
     socket.on("close", off);
   });
+
+  app.addHook("onClose", async () => { await mcp.closeAll(); });
 
   return app;
 }
