@@ -5,3 +5,4 @@ export type {
   LlmProvider, ExtractJsonArgs, ToolCall, TurnMessage, RunTurn, RunToolsArgs,
 } from "./provider.js";
 export { AgentRuntime, type AgentEvent } from "./agent-runtime.js";
+export { makeHttpReplayTool, makeProposeScopeExpansionTool } from "./builtin-tools.js";

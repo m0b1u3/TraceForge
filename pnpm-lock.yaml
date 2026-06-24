@@ -97,6 +97,9 @@ importers:
       '@traceforge/tool-resolver':
         specifier: workspace:*
         version: link:../tool-resolver
+      '@traceforge/tools':
+        specifier: workspace:*
+        version: link:../tools
 
   packages/llm:
     dependencies:
