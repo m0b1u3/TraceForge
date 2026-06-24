@@ -26,5 +26,5 @@ PlanA Task 1: complete (commit 37a66b5, tool descriptor + registry)
 PlanA Task 2: complete (commit c2c713a, approval gate)
 PlanA Task 3: complete (commit 3e6888b, native tool-calling runTools, provider iface in extension)
 PlanA Task 4: complete (commit 47f01ea, agent runtime self-orchestrating loop)
-PlanA Task 5: BLOCKED — depends on @traceforge/tools (phase 5 not yet executed). Inserting phase 5 first.
+PlanA Task 5: complete (commit 7c4fc88, builtin tools, blocker resolved)
 Phase5 Task 1: complete (commit 6101fc9, generic replay engine — unblocks PlanA Task5)
