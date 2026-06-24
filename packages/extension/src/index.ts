@@ -6,3 +6,6 @@ export type {
 } from "./provider.js";
 export { AgentRuntime, type AgentEvent } from "./agent-runtime.js";
 export { makeHttpReplayTool, makeProposeScopeExpansionTool } from "./builtin-tools.js";
+export {
+  makeListTrafficTool, makeGetTrafficTool, type TrafficReader,
+} from "./case-tools.js";
