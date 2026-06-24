@@ -9,6 +9,7 @@ export { makeHttpReplayTool, makeProposeScopeExpansionTool } from "./builtin-too
 export { makeBrowserTools, type BrowserController } from "./browser-tools.js";
 export { loadMcpConfig, McpServerConfigSchema, McpConfigSchema, type McpServerConfig } from "./mcp-config.js";
 export { mcpToolToDescriptor, type McpToolHandle, type McpCaller } from "./mcp-tools.js";
+export { McpManager, type McpClient, type McpClientFactory } from "./mcp-manager.js";
 export {
   makeListTrafficTool, makeGetTrafficTool, type TrafficReader,
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,

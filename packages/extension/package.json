@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@traceforge/shared": "workspace:*",
     "@traceforge/tool-resolver": "workspace:*",
     "@traceforge/tools": "workspace:*",

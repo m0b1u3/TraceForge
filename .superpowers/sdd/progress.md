@@ -49,3 +49,4 @@ PlanF2 Tasks 1-3: complete (commit 178ef5d, browser control UI)
 PlanF2 Task 4: complete (commit c43c051, README + e2e verified)
 PlanF2: ALL TASKS COMPLETE
 PlanC Task 1: complete (commit 6bbc0d1, mcp-config)
+PlanC Task 2: complete (commit 13f508d, mcp-tools adapter)
