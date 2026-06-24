@@ -1,5 +1,10 @@
 import { create } from "zustand";
-import type { TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, RuntimeEvent } from "@traceforge/shared";
+import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent } from "@traceforge/shared";
+
+export interface AgentUiEvent {
+  kind: "text" | "tool_call" | "tool_result" | "done" | "error" | "started";
+  text: string;
+}
 
 interface State {
   caseId: string | null;
@@ -7,21 +12,21 @@ interface State {
   facts: Fact[];
   tasks: Task[];
   timeline: TimelineEntry[];
-  candidates: CandidateFact[];
-  actionCandidates: ActionCard[];
   actions: ActionCard[];
   decisions: Decision[];
+  agentEvents: AgentUiEvent[];
+  pendingApproval: { approvalId: string; tool: string; input: string } | null;
   setCase: (id: string) => void;
   addEntry: (e: TrafficEntry) => void;
   addFact: (f: Fact) => void;
   upsertTask: (t: Task) => void;
   addTimeline: (e: TimelineEntry) => void;
-  setCandidates: (cs: CandidateFact[]) => void;
-  removeCandidate: (id: string) => void;
-  setActionCandidates: (cs: ActionCard[]) => void;
-  removeActionCandidate: (id: string) => void;
   addAction: (a: ActionCard) => void;
   addDecision: (d: Decision) => void;
+  addAgentEvent: (e: AgentUiEvent) => void;
+  setPendingApproval: (p: { approvalId: string; tool: string; input: string }) => void;
+  clearPendingApproval: () => void;
+  resetAgent: () => void;
   connectWs: () => void;
 }
 
@@ -31,11 +36,11 @@ export const useStore = create<State>((set, get) => ({
   facts: [],
   tasks: [],
   timeline: [],
-  candidates: [],
-  actionCandidates: [],
   actions: [],
   decisions: [],
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], candidates: [], actionCandidates: [], actions: [], decisions: [] }),
+  agentEvents: [],
+  pendingApproval: null,
+  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], pendingApproval: null }),
   addEntry: (e) => set((s) => ({ traffic: [...s.traffic, e] })),
   addFact: (f) => set((s) => ({ facts: [...s.facts, f] })),
   upsertTask: (t) =>
@@ -47,12 +52,12 @@ export const useStore = create<State>((set, get) => ({
       return { tasks: copy };
     }),
   addTimeline: (e) => set((s) => ({ timeline: [...s.timeline, e] })),
-  setCandidates: (cs) => set({ candidates: cs }),
-  removeCandidate: (id) => set((s) => ({ candidates: s.candidates.filter((c) => c.id !== id) })),
-  setActionCandidates: (cs) => set({ actionCandidates: cs }),
-  removeActionCandidate: (id) => set((s) => ({ actionCandidates: s.actionCandidates.filter((c) => c.id !== id) })),
   addAction: (a) => set((s) => ({ actions: [...s.actions, a] })),
   addDecision: (d) => set((s) => ({ decisions: [...s.decisions, d] })),
+  addAgentEvent: (e) => set((s) => ({ agentEvents: [...s.agentEvents, e] })),
+  setPendingApproval: (p) => set({ pendingApproval: p }),
+  clearPendingApproval: () => set({ pendingApproval: null }),
+  resetAgent: () => set({ agentEvents: [], pendingApproval: null }),
   connectWs: () => {
     const ws = new WebSocket(`ws://${location.host}/ws`);
     ws.onmessage = (msg) => {
@@ -63,10 +68,16 @@ export const useStore = create<State>((set, get) => ({
       else if (event.type === "task_created" && event.task.caseId === cid) get().upsertTask(event.task);
       else if (event.type === "task_updated" && event.task.caseId === cid) get().upsertTask(event.task);
       else if (event.type === "timeline_appended" && event.entry.caseId === cid) get().addTimeline(event.entry);
-      else if (event.type === "candidates_extracted" && event.caseId === cid) get().setCandidates(event.candidates);
-      else if (event.type === "action_candidates_generated" && event.caseId === cid) get().setActionCandidates(event.candidates);
-      else if (event.type === "action_approved" && event.action.caseId === cid) get().addAction(event.action);
+      else if (event.type === "action_recorded" && event.action.caseId === cid) get().addAction(event.action);
       else if (event.type === "decision_recorded" && event.decision.caseId === cid) get().addDecision(event.decision);
+      else if (event.type === "agent_started" && event.caseId === cid) get().addAgentEvent({ kind: "started", text: `开始：${event.goal}` });
+      else if (event.type === "agent_text" && event.caseId === cid) get().addAgentEvent({ kind: "text", text: event.content });
+      else if (event.type === "agent_tool_call" && event.caseId === cid) get().addAgentEvent({ kind: "tool_call", text: `${event.tool}(${event.input})` });
+      else if (event.type === "agent_tool_result" && event.caseId === cid) get().addAgentEvent({ kind: "tool_result", text: `${event.tool} → ${event.content}` });
+      else if (event.type === "agent_done" && event.caseId === cid) get().addAgentEvent({ kind: "done", text: event.content });
+      else if (event.type === "agent_error" && event.caseId === cid) get().addAgentEvent({ kind: "error", text: event.content });
+      else if (event.type === "approval_requested" && event.caseId === cid) get().setPendingApproval({ approvalId: event.approvalId, tool: event.tool, input: event.input });
+      else if (event.type === "approval_resolved" && event.caseId === cid) get().clearPendingApproval();
     };
   },
 }));
