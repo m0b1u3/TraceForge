@@ -27,7 +27,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 `config/llm.json` 不纳入版本控制；未配置时 AI 提取返回空候选（其余功能不受影响）。
 
-## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 Plan A）
+## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 Plan A + agent 交互 E1/E2 + 共享浏览器 F1 后端）
 
 - pnpm monorepo 骨架
 - Scope Guard 安全地基（deny-by-default + 通配符，单元测试覆盖）
@@ -41,10 +41,11 @@ export ANTHROPIC_API_KEY=sk-ant-...
 - 扩展地基 Plan A（@traceforge/extension）：统一 ToolRegistry + LLM 原生 tool-calling AgentRuntime（LLM 自主多轮调工具）+ 两道门（ApprovalGate 只拦系统命令、Scope Guard 守发包授权边界）+ 内置工具（http_replay、propose_scope_expansion）。MCP / 工具插件 / Skills 在此地基上后续接入
 - agent 驱动交互（Plan E1 后端）：人给目标，AgentRuntime 自主多轮调工具（看流量 / 记 Fact-Task-Action / 重放），写库直接落库（normal 风险），只有系统命令类才经确认门。取代旧的单轮候选确认模式（FactExtractor/ActionPlanner 已移除）
 - agent 前端对话流（Plan E2）：人在对话区给目标启动 agent，事件流实时显示 agent 调工具活动，危险动作弹确认；Facts/Tasks/Timeline 面板实时刷新。旧候选确认 UI 已移除
+- 人机共享浏览器（Plan F1 后端）：持久有头 Chromium 会话（每 Case 一个）+ 控制权锁（LLM 默认探索，人随时接管/交回）+ 浏览器工具（navigate/click/fill/extract_links/get_page_text 纳入 agent 工具集，navigate 过 Scope Guard）。人和 LLM 共享同一会话，流量自动进库。取代旧的一次性无头 /open。前端控制 UI 见 Plan F2
 
 ## 测试
 
 ```bash
-pnpm test     # 77 个单元测试
+pnpm test     # 90 个单元测试
 pnpm -r build # 全量构建
 ```
