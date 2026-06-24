@@ -134,6 +134,8 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/tools: {}
+
 packages:
 
   '@anthropic-ai/sdk@0.68.0':
