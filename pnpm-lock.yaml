@@ -103,6 +103,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.68.0
         version: 0.68.0(zod@3.25.76)
+      '@traceforge/extension':
+        specifier: workspace:*
+        version: link:../extension
       openai:
         specifier: ^4.77.0
         version: 4.104.0(ws@8.21.0)(zod@3.25.76)

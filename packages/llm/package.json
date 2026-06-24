@@ -6,6 +6,7 @@
   "exports": { ".": "./src/index.ts" },
   "scripts": { "build": "tsc -p tsconfig.json" },
   "dependencies": {
+    "@traceforge/extension": "workspace:*",
     "@anthropic-ai/sdk": "^0.68.0",
     "openai": "^4.77.0",
     "zod": "^3.24.0"
