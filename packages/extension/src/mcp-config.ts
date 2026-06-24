@@ -1,0 +1,25 @@
+import { readFileSync } from "node:fs";
+import { z } from "zod";
+
+export const McpServerConfigSchema = z.object({
+  name: z.string().regex(/^[a-z0-9_]+$/),
+  command: z.string(),
+  args: z.array(z.string()).default([]),
+  env: z.record(z.string()).optional(),
+  trustLevel: z.enum(["command", "normal"]).default("command"),
+});
+export type McpServerConfig = z.infer<typeof McpServerConfigSchema>;
+
+export const McpConfigSchema = z.object({
+  servers: z.array(McpServerConfigSchema).default([]),
+});
+
+export function loadMcpConfig(path = "config/mcp.json"): McpServerConfig[] {
+  try {
+    const raw = readFileSync(path, "utf8");
+    const parsed = McpConfigSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data.servers : [];
+  } catch {
+    return [];
+  }
+}

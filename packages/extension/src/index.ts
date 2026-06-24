@@ -7,6 +7,7 @@ export type {
 export { AgentRuntime, type AgentEvent } from "./agent-runtime.js";
 export { makeHttpReplayTool, makeProposeScopeExpansionTool } from "./builtin-tools.js";
 export { makeBrowserTools, type BrowserController } from "./browser-tools.js";
+export { loadMcpConfig, McpServerConfigSchema, McpConfigSchema, type McpServerConfig } from "./mcp-config.js";
 export {
   makeListTrafficTool, makeGetTrafficTool, type TrafficReader,
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
