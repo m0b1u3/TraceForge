@@ -12,11 +12,8 @@ import { EventBus } from "./event-bus.js";
 import type { Task } from "@traceforge/shared";
 import type { LlmProvider } from "@traceforge/llm";
 import { loadLlmConfig, createProviderOrMock } from "@traceforge/llm";
-import { FactExtractor, ActionPlanner } from "@traceforge/reasoning-core";
-import { CandidateStore } from "./candidate-store.js";
 import { ActionCardStore } from "./stores/action-store.js";
 import { DecisionStore } from "./stores/decision-store.js";
-import { ActionCandidateStore } from "./action-candidate-store.js";
 import {
   ToolRegistry, ApprovalGate, AgentRuntime,
   makeListTrafficTool, makeGetTrafficTool,
@@ -39,12 +36,8 @@ export function registerRoutes(
 
   // model/baseUrl/provider 全部来自 config/llm.json；无配置或无 key 回退空候选 Mock
   const llm: LlmProvider = provider ?? createProviderOrMock(loadLlmConfig());
-  const extractor = new FactExtractor(llm);
-  const candidateStore = new CandidateStore();
-  const planner = new ActionPlanner(llm);
   const actionStore = new ActionCardStore(db);
   const decisionStore = new DecisionStore(db);
-  const actionCandidateStore = new ActionCandidateStore();
 
   app.post("/api/cases", async (req) => {
     const body = req.body as { name: string; allowHosts: string[]; denyHosts?: string[] };
@@ -143,51 +136,6 @@ export function registerRoutes(
     return timelineStore.listByCase(id);
   });
 
-  app.post("/api/cases/:id/traffic/:trafId/extract", async (req, reply) => {
-    const { id, trafId } = req.params as { id: string; trafId: string };
-    const entry = traffic.listByCase(id).find((t) => t.id === trafId);
-    if (!entry) return reply.code(404).send({ error: "traffic entry not found" });
-    const candidates = await extractor.extract(id, entry);
-    for (const c of candidates) candidateStore.put(c);
-    bus.emit({ type: "candidates_extracted", caseId: id, candidates });
-    return candidates;
-  });
-
-  app.post("/api/candidates/:candId/confirm", async (req, reply) => {
-    const { candId } = req.params as { candId: string };
-    const cand = candidateStore.get(candId);
-    if (!cand) return reply.code(404).send({ error: "candidate not found" });
-    const fact = factStore.create(cand.caseId, {
-      type: cand.type,
-      title: cand.title,
-      value: cand.value,
-      source: { type: "ai", ref: cand.sourceRef },
-      confidence: cand.confidence,
-      tags: [],
-    });
-    const entry = timelineStore.append(cand.caseId, "fact_created", `Fact (AI): ${fact.title}`, fact.id);
-    bus.emit({ type: "fact_created", fact });
-    bus.emit({ type: "timeline_appended", entry });
-    candidateStore.delete(candId);
-    return fact;
-  });
-
-  app.post("/api/candidates/:candId/reject", async (req, reply) => {
-    const { candId } = req.params as { candId: string };
-    const existed = candidateStore.delete(candId);
-    if (!existed) return reply.code(404).send({ error: "candidate not found" });
-    return { ok: true };
-  });
-
-  app.post("/api/cases/:id/plan-actions", async (req) => {
-    const { id } = req.params as { id: string };
-    const facts = factStore.listByCase(id);
-    const candidates = await planner.plan(id, facts);
-    for (const c of candidates) actionCandidateStore.put(c);
-    bus.emit({ type: "action_candidates_generated", caseId: id, candidates });
-    return candidates;
-  });
-
   app.get("/api/cases/:id/actions", async (req) => {
     const { id } = req.params as { id: string };
     return actionStore.listByCase(id);
@@ -196,35 +144,6 @@ export function registerRoutes(
   app.get("/api/cases/:id/decisions", async (req) => {
     const { id } = req.params as { id: string };
     return decisionStore.listByCase(id);
-  });
-
-  app.post("/api/action-candidates/:acandId/approve", async (req, reply) => {
-    const { acandId } = req.params as { acandId: string };
-    const cand = actionCandidateStore.get(acandId);
-    if (!cand) return reply.code(404).send({ error: "action candidate not found" });
-    const approved = { ...cand, status: "approved" as const, updatedAt: new Date().toISOString() };
-    const action = actionStore.create(approved);
-    const decision = decisionStore.create(cand.caseId, {
-      decision: cand.title,
-      basedOn: cand.evidenceRefs,
-      reasoning: cand.reasoning,
-      actionRef: cand.id,
-      result: null,
-      newFacts: [],
-    });
-    const entry = timelineStore.append(cand.caseId, "action_approved", `Action approved: ${action.title}`, action.id);
-    bus.emit({ type: "action_approved", action });
-    bus.emit({ type: "decision_recorded", decision });
-    bus.emit({ type: "timeline_appended", entry });
-    actionCandidateStore.delete(acandId);
-    return { action, decision };
-  });
-
-  app.post("/api/action-candidates/:acandId/reject", async (req, reply) => {
-    const { acandId } = req.params as { acandId: string };
-    const existed = actionCandidateStore.delete(acandId);
-    if (!existed) return reply.code(404).send({ error: "action candidate not found" });
-    return { ok: true };
   });
 
   const approvals = new ApprovalRegistry();
