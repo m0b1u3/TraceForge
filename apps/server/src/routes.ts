@@ -17,6 +17,13 @@ import { CandidateStore } from "./candidate-store.js";
 import { ActionCardStore } from "./stores/action-store.js";
 import { DecisionStore } from "./stores/decision-store.js";
 import { ActionCandidateStore } from "./action-candidate-store.js";
+import {
+  ToolRegistry, ApprovalGate, AgentRuntime,
+  makeListTrafficTool, makeGetTrafficTool,
+  makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
+  makeHttpReplayTool, makeProposeScopeExpansionTool,
+} from "@traceforge/extension";
+import { ApprovalRegistry } from "./agent-approvals.js";
 
 export function registerRoutes(
   app: FastifyInstance,
@@ -217,6 +224,59 @@ export function registerRoutes(
     const { acandId } = req.params as { acandId: string };
     const existed = actionCandidateStore.delete(acandId);
     if (!existed) return reply.code(404).send({ error: "action candidate not found" });
+    return { ok: true };
+  });
+
+  const approvals = new ApprovalRegistry();
+
+  app.post("/api/cases/:id/agent/run", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const c = cases.get(id);
+    if (!c) return reply.code(404).send({ error: "case not found" });
+
+    const registry = new ToolRegistry();
+    registry.register(makeListTrafficTool(id, traffic));
+    registry.register(makeGetTrafficTool(id, traffic));
+    registry.register(makeRecordFactTool(id, factStore, timelineStore, (e) => bus.emit(e)));
+    registry.register(makeRecordTaskTool(id, taskStore, timelineStore, (e) => bus.emit(e)));
+    registry.register(makeRecordActionTool(id, factStore, actionStore, decisionStore, timelineStore, (e) => bus.emit(e)));
+    registry.register(makeHttpReplayTool(c.scopeRules));
+    registry.register(makeProposeScopeExpansionTool((host, reason) =>
+      bus.emit({ type: "scope_expansion_proposed", caseId: id, host, reason })));
+
+    const gate = new ApprovalGate(async (tool, input) => {
+      const approvalId = `appr_${randomUUID()}`;
+      bus.emit({ type: "approval_requested", caseId: id, approvalId, tool: tool.name, input: JSON.stringify(input) });
+      const decision = await approvals.request(approvalId);
+      bus.emit({ type: "approval_resolved", caseId: id, approvalId, decision });
+      return decision;
+    });
+
+    const { goal } = req.body as { goal: string };
+    const system = `你是 TraceForge 的授权渗透测试 agent。当前授权范围：${JSON.stringify(c.scopeRules)}。
+你可以用工具查看流量、记录发现（Fact/Task/Action）、重放请求。证据驱动：记录动作前先记录支撑它的 Fact。
+完成后用一句话总结。`;
+
+    bus.emit({ type: "agent_started", caseId: id, goal });
+    try {
+      await new AgentRuntime(llm, registry, gate).run(system, goal, (e) => {
+        if (e.type === "tool_call") bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content });
+        else if (e.type === "tool_result") bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content });
+        else if (e.type === "text") bus.emit({ type: "agent_text", caseId: id, content: e.content });
+        else if (e.type === "done") bus.emit({ type: "agent_done", caseId: id, content: e.content });
+      });
+    } catch (err) {
+      bus.emit({ type: "agent_error", caseId: id, content: (err as Error).message });
+      return reply.code(500).send({ error: "agent run failed", reason: (err as Error).message });
+    }
+    return { ok: true };
+  });
+
+  app.post("/api/agent/approvals/:approvalId", async (req, reply) => {
+    const { approvalId } = req.params as { approvalId: string };
+    const { decision } = req.body as { decision: "approved" | "rejected" };
+    const ok = approvals.resolve(approvalId, decision);
+    if (!ok) return reply.code(404).send({ error: "approval not found" });
     return { ok: true };
   });
 }

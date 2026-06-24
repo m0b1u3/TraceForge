@@ -31,3 +31,4 @@ Phase5 Task 1: complete (commit 6101fc9, generic replay engine — unblocks Plan
 PlanA Task 6: complete (commit 8bf2f4d, readme + full verify: 87 tests, no cyclic deps)
 PlanE1 Task 1: complete (commit 5f664ff, agent events)
 PlanE1 Task 2: complete (commit aab1d43, read-traffic tools)
+PlanE1 Task 3: complete (commit 2d0667d, record tools + evidence rule)

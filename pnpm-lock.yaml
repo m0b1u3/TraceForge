@@ -26,6 +26,9 @@ importers:
       '@fastify/websocket':
         specifier: ^11.0.0
         version: 11.2.0
+      '@traceforge/extension':
+        specifier: workspace:*
+        version: link:../../packages/extension
       '@traceforge/llm':
         specifier: workspace:*
         version: link:../../packages/llm
