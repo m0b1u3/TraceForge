@@ -27,7 +27,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 `config/llm.json` 不纳入版本控制；未配置时 AI 提取返回空候选（其余功能不受影响）。
 
-## 当前进度（阶段 0 + 1 + 2 + 3 + 4）
+## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 Plan A）
 
 - pnpm monorepo 骨架
 - Scope Guard 安全地基（deny-by-default + 通配符，单元测试覆盖）
@@ -36,11 +36,13 @@ export ANTHROPIC_API_KEY=sk-ant-...
 - Playwright 抓包 + 实时 Traffic Panel
 - Facts / Tasks / Timeline：手动标记请求为 Fact、创建挂起（blocked）Task、Timeline 实时回放
 - AI 事实提取：从流量提取候选 Fact（带 prompt injection 数据边界防护），人工 confirm/reject 后入库。LLM 多 Provider 可配置（Anthropic / OpenAI 兼容，后者覆盖 DeepSeek 等），模型与 baseURL 由 config/llm.json 决定
-- Action Card：AI 基于已确认 Facts 生成候选动作（每个动作必须引用至少一个 fact_id，无证据依据的动作被拒），人工 approve/reject，批准时记录 Decision；本阶段只生成+决策，不执行
+- Action Card：AI 基于已确认 Facts 生成候选动作（每个动作必须引用至少一个 fact_id，无证据依据的动作被拒），人工 approve/reject，批准时记录 Decision
+- 通用 HTTP 重放引擎（@traceforge/tools）：重发任意请求 + 改任意参数为任意值 + 客观对比（状态码/长度，body 原样返回）。不内置漏洞专用探测器，漏洞测试变体由 AI 生成
+- 扩展地基 Plan A（@traceforge/extension）：统一 ToolRegistry + LLM 原生 tool-calling AgentRuntime（LLM 自主多轮调工具）+ 两道门（ApprovalGate 只拦系统命令、Scope Guard 守发包授权边界）+ 内置工具（http_replay、propose_scope_expansion）。MCP / 工具插件 / Skills 在此地基上后续接入
 
 ## 测试
 
 ```bash
-pnpm test     # 63 个单元测试
+pnpm test     # 87 个单元测试
 pnpm -r build # 全量构建
 ```
