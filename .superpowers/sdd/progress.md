@@ -43,3 +43,5 @@ PlanF1 Task 1: complete (commit 6c627ce, browser events)
 PlanF1 Task 2: complete (commit eaa60f4, browser tools)
 PlanF1 Task 3: complete (commit 66d5d1f, BrowserSession)
 PlanF1 Task 4: complete (commit 8251604, browser routes + agent integ + remove /open)
+PlanF1 Task 5: complete (commit 7accf98, README + e2e verified headful browser)
+PlanF1: ALL TASKS COMPLETE
