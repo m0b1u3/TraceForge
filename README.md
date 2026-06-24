@@ -39,7 +39,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 - Action Card：AI 基于已确认 Facts 生成候选动作（每个动作必须引用至少一个 fact_id，无证据依据的动作被拒），人工 approve/reject，批准时记录 Decision
 - 通用 HTTP 重放引擎（@traceforge/tools）：重发任意请求 + 改任意参数为任意值 + 客观对比（状态码/长度，body 原样返回）。不内置漏洞专用探测器，漏洞测试变体由 AI 生成
 - 扩展地基 Plan A（@traceforge/extension）：统一 ToolRegistry + LLM 原生 tool-calling AgentRuntime（LLM 自主多轮调工具）+ 两道门（ApprovalGate 只拦系统命令、Scope Guard 守发包授权边界）+ 内置工具（http_replay、propose_scope_expansion）。MCP / 工具插件 / Skills 在此地基上后续接入
-- agent 驱动交互（Plan E1 后端）：人给目标，AgentRuntime 自主多轮调工具（看流量 / 记 Fact-Task-Action / 重放），写库直接落库（normal 风险），只有系统命令类才经确认门。取代旧的单轮候选确认模式（FactExtractor/ActionPlanner 已移除）。前端对话流 UI 见 Plan E2
+- agent 驱动交互（Plan E1 后端）：人给目标，AgentRuntime 自主多轮调工具（看流量 / 记 Fact-Task-Action / 重放），写库直接落库（normal 风险），只有系统命令类才经确认门。取代旧的单轮候选确认模式（FactExtractor/ActionPlanner 已移除）
+- agent 前端对话流（Plan E2）：人在对话区给目标启动 agent，事件流实时显示 agent 调工具活动，危险动作弹确认；Facts/Tasks/Timeline 面板实时刷新。旧候选确认 UI 已移除
 
 ## 测试
 
