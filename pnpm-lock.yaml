@@ -89,6 +89,15 @@ importers:
         specifier: ^6.0.0
         version: 6.4.3(@types/node@22.20.0)(tsx@4.22.4)
 
+  packages/extension:
+    dependencies:
+      '@traceforge/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@traceforge/tool-resolver':
+        specifier: workspace:*
+        version: link:../tool-resolver
+
   packages/llm:
     dependencies:
       '@anthropic-ai/sdk':
