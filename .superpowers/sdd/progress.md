@@ -28,3 +28,4 @@ PlanA Task 3: complete (commit 3e6888b, native tool-calling runTools, provider i
 PlanA Task 4: complete (commit 47f01ea, agent runtime self-orchestrating loop)
 PlanA Task 5: complete (commit 7c4fc88, builtin tools, blocker resolved)
 Phase5 Task 1: complete (commit 6101fc9, generic replay engine — unblocks PlanA Task5)
+PlanA Task 6: complete (commit 8bf2f4d, readme + full verify: 87 tests, no cyclic deps)
