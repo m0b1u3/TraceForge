@@ -7,3 +7,4 @@ cases/
 *.sqlite-journal
 .DS_Store
 config/llm.json
+config/mcp.json
