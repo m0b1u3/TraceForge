@@ -52,3 +52,5 @@ PlanC Task 1: complete (commit 6bbc0d1, mcp-config)
 PlanC Task 2: complete (commit 13f508d, mcp-tools adapter)
 PlanC Task 3: complete (commit 2c3cb0f, McpManager + SDK dep)
 PlanC Task 4: complete (commit e4b6a76, routes + main.ts wiring)
+PlanC Task 5: complete (commit c605be0, README + example config + e2e verified 14 real tools)
+PlanC: ALL TASKS COMPLETE
