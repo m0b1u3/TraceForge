@@ -94,6 +94,24 @@ export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: 
   };
 }
 
+const TASK_STATUSES = new Set<Task["status"]>([
+  "open", "blocked", "recheck_candidate", "approved", "running", "done", "failed", "rejected", "out_of_scope",
+]);
+
+// LLM 可能给闭 enum 外的值（如 priority:"critical"、status:"maybe"）；归一而非崩溃。
+function normalizePriority(v: unknown): Task["priority"] {
+  if (v === "low" || v === "medium" || v === "high") return v;
+  if (typeof v === "string") {
+    const s = v.toLowerCase();
+    if (s === "critical" || s === "urgent" || s === "highest" || s === "p0") return "high";
+    if (s === "lowest" || s === "trivial" || s === "p3") return "low";
+  }
+  return "medium";
+}
+function normalizeStatus(v: unknown): Task["status"] {
+  return typeof v === "string" && TASK_STATUSES.has(v as Task["status"]) ? (v as Task["status"]) : "open";
+}
+
 export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: TimelineWriter, emit: Emit): ToolDescriptor {
   return {
     name: "record_task",
@@ -115,12 +133,12 @@ export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: 
       const i = input as Record<string, unknown>;
       const task = tasks.create(caseId, {
         title: String(i.title),
-        status: (typeof i.status === "string" ? i.status : "open") as Task["status"],
+        status: normalizeStatus(i.status),
         reason: typeof i.reason === "string" ? i.reason : "",
         blockedBy: Array.isArray(i.blockedBy) ? (i.blockedBy as string[]) : [],
         triggerWhen: Array.isArray(i.triggerWhen) ? (i.triggerWhen as string[]) : [],
         relatedFacts: Array.isArray(i.relatedFacts) ? (i.relatedFacts as string[]) : [],
-        priority: (typeof i.priority === "string" ? i.priority : "medium") as Task["priority"],
+        priority: normalizePriority(i.priority),
       });
       const entry = timeline.append(caseId, "task_created", `Task (agent): ${task.title}`, task.id);
       emit({ type: "task_created", task });
