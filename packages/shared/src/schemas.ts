@@ -144,3 +144,16 @@ export const DecisionSchema = z.object({
   createdAt: z.string(),
 });
 export type Decision = z.infer<typeof DecisionSchema>;
+
+export const ObserverWarningSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  level: z.enum(["info", "warning", "critical"]),
+  title: z.string(),
+  description: z.string(),
+  relatedFacts: z.array(z.string()).default([]),
+  relatedTasks: z.array(z.string()).default([]),
+  suggestedAction: z.string(),
+  createdAt: z.string(),
+});
+export type ObserverWarning = z.infer<typeof ObserverWarningSchema>;

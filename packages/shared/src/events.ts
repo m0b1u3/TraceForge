@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision } from "./schemas.js";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning } from "./schemas.js";
 
 export type RuntimeEvent =
   | { type: "case_created"; case: Case }
@@ -26,4 +26,5 @@ export type RuntimeEvent =
   | { type: "browser_started"; caseId: string }
   | { type: "browser_stopped"; caseId: string }
   | { type: "browser_control_changed"; caseId: string; controller: "llm" | "human" }
-  | { type: "browser_navigated"; caseId: string; url: string };
+  | { type: "browser_navigated"; caseId: string; url: string }
+  | { type: "observer_warning"; warning: ObserverWarning };
