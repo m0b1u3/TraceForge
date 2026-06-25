@@ -26,6 +26,8 @@ interface State {
   mcpTools: McpToolHandle[];
   warnings: ObserverWarning[];
   addWarning: (w: ObserverWarning) => void;
+  pendingScope: { host: string; reason: string } | null;
+  setPendingScope: (p: { host: string; reason: string } | null) => void;
   setCase: (id: string) => void;
   setCases: (list: Case[]) => void;
   setActiveTab: (tab: State["activeTab"]) => void;
@@ -64,7 +66,9 @@ export const useStore = create<State>((set, get) => ({
   mcpTools: [],
   warnings: [],
   addWarning: (w) => set((s) => ({ warnings: [...s.warnings, w] })),
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], pendingApproval: null, browserController: null, browserUrl: "", warnings: [] }),
+  pendingScope: null,
+  setPendingScope: (p) => set({ pendingScope: p }),
+  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null }),
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
@@ -119,6 +123,8 @@ export const useStore = create<State>((set, get) => ({
       else if (event.type === "browser_control_changed" && event.caseId === cid) get().setBrowser(event.controller);
       else if (event.type === "browser_navigated" && event.caseId === cid) get().setBrowser(get().browserController, event.url);
       else if (event.type === "observer_warning" && event.warning.caseId === cid) get().addWarning(event.warning);
+      else if (event.type === "scope_expansion_proposed" && event.caseId === cid) get().setPendingScope({ host: event.host, reason: event.reason });
+      else if (event.type === "scope_updated" && event.caseId === cid) get().setPendingScope(null);
     };
   },
 }));

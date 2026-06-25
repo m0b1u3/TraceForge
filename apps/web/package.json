@@ -7,6 +7,8 @@
     "build": "vite build"
   },
   "dependencies": {
+    "@fontsource/geist-mono": "^5.2.8",
+    "@fontsource/geist-sans": "^5.2.5",
     "@traceforge/extension": "workspace:^",
     "@traceforge/shared": "workspace:*",
     "react": "^18.3.0",

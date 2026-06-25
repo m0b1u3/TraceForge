@@ -97,3 +97,9 @@ export async function listMcpTools(): Promise<McpToolHandle[]> {
 export async function listWarnings(caseId: string): Promise<ObserverWarning[]> {
   return (await fetch(`/api/cases/${caseId}/warnings`)).json();
 }
+
+export async function approveScope(caseId: string, host: string): Promise<Response> {
+  return fetch(`/api/cases/${caseId}/scope/approve`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ host }),
+  });
+}
