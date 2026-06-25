@@ -1,7 +1,38 @@
 import { useState } from "react";
-import { Sparkle, PaperPlaneTilt } from "@phosphor-icons/react";
+import { Sparkle, PaperPlaneTilt, Wrench, ArrowBendDownRight, CheckCircle, WarningCircle, Flag, ChatText } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { runAgent, resolveApproval, approveScope } from "../api.js";
+
+function EvIcon({ kind }: { kind: string }) {
+  if (kind === "tool_call") return <Wrench size={13} weight="bold" />;
+  if (kind === "tool_result") return <ArrowBendDownRight size={13} weight="bold" />;
+  if (kind === "error") return <WarningCircle size={14} weight="fill" />;
+  if (kind === "done") return <CheckCircle size={14} weight="fill" />;
+  if (kind === "started") return <Flag size={13} weight="fill" />;
+  return <ChatText size={13} weight="bold" />;
+}
+
+function EventItem({ kind, text }: { kind: string; text: string }) {
+  // tool_call 文本形如 "tool(arg...)"
+  const cls = kind === "tool_call" ? "tf-ev-tool" : kind === "tool_result" ? "tf-ev-result" : `tf-ev-${kind}`;
+  if (kind === "tool_call") {
+    const m = text.match(/^([^(]+)\((.*)\)$/s);
+    const name = m ? m[1] : text;
+    const arg = m ? m[2] : "";
+    return (
+      <div className={`tf-ev ${cls}`}>
+        <span className="tf-ev-ico"><EvIcon kind={kind} /></span>
+        <span className="tf-ev-body"><span className="tf-ev-name">{name}</span>{arg && <span className="tf-ev-arg">{arg}</span>}</span>
+      </div>
+    );
+  }
+  return (
+    <div className={`tf-ev ${cls}`}>
+      <span className="tf-ev-ico"><EvIcon kind={kind} /></span>
+      <span className="tf-ev-body"><span className="tf-ev-text">{text}</span></span>
+    </div>
+  );
+}
 
 export function AgentPanel() {
   const { caseId, agentEvents, pendingApproval, pendingScope, setPendingScope, resetAgent } = useStore();
@@ -9,7 +40,7 @@ export function AgentPanel() {
   if (!caseId) return null;
   return (
     <div className="tf-panel" style={{ height: "100%" }}>
-      <div className="tf-panel-head">Agent 对话 <span className="tf-count">{agentEvents.length} events</span></div>
+      <div className="tf-panel-head"><Sparkle size={13} weight="bold" style={{ opacity: 0.6 }} /> Agent 对话 <span className="tf-count">{agentEvents.length} events</span></div>
       <div className="tf-panel-body">
         {pendingApproval && (
           <div className="tf-approval">
@@ -40,11 +71,7 @@ export function AgentPanel() {
             <div className="tf-guide-step">↓ 在下方输入目标后回车</div>
           </div>
         )}
-        {agentEvents.map((e, i) => (
-          <div className={`tf-ev tf-ev-${e.kind}`} key={i}>
-            <span className="tf-ev-kind">{e.kind}</span>{e.text}
-          </div>
-        ))}
+        {agentEvents.map((e, i) => <EventItem key={i} kind={e.kind} text={e.text} />)}
       </div>
       <div className="tf-panel-foot">
         <input

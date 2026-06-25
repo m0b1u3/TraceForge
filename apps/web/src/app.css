@@ -51,13 +51,12 @@ body { margin: 0; font-family: var(--tf-sans); background: var(--tf-bg); color: 
 .tf-pill.is-llm { color: var(--tf-accent); border-color: rgba(74,214,224,0.25); } .tf-pill.is-llm svg { color: var(--tf-accent); }
 .tf-pill.is-human { color: var(--tf-human); border-color: rgba(240,149,74,0.3); } .tf-pill.is-human svg { color: var(--tf-human); }
 
-.tf-cols { display: grid; grid-template-columns: 1.1fr 1.3fr 1fr; flex: 1; min-height: 0; }
-.tf-col { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--tf-border); }
-.tf-col:last-child { border-right: none; }
-.tf-col-left { display: grid; grid-template-rows: auto 1fr; min-height: 0; }
-.tf-col-left > .tf-panel:first-child { border-bottom: 1px solid var(--tf-border); }
+.tf-cols { display: grid; grid-template-columns: 1.05fr 1.35fr 1fr; flex: 1; min-height: 0; background: var(--tf-border-soft); gap: 1px; }
+.tf-col { display: flex; flex-direction: column; min-height: 0; background: var(--tf-bg); }
+.tf-col-left { display: grid; grid-template-rows: auto 1fr; min-height: 0; gap: 1px; background: var(--tf-border-soft); }
+.tf-col-left > .tf-panel { background: var(--tf-bg); }
 
-.tf-panel { display: flex; flex-direction: column; min-height: 0; background: var(--tf-panel); }
+.tf-panel { display: flex; flex-direction: column; min-height: 0; background: var(--tf-bg); }
 .tf-panel-head { padding: 0 15px; height: 42px; border-bottom: 1px solid var(--tf-border-soft); font-size: 11px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--tf-muted); display: flex; align-items: center; gap: 8px; flex-shrink: 0; background: linear-gradient(180deg, rgba(255,255,255,0.018), transparent); }
 .tf-panel-head .tf-count { font-family: var(--tf-mono); font-weight: 400; color: var(--tf-faint); letter-spacing: 0; text-transform: none; }
 .tf-panel-body { flex: 1; overflow: auto; padding: 12px 14px; font-size: 12px; }
@@ -96,12 +95,33 @@ select.tf-input { cursor: pointer; }
 .tf-step-n { flex-shrink: 0; width: 24px; height: 24px; border-radius: 8px; background: linear-gradient(180deg, #58dee8, #36c0cc); color: #04282c; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(74,214,224,0.25); }
 .tf-step b { color: var(--tf-text); font-weight: 600; }
 
-.tf-ev { font-family: var(--tf-mono); font-size: 12px; line-height: 1.6; padding: 6px 10px; border-left: 2px solid var(--tf-border); margin-bottom: 3px; color: var(--tf-text); border-radius: 0 7px 7px 0; background: rgba(255,255,255,0.012); }
-.tf-ev-tool_call { border-left-color: var(--tf-accent); background: rgba(74,214,224,0.04); }
-.tf-ev-tool_result { border-left-color: var(--tf-accent-2); color: var(--tf-muted); }
-.tf-ev-error { border-left-color: var(--tf-err); color: var(--tf-err); background: rgba(239,107,96,0.05); }
-.tf-ev-done { border-left-color: var(--tf-ok); color: var(--tf-ok); background: rgba(92,201,154,0.05); }
-.tf-ev-kind { color: var(--tf-faint); text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.08em; margin-right: 7px; font-weight: 500; }
+/* Agent 事件流：chat 化，不再是裸文本行 */
+.tf-ev { display: flex; gap: 9px; margin-bottom: 10px; line-height: 1.6; font-size: 12.5px; }
+.tf-ev-ico { flex-shrink: 0; width: 22px; height: 22px; border-radius: 7px; display: flex; align-items: center; justify-content: center; margin-top: 1px; border: 1px solid var(--tf-border); background: var(--tf-panel-2); color: var(--tf-muted); }
+.tf-ev-body { flex: 1; min-width: 0; }
+.tf-ev-text { color: var(--tf-text); }
+.tf-ev-tool .tf-ev-ico { color: var(--tf-accent); border-color: rgba(74,214,224,0.3); background: rgba(74,214,224,0.06); }
+.tf-ev-tool .tf-ev-name { font-family: var(--tf-mono); font-size: 11.5px; color: var(--tf-accent); font-weight: 500; }
+.tf-ev-tool .tf-ev-arg { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-faint); word-break: break-all; display: block; margin-top: 1px; }
+.tf-ev-result .tf-ev-ico { color: var(--tf-accent-2); }
+.tf-ev-result .tf-ev-text { font-family: var(--tf-mono); font-size: 11.5px; color: var(--tf-muted); word-break: break-all; }
+.tf-ev-error .tf-ev-ico { color: var(--tf-err); border-color: rgba(239,107,96,0.35); background: rgba(239,107,96,0.07); }
+.tf-ev-error .tf-ev-text { color: var(--tf-err); }
+.tf-ev-done .tf-ev-ico { color: var(--tf-ok); border-color: rgba(92,201,154,0.35); background: rgba(92,201,154,0.07); }
+.tf-ev-done .tf-ev-text { color: var(--tf-ok); }
+.tf-ev-started .tf-ev-ico { color: var(--tf-accent); }
+.tf-ev-started .tf-ev-text { color: var(--tf-muted); }
+
+/* 流量行：status 做成 pill，可点 */
+.tf-traffic-row { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 8px; cursor: default; transition: background .1s var(--tf-ease); }
+.tf-traffic-row:hover { background: rgba(255,255,255,0.03); }
+.tf-st { flex-shrink: 0; font-family: var(--tf-mono); font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 5px; min-width: 34px; text-align: center; }
+.tf-st-2 { color: var(--tf-ok); background: rgba(92,201,154,0.12); }
+.tf-st-3 { color: var(--tf-accent); background: rgba(74,214,224,0.12); }
+.tf-st-4 { color: var(--tf-warn); background: rgba(240,179,74,0.12); }
+.tf-st-5 { color: var(--tf-err); background: rgba(239,107,96,0.12); }
+.tf-method { flex-shrink: 0; font-family: var(--tf-mono); font-size: 10.5px; color: var(--tf-muted); font-weight: 500; min-width: 36px; }
+.tf-url { font-family: var(--tf-mono); font-size: 11.5px; color: var(--tf-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .tf-approval { border: 1px solid rgba(240,179,74,0.35); border-radius: 12px; padding: 13px 14px; margin: 4px 0 12px; background: linear-gradient(180deg, rgba(240,179,74,0.09), rgba(240,179,74,0.03)); box-shadow: 0 1px 0 var(--tf-hilite) inset, 0 6px 20px rgba(0,0,0,0.2); }
 .tf-approval-h { font-size: 11px; font-weight: 600; color: var(--tf-warn); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }

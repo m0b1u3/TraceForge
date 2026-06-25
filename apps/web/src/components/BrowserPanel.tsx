@@ -8,7 +8,7 @@ export function BrowserPanel() {
   return (
     <div className="tf-panel">
       <div className="tf-panel-head">
-        共享浏览器
+        <Browser size={13} weight="bold" style={{ opacity: 0.6 }} /> 共享浏览器
         {browserController && <span className="tf-count">{browserUrl || "about:blank"}</span>}
       </div>
       <div className="tf-panel-body">

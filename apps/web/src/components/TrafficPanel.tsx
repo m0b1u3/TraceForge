@@ -5,7 +5,7 @@ export function TrafficPanel() {
   const traffic = useStore((s) => s.traffic);
   return (
     <div className="tf-panel">
-      <div className="tf-panel-head">流量 <span className="tf-count">{traffic.length}</span></div>
+      <div className="tf-panel-head"><Pulse size={13} weight="bold" style={{ opacity: 0.6 }} /> 流量 <span className="tf-count">{traffic.length}</span></div>
       <div className="tf-panel-body">
         {traffic.length === 0 && (
           <div className="tf-guide">
@@ -15,9 +15,10 @@ export function TrafficPanel() {
           </div>
         )}
         {traffic.map((t) => (
-          <div className="tf-row" key={t.id}>
-            <span className={`tf-status-${String(t.responseStatus).charAt(0)}`}>{t.responseStatus}</span>{" "}
-            <span style={{ color: "var(--tf-muted)" }}>{t.method}</span> {t.url}
+          <div className="tf-traffic-row" key={t.id} title={t.url}>
+            <span className={`tf-st tf-st-${String(t.responseStatus).charAt(0)}`}>{t.responseStatus}</span>
+            <span className="tf-method">{t.method}</span>
+            <span className="tf-url">{t.url}</span>
           </div>
         ))}
       </div>
