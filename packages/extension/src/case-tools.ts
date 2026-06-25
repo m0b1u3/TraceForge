@@ -181,3 +181,48 @@ export function makeRecordActionTool(
     },
   };
 }
+
+export interface TaskStatusReader {
+  getById(taskId: string): { id: string; title: string; status: string } | undefined;
+}
+export interface StatusWriter {
+  updateStatus(id: string, status: string, reason: string): { id: string; caseId: string; title: string; status: string } | undefined;
+}
+
+// 校验 evidenceRefs 非空且都引用已记录 Fact（复用 record_action 规则）
+function evidenceValid(caseId: string, facts: FactWriter, input: unknown): { ok: true; refs: string[] } | { ok: false } {
+  const i = input as Record<string, unknown>;
+  const refs = Array.isArray(i.evidenceRefs) ? (i.evidenceRefs as unknown[]).filter((r): r is string => typeof r === "string") : [];
+  const known = new Set(facts.listByCase(caseId).map((f) => f.id));
+  return refs.length > 0 && refs.every((r) => known.has(r)) ? { ok: true, refs } : { ok: false };
+}
+
+export function makeReopenTaskTool(
+  caseId: string, tasksR: TaskStatusReader, tasksW: StatusWriter, facts: FactWriter, timeline: TimelineWriter, emit: Emit,
+): ToolDescriptor {
+  return {
+    name: "reopen_task",
+    description: "当新证据使一个未完成（blocked/failed/open）的旧任务重新可做时，把它重启为 recheck_candidate。evidenceRefs 必须引用支撑此判断的已记录 Fact。已完成(done)的任务请改用 revert_done_task。",
+    inputSchema: {
+      type: "object",
+      properties: { taskId: { type: "string" }, reason: { type: "string" }, evidenceRefs: { type: "array", items: { type: "string" } } },
+      required: ["taskId", "reason", "evidenceRefs"],
+    },
+    risk: "normal",
+    source: "builtin",
+    execute: async (input) => {
+      const i = input as { taskId: string; reason: string };
+      const task = tasksR.getById(i.taskId);
+      if (!task) return { ok: false, content: `task not found: ${i.taskId}` };
+      if (task.status === "done") return { ok: false, content: "已完成任务请用 revert_done_task" };
+      const ev = evidenceValid(caseId, facts, input);
+      if (!ev.ok) return { ok: false, content: "evidenceRefs 必须非空且都引用已记录的 Fact id" };
+      tasksW.updateStatus(i.taskId, "recheck_candidate", i.reason);
+      const updated = { id: task.id, caseId, title: task.title, status: "recheck_candidate", reason: i.reason, blockedBy: [], triggerWhen: [], relatedFacts: [], priority: "medium", createdAt: "", updatedAt: new Date().toISOString() } as unknown as Task;
+      const entry = timeline.append(caseId, "task_reopened", `Task 重启: ${task.title} ← ${i.reason}`, task.id);
+      emit({ type: "task_updated", task: updated });
+      emit({ type: "timeline_appended", entry });
+      return { ok: true, content: `Task ${task.title} 已重启为 recheck_candidate` };
+    },
+  };
+}
