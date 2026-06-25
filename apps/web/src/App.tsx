@@ -1,6 +1,9 @@
 import { useEffect } from "react";
 import { useStore } from "./store.js";
 import { TopBar } from "./components/TopBar.js";
+import { BrowserPanel } from "./components/BrowserPanel.js";
+import { TrafficPanel } from "./components/TrafficPanel.js";
+import { AgentPanel } from "./components/AgentPanel.js";
 
 export function App() {
   const { caseId, connectWs } = useStore();
@@ -23,10 +26,10 @@ export function App() {
       <TopBar />
       <div className="tf-cols">
         <div className="tf-col tf-col-left">
-          <div className="tf-panel"><div className="tf-panel-head">共享浏览器</div></div>
-          <div className="tf-panel"><div className="tf-panel-head">流量</div></div>
+          <BrowserPanel />
+          <TrafficPanel />
         </div>
-        <div className="tf-col"><div className="tf-panel-head">Agent 对话</div></div>
+        <div className="tf-col"><AgentPanel /></div>
         <div className="tf-col"><div className="tf-panel-head">知识</div></div>
       </div>
     </div>
