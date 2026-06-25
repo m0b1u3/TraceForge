@@ -105,10 +105,17 @@ export function registerRoutes(
     return { ok: true, controller: session.controller() };
   });
 
-  app.post("/api/cases/:id/facts", async (req) => {
+  app.post("/api/cases/:id/facts", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const input = req.body as Parameters<FactStore["create"]>[1];
-    const fact = factStore.create(id, input);
+    const body = (req.body ?? {}) as Partial<Parameters<FactStore["create"]>[1]>;
+    // 直接 POST 的人工/外部调用可省略 source/value，补默认（agent 的 record_fact 工具同样补默认）
+    const input = { value: {}, ...body, source: body.source ?? { type: "manual", ref: "api" } } as Parameters<FactStore["create"]>[1];
+    let fact;
+    try {
+      fact = factStore.create(id, input);
+    } catch (err) {
+      return reply.code(400).send({ error: "invalid fact", reason: (err as Error).message });
+    }
     const entry = timelineStore.append(id, "fact_created", `Fact: ${fact.title}`, fact.id);
     bus.emit({ type: "fact_created", fact });
     bus.emit({ type: "timeline_appended", entry });
@@ -120,10 +127,15 @@ export function registerRoutes(
     return factStore.listByCase(id);
   });
 
-  app.post("/api/cases/:id/tasks", async (req) => {
+  app.post("/api/cases/:id/tasks", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const input = req.body as Parameters<TaskStore["create"]>[1];
-    const task = taskStore.create(id, input);
+    const input = (req.body ?? {}) as Parameters<TaskStore["create"]>[1];
+    let task;
+    try {
+      task = taskStore.create(id, input);
+    } catch (err) {
+      return reply.code(400).send({ error: "invalid task", reason: (err as Error).message });
+    }
     const entry = timelineStore.append(id, "task_created", `Task: ${task.title}`, task.id);
     bus.emit({ type: "task_created", task });
     bus.emit({ type: "timeline_appended", entry });

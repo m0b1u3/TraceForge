@@ -46,6 +46,27 @@ describe("facts route", () => {
     expect(events.some((e) => e.type === "fact_created")).toBe(true);
     expect(events.some((e) => e.type === "timeline_appended")).toBe(true);
   });
+
+  it("creates a fact when source is omitted (defaults applied, no 500)", async () => {
+    const res = await app.inject({
+      method: "POST", url: `/api/cases/${caseId}/facts`,
+      payload: { type: "credential", title: "admin cred" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().id).toMatch(/^fact_/);
+    expect(res.json().source).toEqual({ type: "manual", ref: "api" });
+
+    const facts = (await app.inject({ url: `/api/cases/${caseId}/facts` })).json();
+    expect(facts).toHaveLength(1);
+  });
+
+  it("returns 400 (not 500) when required fields are missing", async () => {
+    const res = await app.inject({
+      method: "POST", url: `/api/cases/${caseId}/facts`,
+      payload: { title: "no type" },
+    });
+    expect(res.statusCode).toBe(400);
+  });
 });
 
 describe("tasks route", () => {
