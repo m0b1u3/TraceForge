@@ -20,8 +20,8 @@
   --tf-err: #ef6b60;
   --tf-human: #f0954a;
   --tf-mono: "Geist Mono", ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
-  --tf-sans: "Geist Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --tf-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --tf-sans: "Geist Sans", "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --tf-ease: cubic-bezier(0.4, 0, 0.2, 1);
   --tf-shadow: 0 8px 30px rgba(0,0,0,0.36), 0 1px 0 var(--tf-hilite) inset;
 }
 * { box-sizing: border-box; }
@@ -68,12 +68,11 @@ body { margin: 0; font-family: var(--tf-sans); background: var(--tf-bg); color: 
 .tf-tab:hover { color: var(--tf-text); background: rgba(255,255,255,0.04); }
 .tf-tab.active { color: var(--tf-accent); background: var(--tf-accent-dim); }
 
-.tf-btn { background: var(--tf-elev); border: 1px solid var(--tf-border); color: var(--tf-text); border-radius: 8px; padding: 7px 13px; font-size: 12.5px; font-weight: 500; cursor: pointer; font-family: inherit; box-shadow: 0 1px 0 var(--tf-hilite) inset, 0 1px 2px rgba(0,0,0,0.2); transition: background .18s var(--tf-ease), border-color .18s var(--tf-ease), transform .12s var(--tf-ease); }
+.tf-btn { background: var(--tf-elev); border: 1px solid var(--tf-border); color: var(--tf-text); border-radius: 8px; padding: 7px 13px; font-size: 12.5px; font-weight: 500; cursor: pointer; font-family: inherit; box-shadow: 0 1px 0 var(--tf-hilite) inset; transition: background .1s var(--tf-ease), border-color .1s var(--tf-ease); }
 .tf-btn:hover { border-color: #353b45; background: #20242b; }
-.tf-btn:active { transform: scale(0.97); }
 .tf-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.tf-btn-accent { background: linear-gradient(180deg, #58dee8, #36c0cc); border-color: transparent; color: #04282c; box-shadow: 0 1px 0 rgba(255,255,255,0.3) inset, 0 2px 8px rgba(74,214,224,0.18); }
-.tf-btn-accent:hover { background: linear-gradient(180deg, #6ee6ef, #45cdd9); }
+.tf-btn-accent { background: #3cc6d2; border-color: transparent; color: #04282c; box-shadow: none; }
+.tf-btn-accent:hover { background: #4ad6e0; }
 .tf-input, select.tf-input { background: var(--tf-panel-2); border: 1px solid var(--tf-border); color: var(--tf-text); border-radius: 8px; padding: 8px 11px; font-size: 13px; font-family: inherit; outline: none; box-shadow: 0 1px 0 var(--tf-hilite) inset; transition: border-color .18s var(--tf-ease), box-shadow .18s var(--tf-ease); }
 .tf-input::placeholder { color: var(--tf-faint); }
 .tf-input:focus { border-color: var(--tf-accent-2); box-shadow: 0 0 0 3px var(--tf-accent-dim); }
@@ -117,10 +116,10 @@ select.tf-input { cursor: pointer; }
 
 .tf-center { display: flex; align-items: center; justify-content: center; height: 100vh; padding: 24px; }
 /* Double-Bezel：外壳(hairline + 微背景) 包内核 */
-.tf-card { position: relative; background: linear-gradient(180deg, var(--tf-panel-2), var(--tf-panel)); border: 1px solid var(--tf-border); border-radius: 18px; padding: 30px 32px; display: flex; flex-direction: column; gap: 16px; min-width: 360px; box-shadow: 0 24px 70px rgba(0,0,0,0.5), 0 1px 0 var(--tf-hilite) inset; }
+.tf-card { position: relative; background: linear-gradient(180deg, var(--tf-panel-2), var(--tf-panel)); border: 1px solid var(--tf-border); border-radius: 20px; padding: 44px 48px; display: flex; flex-direction: column; gap: 22px; width: 100%; max-width: 560px; box-shadow: 0 30px 90px rgba(0,0,0,0.55), 0 1px 0 var(--tf-hilite) inset; }
 .tf-card::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; background: linear-gradient(180deg, rgba(255,255,255,0.08), transparent 40%); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
-.tf-card h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
-.tf-card .tf-sub { color: var(--tf-muted); margin: -8px 0 2px; font-size: 13px; line-height: 1.6; }
+.tf-card h2 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.tf-card .tf-sub { color: var(--tf-muted); margin: -12px 0 4px; font-size: 13.5px; line-height: 1.7; }
 
 /* 自定义下拉框（替原生 select，Linear 级精致） */
 .tf-select { position: relative; }
@@ -128,10 +127,10 @@ select.tf-input { cursor: pointer; }
 .tf-select-trigger:hover { background: #1a1e25; border-color: #313742; }
 .tf-select-trigger.is-open { border-color: var(--tf-accent-2); box-shadow: 0 0 0 3px var(--tf-accent-dim); }
 .tf-select-ph { color: var(--tf-faint); }
-.tf-select-caret { color: var(--tf-muted); transition: transform .22s var(--tf-ease); flex-shrink: 0; }
+.tf-select-caret { color: var(--tf-muted); transition: transform .12s var(--tf-ease); flex-shrink: 0; }
 .tf-select-trigger.is-open .tf-select-caret { transform: rotate(180deg); }
-.tf-select-menu { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30; background: var(--tf-elev); border: 1px solid var(--tf-border); border-radius: 11px; padding: 5px; box-shadow: 0 16px 44px rgba(0,0,0,0.55), 0 1px 0 var(--tf-hilite) inset; animation: tf-pop .16s var(--tf-ease); max-height: 280px; overflow: auto; }
-@keyframes tf-pop { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
+.tf-select-menu { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30; background: var(--tf-elev); border: 1px solid var(--tf-border); border-radius: 10px; padding: 5px; box-shadow: 0 16px 44px rgba(0,0,0,0.55), 0 1px 0 var(--tf-hilite) inset; animation: tf-pop .1s var(--tf-ease); max-height: 280px; overflow: auto; }
+@keyframes tf-pop { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
 .tf-select-opt { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: none; border: none; color: var(--tf-text); font-size: 13px; font-family: inherit; text-align: left; padding: 7px 9px; border-radius: 7px; cursor: pointer; transition: background .14s var(--tf-ease); }
 .tf-select-opt:hover { background: rgba(255,255,255,0.06); }
 .tf-select-opt.is-sel { color: var(--tf-accent); }
