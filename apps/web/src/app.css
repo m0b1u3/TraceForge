@@ -123,10 +123,23 @@ select.tf-input { cursor: pointer; }
 .tf-method { flex-shrink: 0; font-family: var(--tf-mono); font-size: 10.5px; color: var(--tf-muted); font-weight: 500; min-width: 36px; }
 .tf-url { font-family: var(--tf-mono); font-size: 11.5px; color: var(--tf-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.tf-approval { border: 1px solid rgba(240,179,74,0.35); border-radius: 12px; padding: 13px 14px; margin: 4px 0 12px; background: linear-gradient(180deg, rgba(240,179,74,0.09), rgba(240,179,74,0.03)); box-shadow: 0 1px 0 var(--tf-hilite) inset, 0 6px 20px rgba(0,0,0,0.2); }
-.tf-approval-h { font-size: 11px; font-weight: 600; color: var(--tf-warn); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
-.tf-approval-h::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--tf-warn); box-shadow: 0 0 8px var(--tf-warn); }
-.tf-approval code { font-family: var(--tf-mono); font-size: 12px; color: var(--tf-text); word-break: break-all; }
+/* 确认卡：精致 + 入场动效 + 左侧强调条 */
+.tf-confirm { position: relative; border: 1px solid var(--tf-border); border-radius: 12px; padding: 14px 15px 14px 16px; margin: 2px 0 14px; background: var(--tf-panel-2); box-shadow: 0 1px 0 var(--tf-hilite) inset, 0 8px 24px rgba(0,0,0,0.28); overflow: hidden; animation: tf-confirm-in .18s var(--tf-ease); }
+.tf-confirm::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+.tf-confirm-warn { border-color: rgba(240,179,74,0.4); }
+.tf-confirm-warn::before { background: var(--tf-warn); box-shadow: 0 0 12px rgba(240,179,74,0.5); }
+.tf-confirm-info { border-color: rgba(74,214,224,0.4); }
+.tf-confirm-info::before { background: var(--tf-accent); box-shadow: 0 0 12px rgba(74,214,224,0.5); }
+@keyframes tf-confirm-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.tf-confirm-head { font-size: 12.5px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 7px; }
+.tf-confirm-warn .tf-confirm-head { color: var(--tf-warn); }
+.tf-confirm-info .tf-confirm-head { color: var(--tf-accent); }
+.tf-confirm-body { font-size: 12.5px; color: var(--tf-text); line-height: 1.6; }
+.tf-confirm-reason { font-size: 12px; color: var(--tf-muted); margin-top: 5px; line-height: 1.55; }
+.tf-confirm-code { display: block; font-family: var(--tf-mono); font-size: 11.5px; color: var(--tf-text); word-break: break-all; background: var(--tf-bg); border: 1px solid var(--tf-border-soft); border-radius: 8px; padding: 9px 11px; margin: 9px 0; line-height: 1.5; }
+.tf-confirm-inline { font-family: var(--tf-mono); font-size: 11.5px; color: var(--tf-accent); background: var(--tf-accent-dim); border-radius: 5px; padding: 1px 6px; }
+.tf-confirm-actions { display: flex; gap: 8px; margin-top: 12px; }
+.tf-confirm-actions .tf-btn { padding: 8px 16px; }
 
 .tf-status-2 { color: var(--tf-ok); } .tf-status-3 { color: var(--tf-accent); }
 .tf-status-4 { color: var(--tf-warn); } .tf-status-5 { color: var(--tf-err); }

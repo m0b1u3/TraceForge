@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Sparkle, PaperPlaneTilt, Wrench, ArrowBendDownRight, CheckCircle, WarningCircle, Flag, ChatText } from "@phosphor-icons/react";
+import { Sparkle, PaperPlaneTilt, Wrench, ArrowBendDownRight, CheckCircle, WarningCircle, Flag, ChatText, ShieldWarning, Globe } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { runAgent, resolveApproval, approveScope } from "../api.js";
 
@@ -35,30 +35,40 @@ function EventItem({ kind, text }: { kind: string; text: string }) {
 }
 
 export function AgentPanel() {
-  const { caseId, agentEvents, pendingApproval, pendingScope, setPendingScope, resetAgent } = useStore();
+  const { caseId, agentEvents, pendingApproval, pendingScope, setPendingScope, clearPendingApproval, resetAgent } = useStore();
   const [goal, setGoal] = useState("看一下已抓的流量，把发现的接口记录为 Fact。");
+  const [busy, setBusy] = useState<"approved" | "rejected" | null>(null);
   if (!caseId) return null;
+
+  const decide = async (decision: "approved" | "rejected") => {
+    if (!pendingApproval) return;
+    setBusy(decision);
+    try { await resolveApproval(pendingApproval.approvalId, decision); } catch { /* 忽略，下方仍清卡 */ }
+    clearPendingApproval();   // 乐观清除，不依赖 WS 回执
+    setBusy(null);
+  };
   return (
     <div className="tf-panel" style={{ height: "100%" }}>
       <div className="tf-panel-head"><Sparkle size={13} weight="bold" style={{ opacity: 0.6 }} /> Agent 对话 <span className="tf-count">{agentEvents.length} events</span></div>
       <div className="tf-panel-body">
         {pendingApproval && (
-          <div className="tf-approval">
-            <div className="tf-approval-h">需要确认</div>
-            <code>{pendingApproval.tool}({pendingApproval.input})</code>
-            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-              <button className="tf-btn tf-btn-accent" onClick={() => resolveApproval(pendingApproval.approvalId, "approved")}>批准</button>
-              <button className="tf-btn" onClick={() => resolveApproval(pendingApproval.approvalId, "rejected")}>拒绝</button>
+          <div className="tf-confirm tf-confirm-warn">
+            <div className="tf-confirm-head"><ShieldWarning size={15} weight="fill" /> 需要你确认</div>
+            <div className="tf-confirm-body">Agent 请求执行一个高风险动作：</div>
+            <code className="tf-confirm-code">{pendingApproval.tool}({pendingApproval.input})</code>
+            <div className="tf-confirm-actions">
+              <button className="tf-btn tf-btn-accent" disabled={busy !== null} onClick={() => decide("approved")}>{busy === "approved" ? "批准中…" : "批准执行"}</button>
+              <button className="tf-btn" disabled={busy !== null} onClick={() => decide("rejected")}>拒绝</button>
             </div>
           </div>
         )}
         {pendingScope && caseId && (
-          <div className="tf-approval">
-            <div className="tf-approval-h">授权范围扩展请求</div>
-            <div>agent 建议把 <code>{pendingScope.host}</code> 纳入授权范围。</div>
-            <div style={{ color: "var(--tf-muted)", marginTop: 4 }}>{pendingScope.reason}</div>
-            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-              <button className="tf-btn tf-btn-accent" onClick={() => { approveScope(caseId, pendingScope.host); }}>批准纳入</button>
+          <div className="tf-confirm tf-confirm-info">
+            <div className="tf-confirm-head"><Globe size={15} weight="fill" /> 授权范围扩展请求</div>
+            <div className="tf-confirm-body">Agent 建议把 <code className="tf-confirm-inline">{pendingScope.host}</code> 纳入授权范围。</div>
+            <div className="tf-confirm-reason">{pendingScope.reason}</div>
+            <div className="tf-confirm-actions">
+              <button className="tf-btn tf-btn-accent" onClick={() => { approveScope(caseId, pendingScope.host); setPendingScope(null); }}>批准纳入</button>
               <button className="tf-btn" onClick={() => setPendingScope(null)}>忽略</button>
             </div>
           </div>
