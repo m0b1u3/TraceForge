@@ -35,6 +35,11 @@ export class TaskStore {
     return this.db.select().from(tasks).where(eq(tasks.caseId, caseId)).all().map(rowToTask);
   }
 
+  getById(id: string): Task | undefined {
+    const row = this.db.select().from(tasks).where(eq(tasks.id, id)).get();
+    return row ? rowToTask(row) : undefined;
+  }
+
   updateStatus(id: string, status: Task["status"], reason?: string): Task | undefined {
     const row = this.db.select().from(tasks).where(eq(tasks.id, id)).get();
     if (!row) return undefined;

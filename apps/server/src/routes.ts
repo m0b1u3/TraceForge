@@ -16,6 +16,7 @@ import {
   ToolRegistry, ApprovalGate, AgentRuntime,
   makeListTrafficTool, makeGetTrafficTool,
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
+  makeReopenTaskTool, makeRevertDoneTaskTool,
   makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools,
   McpManager, mcpToolToDescriptor,
 } from "@traceforge/extension";
@@ -173,6 +174,8 @@ export function registerRoutes(
     registry.register(makeRecordFactTool(id, factStore, timelineStore, (e) => bus.emit(e)));
     registry.register(makeRecordTaskTool(id, taskStore, timelineStore, (e) => bus.emit(e)));
     registry.register(makeRecordActionTool(id, factStore, actionStore, decisionStore, timelineStore, (e) => bus.emit(e)));
+    registry.register(makeReopenTaskTool(id, taskStore, taskStore, factStore, timelineStore, (e) => bus.emit(e)));
+    registry.register(makeRevertDoneTaskTool(id, taskStore, taskStore, factStore, timelineStore, (e) => bus.emit(e)));
     registry.register(makeHttpReplayTool(c.scopeRules));
     registry.register(makeProposeScopeExpansionTool((host, reason) =>
       bus.emit({ type: "scope_expansion_proposed", caseId: id, host, reason })));

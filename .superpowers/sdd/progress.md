@@ -68,3 +68,4 @@ PoC MCP Task 3: complete (commit 13ebe8e, server.ts)
 PoC MCP Task 4: complete (commit cd1049e, main.ts + example + README + e2e verified 4 tools)
 PoC MCP server: ALL TASKS COMPLETE
 Reeval Task 1: complete (commit 09d2696, reopen_task)
+Reeval Task 2: complete (commit 1deb612, revert_done_task)
