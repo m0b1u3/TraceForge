@@ -57,3 +57,4 @@ PlanC: ALL TASKS COMPLETE
 Workbench Task 1: complete (commit 404c6cc, buildGraph)
 Workbench Task 2: complete (commit c78de42, deps+css+store/api)
 Workbench Task 3: complete (commit 5d105ef, TopBar + skeleton + terminal aesthetic css)
+Workbench Task 4: complete (commit 736de83, browser/traffic/agent panels)

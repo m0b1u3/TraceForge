@@ -4,6 +4,7 @@ import { TopBar } from "./components/TopBar.js";
 import { BrowserPanel } from "./components/BrowserPanel.js";
 import { TrafficPanel } from "./components/TrafficPanel.js";
 import { AgentPanel } from "./components/AgentPanel.js";
+import { KnowledgePanel } from "./components/KnowledgePanel.js";
 
 export function App() {
   const { caseId, connectWs } = useStore();
@@ -30,7 +31,7 @@ export function App() {
           <TrafficPanel />
         </div>
         <div className="tf-col"><AgentPanel /></div>
-        <div className="tf-col"><div className="tf-panel-head">知识</div></div>
+        <div className="tf-col"><KnowledgePanel /></div>
       </div>
     </div>
   );
