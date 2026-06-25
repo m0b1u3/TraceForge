@@ -2844,7 +2844,7 @@ TraceForge 应该像一个有经验的渗透测试搭档：
 1. **整体工作台 UI（P0，前端）** — 把已通的三大后端能力（共享浏览器、agent 自主、MCP）整合为多面板工作台，替换当前裸占位 UI。对应原阶段 1 的 BrowserPanel/TrafficPanel 升级 + 承载 7 的 Graph。**理由**：后端能力已全通，前端是最大短板。
 2. **Terminal / PoC / 依赖（原阶段 6，改形态）** — 不在核心写死命令执行逻辑，而是**作为一个本地 MCP server 或工具插件**接入（命令执行天然是 risk=command，过 ApprovalGate）。Plan C 已铺好接入通道。
 3. **Graph Panel（原阶段 7，基本不变）** — Facts/Tasks/Actions/Decisions/evidenceRefs 数据已齐，做 GraphBuilder + ReactFlow 可视化。
-4. **重新评估机制（原阶段 8，去硬编码重设计）** — 原 Trigger Rules（「新凭据→触发登录任务」等写死映射）违反第 3.0 原则。改为：新 Fact 入库时由 **LLM 判断**是否应重启/新建相关 Task，规则不写进代码。
+4. **重新评估机制（原阶段 8，去硬编码重设计）** — 原 Trigger Rules（「新凭据→触发登录任务」等写死映射）违反第 3.0 原则。改为：新 Fact 入库时由 **LLM 判断**是否应重启/新建相关 Task，规则不写进代码。✅ 已完成（reopen_task/revert_done_task 两工具，LLM 判断 Fact↔Task 关联，去 factTypeToTriggers 硬编码；revert done 过 ApprovalGate 人工确认）。
 5. **Observer（原阶段 9，形态不变）** — 监督 agent：查无依据猜测、低效路径、过早结束，向 Manager 发纠偏建议。
 6. **Plan B 工具插件（按需）** — 仅当某关键工具无 MCP 封装时单独写；MCP 已是主扩展通道，B 降为补充。
 

@@ -27,7 +27,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 `config/llm.json` 不纳入版本控制；未配置时 AI 提取返回空候选（其余功能不受影响）。
 
-## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 A + agent 交互 E1/E2 + 共享浏览器 F1/F2 + MCP 集成 C + 工作台 UI + PoC MCP server）
+## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 A + agent 交互 E1/E2 + 共享浏览器 F1/F2 + MCP 集成 C + 工作台 UI + PoC MCP server + LLM 重评估）
 
 - pnpm monorepo 骨架
 - Scope Guard 安全地基（deny-by-default + 通配符，单元测试覆盖）
@@ -46,10 +46,11 @@ export ANTHROPIC_API_KEY=sk-ant-...
 - MCP 集成（Plan C）：server 启动时连接 config/mcp.json 声明的 stdio MCP server，动态发现其工具并纳入 agent 工具集（命名空间 mcp__<server>__<tool>，默认 risk=command 过确认门，可逐 server 降为 normal）。领域工具留在进程外、零侵入核心——「特定领域知识走 MCP 扩展」原则的主载体。GET /api/mcp/tools 可查当前工具池。单 server 连接失败/无配置不影响 TraceForge 启动（降级不崩）
 - 整体工作台 UI（修订路线第 1 项）：三栏多面板工作台（终端美学深色主题）——顶栏（Case 切换/新建 + 控制权状态）+ 左栏（共享浏览器控制 + 流量）+ 中栏（Agent 对话，事件流 + 审批）+ 右栏（Facts/Tasks/Timeline/MCP/Graph 五 Tab）。Graph 用 React Flow 把 Facts/Tasks/Actions 渲染为证据关系图谱（边=evidenceRefs，即「每个动作都有证据依据」的可视化），可嵌入小图 + 点击放大全屏缩放拖拽。取代旧裸占位 UI，后端零改动
 - Terminal/PoC MCP server（@traceforge/mcp-poc-server，修订路线第 2 项）：独立 stdio MCP server，暴露 exec_command/write_file/read_file/list_dir 四个原子工具，按 caseId 锁进 workspace/<caseId>/（路径逃逸拒绝 + 命令超时 + 输出截断）。让 agent 写 PoC、跑命令、装依赖、读输出——装依赖=exec pip/npm、跑脚本=write+exec、分析=LLM 读输出自判，零硬编码。命令执行 risk=command 过 ApprovalGate 人工确认。core 零改动，经 config/mcp.json 接入（见 mcp.example.json）
+- LLM 驱动的重评估（修订路线第 4 项）：两个 agent 工具 reopen_task（重启未完成的旧任务，normal）与 revert_done_task（打回已完成结论，command 过 ApprovalGate 人工确认），都转为 recheck_candidate。新 Fact 入库后 LLM 自主判断哪些旧任务该复活/翻案——Fact↔Task 关联完全由 LLM 决定，代码不写 factTypeToTriggers 等映射表（第 27 章双向重评估的去硬编码最小闭环）。两工具强制 evidenceRefs 引用已记录 Fact
 
 ## 测试
 
 ```bash
-pnpm test     # 128 个单元测试
+pnpm test     # 138 个单元测试
 pnpm -r build # 全量构建
 ```
