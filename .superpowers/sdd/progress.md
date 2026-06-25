@@ -76,3 +76,5 @@ Observer Task 1: complete (commit 0313d01, schema+event)
 Observer Task 2: complete (commit a106e29, Observer.review)
 Observer Task 3: complete (commit 28bb975, store+table+trigger+route)
 Observer Task 4: complete (commit b27099b, Observer tab)
+Observer Task 5: complete (commit 0e5a78d, README + roadmap checkmark)
+Observer: ALL TASKS COMPLETE
