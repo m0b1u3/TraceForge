@@ -3,6 +3,7 @@ import { FactsTab } from "./knowledge/FactsTab.js";
 import { TasksTab } from "./knowledge/TasksTab.js";
 import { TimelineTab } from "./knowledge/TimelineTab.js";
 import { McpTab } from "./knowledge/McpTab.js";
+import { GraphTab } from "./knowledge/GraphTab.js";
 
 const TABS = [
   { key: "facts", label: "Facts" }, { key: "tasks", label: "Tasks" },
@@ -24,7 +25,7 @@ export function KnowledgePanel() {
         {activeTab === "tasks" && <TasksTab />}
         {activeTab === "timeline" && <TimelineTab />}
         {activeTab === "mcp" && <McpTab />}
-        {activeTab === "graph" && <div className="tf-empty">图谱待接入</div>}
+        {activeTab === "graph" && <GraphTab />}
       </div>
     </div>
   );

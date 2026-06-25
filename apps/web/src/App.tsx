@@ -5,6 +5,7 @@ import { BrowserPanel } from "./components/BrowserPanel.js";
 import { TrafficPanel } from "./components/TrafficPanel.js";
 import { AgentPanel } from "./components/AgentPanel.js";
 import { KnowledgePanel } from "./components/KnowledgePanel.js";
+import { GraphModal } from "./components/GraphModal.js";
 
 export function App() {
   const { caseId, connectWs } = useStore();
@@ -33,6 +34,7 @@ export function App() {
         <div className="tf-col"><AgentPanel /></div>
         <div className="tf-col"><KnowledgePanel /></div>
       </div>
+      <GraphModal />
     </div>
   );
 }
