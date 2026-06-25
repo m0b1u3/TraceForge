@@ -1,0 +1,11 @@
+{
+  "name": "@traceforge/mcp-poc-server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "bin": { "traceforge-mcp-poc": "./dist/main.js" },
+  "scripts": { "build": "tsc -p tsconfig.json" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  }
+}

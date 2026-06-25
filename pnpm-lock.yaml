@@ -131,6 +131,12 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
 
+  packages/mcp-poc-server:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@3.25.76)
+
   packages/reasoning-core:
     dependencies:
       '@traceforge/llm':
