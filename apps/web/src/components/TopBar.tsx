@@ -3,7 +3,9 @@ import { useStore } from "../store.js";
 import { listCases, createCase } from "../api.js";
 
 export function TopBar() {
-  const { caseId, cases, setCases, enterCase, browserController, browserUrl } = useStore();
+  const { caseId, cases, setCases, enterCase, browserController, browserUrl, facts, tasks, warnings } = useStore();
+  const crit = warnings.filter((w) => w.level === "critical").length;
+  const warnCls = crit > 0 ? "is-crit" : warnings.length > 0 ? "is-alert" : "";
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [hosts, setHosts] = useState("");
@@ -51,10 +53,18 @@ export function TopBar() {
       )}
       <span className="tf-spacer" />
       {caseId && (
-        <span className={`tf-pill ${controlClass}`}>
-          控制权 {controlLabel}
-          {browserUrl && <span style={{ color: "var(--tf-faint)" }}>· {browserUrl}</span>}
-        </span>
+        <>
+          <span className="tf-stat">Facts <b>{facts.length}</b></span>
+          <span className="tf-stat-sep" />
+          <span className="tf-stat">Tasks <b>{tasks.length}</b></span>
+          <span className="tf-stat-sep" />
+          <span className={`tf-stat ${warnCls}`} title="Observer 监督提示">⚠ <b>{warnings.length}</b></span>
+          <span className="tf-stat-sep" />
+          <span className={`tf-pill ${controlClass}`}>
+            控制权 {controlLabel}
+            {browserUrl && <span style={{ color: "var(--tf-faint)" }}>· {browserUrl}</span>}
+          </span>
+        </>
       )}
     </div>
   );

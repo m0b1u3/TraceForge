@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useStore } from "../store.js";
-import { runAgent, resolveApproval } from "../api.js";
+import { runAgent, resolveApproval, approveScope } from "../api.js";
 
 export function AgentPanel() {
-  const { caseId, agentEvents, pendingApproval, resetAgent } = useStore();
+  const { caseId, agentEvents, pendingApproval, pendingScope, setPendingScope, resetAgent } = useStore();
   const [goal, setGoal] = useState("看一下已抓的流量，把发现的接口记录为 Fact。");
   if (!caseId) return null;
   return (
@@ -20,7 +20,27 @@ export function AgentPanel() {
             </div>
           </div>
         )}
-        {agentEvents.length === 0 && <div className="tf-empty">给 agent 一个目标并启动，活动会在这里实时显示。</div>}
+        {pendingScope && caseId && (
+          <div className="tf-approval">
+            <div className="tf-approval-h">授权范围扩展请求</div>
+            <div>agent 建议把 <code>{pendingScope.host}</code> 纳入授权范围。</div>
+            <div style={{ color: "var(--tf-muted)", marginTop: 4 }}>{pendingScope.reason}</div>
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <button className="tf-btn tf-btn-accent" onClick={() => { approveScope(caseId, pendingScope.host); }}>批准纳入</button>
+              <button className="tf-btn" onClick={() => setPendingScope(null)}>忽略</button>
+            </div>
+          </div>
+        )}
+        {agentEvents.length === 0 && !pendingScope && (
+          <div className="tf-guide">
+            <div className="tf-guide-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
+            </div>
+            <div className="tf-guide-title">Agent 待命</div>
+            <div className="tf-guide-hint">在下方输入一个目标（如「测试 example.com 的登录接口有没有越权」），Agent 会自主探索并把发现记录为 Fact。</div>
+            <div className="tf-guide-step">↓ 在下方输入目标后回车</div>
+          </div>
+        )}
         {agentEvents.map((e, i) => (
           <div className={`tf-ev tf-ev-${e.kind}`} key={i}>
             <span className="tf-ev-kind">{e.kind}</span>{e.text}

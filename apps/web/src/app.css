@@ -21,10 +21,17 @@ body { margin: 0; font-family: var(--tf-sans); background: var(--tf-bg); color: 
 ::selection { background: var(--tf-accent-dim); color: #eafdff; }
 .tf-app { display: flex; flex-direction: column; height: 100vh; }
 
-.tf-topbar { display: flex; align-items: center; gap: 12px; padding: 0 14px; height: 44px; background: var(--tf-panel); border-bottom: 1px solid var(--tf-border); font-size: 13px; }
+.tf-topbar { display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 50px; background: var(--tf-panel); border-bottom: 1px solid var(--tf-border); font-size: 13px; }
 .tf-brand { display: flex; align-items: center; gap: 7px; font-weight: 600; letter-spacing: 0.04em; }
 .tf-brand::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--tf-accent); box-shadow: 0 0 7px var(--tf-accent); }
 .tf-topbar .tf-spacer { margin-left: auto; }
+
+/* 顶栏状态总览徽章 */
+.tf-stat { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--tf-muted); }
+.tf-stat b { font-family: var(--tf-mono); font-weight: 500; color: var(--tf-text); font-size: 12px; }
+.tf-stat-sep { width: 1px; height: 14px; background: var(--tf-border); }
+.tf-stat.is-alert b, .tf-stat.is-alert { color: var(--tf-warn); }
+.tf-stat.is-crit b, .tf-stat.is-crit { color: var(--tf-err); }
 .tf-pill { font-family: var(--tf-mono); font-size: 11px; background: var(--tf-bg); border: 1px solid var(--tf-border); border-radius: 5px; padding: 3px 9px; color: var(--tf-muted); display: inline-flex; align-items: center; gap: 6px; }
 .tf-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--tf-faint); }
 .tf-pill.is-llm::before { background: var(--tf-accent); box-shadow: 0 0 6px var(--tf-accent); }
@@ -37,10 +44,10 @@ body { margin: 0; font-family: var(--tf-sans); background: var(--tf-bg); color: 
 .tf-col-left > .tf-panel:first-child { border-bottom: 1px solid var(--tf-border); }
 
 .tf-panel { display: flex; flex-direction: column; min-height: 0; background: var(--tf-panel); }
-.tf-panel-head { padding: 0 12px; height: 34px; border-bottom: 1px solid var(--tf-border-soft); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--tf-muted); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.tf-panel-head { padding: 0 14px; height: 40px; border-bottom: 1px solid var(--tf-border-soft); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--tf-muted); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .tf-panel-head .tf-count { font-family: var(--tf-mono); font-weight: 400; color: var(--tf-faint); letter-spacing: 0; text-transform: none; }
-.tf-panel-body { flex: 1; overflow: auto; padding: 10px 12px; font-size: 12px; }
-.tf-panel-foot { padding: 8px 10px; border-top: 1px solid var(--tf-border-soft); display: flex; gap: 6px; flex-shrink: 0; }
+.tf-panel-body { flex: 1; overflow: auto; padding: 12px 14px; font-size: 12px; }
+.tf-panel-foot { padding: 10px 12px; border-top: 1px solid var(--tf-border-soft); display: flex; gap: 8px; flex-shrink: 0; }
 
 .tf-tabs { display: flex; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--tf-border-soft); font-size: 11px; flex-shrink: 0; }
 .tf-tab { color: var(--tf-muted); cursor: pointer; padding: 9px 8px 7px; background: none; border: none; border-bottom: 2px solid transparent; letter-spacing: 0.04em; font-family: inherit; }
@@ -55,10 +62,23 @@ body { margin: 0; font-family: var(--tf-sans); background: var(--tf-bg); color: 
 .tf-input, select.tf-input { background: var(--tf-bg); border: 1px solid var(--tf-border); color: var(--tf-text); border-radius: 5px; padding: 5px 8px; font-size: 12px; font-family: inherit; outline: none; }
 .tf-input:focus { border-color: var(--tf-accent-dim); box-shadow: 0 0 0 2px var(--tf-accent-dim); }
 
-.tf-row { font-family: var(--tf-mono); font-size: 11.5px; line-height: 1.5; padding: 3px 0; color: var(--tf-text); border-bottom: 1px solid var(--tf-border-soft); }
+.tf-row { font-family: var(--tf-mono); font-size: 11.5px; line-height: 1.6; padding: 5px 0; color: var(--tf-text); border-bottom: 1px solid var(--tf-border-soft); }
 .tf-row:last-child { border-bottom: none; }
 .tf-tag { font-family: var(--tf-mono); font-size: 10px; color: var(--tf-accent); background: var(--tf-accent-dim); border-radius: 3px; padding: 1px 5px; margin-right: 6px; opacity: 0.85; }
-.tf-empty { color: var(--tf-faint); font-size: 12px; font-style: italic; }
+
+/* 引导式空状态：图标 + 标题 + 一句话 + 下一步，而非一行冷字 */
+.tf-empty { color: var(--tf-faint); font-size: 12px; }
+.tf-guide { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 160px; text-align: center; padding: 24px 16px; color: var(--tf-muted); }
+.tf-guide-icon { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--tf-border); display: flex; align-items: center; justify-content: center; color: var(--tf-faint); font-size: 20px; }
+.tf-guide-title { font-size: 13px; color: var(--tf-text); font-weight: 500; }
+.tf-guide-hint { font-size: 12px; color: var(--tf-muted); max-width: 240px; line-height: 1.6; }
+.tf-guide-step { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-accent); }
+
+/* 上手三步（无 case 时） */
+.tf-steps { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.tf-step { display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; color: var(--tf-muted); }
+.tf-step-n { flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; background: var(--tf-accent-dim); color: #eafdff; font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+.tf-step b { color: var(--tf-text); font-weight: 500; }
 
 .tf-ev { font-family: var(--tf-mono); font-size: 11.5px; line-height: 1.55; padding: 4px 0 4px 10px; border-left: 2px solid var(--tf-border); margin-bottom: 2px; color: var(--tf-text); }
 .tf-ev-tool_call { border-left-color: var(--tf-accent); }
