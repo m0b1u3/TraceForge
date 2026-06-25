@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { makeReopenTaskTool, type TaskStatusReader, type StatusWriter } from "./case-tools.js";
+import { makeReopenTaskTool, makeRevertDoneTaskTool, type TaskStatusReader, type StatusWriter } from "./case-tools.js";
 import type { Fact, Task } from "@traceforge/shared";
 
 function mkFacts(ids: string[]) {
@@ -58,5 +58,36 @@ describe("makeReopenTaskTool", () => {
     const res = await tool.execute({ taskId: "task_1", reason: "x", evidenceRefs: ["f1"] });
     expect(res.ok).toBe(false);
     expect(res.content).toMatch(/revert_done_task/);
+  });
+});
+
+describe("makeRevertDoneTaskTool", () => {
+  it("is command risk (goes through approval gate)", () => {
+    const tk = mkTasks([]);
+    const t = makeRevertDoneTaskTool("c", tk.reader, tk.writer, mkFacts([]), timeline, noop);
+    expect(t.risk).toBe("command");
+    expect(t.name).toBe("revert_done_task");
+  });
+
+  it("reverts a done task to recheck_candidate", async () => {
+    const tk = mkTasks([{ id: "task_1", title: "确认无注入", status: "done" }]);
+    const tool = makeRevertDoneTaskTool("c", tk.reader, tk.writer, mkFacts(["f1"]), timeline, noop);
+    const res = await tool.execute({ taskId: "task_1", reason: "发现矛盾证据", evidenceRefs: ["f1"] });
+    expect(res.ok).toBe(true);
+    expect(tk.updates).toEqual([{ id: "task_1", status: "recheck_candidate", reason: "发现矛盾证据" }]);
+  });
+
+  it("rejects reverting a non-done task (points to reopen_task)", async () => {
+    const tk = mkTasks([{ id: "task_1", title: "t", status: "blocked" }]);
+    const tool = makeRevertDoneTaskTool("c", tk.reader, tk.writer, mkFacts(["f1"]), timeline, noop);
+    const res = await tool.execute({ taskId: "task_1", reason: "x", evidenceRefs: ["f1"] });
+    expect(res.ok).toBe(false);
+    expect(res.content).toMatch(/reopen_task/);
+  });
+
+  it("rejects empty evidenceRefs", async () => {
+    const tk = mkTasks([{ id: "task_1", title: "t", status: "done" }]);
+    const tool = makeRevertDoneTaskTool("c", tk.reader, tk.writer, mkFacts(["f1"]), timeline, noop);
+    expect((await tool.execute({ taskId: "task_1", reason: "x", evidenceRefs: [] })).ok).toBe(false);
   });
 });

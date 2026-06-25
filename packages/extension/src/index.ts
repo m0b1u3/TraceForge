@@ -13,6 +13,6 @@ export { McpManager, type McpClient, type McpClientFactory } from "./mcp-manager
 export {
   makeListTrafficTool, makeGetTrafficTool, type TrafficReader,
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
-  makeReopenTaskTool, type TaskStatusReader, type StatusWriter,
+  makeReopenTaskTool, makeRevertDoneTaskTool, type TaskStatusReader, type StatusWriter,
   type FactWriter, type TaskWriter, type ActionWriter, type DecisionWriter, type TimelineWriter, type Emit,
 } from "./case-tools.js";

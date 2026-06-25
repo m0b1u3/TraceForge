@@ -226,3 +226,33 @@ export function makeReopenTaskTool(
     },
   };
 }
+
+export function makeRevertDoneTaskTool(
+  caseId: string, tasksR: TaskStatusReader, tasksW: StatusWriter, facts: FactWriter, timeline: TimelineWriter, emit: Emit,
+): ToolDescriptor {
+  return {
+    name: "revert_done_task",
+    description: "当新证据与一个已完成(done)任务的结论矛盾时，把它打回 recheck_candidate 重新核查。这是推翻已完成结论的高风险操作，需人工确认。evidenceRefs 必须引用支撑此判断的已记录 Fact。未完成的任务请用 reopen_task。",
+    inputSchema: {
+      type: "object",
+      properties: { taskId: { type: "string" }, reason: { type: "string" }, evidenceRefs: { type: "array", items: { type: "string" } } },
+      required: ["taskId", "reason", "evidenceRefs"],
+    },
+    risk: "command",
+    source: "builtin",
+    execute: async (input) => {
+      const i = input as { taskId: string; reason: string };
+      const task = tasksR.getById(i.taskId);
+      if (!task) return { ok: false, content: `task not found: ${i.taskId}` };
+      if (task.status !== "done") return { ok: false, content: "未完成任务请用 reopen_task" };
+      const ev = evidenceValid(caseId, facts, input);
+      if (!ev.ok) return { ok: false, content: "evidenceRefs 必须非空且都引用已记录的 Fact id" };
+      tasksW.updateStatus(i.taskId, "recheck_candidate", i.reason);
+      const updated = { id: task.id, caseId, title: task.title, status: "recheck_candidate", reason: i.reason, blockedBy: [], triggerWhen: [], relatedFacts: [], priority: "medium", createdAt: "", updatedAt: new Date().toISOString() } as unknown as Task;
+      const entry = timeline.append(caseId, "task_reverted", `Task 打回: ${task.title}（done→recheck）← ${i.reason}`, task.id);
+      emit({ type: "task_updated", task: updated });
+      emit({ type: "timeline_appended", entry });
+      return { ok: true, content: `Task ${task.title} 已打回 recheck_candidate` };
+    },
+  };
+}
