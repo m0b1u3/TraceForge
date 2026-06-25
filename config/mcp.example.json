@@ -5,6 +5,13 @@
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
       "trustLevel": "command"
+    },
+    {
+      "name": "poc",
+      "command": "node",
+      "args": ["packages/mcp-poc-server/dist/main.js"],
+      "env": { "TRACEFORGE_WORKSPACE": "./workspace" },
+      "trustLevel": "command"
     }
   ]
 }
