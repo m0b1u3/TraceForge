@@ -8,3 +8,4 @@ cases/
 .DS_Store
 config/llm.json
 config/mcp.json
+.env
