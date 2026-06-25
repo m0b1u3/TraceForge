@@ -43,10 +43,13 @@ body { margin: 0; font-family: var(--tf-sans); background: var(--tf-bg); color: 
 .tf-stat-sep { width: 1px; height: 14px; background: var(--tf-border); }
 .tf-stat.is-alert b, .tf-stat.is-alert { color: var(--tf-warn); }
 .tf-stat.is-crit b, .tf-stat.is-crit { color: var(--tf-err); }
-.tf-pill { font-family: var(--tf-mono); font-size: 11px; background: var(--tf-bg); border: 1px solid var(--tf-border); border-radius: 5px; padding: 3px 9px; color: var(--tf-muted); display: inline-flex; align-items: center; gap: 6px; }
-.tf-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--tf-faint); }
-.tf-pill.is-llm::before { background: var(--tf-accent); box-shadow: 0 0 6px var(--tf-accent); }
-.tf-pill.is-human::before { background: var(--tf-human); box-shadow: 0 0 6px var(--tf-human); }
+.tf-topbar-div { width: 1px; height: 20px; background: var(--tf-border); }
+.tf-btn-icon { display: inline-flex; align-items: center; gap: 5px; }
+.tf-create-pop { display: flex; align-items: center; gap: 7px; padding-left: 4px; }
+.tf-pill { font-size: 12px; background: var(--tf-panel-2); border: 1px solid var(--tf-border); border-radius: 8px; padding: 5px 10px; color: var(--tf-text); display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 1px 0 var(--tf-hilite) inset; }
+.tf-pill svg { color: var(--tf-faint); }
+.tf-pill.is-llm { color: var(--tf-accent); border-color: rgba(74,214,224,0.25); } .tf-pill.is-llm svg { color: var(--tf-accent); }
+.tf-pill.is-human { color: var(--tf-human); border-color: rgba(240,149,74,0.3); } .tf-pill.is-human svg { color: var(--tf-human); }
 
 .tf-cols { display: grid; grid-template-columns: 1.1fr 1.3fr 1fr; flex: 1; min-height: 0; }
 .tf-col { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--tf-border); }
@@ -118,5 +121,21 @@ select.tf-input { cursor: pointer; }
 .tf-card::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; background: linear-gradient(180deg, rgba(255,255,255,0.08), transparent 40%); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
 .tf-card h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
 .tf-card .tf-sub { color: var(--tf-muted); margin: -8px 0 2px; font-size: 13px; line-height: 1.6; }
+
+/* 自定义下拉框（替原生 select，Linear 级精致） */
+.tf-select { position: relative; }
+.tf-select-trigger { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--tf-panel-2); border: 1px solid var(--tf-border); color: var(--tf-text); border-radius: 8px; padding: 8px 11px; font-size: 13px; font-weight: 500; font-family: inherit; cursor: pointer; box-shadow: 0 1px 0 var(--tf-hilite) inset; transition: border-color .18s var(--tf-ease), background .18s var(--tf-ease); }
+.tf-select-trigger:hover { background: #1a1e25; border-color: #313742; }
+.tf-select-trigger.is-open { border-color: var(--tf-accent-2); box-shadow: 0 0 0 3px var(--tf-accent-dim); }
+.tf-select-ph { color: var(--tf-faint); }
+.tf-select-caret { color: var(--tf-muted); transition: transform .22s var(--tf-ease); flex-shrink: 0; }
+.tf-select-trigger.is-open .tf-select-caret { transform: rotate(180deg); }
+.tf-select-menu { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30; background: var(--tf-elev); border: 1px solid var(--tf-border); border-radius: 11px; padding: 5px; box-shadow: 0 16px 44px rgba(0,0,0,0.55), 0 1px 0 var(--tf-hilite) inset; animation: tf-pop .16s var(--tf-ease); max-height: 280px; overflow: auto; }
+@keyframes tf-pop { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
+.tf-select-opt { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: none; border: none; color: var(--tf-text); font-size: 13px; font-family: inherit; text-align: left; padding: 7px 9px; border-radius: 7px; cursor: pointer; transition: background .14s var(--tf-ease); }
+.tf-select-opt:hover { background: rgba(255,255,255,0.06); }
+.tf-select-opt.is-sel { color: var(--tf-accent); }
+.tf-select-opt svg { color: var(--tf-accent); flex-shrink: 0; }
+.tf-select-empty { padding: 9px; color: var(--tf-faint); font-size: 12.5px; text-align: center; }
 
 .react-flow__attribution { display: none; }

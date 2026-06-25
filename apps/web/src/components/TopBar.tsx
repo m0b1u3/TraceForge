@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
+import { Plus, Warning, ShieldCheck } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { listCases, createCase } from "../api.js";
+import { Select } from "./Select.js";
 
 export function TopBar() {
   const { caseId, cases, setCases, enterCase, browserController, browserUrl, facts, tasks, warnings } = useStore();
@@ -28,28 +30,36 @@ export function TopBar() {
   return (
     <div className="tf-topbar">
       <span className="tf-brand">TraceForge</span>
-      <select className="tf-input" value={caseId ?? ""} onChange={(e) => enterCase(e.target.value)}>
-        {!caseId && <option value="">选择 Case…</option>}
-        {cases.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-      </select>
-      <button className="tf-btn" onClick={() => setCreating((v) => !v)}>新建 Case</button>
+      <span className="tf-topbar-div" />
+      <Select
+        value={caseId}
+        placeholder="选择 Case"
+        options={cases.map((c) => ({ value: c.id, label: c.name }))}
+        onChange={(v) => enterCase(v)}
+        minWidth={150}
+      />
+      <button className="tf-btn tf-btn-icon" onClick={() => setCreating((v) => !v)}>
+        <Plus size={14} weight="bold" /> 新建
+      </button>
       {creating && (
-        <>
+        <div className="tf-create-pop">
           <input
             className="tf-input" value={name} autoFocus
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") submitCreate(); if (e.key === "Escape") setCreating(false); }}
             placeholder="Case 名称"
+            style={{ width: 150 }}
           />
           <input
             className="tf-input" value={hosts}
             onChange={(e) => setHosts(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") submitCreate(); if (e.key === "Escape") setCreating(false); }}
-            placeholder="授权范围 host（可选，逗号分隔）"
+            placeholder="授权范围（可选）"
+            style={{ width: 170 }}
           />
           <button className="tf-btn tf-btn-accent" disabled={!name.trim()} onClick={submitCreate}>创建</button>
           <button className="tf-btn" onClick={() => { setCreating(false); setName(""); setHosts(""); }}>取消</button>
-        </>
+        </div>
       )}
       <span className="tf-spacer" />
       {caseId && (
@@ -58,10 +68,11 @@ export function TopBar() {
           <span className="tf-stat-sep" />
           <span className="tf-stat">Tasks <b>{tasks.length}</b></span>
           <span className="tf-stat-sep" />
-          <span className={`tf-stat ${warnCls}`} title="Observer 监督提示">⚠ <b>{warnings.length}</b></span>
+          <span className={`tf-stat ${warnCls}`} title="Observer 监督提示"><Warning size={13} weight="fill" /> <b>{warnings.length}</b></span>
           <span className="tf-stat-sep" />
           <span className={`tf-pill ${controlClass}`}>
-            控制权 {controlLabel}
+            <ShieldCheck size={13} weight="fill" style={{ opacity: 0.7 }} />
+            {controlLabel}
             {browserUrl && <span style={{ color: "var(--tf-faint)" }}>· {browserUrl}</span>}
           </span>
         </>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Sparkle, PaperPlaneTilt } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { runAgent, resolveApproval, approveScope } from "../api.js";
 
@@ -33,9 +34,7 @@ export function AgentPanel() {
         )}
         {agentEvents.length === 0 && !pendingScope && (
           <div className="tf-guide">
-            <div className="tf-guide-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
-            </div>
+            <div className="tf-guide-icon"><Sparkle size={22} weight="duotone" /></div>
             <div className="tf-guide-title">Agent 待命</div>
             <div className="tf-guide-hint">在下方输入一个目标（如「测试 example.com 的登录接口有没有越权」），Agent 会自主探索并把发现记录为 Fact。</div>
             <div className="tf-guide-step">↓ 在下方输入目标后回车</div>
@@ -55,10 +54,10 @@ export function AgentPanel() {
           placeholder="给 agent 一个目标…"
         />
         <button
-          className="tf-btn tf-btn-accent"
+          className="tf-btn tf-btn-accent tf-btn-icon"
           disabled={!goal.trim()}
           onClick={() => { if (!goal.trim()) return; resetAgent(); runAgent(caseId, goal); setGoal(""); }}
-        >启动 Agent</button>
+        ><PaperPlaneTilt size={14} weight="fill" /> 启动</button>
       </div>
     </div>
   );

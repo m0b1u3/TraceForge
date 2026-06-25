@@ -1,3 +1,4 @@
+import { Pulse } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 
 export function TrafficPanel() {
@@ -8,9 +9,7 @@ export function TrafficPanel() {
       <div className="tf-panel-body">
         {traffic.length === 0 && (
           <div className="tf-guide">
-            <div className="tf-guide-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
-            </div>
+            <div className="tf-guide-icon"><Pulse size={22} weight="duotone" /></div>
             <div className="tf-guide-title">暂无流量</div>
             <div className="tf-guide-hint">启动共享浏览器后，你和 Agent 的访问都会实时出现在这里。</div>
           </div>

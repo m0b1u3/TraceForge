@@ -1,3 +1,4 @@
+import { Browser } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { startBrowser, stopBrowser, takeoverBrowser, releaseBrowser } from "../api.js";
 
@@ -13,7 +14,7 @@ export function BrowserPanel() {
       <div className="tf-panel-body">
         {browserController === null ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <button className="tf-btn tf-btn-accent" onClick={() => startBrowser(caseId)}>启动浏览器</button>
+            <button className="tf-btn tf-btn-accent tf-btn-icon" onClick={() => startBrowser(caseId)}><Browser size={15} weight="bold" /> 启动浏览器</button>
             <span className="tf-empty" style={{ lineHeight: 1.6 }}>会弹出一个真实浏览器窗口。LLM 默认自主探索，你可随时「接管」自己操作（如登录），再「交回」。</span>
           </div>
         ) : (
