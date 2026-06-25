@@ -63,3 +63,4 @@ Workbench Task 6: complete (commit b948d43, React Flow graph + modal)
 Workbench Task 7: complete (commit ddf6d2e, README + e2e verified API chain + vite proxy)
 Workbench UI: ALL TASKS COMPLETE
 PoC MCP Task 1: complete (commit e23c4eb, scaffold + workspace.ts)
+PoC MCP Task 2: complete (commit ebe3515, tools.ts)
