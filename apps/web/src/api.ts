@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry } from "@traceforge/shared";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 export async function createCase(name: string, allowHosts: string[]): Promise<Case> {
@@ -92,4 +92,8 @@ export async function listCases(): Promise<Case[]> {
 
 export async function listMcpTools(): Promise<McpToolHandle[]> {
   return (await fetch("/api/mcp/tools")).json();
+}
+
+export async function listWarnings(caseId: string): Promise<ObserverWarning[]> {
+  return (await fetch(`/api/cases/${caseId}/warnings`)).json();
 }

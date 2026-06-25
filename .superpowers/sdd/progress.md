@@ -74,3 +74,4 @@ Reeval Task 4: complete (commit 48c57de, README + roadmap checkmark)
 LLM Reevaluation: ALL TASKS COMPLETE
 Observer Task 1: complete (commit 0313d01, schema+event)
 Observer Task 2: complete (commit a106e29, Observer.review)
+Observer Task 3: complete (commit 28bb975, store+table+trigger+route)

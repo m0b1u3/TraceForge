@@ -4,11 +4,13 @@ import { TasksTab } from "./knowledge/TasksTab.js";
 import { TimelineTab } from "./knowledge/TimelineTab.js";
 import { McpTab } from "./knowledge/McpTab.js";
 import { GraphTab } from "./knowledge/GraphTab.js";
+import { ObserverTab } from "./knowledge/ObserverTab.js";
 
 const TABS = [
   { key: "facts", label: "Facts" }, { key: "tasks", label: "Tasks" },
   { key: "timeline", label: "Timeline" }, { key: "mcp", label: "MCP" },
   { key: "graph", label: "Graph" },
+  { key: "observer", label: "Observer" },
 ] as const;
 
 export function KnowledgePanel() {
@@ -26,6 +28,7 @@ export function KnowledgePanel() {
         {activeTab === "timeline" && <TimelineTab />}
         {activeTab === "mcp" && <McpTab />}
         {activeTab === "graph" && <GraphTab />}
+        {activeTab === "observer" && <ObserverTab />}
       </div>
     </div>
   );

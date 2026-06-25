@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case } from "@traceforge/shared";
+import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools } from "./api.js";
+import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings } from "./api.js";
 
 export interface AgentUiEvent {
   kind: "text" | "tool_call" | "tool_result" | "done" | "error" | "started";
@@ -21,9 +21,11 @@ interface State {
   browserController: "llm" | "human" | null;
   browserUrl: string;
   cases: Case[];
-  activeTab: "facts" | "tasks" | "timeline" | "mcp" | "graph";
+  activeTab: "facts" | "tasks" | "timeline" | "mcp" | "graph" | "observer";
   graphModalOpen: boolean;
   mcpTools: McpToolHandle[];
+  warnings: ObserverWarning[];
+  addWarning: (w: ObserverWarning) => void;
   setCase: (id: string) => void;
   setCases: (list: Case[]) => void;
   setActiveTab: (tab: State["activeTab"]) => void;
@@ -60,16 +62,18 @@ export const useStore = create<State>((set, get) => ({
   activeTab: "facts",
   graphModalOpen: false,
   mcpTools: [],
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], pendingApproval: null, browserController: null, browserUrl: "" }),
+  warnings: [],
+  addWarning: (w) => set((s) => ({ warnings: [...s.warnings, w] })),
+  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], pendingApproval: null, browserController: null, browserUrl: "", warnings: [] }),
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
   enterCase: async (id) => {
     get().setCase(id);
-    const [traffic, facts, tasks, timeline, mcpTools] = await Promise.all([
-      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(),
+    const [traffic, facts, tasks, timeline, mcpTools, warnings] = await Promise.all([
+      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id),
     ]);
-    set({ traffic, facts, tasks, timeline, mcpTools });
+    set({ traffic, facts, tasks, timeline, mcpTools, warnings });
   },
   addEntry: (e) => set((s) => ({ traffic: [...s.traffic, e] })),
   addFact: (f) => set((s) => ({ facts: [...s.facts, f] })),
@@ -114,6 +118,7 @@ export const useStore = create<State>((set, get) => ({
       else if (event.type === "browser_stopped" && event.caseId === cid) get().resetBrowser();
       else if (event.type === "browser_control_changed" && event.caseId === cid) get().setBrowser(event.controller);
       else if (event.type === "browser_navigated" && event.caseId === cid) get().setBrowser(get().browserController, event.url);
+      else if (event.type === "observer_warning" && event.warning.caseId === cid) get().addWarning(event.warning);
     };
   },
 }));
