@@ -28,8 +28,17 @@ export function AgentPanel() {
         ))}
       </div>
       <div className="tf-panel-foot">
-        <input className="tf-input" style={{ flex: 1 }} value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="给 agent 一个目标…" />
-        <button className="tf-btn tf-btn-accent" onClick={() => { resetAgent(); runAgent(caseId, goal); }}>启动 Agent</button>
+        <input
+          className="tf-input" style={{ flex: 1 }} value={goal}
+          onChange={(e) => setGoal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && goal.trim()) { resetAgent(); runAgent(caseId, goal); setGoal(""); } }}
+          placeholder="给 agent 一个目标…"
+        />
+        <button
+          className="tf-btn tf-btn-accent"
+          disabled={!goal.trim()}
+          onClick={() => { if (!goal.trim()) return; resetAgent(); runAgent(caseId, goal); setGoal(""); }}
+        >启动 Agent</button>
       </div>
     </div>
   );

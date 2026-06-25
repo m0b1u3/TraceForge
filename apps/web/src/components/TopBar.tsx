@@ -5,8 +5,18 @@ import { listCases, createCase } from "../api.js";
 export function TopBar() {
   const { caseId, cases, setCases, enterCase, browserController, browserUrl } = useStore();
   const [creating, setCreating] = useState(false);
-  const [name, setName] = useState("demo");
-  const [hosts, setHosts] = useState("example.com");
+  const [name, setName] = useState("");
+  const [hosts, setHosts] = useState("");
+
+  const submitCreate = async () => {
+    if (!name.trim()) return;
+    const c = await createCase(name.trim(), hosts.split(",").map((h) => h.trim()).filter(Boolean));
+    setCases([...cases, c]);
+    await enterCase(c.id);
+    setCreating(false);
+    setName("");
+    setHosts("");
+  };
 
   useEffect(() => { listCases().then(setCases); }, [setCases]);
 
@@ -23,14 +33,20 @@ export function TopBar() {
       <button className="tf-btn" onClick={() => setCreating((v) => !v)}>新建 Case</button>
       {creating && (
         <>
-          <input className="tf-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="名称" />
-          <input className="tf-input" value={hosts} onChange={(e) => setHosts(e.target.value)} placeholder="allowHosts(逗号)" />
-          <button className="tf-btn tf-btn-accent" onClick={async () => {
-            const c = await createCase(name, hosts.split(",").map((h) => h.trim()));
-            setCases([...cases, c]);
-            await enterCase(c.id);
-            setCreating(false);
-          }}>创建</button>
+          <input
+            className="tf-input" value={name} autoFocus
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submitCreate(); if (e.key === "Escape") setCreating(false); }}
+            placeholder="Case 名称"
+          />
+          <input
+            className="tf-input" value={hosts}
+            onChange={(e) => setHosts(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submitCreate(); if (e.key === "Escape") setCreating(false); }}
+            placeholder="授权范围 host（可选，逗号分隔）"
+          />
+          <button className="tf-btn tf-btn-accent" disabled={!name.trim()} onClick={submitCreate}>创建</button>
+          <button className="tf-btn" onClick={() => { setCreating(false); setName(""); setHosts(""); }}>取消</button>
         </>
       )}
       <span className="tf-spacer" />
