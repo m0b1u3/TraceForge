@@ -2845,7 +2845,7 @@ TraceForge 应该像一个有经验的渗透测试搭档：
 2. **Terminal / PoC / 依赖（原阶段 6，改形态）** — 不在核心写死命令执行逻辑，而是**作为一个本地 MCP server 或工具插件**接入（命令执行天然是 risk=command，过 ApprovalGate）。Plan C 已铺好接入通道。
 3. **Graph Panel（原阶段 7，基本不变）** — Facts/Tasks/Actions/Decisions/evidenceRefs 数据已齐，做 GraphBuilder + ReactFlow 可视化。
 4. **重新评估机制（原阶段 8，去硬编码重设计）** — 原 Trigger Rules（「新凭据→触发登录任务」等写死映射）违反第 3.0 原则。改为：新 Fact 入库时由 **LLM 判断**是否应重启/新建相关 Task，规则不写进代码。✅ 已完成（reopen_task/revert_done_task 两工具，LLM 判断 Fact↔Task 关联，去 factTypeToTriggers 硬编码；revert done 过 ApprovalGate 人工确认）。
-5. **Observer（原阶段 9，形态不变）** — 监督 agent：查无依据猜测、低效路径、过早结束，向 Manager 发纠偏建议。
+5. **Observer（原阶段 9，形态不变）** — 监督 agent：查无依据猜测、低效路径、过早结束，向 Manager 发纠偏建议。✅ 已完成（run 后旁路 LLM 监督，10 检查项作 prompt 指引去硬编码，ObserverWarning 存库 + 工作台 Tab，只提醒不干预）。
 6. **Plan B 工具插件（按需）** — 仅当某关键工具无 MCP 封装时单独写；MCP 已是主扩展通道，B 降为补充。
 
 > 横切关注（第 25-30 章：上下文/证据检索、自身安全、置信度传播、多 Case 隔离、并发恢复、可观测性）随各功能推进逐步落实，不单列为阶段。
