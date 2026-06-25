@@ -114,6 +114,30 @@ select.tf-input { cursor: pointer; }
 .tf-modal-bg { position: absolute; inset: 0; background: rgba(6,7,9,0.7); display: flex; align-items: center; justify-content: center; z-index: 10; backdrop-filter: blur(8px) saturate(120%); }
 .tf-modal { width: 86vw; height: 80vh; background: var(--tf-panel); border: 1px solid var(--tf-border); border-radius: 16px; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 1px 0 var(--tf-hilite) inset; overflow: hidden; }
 
+/* 首屏 A：左文右行动，大气构图 */
+.tf-hero { height: 100vh; display: flex; align-items: center; justify-content: center; padding: 32px; background:
+  radial-gradient(1200px 600px at 18% 30%, rgba(74,214,224,0.06), transparent 60%),
+  radial-gradient(900px 500px at 85% 80%, rgba(74,214,224,0.04), transparent 55%); }
+.tf-hero-inner { width: 100%; max-width: 980px; display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 72px; align-items: center; }
+.tf-hero-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--tf-accent); font-size: 12px; font-weight: 600; letter-spacing: 0.16em; margin-bottom: 22px; }
+.tf-hero-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--tf-accent); box-shadow: 0 0 10px var(--tf-accent); }
+.tf-hero-title { margin: 0; font-size: 44px; line-height: 1.12; font-weight: 600; letter-spacing: -0.035em; color: var(--tf-text); }
+.tf-hero-sub { margin: 20px 0 0; font-size: 15px; line-height: 1.75; color: var(--tf-muted); max-width: 380px; }
+.tf-hero-feats { margin-top: 28px; display: flex; align-items: center; gap: 12px; font-size: 12.5px; color: var(--tf-faint); }
+.tf-dot-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--tf-faint); }
+
+.tf-launcher { background: linear-gradient(180deg, var(--tf-panel-2), var(--tf-panel)); border: 1px solid var(--tf-border); border-radius: 18px; padding: 26px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 30px 90px rgba(0,0,0,0.5), 0 1px 0 var(--tf-hilite) inset; }
+.tf-launcher-label { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--tf-muted); text-transform: uppercase; margin-bottom: 4px; }
+.tf-launcher-or { display: flex; align-items: center; gap: 10px; color: var(--tf-faint); font-size: 11.5px; margin: 2px 0; }
+.tf-launcher-or::before, .tf-launcher-or::after { content: ""; flex: 1; height: 1px; background: var(--tf-border-soft); }
+.tf-btn-block { width: 100%; justify-content: center; padding: 11px; font-size: 13.5px; }
+.tf-input-block { width: 100%; }
+
+@media (max-width: 760px) {
+  .tf-hero-inner { grid-template-columns: 1fr; gap: 36px; }
+  .tf-hero-title { font-size: 34px; }
+}
+
 .tf-center { display: flex; align-items: center; justify-content: center; height: 100vh; padding: 24px; }
 /* Double-Bezel：外壳(hairline + 微背景) 包内核 */
 .tf-card { position: relative; background: linear-gradient(180deg, var(--tf-panel-2), var(--tf-panel)); border: 1px solid var(--tf-border); border-radius: 20px; padding: 44px 48px; display: flex; flex-direction: column; gap: 22px; width: 100%; max-width: 560px; box-shadow: 0 30px 90px rgba(0,0,0,0.55), 0 1px 0 var(--tf-hilite) inset; }

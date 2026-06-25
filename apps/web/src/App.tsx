@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useStore } from "./store.js";
 import { TopBar } from "./components/TopBar.js";
+import { CaseLauncher } from "./components/CaseLauncher.js";
 import { BrowserPanel } from "./components/BrowserPanel.js";
 import { TrafficPanel } from "./components/TrafficPanel.js";
 import { AgentPanel } from "./components/AgentPanel.js";
@@ -13,18 +14,19 @@ export function App() {
 
   if (!caseId) {
     return (
-      <div className="tf-center">
-        <div className="tf-card" style={{ maxWidth: 460 }}>
-          <h2>TraceForge 漏洞挖掘工作台</h2>
-          <p className="tf-sub">证据驱动、人机协同的红队推理底座。新建或选择一个 Case 开始。</p>
-          <div className="tf-steps">
-            <div className="tf-step"><span className="tf-step-n">1</span><span><b>新建 Case</b> — 只需取个名字。授权范围留空，稍后在对话中按需纳入。</span></div>
-            <div className="tf-step"><span className="tf-step-n">2</span><span><b>给 Agent 一个目标</b> — 用自然语言描述要测什么。Agent 会自主探索；越界访问会请你确认授权范围。</span></div>
-            <div className="tf-step"><span className="tf-step-n">3</span><span><b>观察与介入</b> — 右栏实时看 Facts / Tasks / 图谱 / Observer 提示；可随时接管共享浏览器。</span></div>
+      <div className="tf-hero">
+        <div className="tf-hero-inner">
+          <div className="tf-hero-text">
+            <div className="tf-hero-brand"><span className="tf-hero-dot" />TRACEFORGE</div>
+            <h1 className="tf-hero-title">漏洞挖掘<br />智能体工作台</h1>
+            <p className="tf-hero-sub">让 AI 像有经验的红队搭档一样自主探索、记录证据、持续推理。你随时介入、把关方向，每一步都有依据。</p>
+            <div className="tf-hero-feats">
+              <span>人机共享浏览器</span><span className="tf-dot-sep" />
+              <span>证据驱动 Agent</span><span className="tf-dot-sep" />
+              <span>可回溯证据图谱</span>
+            </div>
           </div>
-          <div style={{ borderTop: "1px solid var(--tf-border-soft)", paddingTop: 14 }}>
-            <TopBar />
-          </div>
+          <CaseLauncher variant="hero" />
         </div>
       </div>
     );
