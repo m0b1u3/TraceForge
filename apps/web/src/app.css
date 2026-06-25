@@ -195,3 +195,33 @@ select.tf-input { cursor: pointer; }
 .tf-select-empty { padding: 9px; color: var(--tf-faint); font-size: 12.5px; text-align: center; }
 
 .react-flow__attribution { display: none; }
+
+/* Graph 自定义节点：BreachWeave 风深色卡片 */
+.tf-gnode { position: relative; width: 200px; background: var(--tf-panel-2); border: 1px solid var(--tf-border); border-radius: 11px; overflow: hidden; box-shadow: 0 6px 18px rgba(0,0,0,0.3), 0 1px 0 var(--tf-hilite) inset; transition: border-color .12s var(--tf-ease), box-shadow .12s var(--tf-ease); }
+.tf-gnode:hover { border-color: #353b45; }
+.tf-gnode.is-sel { border-color: var(--gn); box-shadow: 0 0 0 1px var(--gn), 0 8px 22px rgba(0,0,0,0.4); }
+.tf-gnode-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--gn); }
+.tf-gnode-in { padding: 9px 12px 10px 14px; }
+.tf-gnode-badge { font-family: var(--tf-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; margin-bottom: 5px; }
+.tf-gnode-title { font-size: 12px; color: var(--tf-text); font-weight: 500; line-height: 1.4; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tf-gnode-meta { font-family: var(--tf-mono); font-size: 10px; color: var(--tf-faint); margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tf-gnode-h { width: 6px !important; height: 6px !important; background: var(--tf-faint) !important; border: none !important; }
+
+.react-flow__controls { box-shadow: 0 4px 14px rgba(0,0,0,0.4) !important; border-radius: 8px !important; overflow: hidden; border: 1px solid var(--tf-border); }
+.react-flow__controls-button { background: var(--tf-panel-2) !important; border-bottom: 1px solid var(--tf-border-soft) !important; color: var(--tf-muted) !important; }
+.react-flow__controls-button:hover { background: var(--tf-elev) !important; }
+.react-flow__controls-button svg { fill: var(--tf-muted); }
+.react-flow__edge-text { font-family: var(--tf-mono); }
+
+/* Graph 详情侧栏 */
+.tf-gdetail { position: absolute; top: 0; right: 0; bottom: 0; width: 288px; z-index: 5; background: var(--tf-panel); border-left: 1px solid var(--tf-border); padding: 14px 16px; overflow: auto; box-shadow: -12px 0 30px rgba(0,0,0,0.3); }
+.tf-gdetail-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.tf-gdetail-title { font-size: 14px; color: var(--tf-text); font-weight: 500; line-height: 1.4; }
+.tf-gdetail-id { font-family: var(--tf-mono); font-size: 10.5px; color: var(--tf-faint); margin: 4px 0 14px; word-break: break-all; }
+.tf-gdetail-meta { display: flex; flex-direction: column; gap: 6px; padding: 11px 0; border-top: 1px solid var(--tf-border-soft); border-bottom: 1px solid var(--tf-border-soft); margin-bottom: 14px; }
+.tf-gdetail-kv { display: flex; justify-content: space-between; gap: 12px; font-size: 11.5px; }
+.tf-gdetail-kv span:first-child { color: var(--tf-muted); }
+.tf-gdetail-kv span:last-child { font-family: var(--tf-mono); color: var(--tf-text); word-break: break-all; text-align: right; }
+.tf-gdetail-rel { margin-bottom: 12px; }
+.tf-gdetail-rel-h { font-size: 11px; color: var(--tf-muted); font-weight: 500; margin-bottom: 6px; }
+.tf-gdetail-link { font-family: var(--tf-mono); font-size: 11.5px; color: var(--tf-text); padding: 5px 9px; background: var(--tf-panel-2); border: 1px solid var(--tf-border-soft); border-radius: 7px; margin-bottom: 5px; }
