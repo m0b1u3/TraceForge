@@ -65,3 +65,5 @@ Workbench UI: ALL TASKS COMPLETE
 PoC MCP Task 1: complete (commit e23c4eb, scaffold + workspace.ts)
 PoC MCP Task 2: complete (commit ebe3515, tools.ts)
 PoC MCP Task 3: complete (commit 13ebe8e, server.ts)
+PoC MCP Task 4: complete (commit cd1049e, main.ts + example + README + e2e verified 4 tools)
+PoC MCP server: ALL TASKS COMPLETE
