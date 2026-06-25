@@ -1,5 +1,7 @@
 import { create } from "zustand";
-import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent } from "@traceforge/shared";
+import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case } from "@traceforge/shared";
+import type { McpToolHandle } from "@traceforge/extension";
+import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools } from "./api.js";
 
 export interface AgentUiEvent {
   kind: "text" | "tool_call" | "tool_result" | "done" | "error" | "started";
@@ -18,7 +20,15 @@ interface State {
   pendingApproval: { approvalId: string; tool: string; input: string } | null;
   browserController: "llm" | "human" | null;
   browserUrl: string;
+  cases: Case[];
+  activeTab: "facts" | "tasks" | "timeline" | "mcp" | "graph";
+  graphModalOpen: boolean;
+  mcpTools: McpToolHandle[];
   setCase: (id: string) => void;
+  setCases: (list: Case[]) => void;
+  setActiveTab: (tab: State["activeTab"]) => void;
+  setGraphModalOpen: (open: boolean) => void;
+  enterCase: (id: string) => Promise<void>;
   addEntry: (e: TrafficEntry) => void;
   addFact: (f: Fact) => void;
   upsertTask: (t: Task) => void;
@@ -46,7 +56,21 @@ export const useStore = create<State>((set, get) => ({
   pendingApproval: null,
   browserController: null,
   browserUrl: "",
+  cases: [],
+  activeTab: "facts",
+  graphModalOpen: false,
+  mcpTools: [],
   setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], pendingApproval: null, browserController: null, browserUrl: "" }),
+  setCases: (list) => set({ cases: list }),
+  setActiveTab: (tab) => set({ activeTab: tab }),
+  setGraphModalOpen: (open) => set({ graphModalOpen: open }),
+  enterCase: async (id) => {
+    get().setCase(id);
+    const [traffic, facts, tasks, timeline, mcpTools] = await Promise.all([
+      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(),
+    ]);
+    set({ traffic, facts, tasks, timeline, mcpTools });
+  },
   addEntry: (e) => set((s) => ({ traffic: [...s.traffic, e] })),
   addFact: (f) => set((s) => ({ facts: [...s.facts, f] })),
   upsertTask: (t) =>

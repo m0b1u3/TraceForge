@@ -1,4 +1,5 @@
 import type { Case, TrafficEntry, Fact, Task, TimelineEntry } from "@traceforge/shared";
+import type { McpToolHandle } from "@traceforge/extension";
 
 export async function createCase(name: string, allowHosts: string[]): Promise<Case> {
   const r = await fetch("/api/cases", {
@@ -83,4 +84,12 @@ export async function resolveApproval(approvalId: string, decision: "approved" |
   return fetch(`/api/agent/approvals/${approvalId}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision }),
   });
+}
+
+export async function listCases(): Promise<Case[]> {
+  return (await fetch("/api/cases")).json();
+}
+
+export async function listMcpTools(): Promise<McpToolHandle[]> {
+  return (await fetch("/api/mcp/tools")).json();
 }

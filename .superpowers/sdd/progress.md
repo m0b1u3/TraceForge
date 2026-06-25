@@ -54,3 +54,4 @@ PlanC Task 3: complete (commit 2c3cb0f, McpManager + SDK dep)
 PlanC Task 4: complete (commit e4b6a76, routes + main.ts wiring)
 PlanC Task 5: complete (commit c605be0, README + example config + e2e verified 14 real tools)
 PlanC: ALL TASKS COMPLETE
+Workbench Task 1: complete (commit 404c6cc, buildGraph)
