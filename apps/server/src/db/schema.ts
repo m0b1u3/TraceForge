@@ -85,3 +85,15 @@ export const decisions = sqliteTable("decisions", {
   newFactsJson: text("new_facts_json").notNull(),
   createdAt: text("created_at").notNull(),
 });
+
+export const observerWarnings = sqliteTable("observer_warnings", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  level: text("level").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  relatedFactsJson: text("related_facts_json").notNull(),
+  relatedTasksJson: text("related_tasks_json").notNull(),
+  suggestedAction: text("suggested_action").notNull(),
+  createdAt: text("created_at").notNull(),
+});

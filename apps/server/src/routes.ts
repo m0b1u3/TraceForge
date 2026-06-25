@@ -18,9 +18,10 @@ import {
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
   makeReopenTaskTool, makeRevertDoneTaskTool,
   makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools,
-  McpManager, mcpToolToDescriptor,
+  McpManager, mcpToolToDescriptor, Observer,
 } from "@traceforge/extension";
 import { BrowserSession } from "./browser-session.js";
+import { ObserverWarningStore } from "./stores/observer-store.js";
 import { ApprovalRegistry } from "./agent-approvals.js";
 
 export function registerRoutes(
@@ -40,6 +41,7 @@ export function registerRoutes(
   const llm: LlmProvider = provider ?? createProviderOrMock(loadLlmConfig());
   const actionStore = new ActionCardStore(db);
   const decisionStore = new DecisionStore(db);
+  const observerStore = new ObserverWarningStore(db);
 
   app.post("/api/cases", async (req) => {
     const body = req.body as { name: string; allowHosts: string[]; denyHosts?: string[] };
@@ -161,6 +163,11 @@ export function registerRoutes(
 
   app.get("/api/mcp/tools", async () => (mcp ? mcp.listTools() : []));
 
+  app.get("/api/cases/:id/warnings", async (req) => {
+    const { id } = req.params as { id: string };
+    return observerStore.listByCase(id);
+  });
+
   const approvals = new ApprovalRegistry();
 
   app.post("/api/cases/:id/agent/run", async (req, reply) => {
@@ -204,17 +211,31 @@ export function registerRoutes(
 你可以用工具查看流量、记录发现（Fact/Task/Action）、重放请求。证据驱动：记录动作前先记录支撑它的 Fact。
 完成后用一句话总结。`;
 
+    const trajectory: string[] = [];
     bus.emit({ type: "agent_started", caseId: id, goal });
     try {
       await new AgentRuntime(llm, registry, gate).run(system, goal, (e) => {
-        if (e.type === "tool_call") bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content });
-        else if (e.type === "tool_result") bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content });
-        else if (e.type === "text") bus.emit({ type: "agent_text", caseId: id, content: e.content });
-        else if (e.type === "done") bus.emit({ type: "agent_done", caseId: id, content: e.content });
+        if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); trajectory.push(`[tool] ${e.name}(${e.content})`); }
+        else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); trajectory.push(`[result] ${e.name} → ${e.content}`); }
+        else if (e.type === "text") { bus.emit({ type: "agent_text", caseId: id, content: e.content }); trajectory.push(`[text] ${e.content}`); }
+        else if (e.type === "done") { bus.emit({ type: "agent_done", caseId: id, content: e.content }); trajectory.push(`[done] ${e.content}`); }
       });
     } catch (err) {
       bus.emit({ type: "agent_error", caseId: id, content: (err as Error).message });
       return reply.code(500).send({ error: "agent run failed", reason: (err as Error).message });
+    }
+
+    // 旁路监督：run 结束后触发 Observer，失败不影响已完成的 run
+    try {
+      const factsSummary = factStore.listByCase(id).map((f) => `${f.id} [${f.type}] ${f.title}`).join("\n") || "(无)";
+      const tasksSummary = taskStore.listByCase(id).map((t) => `${t.id} [${t.status}] ${t.title}`).join("\n") || "(无)";
+      const warnings = await new Observer(llm).review(id, { goal, trajectory: trajectory.join("\n"), factsSummary, tasksSummary });
+      for (const w of warnings) {
+        observerStore.create(w);
+        bus.emit({ type: "observer_warning", warning: w });
+      }
+    } catch (e) {
+      console.error("[observer]", (e as Error).message);
     }
     return { ok: true };
   });

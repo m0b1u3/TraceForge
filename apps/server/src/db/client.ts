@@ -48,6 +48,13 @@ export function createDb(path: string) {
       new_facts_json TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_decisions_case ON decisions(case_id);
+    CREATE TABLE IF NOT EXISTS observer_warnings (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, level TEXT NOT NULL,
+      title TEXT NOT NULL, description TEXT NOT NULL,
+      related_facts_json TEXT NOT NULL, related_tasks_json TEXT NOT NULL,
+      suggested_action TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_warnings_case ON observer_warnings(case_id);
   `);
   return drizzle(sqlite);
 }
