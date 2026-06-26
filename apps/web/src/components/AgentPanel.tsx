@@ -1,38 +1,7 @@
 import { useState } from "react";
-import { Sparkle, PaperPlaneTilt, Wrench, ArrowBendDownRight, CheckCircle, WarningCircle, Flag, ChatText, ShieldWarning, Globe } from "@phosphor-icons/react";
+import { Sparkle, PaperPlaneTilt, ShieldWarning, Globe } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { runAgent, resolveApproval, approveScope } from "../api.js";
-
-function EvIcon({ kind }: { kind: string }) {
-  if (kind === "tool_call") return <Wrench size={13} weight="bold" />;
-  if (kind === "tool_result") return <ArrowBendDownRight size={13} weight="bold" />;
-  if (kind === "error") return <WarningCircle size={14} weight="fill" />;
-  if (kind === "done") return <CheckCircle size={14} weight="fill" />;
-  if (kind === "started") return <Flag size={13} weight="fill" />;
-  return <ChatText size={13} weight="bold" />;
-}
-
-function EventItem({ kind, text }: { kind: string; text: string }) {
-  // tool_call 文本形如 "tool(arg...)"
-  const cls = kind === "tool_call" ? "tf-ev-tool" : kind === "tool_result" ? "tf-ev-result" : `tf-ev-${kind}`;
-  if (kind === "tool_call") {
-    const m = text.match(/^([^(]+)\((.*)\)$/s);
-    const name = m ? m[1] : text;
-    const arg = m ? m[2] : "";
-    return (
-      <div className={`tf-ev ${cls}`}>
-        <span className="tf-ev-ico"><EvIcon kind={kind} /></span>
-        <span className="tf-ev-body"><span className="tf-ev-name">{name}</span>{arg && <span className="tf-ev-arg">{arg}</span>}</span>
-      </div>
-    );
-  }
-  return (
-    <div className={`tf-ev ${cls}`}>
-      <span className="tf-ev-ico"><EvIcon kind={kind} /></span>
-      <span className="tf-ev-body"><span className="tf-ev-text">{text}</span></span>
-    </div>
-  );
-}
 
 export function AgentPanel() {
   const { caseId, agentEvents, pendingApproval, pendingScope, setPendingScope, clearPendingApproval, resetAgent } = useStore();
@@ -44,13 +13,19 @@ export function AgentPanel() {
     if (!pendingApproval) return;
     setBusy(decision);
     try { await resolveApproval(pendingApproval.approvalId, decision); } catch { /* 忽略，下方仍清卡 */ }
-    clearPendingApproval();   // 乐观清除，不依赖 WS 回执
+    clearPendingApproval();
     setBusy(null);
   };
+
+  const send = () => { if (!goal.trim()) return; resetAgent(); runAgent(caseId, goal); setGoal(""); };
+
   return (
-    <div className="tf-panel" style={{ height: "100%" }}>
-      <div className="tf-panel-head"><Sparkle size={13} weight="bold" style={{ opacity: 0.6 }} /> Agent 对话 <span className="tf-count">{agentEvents.length} events</span></div>
-      <div className="tf-panel-body">
+    <main className="panel chat-panel">
+      <div className="panel-header">
+        <div><span className="section-kicker">Agent</span><h2>Run Console</h2></div>
+        <div className="session-state"><Sparkle size={14} /> autonomous</div>
+      </div>
+      <section className="messages">
         {pendingApproval && (
           <div className="tf-confirm tf-confirm-warn">
             <div className="tf-confirm-head"><ShieldWarning size={15} weight="fill" /> 需要你确认</div>
@@ -62,7 +37,7 @@ export function AgentPanel() {
             </div>
           </div>
         )}
-        {pendingScope && caseId && (
+        {pendingScope && (
           <div className="tf-confirm tf-confirm-info">
             <div className="tf-confirm-head"><Globe size={15} weight="fill" /> 授权范围扩展请求</div>
             <div className="tf-confirm-body">Agent 建议把 <code className="tf-confirm-inline">{pendingScope.host}</code> 纳入授权范围。</div>
@@ -78,24 +53,22 @@ export function AgentPanel() {
             <div className="tf-guide-icon"><Sparkle size={22} weight="duotone" /></div>
             <div className="tf-guide-title">Agent 待命</div>
             <div className="tf-guide-hint">在下方输入一个目标（如「测试 example.com 的登录接口有没有越权」），Agent 会自主探索并把发现记录为 Fact。</div>
-            <div className="tf-guide-step">↓ 在下方输入目标后回车</div>
           </div>
         )}
-        {agentEvents.map((e, i) => <EventItem key={i} kind={e.kind} text={e.text} />)}
-      </div>
-      <div className="tf-panel-foot">
+        {agentEvents.map((e, i) => (
+          <div className={`message ${e.kind === "error" ? "trace" : "agent"}`} key={i}>
+            <span>{e.kind}</span><p>{e.text}</p>
+          </div>
+        ))}
+      </section>
+      <div className="composer">
         <input
-          className="tf-input" style={{ flex: 1 }} value={goal}
-          onChange={(e) => setGoal(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && goal.trim()) { resetAgent(); runAgent(caseId, goal); setGoal(""); } }}
+          value={goal} onChange={(e) => setGoal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") send(); }}
           placeholder="给 agent 一个目标…"
         />
-        <button
-          className="tf-btn tf-btn-accent tf-btn-icon"
-          disabled={!goal.trim()}
-          onClick={() => { if (!goal.trim()) return; resetAgent(); runAgent(caseId, goal); setGoal(""); }}
-        ><PaperPlaneTilt size={14} weight="fill" /> 启动</button>
+        <button disabled={!goal.trim()} onClick={send}><PaperPlaneTilt size={15} weight="fill" /></button>
       </div>
-    </div>
+    </main>
   );
 }
