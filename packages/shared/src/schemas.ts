@@ -185,3 +185,16 @@ export const SessionStateSchema = z.object({
   updatedAt: z.string(),
 });
 export type SessionState = z.infer<typeof SessionStateSchema>;
+
+export const HypothesisSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  statement: z.string().min(1),
+  status: z.enum(["open", "confirmed", "refuted"]).default("open"),
+  basedOnFactIds: z.array(z.string()),
+  relatedTaskIds: z.array(z.string()).default([]),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  updateCount: z.number().default(0),
+});
+export type Hypothesis = z.infer<typeof HypothesisSchema>;

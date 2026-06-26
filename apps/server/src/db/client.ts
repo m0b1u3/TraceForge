@@ -69,6 +69,13 @@ export function createDb(path: string) {
       focus_json TEXT NOT NULL, active_hypothesis_ids_json TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS hypotheses (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, statement TEXT NOT NULL,
+      status TEXT NOT NULL, based_on_fact_ids_json TEXT NOT NULL,
+      related_task_ids_json TEXT NOT NULL, created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL, update_count INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_hypotheses_case ON hypotheses(case_id);
   `);
   return drizzle(sqlite);
 }

@@ -120,3 +120,15 @@ export const sessionState = sqliteTable("session_state", {
   activeHypothesisIdsJson: text("active_hypothesis_ids_json").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+export const hypotheses = sqliteTable("hypotheses", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  statement: text("statement").notNull(),
+  status: text("status").notNull(),
+  basedOnFactIdsJson: text("based_on_fact_ids_json").notNull(),
+  relatedTaskIdsJson: text("related_task_ids_json").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  updateCount: integer("update_count").notNull(),
+});
