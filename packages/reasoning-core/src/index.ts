@@ -3,3 +3,4 @@
 export * from "./token-estimate.js";
 export * from "./relevance.js";
 export * from "./context-builder.js";
+export * from "./compressor.js";
