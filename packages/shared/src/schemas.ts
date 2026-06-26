@@ -59,6 +59,9 @@ export const FactSchema = z.object({
   confidence: z.number().default(1),
   tags: z.array(z.string()).default([]),
   createdAt: z.string(),
+  updateCount: z.number().default(0),
+  updatedAt: z.string().default(""),
+  validity: z.enum(["valid", "superseded"]).default("valid"),
 });
 export type Fact = z.infer<typeof FactSchema>;
 
@@ -77,6 +80,7 @@ export const TaskSchema = z.object({
   priority: z.enum(["low", "medium", "high"]).default("medium"),
   createdAt: z.string(),
   updatedAt: z.string(),
+  updateCount: z.number().default(0),
 });
 export type Task = z.infer<typeof TaskSchema>;
 

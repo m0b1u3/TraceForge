@@ -27,6 +27,19 @@ export class CaseStore {
     });
   }
 
+  addAllowHost(id: string, host: string): Case | undefined {
+    const c = this.get(id);
+    if (!c) return undefined;
+    const rules = c.scopeRules.length > 0
+      ? c.scopeRules.map((r) => ({ ...r }))
+      : [{ caseId: "pending", allowHosts: [], denyHosts: [] }];
+    if (!rules[0].allowHosts.includes(host)) {
+      rules[0] = { ...rules[0], allowHosts: [...rules[0].allowHosts, host] };
+    }
+    this.db.update(cases).set({ scopeRulesJson: JSON.stringify(rules) }).where(eq(cases.id, id)).run();
+    return CaseSchema.parse({ ...c, scopeRules: rules });
+  }
+
   list(): Case[] {
     return this.db.select().from(cases).all().map((row) =>
       CaseSchema.parse({

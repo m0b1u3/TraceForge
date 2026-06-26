@@ -5,10 +5,12 @@ import type { Fact, Task, ActionCard } from "./schemas.js";
 const fact = (id: string, type = "endpoint"): Fact => ({
   id, caseId: "c", type, title: `fact ${id}`, value: null,
   source: { type: "ai", ref: "" }, confidence: 1, tags: [], createdAt: "t",
+  updateCount: 0, updatedAt: "t", validity: "valid",
 });
 const task = (id: string): Task => ({
   id, caseId: "c", title: `task ${id}`, status: "open", reason: "", blockedBy: [],
   triggerWhen: [], relatedFacts: [], priority: "medium", createdAt: "t", updatedAt: "t",
+  updateCount: 0,
 });
 const action = (id: string, evidenceRefs: string[]): ActionCard => ({
   id, caseId: "c", title: `action ${id}`, goal: "", evidenceRefs, hypothesisRefs: [],

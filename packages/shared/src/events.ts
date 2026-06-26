@@ -6,6 +6,7 @@ export type RuntimeEvent =
   | { type: "response_captured"; entry: TrafficEntry }
   | { type: "scope_violation"; caseId: string; url: string; reason: string }
   | { type: "fact_created"; fact: Fact }
+  | { type: "fact_updated"; fact: Fact }
   | { type: "task_created"; task: Task }
   | { type: "task_updated"; task: Task }
   | { type: "timeline_appended"; entry: TimelineEntry }
@@ -27,4 +28,5 @@ export type RuntimeEvent =
   | { type: "browser_stopped"; caseId: string }
   | { type: "browser_control_changed"; caseId: string; controller: "llm" | "human" }
   | { type: "browser_navigated"; caseId: string; url: string }
-  | { type: "observer_warning"; warning: ObserverWarning };
+  | { type: "observer_warning"; warning: ObserverWarning }
+  | { type: "scope_updated"; caseId: string; allowHosts: string[] };

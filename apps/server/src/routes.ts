@@ -180,6 +180,16 @@ export function registerRoutes(
     return observerStore.listByCase(id);
   });
 
+  app.post("/api/cases/:id/scope/approve", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { host } = (req.body ?? {}) as { host?: string };
+    if (!host) return reply.code(400).send({ error: "host required" });
+    const updated = cases.addAllowHost(id, host);
+    if (!updated) return reply.code(404).send({ error: "case not found" });
+    bus.emit({ type: "scope_updated", caseId: id, allowHosts: updated.scopeRules[0]?.allowHosts ?? [] });
+    return updated;
+  });
+
   const approvals = new ApprovalRegistry();
 
   app.post("/api/cases/:id/agent/run", async (req, reply) => {
