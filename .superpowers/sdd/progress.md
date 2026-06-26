@@ -88,3 +88,8 @@ GraphEngine Task 2: complete (commit bf87f6f, GraphView rewrite)
 GraphEngine Task 3: complete (commit 52cabdd, light graph styles)
 GraphEngine Task 4: complete (commit 9d1acbe, README + verify xyflow/elk compile)
 Graph engine (round 2): ALL TASKS COMPLETE
+DemoStyle Task 1: complete (commit fd885bb, app.css 移植)
+DemoStyle Task 2: complete (commit fa8c786, shell+topbar)
+DemoStyle Task 3: complete (commit d6c4d45, traffic+browser)
+DemoStyle Task 4: complete (commit 29b7c52, agent console)
+DemoStyle Task 5: complete (commit 5936608, knowledge+graph unify light)

@@ -49,7 +49,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 - LLM 驱动的重评估（修订路线第 4 项）：两个 agent 工具 reopen_task（重启未完成的旧任务，normal）与 revert_done_task（打回已完成结论，command 过 ApprovalGate 人工确认），都转为 recheck_candidate。新 Fact 入库后 LLM 自主判断哪些旧任务该复活/翻案——Fact↔Task 关联完全由 LLM 决定，代码不写 factTypeToTriggers 等映射表（第 27 章双向重评估的去硬编码最小闭环）。两工具强制 evidenceRefs 引用已记录 Fact
 - Observer 监督（修订路线第 5 项）：agent 一轮 run 结束后系统自动发一次独立 LLM 调用（旁路监督，不干预），把轨迹 + Facts/Tasks 摘要交给它判断 agent 有无无依据猜测/忽略已有信息/偏离目标/过早结束等问题，产出 ObserverWarning（level=info/warning/critical）存库 + 工作台 Observer Tab 展示。10 个检查项是 prompt 指引而非代码 if 规则（零硬编码）；只提醒、纠偏决定权留给人。轨迹用 <untrusted_data> 边界防注入；Observer 失败不影响 agent run（降级不崩）
 - 实时实体数据机制（工作流图谱重做 第 1 轮 / 共 3 轮）：Fact/Task 加 updateCount/updatedAt/validity；record_fact/record_task 入参可带 id 实现 upsert（带=更新该实体并 updateCount+1、emit fact_updated/task_updated；不带=新建），LLM 自主决定。为后续工作流图谱的「节点实时计数+状态变化」提供数据地基
-- 工作流图谱引擎（图谱重做 第 2 轮 / 共 3 轮）：GraphView 换 @xyflow/react v12 + elkjs 自动布局，照 BreachWeave 风做成浅色白卡片节点（类型徽章 + 标题 + body + N updates，validity=superseded 置灰划线）+ 流动贝塞尔连线 + 最新 updatedAt 节点自动聚焦。节点随真实 agent 事件实时出现/更新。仅图谱区浅色（.tf-graph 作用域），第 3 轮整体浅色化收尾
+- 工作流图谱引擎（图谱重做 第 2 轮 / 共 3 轮）：GraphView 换 @xyflow/react v12 + elkjs 自动布局，照 BreachWeave 风做成浅色白卡片节点（类型徽章 + 标题 + body + N updates，validity=superseded 置灰划线）+ 流动贝塞尔连线 + 最新 updatedAt 节点自动聚焦。节点随真实 agent 事件实时出现/更新
+- 整体 demo 风样式（图谱重做 第 3 轮 / 共 3 轮 · 收尾）：以 BreachWeave demo 的 styles.css 为基底重做整个工作台为浅色专业风（.app-shell/.topbar/.workspace/.panel/.request-row/.message/.composer），各组件结构对齐 demo；演示专用部分（重放/假导航/写死 id）换成真功能（Case 选择/控制权状态/真事件流）；去图谱作用域整体浅色统一。保留 Geist + 思源黑字体
 
 ## 测试
 
