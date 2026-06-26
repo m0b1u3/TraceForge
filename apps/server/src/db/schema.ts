@@ -111,3 +111,12 @@ export const observerWarnings = sqliteTable("observer_warnings", {
   suggestedAction: text("suggested_action").notNull(),
   createdAt: text("created_at").notNull(),
 });
+
+export const sessionState = sqliteTable("session_state", {
+  caseId: text("case_id").primaryKey(),
+  currentGoal: text("current_goal").notNull(),
+  phase: text("phase").notNull(),
+  focusJson: text("focus_json").notNull(),
+  activeHypothesisIdsJson: text("active_hypothesis_ids_json").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});

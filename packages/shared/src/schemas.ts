@@ -171,3 +171,17 @@ export const AgentEventSchema = z.object({
   createdAt: z.string(),
 });
 export type AgentEvent = z.infer<typeof AgentEventSchema>;
+
+export const SessionStateSchema = z.object({
+  caseId: z.string(),
+  currentGoal: z.string().default(""),
+  phase: z.enum(["recon", "analyze", "exploit", "report"]).default("recon"),
+  focus: z.object({
+    host: z.string().optional(),
+    url: z.string().optional(),
+    note: z.string().optional(),
+  }).default({}),
+  activeHypothesisIds: z.array(z.string()).default([]),
+  updatedAt: z.string(),
+});
+export type SessionState = z.infer<typeof SessionStateSchema>;

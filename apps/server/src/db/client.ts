@@ -63,6 +63,12 @@ export function createDb(path: string) {
       text TEXT NOT NULL, tool TEXT, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_agent_events_case ON agent_events(case_id);
+    CREATE TABLE IF NOT EXISTS session_state (
+      case_id TEXT PRIMARY KEY,
+      current_goal TEXT NOT NULL, phase TEXT NOT NULL,
+      focus_json TEXT NOT NULL, active_hypothesis_ids_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
   return drizzle(sqlite);
 }
