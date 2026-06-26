@@ -17,3 +17,5 @@ export {
   makeReopenTaskTool, makeRevertDoneTaskTool, type TaskStatusReader, type StatusWriter,
   type FactWriter, type TaskWriter, type ActionWriter, type DecisionWriter, type TimelineWriter, type Emit,
 } from "./case-tools.js";
+export { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool } from "./cognitive-tools.js";
+export type { SessionStateWriter, HypothesisWriter, FactReader } from "./cognitive-tools.js";
