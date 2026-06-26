@@ -71,21 +71,39 @@ export type Emit = (e: RuntimeEvent) => void;
 export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: TimelineWriter, emit: Emit): ToolDescriptor {
   return {
     name: "record_fact",
-    description: "把一个发现记录为 Fact。type 用最贴切的英文标识（如 api_endpoint、graphql_endpoint、credential、finding 等，不限于预设）。",
+    description: "把一个发现记录为 Fact。type 用最贴切的英文标识（如 api_endpoint、graphql_endpoint、credential、finding 等，不限于预设）。要更新已有 Fact（如证据增强、置信度变化、标记 validity=superseded）时带上它的 id；新建则不带 id。",
     inputSchema: {
       type: "object",
       properties: {
+        id: { type: "string" },
         type: { type: "string" }, title: { type: "string" }, value: {},
         confidence: { type: "number" }, tags: { type: "array", items: { type: "string" } },
+        validity: { type: "string", enum: ["valid", "superseded"] },
       },
       required: ["type", "title"],
     },
     risk: "normal",
     source: "builtin",
     execute: async (input) => {
-      const i = input as { type: string; title: string; value?: unknown; confidence?: number; tags?: string[] };
+      const i = input as { id?: string; type?: string; title?: string; value?: unknown; confidence?: number; tags?: string[]; validity?: string };
+      if (typeof i.id === "string" && i.id) {
+        if (!facts.getById(i.id)) return { ok: false, content: `fact ${i.id} 不存在，新建请去掉 id` };
+        const patch: Record<string, unknown> = {};
+        if (i.type !== undefined) patch.type = i.type;
+        if (i.title !== undefined) patch.title = i.title;
+        if (i.value !== undefined) patch.value = i.value;
+        if (typeof i.confidence === "number") patch.confidence = i.confidence;
+        if (Array.isArray(i.tags)) patch.tags = i.tags;
+        if (i.validity === "valid" || i.validity === "superseded") patch.validity = i.validity;
+        const fact = facts.update(i.id, patch as never);
+        if (!fact) return { ok: false, content: `更新失败：${i.id}` };
+        const entry = timeline.append(caseId, "fact_updated", `Fact 更新: ${fact.title}（第 ${fact.updateCount} 次）`, fact.id);
+        emit({ type: "fact_updated", fact });
+        emit({ type: "timeline_appended", entry });
+        return { ok: true, content: `已更新 Fact ${fact.id}（第 ${fact.updateCount} 次）` };
+      }
       const fact = facts.create(caseId, {
-        type: i.type, title: i.title, value: i.value ?? {},
+        type: i.type ?? "note", title: i.title ?? "", value: i.value ?? {},
         source: { type: "ai", ref: "agent" },
         confidence: typeof i.confidence === "number" ? i.confidence : 1,
         tags: Array.isArray(i.tags) ? i.tags : [],
@@ -119,10 +137,11 @@ function normalizeStatus(v: unknown): Task["status"] {
 export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: TimelineWriter, emit: Emit): ToolDescriptor {
   return {
     name: "record_task",
-    description: "记录一个待办/挂起任务。可设 status=blocked + triggerWhen 表示等待某条件（如等凭据）。",
+    description: "记录一个待办/挂起任务。可设 status=blocked + triggerWhen 表示等待某条件（如等凭据）。要更新已有 Task（改状态/标题/原因等）时带上它的 id；新建则不带 id。",
     inputSchema: {
       type: "object",
       properties: {
+        id: { type: "string" },
         title: { type: "string" }, status: { type: "string" }, reason: { type: "string" },
         blockedBy: { type: "array", items: { type: "string" } },
         triggerWhen: { type: "array", items: { type: "string" } },
@@ -135,6 +154,23 @@ export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: 
     source: "builtin",
     execute: async (input) => {
       const i = input as Record<string, unknown>;
+      if (typeof i.id === "string" && i.id) {
+        if (!tasks.getById(i.id)) return { ok: false, content: `task ${i.id} 不存在，新建请去掉 id` };
+        const patch: Record<string, unknown> = {};
+        if (typeof i.title === "string") patch.title = i.title;
+        if (typeof i.status === "string") patch.status = normalizeStatus(i.status);
+        if (typeof i.reason === "string") patch.reason = i.reason;
+        if (typeof i.priority === "string") patch.priority = normalizePriority(i.priority);
+        if (Array.isArray(i.blockedBy)) patch.blockedBy = i.blockedBy;
+        if (Array.isArray(i.triggerWhen)) patch.triggerWhen = i.triggerWhen;
+        if (Array.isArray(i.relatedFacts)) patch.relatedFacts = i.relatedFacts;
+        const task = tasks.update(i.id, patch as never);
+        if (!task) return { ok: false, content: `更新失败：${i.id}` };
+        const entry = timeline.append(caseId, "task_updated", `Task 更新: ${task.title}（第 ${task.updateCount} 次）`, task.id);
+        emit({ type: "task_updated", task });
+        emit({ type: "timeline_appended", entry });
+        return { ok: true, content: `已更新 Task ${task.id}（第 ${task.updateCount} 次）` };
+      }
       const task = tasks.create(caseId, {
         title: String(i.title),
         status: normalizeStatus(i.status),
