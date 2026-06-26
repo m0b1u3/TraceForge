@@ -86,3 +86,5 @@ Realtime entity data (round 1): ALL TASKS COMPLETE
 GraphEngine Task 1: complete (commit 2e5330c, buildGraph meta)
 GraphEngine Task 2: complete (commit bf87f6f, GraphView rewrite)
 GraphEngine Task 3: complete (commit 52cabdd, light graph styles)
+GraphEngine Task 4: complete (commit 9d1acbe, README + verify xyflow/elk compile)
+Graph engine (round 2): ALL TASKS COMPLETE
