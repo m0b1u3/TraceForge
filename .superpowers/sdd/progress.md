@@ -93,3 +93,5 @@ DemoStyle Task 2: complete (commit fa8c786, shell+topbar)
 DemoStyle Task 3: complete (commit d6c4d45, traffic+browser)
 DemoStyle Task 4: complete (commit 29b7c52, agent console)
 DemoStyle Task 5: complete (commit 5936608, knowledge+graph unify light)
+DemoStyle Task 6: complete (commit 0fef4a1, README+roadmap+e2e verify)
+Demo styling (round 3): ALL TASKS COMPLETE — 工作流图谱 3 轮重做收尾
