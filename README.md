@@ -48,10 +48,11 @@ export ANTHROPIC_API_KEY=sk-ant-...
 - Terminal/PoC MCP server（@traceforge/mcp-poc-server，修订路线第 2 项）：独立 stdio MCP server，暴露 exec_command/write_file/read_file/list_dir 四个原子工具，按 caseId 锁进 workspace/<caseId>/（路径逃逸拒绝 + 命令超时 + 输出截断）。让 agent 写 PoC、跑命令、装依赖、读输出——装依赖=exec pip/npm、跑脚本=write+exec、分析=LLM 读输出自判，零硬编码。命令执行 risk=command 过 ApprovalGate 人工确认。core 零改动，经 config/mcp.json 接入（见 mcp.example.json）
 - LLM 驱动的重评估（修订路线第 4 项）：两个 agent 工具 reopen_task（重启未完成的旧任务，normal）与 revert_done_task（打回已完成结论，command 过 ApprovalGate 人工确认），都转为 recheck_candidate。新 Fact 入库后 LLM 自主判断哪些旧任务该复活/翻案——Fact↔Task 关联完全由 LLM 决定，代码不写 factTypeToTriggers 等映射表（第 27 章双向重评估的去硬编码最小闭环）。两工具强制 evidenceRefs 引用已记录 Fact
 - Observer 监督（修订路线第 5 项）：agent 一轮 run 结束后系统自动发一次独立 LLM 调用（旁路监督，不干预），把轨迹 + Facts/Tasks 摘要交给它判断 agent 有无无依据猜测/忽略已有信息/偏离目标/过早结束等问题，产出 ObserverWarning（level=info/warning/critical）存库 + 工作台 Observer Tab 展示。10 个检查项是 prompt 指引而非代码 if 规则（零硬编码）；只提醒、纠偏决定权留给人。轨迹用 <untrusted_data> 边界防注入；Observer 失败不影响 agent run（降级不崩）
+- 实时实体数据机制（工作流图谱重做 第 1 轮 / 共 3 轮）：Fact/Task 加 updateCount/updatedAt/validity；record_fact/record_task 入参可带 id 实现 upsert（带=更新该实体并 updateCount+1、emit fact_updated/task_updated；不带=新建），LLM 自主决定。为后续工作流图谱的「节点实时计数+状态变化」提供数据地基。后两轮：图谱引擎换 @xyflow/react+elk、整体浅色化三栏
 
 ## 测试
 
 ```bash
-pnpm test     # 147 个单元测试
+pnpm test     # 168 个单元测试
 pnpm -r build # 全量构建
 ```

@@ -80,3 +80,4 @@ Observer Task 5: complete (commit 0e5a78d, README + roadmap checkmark)
 Observer: ALL TASKS COMPLETE
 Realtime Task 1: complete (commit ff97e7c, shared fields+event)
 Realtime Task 2: complete (commit 90a712c, db cols + store methods)
+Realtime Task 3: complete (commit 8ce0f86, upsert tools)
