@@ -167,7 +167,7 @@ function GraphInner({ interactive }: { interactive: boolean }) {
     return <div className="tf-empty" style={{ padding: 12 }}>暂无图谱数据（记录 Fact/Action 后出现）。</div>;
   }
   return (
-    <div className="tf-graph" style={{ position: "relative", width: "100%", height: "100%" }}>
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <ReactFlow
         nodes={laid} edges={flow.edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView
         nodesDraggable={false} nodesConnectable={false} elementsSelectable={interactive}

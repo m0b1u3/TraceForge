@@ -1,6 +1,6 @@
 import { useStore } from "../../store.js";
 
-const LEVEL_COLOR: Record<string, string> = { critical: "var(--tf-err)", warning: "var(--tf-warn)", info: "var(--tf-muted)" };
+const LEVEL_COLOR: Record<string, string> = { critical: "var(--red)", warning: "var(--amber)", info: "var(--muted)" };
 
 export function ObserverTab() {
   const warnings = useStore((s) => s.warnings);
@@ -8,8 +8,8 @@ export function ObserverTab() {
   return <>{warnings.map((w) => (
     <div className="tf-row" key={w.id} style={{ borderLeft: `2px solid ${LEVEL_COLOR[w.level]}`, paddingLeft: 8 }}>
       <span style={{ color: LEVEL_COLOR[w.level] }}>[{w.level}]</span> {w.title}
-      <div style={{ color: "var(--tf-muted)", marginTop: 2 }}>{w.description}</div>
-      <div style={{ color: "var(--tf-faint)", marginTop: 2 }}>建议：{w.suggestedAction}</div>
+      <div style={{ color: "var(--muted)", marginTop: 2 }}>{w.description}</div>
+      <div style={{ color: "var(--faint)", marginTop: 2 }}>建议：{w.suggestedAction}</div>
     </div>
   ))}</>;
 }

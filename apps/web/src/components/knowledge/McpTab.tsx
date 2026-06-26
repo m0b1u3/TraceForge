@@ -5,7 +5,7 @@ export function McpTab() {
   return <>{mcpTools.map((t) => (
     <div className="tf-row" key={`${t.serverName}/${t.toolName}`}>
       <span className="tf-tag">{t.serverName}</span>{t.toolName}
-      <span style={{ color: "var(--tf-faint)" }}> — {t.description}</span>
+      <span style={{ color: "var(--faint)" }}> — {t.description}</span>
     </div>
   ))}</>;
 }
