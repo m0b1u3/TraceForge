@@ -196,22 +196,27 @@ select.tf-input { cursor: pointer; }
 
 .react-flow__attribution { display: none; }
 
-/* Graph 自定义节点：BreachWeave 风深色卡片 */
-.tf-gnode { position: relative; width: 200px; background: var(--tf-panel-2); border: 1px solid var(--tf-border); border-radius: 11px; overflow: hidden; box-shadow: 0 6px 18px rgba(0,0,0,0.3), 0 1px 0 var(--tf-hilite) inset; transition: border-color .12s var(--tf-ease), box-shadow .12s var(--tf-ease); }
-.tf-gnode:hover { border-color: #353b45; }
-.tf-gnode.is-sel { border-color: var(--gn); box-shadow: 0 0 0 1px var(--gn), 0 8px 22px rgba(0,0,0,0.4); }
-.tf-gnode-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--gn); }
-.tf-gnode-in { padding: 9px 12px 10px 14px; }
-.tf-gnode-badge { font-family: var(--tf-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; margin-bottom: 5px; }
-.tf-gnode-title { font-size: 12px; color: var(--tf-text); font-weight: 500; line-height: 1.4; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.tf-gnode-meta { font-family: var(--tf-mono); font-size: 10px; color: var(--tf-faint); margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tf-gnode-h { width: 6px !important; height: 6px !important; background: var(--tf-faint) !important; border: none !important; }
-
-.react-flow__controls { box-shadow: 0 4px 14px rgba(0,0,0,0.4) !important; border-radius: 8px !important; overflow: hidden; border: 1px solid var(--tf-border); }
-.react-flow__controls-button { background: var(--tf-panel-2) !important; border-bottom: 1px solid var(--tf-border-soft) !important; color: var(--tf-muted) !important; }
-.react-flow__controls-button:hover { background: var(--tf-elev) !important; }
-.react-flow__controls-button svg { fill: var(--tf-muted); }
-.react-flow__edge-text { font-family: var(--tf-mono); }
+/* 图谱区：demo 风浅色白卡片（作用域 .tf-graph，不污染周围深色） */
+.tf-graph .react-flow { background:
+  linear-gradient(90deg, rgba(15,23,42,0.02) 1px, transparent 1px),
+  linear-gradient(180deg, rgba(15,23,42,0.02) 1px, transparent 1px), #fbfdff; background-size: 22px 22px; }
+.tf-graph .react-flow__controls { overflow: hidden; border: 1px solid #dfe3e8; border-radius: 8px; box-shadow: 0 2px 8px rgba(22,24,29,0.1); }
+.tf-graph .react-flow__controls-button { background: #fff; border-bottom: 1px solid #eef1f4; }
+.tf-graph .react-flow__controls-button svg { fill: #475467; }
+.tf-graph .flow-card { width: 224px; padding: 10px 12px; border: 1.5px solid #d6dbe3; border-radius: 8px; color: #111827; background: #fff; box-shadow: 0 12px 22px rgba(22,24,29,0.12); animation: tf-node-in .18s ease both; }
+.tf-graph .flow-card.task { border-color: #c7d2fe; }
+.tf-graph .flow-card.action { border-color: #ddd6fe; }
+.tf-graph .flow-card.superseded { opacity: 0.55; background: #f3f4f6; }
+.tf-graph .flow-card.superseded strong { text-decoration: line-through; }
+.tf-graph .flow-handle { width: 1px; height: 1px; border: 0; opacity: 0; pointer-events: none; }
+.tf-graph .flow-card-head { display: flex; align-items: flex-start; gap: 9px; min-width: 0; }
+.tf-graph .flow-icon { display: grid; place-items: center; flex: 0 0 auto; width: 26px; height: 26px; border: 1px solid #e5e7eb; border-radius: 999px; }
+.tf-graph .flow-card-head span:not(.flow-icon) { display: block; font-size: 9px; font-weight: 800; letter-spacing: 0.04em; line-height: 1; }
+.tf-graph .flow-card-head strong { display: block; overflow: hidden; margin-top: 4px; color: #101828; font-size: 12px; line-height: 1.22; text-overflow: ellipsis; white-space: nowrap; }
+.tf-graph .flow-card p { display: -webkit-box; overflow: hidden; margin: 8px 0 0; color: #475467; font-size: 11px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.tf-graph .flow-card small { display: block; margin-top: 7px; color: #2563eb; font-size: 9.5px; font-weight: 700; }
+.tf-graph .edge-label { padding: 3px 6px; border: 1px solid #dfe3e8; border-radius: 6px; color: #475467; background: rgba(255,255,255,0.94); box-shadow: 0 2px 8px rgba(22,24,29,0.08); font-size: 9px; font-weight: 700; pointer-events: none; }
+@keyframes tf-node-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
 
 /* Graph 详情侧栏 */
 .tf-gdetail { position: absolute; top: 0; right: 0; bottom: 0; width: 288px; z-index: 5; background: var(--tf-panel); border-left: 1px solid var(--tf-border); padding: 14px 16px; overflow: auto; box-shadow: -12px 0 30px rgba(0,0,0,0.3); }
