@@ -2,3 +2,4 @@
 // 后续如有纯推理逻辑（如重评估引擎）在此重新导出。
 export * from "./token-estimate.js";
 export * from "./relevance.js";
+export * from "./context-builder.js";
