@@ -1,27 +1,37 @@
 import { Pulse } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
+import { BrowserControls } from "./BrowserPanel.js";
 
 export function TrafficPanel() {
-  const traffic = useStore((s) => s.traffic);
+  const { caseId, traffic, browserController, browserUrl } = useStore();
   return (
-    <div className="tf-panel">
-      <div className="tf-panel-head"><Pulse size={13} weight="bold" style={{ opacity: 0.6 }} /> 流量 <span className="tf-count">{traffic.length}</span></div>
-      <div className="tf-panel-body">
+    <aside className="panel traffic-panel">
+      <div className="panel-header">
+        <div><span className="section-kicker">Capture</span><h2>流量</h2></div>
+        {caseId && <BrowserControls />}
+      </div>
+      <div className="browser-strip">
+        <Pulse size={14} />
+        <span>{browserController ? (browserUrl || "about:blank") : "未启动共享浏览器"}</span>
+        {browserController && <i />}
+      </div>
+      <div className="request-list">
         {traffic.length === 0 && (
           <div className="tf-guide">
-            <div className="tf-guide-icon"><Pulse size={22} weight="duotone" /></div>
             <div className="tf-guide-title">暂无流量</div>
-            <div className="tf-guide-hint">启动共享浏览器后，你和 Agent 的访问都会实时出现在这里。</div>
+            <div className="tf-guide-hint">启动共享浏览器后，你和 Agent 的访问都会出现在这里。</div>
           </div>
         )}
         {traffic.map((t) => (
-          <div className="tf-traffic-row" key={t.id} title={t.url}>
-            <span className={`tf-st tf-st-${String(t.responseStatus).charAt(0)}`}>{t.responseStatus}</span>
-            <span className="tf-method">{t.method}</span>
-            <span className="tf-url">{t.url}</span>
-          </div>
+          <article className={`request-row st-${String(t.responseStatus).charAt(0)}`} key={t.id} title={t.url}>
+            <div className="request-top">
+              <span className={`method ${t.method.toLowerCase()}`}>{t.method}</span>
+              <strong>{t.responseStatus}</strong>
+            </div>
+            <p>{t.url}</p>
+          </article>
         ))}
       </div>
-    </div>
+    </aside>
   );
 }
