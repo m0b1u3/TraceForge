@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { proxyFetch } from "./proxy.js";
 import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall } from "./provider.js";
 
 export interface OpenAIOptions {
@@ -10,7 +11,8 @@ export interface OpenAIOptions {
 export class OpenAICompatibleProvider implements LlmProvider {
   private client: OpenAI;
   constructor(private opts: OpenAIOptions) {
-    this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseUrl });
+    const fetchImpl = proxyFetch();
+    this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseUrl, ...(fetchImpl ? { fetch: fetchImpl } : {}) });
   }
 
   async extractJson(args: ExtractJsonArgs): Promise<unknown> {

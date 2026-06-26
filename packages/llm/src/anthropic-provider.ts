@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { proxyFetch } from "./proxy.js";
 import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall } from "./provider.js";
 
 export interface AnthropicOptions {
@@ -10,7 +11,8 @@ export interface AnthropicOptions {
 export class AnthropicProvider implements LlmProvider {
   private client: Anthropic;
   constructor(private opts: AnthropicOptions) {
-    this.client = new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseUrl });
+    const fetchImpl = proxyFetch();
+    this.client = new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseUrl, ...(fetchImpl ? { fetch: fetchImpl } : {}) });
   }
 
   async extractJson(args: ExtractJsonArgs): Promise<unknown> {

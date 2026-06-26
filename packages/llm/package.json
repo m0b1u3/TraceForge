@@ -3,12 +3,17 @@
   "version": "0.1.0",
   "type": "module",
   "main": "./src/index.ts",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "build": "tsc -p tsconfig.json" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
   "dependencies": {
-    "@traceforge/extension": "workspace:*",
     "@anthropic-ai/sdk": "^0.68.0",
+    "@traceforge/extension": "workspace:*",
     "openai": "^4.77.0",
+    "undici": "^8.5.0",
     "zod": "^3.24.0"
   }
 }
