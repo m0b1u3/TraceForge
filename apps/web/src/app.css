@@ -109,11 +109,18 @@ button { cursor: pointer; }
 .edge-label { padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; color: #475467; background: rgba(255,255,255,0.92); box-shadow: 0 2px 8px rgba(22,24,29,0.08); font-size: 9px; font-weight: 780; pointer-events: none; }
 @keyframes node-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
 
-/* 首屏 onboard */
-.onboard { width: 100%; max-width: 460px; padding: 32px; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: var(--shadow); }
-.onboard-title { margin: 18px 0 0; font-size: 24px; font-weight: 740; color: #182230; letter-spacing: -0.02em; }
-.onboard-sub { margin: 10px 0 18px; font-size: 13.5px; line-height: 1.7; color: var(--muted); }
-.onboard .brand span { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 8px; color: #334155; }
+/* 首屏：左文右行动（浅色） */
+.hero-shell { display: flex; align-items: center; justify-content: center; padding: 32px; background:
+  radial-gradient(1100px 560px at 20% 28%, rgba(37,99,235,0.06), transparent 60%),
+  radial-gradient(820px 460px at 84% 78%, rgba(37,99,235,0.04), transparent 55%), var(--bg); }
+.hero-inner { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 72px; align-items: center; width: 100%; max-width: 960px; }
+.hero-brand { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 22px; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: 0.16em; }
+.hero-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px rgba(37,99,235,0.5); }
+.hero-title { margin: 0; font-size: 44px; line-height: 1.12; font-weight: 760; letter-spacing: -0.035em; color: #16181d; }
+.hero-sub { margin: 20px 0 0; max-width: 380px; font-size: 15px; line-height: 1.75; color: var(--muted); }
+.hero-feats { margin-top: 28px; display: flex; align-items: center; gap: 12px; font-size: 12.5px; color: var(--faint); }
+.hero-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); }
+@media (max-width: 760px) { .hero-inner { grid-template-columns: 1fr; gap: 36px; } .hero-title { font-size: 34px; } }
 
 /* 我们特有：Case 下拉（浅色） */
 .tf-select { position: relative; }
