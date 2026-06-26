@@ -22,6 +22,7 @@ import {
 } from "@traceforge/extension";
 import { BrowserSession } from "./browser-session.js";
 import { ObserverWarningStore } from "./stores/observer-store.js";
+import { AgentEventStore } from "./stores/agent-event-store.js";
 import { ApprovalRegistry } from "./agent-approvals.js";
 
 export function registerRoutes(
@@ -42,6 +43,7 @@ export function registerRoutes(
   const actionStore = new ActionCardStore(db);
   const decisionStore = new DecisionStore(db);
   const observerStore = new ObserverWarningStore(db);
+  const agentEventStore = new AgentEventStore(db);
 
   app.post("/api/cases", async (req) => {
     const body = req.body as { name: string; allowHosts: string[]; denyHosts?: string[] };
@@ -68,7 +70,8 @@ export function registerRoutes(
     if (!c) return reply.code(404).send({ error: "case not found" });
     let session = browserSessions.get(id);
     if (!session) {
-      session = new BrowserSession(id, c.scopeRules, traffic, bus);
+      // 传 getter：对话中批准纳入新 host 后，正在运行的浏览器立即按最新范围放行流量
+      session = new BrowserSession(id, () => cases.get(id)?.scopeRules ?? [], traffic, bus);
       browserSessions.set(id, session);
     }
     try {
@@ -173,6 +176,11 @@ export function registerRoutes(
     return decisionStore.listByCase(id);
   });
 
+  app.get("/api/cases/:id/agent/events", async (req) => {
+    const { id } = req.params as { id: string };
+    return agentEventStore.listByCase(id);
+  });
+
   app.get("/api/mcp/tools", async () => (mcp ? mcp.listTools() : []));
 
   app.get("/api/cases/:id/warnings", async (req) => {
@@ -229,21 +237,31 @@ export function registerRoutes(
     });
 
     const { goal } = req.body as { goal: string };
-    const system = `你是 TraceForge 的授权渗透测试 agent。当前授权范围：${JSON.stringify(c.scopeRules)}。
+    const allowHosts = c.scopeRules.flatMap((r) => r.allowHosts);
+    const scopeGuidance =
+      allowHosts.length === 0
+        ? `当前授权范围为空（用户新建 Case 时未预先指定边界）。
+你的首要职责是从用户这次对话的目标里识别出需要测试的目标 host/域名/IP，然后调用 propose_scope_expansion(host, reason) 提议把它纳入授权范围，等用户批准后再发起任何对外请求。
+在用户批准纳入之前，绝不要对任何 host 发包（http_replay / navigate 都会被 Scope Guard 拦截）。如果从对话里识别不出明确目标，就直接询问用户要测哪个目标，不要擅自猜测或测试任意 host。`
+        : `当前授权范围：${JSON.stringify(c.scopeRules)}。如需测试范围外的 host，先用 propose_scope_expansion 提议并等用户批准。`;
+    const system = `你是 TraceForge 的授权渗透测试 agent。${scopeGuidance}
 你可以用工具查看流量、记录发现（Fact/Task/Action）、重放请求。证据驱动：记录动作前先记录支撑它的 Fact。
 完成后用一句话总结。`;
 
     const trajectory: string[] = [];
+    agentEventStore.append(id, "user", goal); // 存用户这句目标，刷新/切 Case 后历史可见完整双边对话
     bus.emit({ type: "agent_started", caseId: id, goal });
+    agentEventStore.append(id, "started", `开始：${goal}`);
     try {
       await new AgentRuntime(llm, registry, gate).run(system, goal, (e) => {
-        if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); trajectory.push(`[tool] ${e.name}(${e.content})`); }
-        else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); trajectory.push(`[result] ${e.name} → ${e.content}`); }
-        else if (e.type === "text") { bus.emit({ type: "agent_text", caseId: id, content: e.content }); trajectory.push(`[text] ${e.content}`); }
-        else if (e.type === "done") { bus.emit({ type: "agent_done", caseId: id, content: e.content }); trajectory.push(`[done] ${e.content}`); }
+        if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
+        else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined); trajectory.push(`[result] ${e.name} → ${e.content}`); }
+        else if (e.type === "text") { bus.emit({ type: "agent_text", caseId: id, content: e.content }); agentEventStore.append(id, "text", e.content); trajectory.push(`[text] ${e.content}`); }
+        else if (e.type === "done") { bus.emit({ type: "agent_done", caseId: id, content: e.content }); agentEventStore.append(id, "done", e.content); trajectory.push(`[done] ${e.content}`); }
       });
     } catch (err) {
       bus.emit({ type: "agent_error", caseId: id, content: (err as Error).message });
+      agentEventStore.append(id, "error", (err as Error).message);
       return reply.code(500).send({ error: "agent run failed", reason: (err as Error).message });
     }
 

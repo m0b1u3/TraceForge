@@ -1,10 +1,10 @@
 import { create } from "zustand";
 import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings } from "./api.js";
+import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents } from "./api.js";
 
 export interface AgentUiEvent {
-  kind: "text" | "tool_call" | "tool_result" | "done" | "error" | "started";
+  kind: "user" | "text" | "tool_call" | "tool_result" | "done" | "error" | "started";
   text: string;
 }
 
@@ -17,6 +17,10 @@ interface State {
   actions: ActionCard[];
   decisions: Decision[];
   agentEvents: AgentUiEvent[];
+  agentBusy: boolean;
+  setAgentBusy: (b: boolean) => void;
+  toast: string | null;
+  showToast: (msg: string) => void;
   pendingApproval: { approvalId: string; tool: string; input: string } | null;
   browserController: "llm" | "human" | null;
   browserUrl: string;
@@ -35,6 +39,7 @@ interface State {
   enterCase: (id: string) => Promise<void>;
   addEntry: (e: TrafficEntry) => void;
   addFact: (f: Fact) => void;
+  upsertFact: (f: Fact) => void;
   upsertTask: (t: Task) => void;
   addTimeline: (e: TimelineEntry) => void;
   addAction: (a: ActionCard) => void;
@@ -57,6 +62,10 @@ export const useStore = create<State>((set, get) => ({
   actions: [],
   decisions: [],
   agentEvents: [],
+  agentBusy: false,
+  setAgentBusy: (b) => set({ agentBusy: b }),
+  toast: null,
+  showToast: (msg) => { set({ toast: msg }); setTimeout(() => { if (get().toast === msg) set({ toast: null }); }, 4000); },
   pendingApproval: null,
   browserController: null,
   browserUrl: "",
@@ -68,19 +77,27 @@ export const useStore = create<State>((set, get) => ({
   addWarning: (w) => set((s) => ({ warnings: [...s.warnings, w] })),
   pendingScope: null,
   setPendingScope: (p) => set({ pendingScope: p }),
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null }),
+  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null }),
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
   enterCase: async (id) => {
     get().setCase(id);
-    const [traffic, facts, tasks, timeline, mcpTools, warnings] = await Promise.all([
-      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id),
+    const [traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents] = await Promise.all([
+      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id), listAgentEvents(id),
     ]);
-    set({ traffic, facts, tasks, timeline, mcpTools, warnings });
+    set({ traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents: agentEvents.map((e) => ({ kind: e.kind, text: e.text })) });
   },
   addEntry: (e) => set((s) => ({ traffic: [...s.traffic, e] })),
   addFact: (f) => set((s) => ({ facts: [...s.facts, f] })),
+  upsertFact: (f) =>
+    set((s) => {
+      const i = s.facts.findIndex((x) => x.id === f.id);
+      if (i === -1) return { facts: [...s.facts, f] };
+      const copy = s.facts.slice();
+      copy[i] = f;
+      return { facts: copy };
+    }),
   upsertTask: (t) =>
     set((s) => {
       const i = s.tasks.findIndex((x) => x.id === t.id);
@@ -99,23 +116,36 @@ export const useStore = create<State>((set, get) => ({
   resetBrowser: () => set({ browserController: null, browserUrl: "" }),
   resetAgent: () => set({ agentEvents: [], pendingApproval: null }),
   connectWs: () => {
-    const ws = new WebSocket(`ws://${location.host}/ws`);
-    ws.onmessage = (msg) => {
+    // 带自动重连：后端重启 / 网络抖动后，WS 会重新建立，否则所有实时更新会静默失效。
+    let retry = 0;
+    const open = () => {
+      const ws = new WebSocket(`ws://${location.host}/ws`);
+      ws.onopen = () => { retry = 0; };
+      ws.onclose = () => {
+        const delay = Math.min(1000 * 2 ** retry, 10000); // 退避，封顶 10s
+        retry += 1;
+        setTimeout(open, delay);
+      };
+      ws.onerror = () => ws.close();
+      ws.onmessage = onMessage;
+    };
+    const onMessage = (msg: MessageEvent) => {
       const event = JSON.parse(msg.data) as RuntimeEvent;
       const cid = get().caseId;
       if (event.type === "response_captured" && event.entry.caseId === cid) get().addEntry(event.entry);
       else if (event.type === "fact_created" && event.fact.caseId === cid) get().addFact(event.fact);
+      else if (event.type === "fact_updated" && event.fact.caseId === cid) get().upsertFact(event.fact);
       else if (event.type === "task_created" && event.task.caseId === cid) get().upsertTask(event.task);
       else if (event.type === "task_updated" && event.task.caseId === cid) get().upsertTask(event.task);
       else if (event.type === "timeline_appended" && event.entry.caseId === cid) get().addTimeline(event.entry);
       else if (event.type === "action_recorded" && event.action.caseId === cid) get().addAction(event.action);
       else if (event.type === "decision_recorded" && event.decision.caseId === cid) get().addDecision(event.decision);
-      else if (event.type === "agent_started" && event.caseId === cid) get().addAgentEvent({ kind: "started", text: `开始：${event.goal}` });
+      else if (event.type === "agent_started" && event.caseId === cid) { get().setAgentBusy(true); get().addAgentEvent({ kind: "started", text: `开始：${event.goal}` }); }
       else if (event.type === "agent_text" && event.caseId === cid) get().addAgentEvent({ kind: "text", text: event.content });
       else if (event.type === "agent_tool_call" && event.caseId === cid) get().addAgentEvent({ kind: "tool_call", text: `${event.tool}(${event.input})` });
       else if (event.type === "agent_tool_result" && event.caseId === cid) get().addAgentEvent({ kind: "tool_result", text: `${event.tool} → ${event.content}` });
-      else if (event.type === "agent_done" && event.caseId === cid) get().addAgentEvent({ kind: "done", text: event.content });
-      else if (event.type === "agent_error" && event.caseId === cid) get().addAgentEvent({ kind: "error", text: event.content });
+      else if (event.type === "agent_done" && event.caseId === cid) { get().setAgentBusy(false); get().addAgentEvent({ kind: "done", text: event.content }); }
+      else if (event.type === "agent_error" && event.caseId === cid) { get().setAgentBusy(false); get().addAgentEvent({ kind: "error", text: event.content }); }
       else if (event.type === "approval_requested" && event.caseId === cid) get().setPendingApproval({ approvalId: event.approvalId, tool: event.tool, input: event.input });
       else if (event.type === "approval_resolved" && event.caseId === cid) get().clearPendingApproval();
       else if (event.type === "browser_started" && event.caseId === cid) get().setBrowser("llm");
@@ -126,5 +156,6 @@ export const useStore = create<State>((set, get) => ({
       else if (event.type === "scope_expansion_proposed" && event.caseId === cid) get().setPendingScope({ host: event.host, reason: event.reason });
       else if (event.type === "scope_updated" && event.caseId === cid) get().setPendingScope(null);
     };
+    open();
   },
 }));

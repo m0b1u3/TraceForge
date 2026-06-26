@@ -70,6 +70,9 @@ button { cursor: pointer; }
 
 .chat-panel { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .session-state { gap: 6px; height: 26px; padding: 0 9px; border: 1px solid #bbf7d0; border-radius: 999px; color: #067647; background: #f0fdf4; font-size: 11px; font-weight: 680; }
+.panel-header-actions { display: inline-flex; align-items: center; gap: 8px; }
+.tf-btn-ghost { height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--muted); font-size: 11.5px; font-weight: 640; cursor: pointer; }
+.tf-btn-ghost:hover { background: #f8fafc; color: #344054; }
 .messages { min-height: 0; overflow: auto; padding: 14px; }
 .message { max-width: 90%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .message + .message { margin-top: 8px; }
@@ -78,7 +81,8 @@ button { cursor: pointer; }
 .message span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 10px; font-weight: 760; letter-spacing: 0.04em; text-transform: uppercase; }
 .message p { margin: 0; color: #1d2939; font-size: 13px; line-height: 1.5; word-break: break-word; }
 .composer { gap: 10px; margin: 10px 14px 14px; padding: 8px 8px 8px 12px; border: 1px solid var(--line-strong); border-radius: 10px; color: var(--muted); background: #fff; box-shadow: 0 9px 24px rgba(22,24,29,0.06); }
-.composer input { min-width: 0; flex: 1; border: 0; outline: 0; color: #182230; font-size: 13px; background: none; }
+.composer { align-items: flex-end; }
+.composer input, .composer textarea { min-width: 0; flex: 1; border: 0; outline: 0; color: #182230; font-size: 13px; background: none; font-family: inherit; resize: none; line-height: 1.5; max-height: 120px; padding: 4px 0; }
 .composer button { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 8px; color: #fff; background: #1d2939; }
 .composer button:disabled { opacity: 0.45; }
 .composer button:active { transform: translateY(1px) scale(0.99); }
@@ -185,12 +189,50 @@ button { cursor: pointer; }
 .tf-row:last-child { border-bottom: none; }
 .tf-tag { display: inline-block; margin-right: 7px; padding: 1px 6px; border-radius: 5px; background: #eef4ff; color: var(--accent); font-family: var(--mono); font-size: 10px; }
 
+/* 可展开行（Fact / Task） */
+.tf-row-expandable { padding: 0; }
+.tf-row-head { display: flex; align-items: center; gap: 6px; padding: 8px 0; cursor: pointer; }
+.tf-row-head:hover { color: var(--accent); }
+.tf-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tf-row-badge { flex-shrink: 0; padding: 1px 6px; border-radius: 999px; background: #f0f4f9; color: var(--muted); font-size: 10px; }
+.tf-row-badge-stale { background: #fef3f2; color: var(--red); }
+.tf-row-stale .tf-row-title { color: var(--faint); text-decoration: line-through; }
+.tf-row-detail { padding: 4px 0 12px; }
+.tf-row-detail-block { margin-top: 8px; }
+.tf-row-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.tf-prio { flex-shrink: 0; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 600; }
+.tf-prio-high { background: #fef3f2; color: var(--red); }
+.tf-prio-medium { background: #fffaeb; color: var(--amber); }
+.tf-prio-low { background: #f0f4f9; color: var(--muted); }
+
+/* key-value 明细行 + 代码块（流量/Fact/Task 详情通用） */
+.kv { display: flex; gap: 8px; padding: 3px 0; font-size: 12px; color: #1d2939; word-break: break-all; }
+.kv > span:first-child { flex-shrink: 0; min-width: 64px; color: var(--muted); }
+.tf-row-detail pre, .request-detail pre { margin: 4px 0 0; padding: 8px 10px; max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 7px; background: #fbfcfd; color: #1d2939; font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
+.request-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.request-detail-time { color: var(--faint); font-size: 11px; }
+.request-detail-block { margin-top: 8px; }
+.request-detail-label { color: var(--muted); font-size: 11px; font-weight: 600; margin-bottom: 3px; }
+.request-row.is-open { border-color: var(--line); }
+
 /* 我们特有：Case launcher（首屏右卡，浅色） */
 .tf-launcher { display: flex; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: var(--shadow); margin-top: 16px; }
 .tf-launcher-label { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .tf-launcher-or { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 11.5px; }
 .tf-launcher-or::before, .tf-launcher-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .tf-create-pop { display: flex; align-items: center; gap: 7px; }
+.tf-launcher-hint { font-size: 12px; line-height: 1.6; color: var(--muted); background: #f8fafc; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+
+/* 旋转 loading 图标 */
+@keyframes tf-spin { to { transform: rotate(360deg); } }
+.tf-spin { animation: tf-spin 0.8s linear infinite; }
+
+/* Agent 运行中指示 */
+.tf-agent-busy { display: inline-flex; align-items: center; gap: 7px; margin-top: 8px; padding: 7px 11px; border: 1px dashed var(--line-strong); border-radius: 999px; color: var(--muted); background: #fbfcfd; font-size: 12px; }
+
+/* 全局错误提示 toast */
+.tf-toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 100; max-width: 80vw; padding: 11px 16px; border: 1px solid #fda29b; border-radius: 10px; color: #b42318; background: #fffbfa; font-size: 13px; font-weight: 600; box-shadow: 0 12px 32px rgba(180,35,24,0.16); animation: tf-toast-in 180ms ease; }
+@keyframes tf-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
 /* 图谱详情侧栏（浅色） */
 .tf-gdetail { position: absolute; top: 0; right: 0; bottom: 0; width: 288px; z-index: 5; padding: 14px 16px; overflow: auto; border-left: 1px solid var(--line); background: #fff; box-shadow: -12px 0 30px rgba(22,24,29,0.08); }

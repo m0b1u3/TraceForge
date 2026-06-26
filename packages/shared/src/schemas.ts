@@ -161,3 +161,13 @@ export const ObserverWarningSchema = z.object({
   createdAt: z.string(),
 });
 export type ObserverWarning = z.infer<typeof ObserverWarningSchema>;
+
+export const AgentEventSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  kind: z.enum(["user", "started", "text", "tool_call", "tool_result", "done", "error"]),
+  text: z.string(),
+  tool: z.string().nullable().default(null),
+  createdAt: z.string(),
+});
+export type AgentEvent = z.infer<typeof AgentEventSchema>;

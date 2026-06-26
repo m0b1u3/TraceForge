@@ -1,29 +1,52 @@
 import { useState } from "react";
-import { Sparkle, PaperPlaneTilt, ShieldWarning, Globe } from "@phosphor-icons/react";
+import { Sparkle, PaperPlaneTilt, ShieldWarning, Globe, CircleNotch } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { runAgent, resolveApproval, approveScope } from "../api.js";
 
 export function AgentPanel() {
-  const { caseId, agentEvents, pendingApproval, pendingScope, setPendingScope, clearPendingApproval, resetAgent } = useStore();
-  const [goal, setGoal] = useState("看一下已抓的流量，把发现的接口记录为 Fact。");
+  const { caseId, agentEvents, agentBusy, setAgentBusy, showToast, pendingApproval, pendingScope, setPendingScope, clearPendingApproval, resetAgent, addAgentEvent } = useStore();
+  const [goal, setGoal] = useState("");
   const [busy, setBusy] = useState<"approved" | "rejected" | null>(null);
   if (!caseId) return null;
 
   const decide = async (decision: "approved" | "rejected") => {
     if (!pendingApproval) return;
     setBusy(decision);
-    try { await resolveApproval(pendingApproval.approvalId, decision); } catch { /* 忽略，下方仍清卡 */ }
+    try { await resolveApproval(pendingApproval.approvalId, decision); }
+    catch (e) { showToast((e as Error).message); }
     clearPendingApproval();
     setBusy(null);
   };
 
-  const send = () => { if (!goal.trim()) return; resetAgent(); runAgent(caseId, goal); setGoal(""); };
+  const approveScopeNow = async () => {
+    if (!pendingScope) return;
+    const host = pendingScope.host;
+    setPendingScope(null); // 乐观清卡
+    try { await approveScope(caseId, host); }
+    catch (e) { showToast((e as Error).message); }
+  };
+
+  // 累积保留对话/事件，不在每次发送时清空（历史可往上翻看）；并发运行时禁止再发
+  const send = async () => {
+    if (!goal.trim() || agentBusy) return;
+    const g = goal.trim();
+    addAgentEvent({ kind: "user", text: g });
+    setGoal("");
+    setAgentBusy(true); // 立即置忙（不等 WS agent_started 回来），失败时回滚
+    try { await runAgent(caseId, g); }
+    catch (e) { showToast((e as Error).message); setAgentBusy(false); }
+  };
 
   return (
     <main className="panel chat-panel">
       <div className="panel-header">
         <div><span className="section-kicker">Agent</span><h2>Run Console</h2></div>
-        <div className="session-state"><Sparkle size={14} /> autonomous</div>
+        <div className="panel-header-actions">
+          {agentEvents.length > 0 && (
+            <button className="tf-btn tf-btn-ghost" onClick={resetAgent} title="清空对话记录">清空</button>
+          )}
+          <div className="session-state"><Sparkle size={14} /> autonomous</div>
+        </div>
       </div>
       <section className="messages">
         {pendingApproval && (
@@ -43,7 +66,7 @@ export function AgentPanel() {
             <div className="tf-confirm-body">Agent 建议把 <code className="tf-confirm-inline">{pendingScope.host}</code> 纳入授权范围。</div>
             <div className="tf-confirm-reason">{pendingScope.reason}</div>
             <div className="tf-confirm-actions">
-              <button className="tf-btn tf-btn-accent" onClick={() => { approveScope(caseId, pendingScope.host); setPendingScope(null); }}>批准纳入</button>
+              <button className="tf-btn tf-btn-accent" onClick={approveScopeNow}>批准纳入</button>
               <button className="tf-btn" onClick={() => setPendingScope(null)}>忽略</button>
             </div>
           </div>
@@ -56,18 +79,23 @@ export function AgentPanel() {
           </div>
         )}
         {agentEvents.map((e, i) => (
-          <div className={`message ${e.kind === "error" ? "trace" : "agent"}`} key={i}>
-            <span>{e.kind}</span><p>{e.text}</p>
+          <div className={`message ${e.kind === "user" ? "operator" : e.kind === "error" ? "trace" : "agent"}`} key={i}>
+            <span>{e.kind === "user" ? "你" : e.kind}</span><p>{e.text}</p>
           </div>
         ))}
+        {agentBusy && (
+          <div className="tf-agent-busy"><CircleNotch size={14} className="tf-spin" /> Agent 运行中…</div>
+        )}
       </section>
       <div className="composer">
-        <input
-          value={goal} onChange={(e) => setGoal(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") send(); }}
-          placeholder="给 agent 一个目标…"
+        <textarea
+          rows={1} value={goal} onChange={(e) => setGoal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          placeholder={agentBusy ? "Agent 运行中，请稍候…" : "给 agent 一个目标（Enter 发送，Shift+Enter 换行）…"}
         />
-        <button disabled={!goal.trim()} onClick={send}><PaperPlaneTilt size={15} weight="fill" /></button>
+        <button disabled={!goal.trim() || agentBusy} onClick={send}>
+          {agentBusy ? <CircleNotch size={15} className="tf-spin" /> : <PaperPlaneTilt size={15} weight="fill" />}
+        </button>
       </div>
     </main>
   );

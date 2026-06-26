@@ -90,6 +90,16 @@ export const decisions = sqliteTable("decisions", {
   createdAt: text("created_at").notNull(),
 });
 
+export const agentEvents = sqliteTable("agent_events", {
+  seq: integer("seq").primaryKey({ autoIncrement: true }),
+  id: text("id").notNull(),
+  caseId: text("case_id").notNull(),
+  kind: text("kind").notNull(),
+  text: text("text").notNull(),
+  tool: text("tool"),
+  createdAt: text("created_at").notNull(),
+});
+
 export const observerWarnings = sqliteTable("observer_warnings", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

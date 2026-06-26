@@ -7,6 +7,12 @@ import { AgentPanel } from "./components/AgentPanel.js";
 import { KnowledgePanel } from "./components/KnowledgePanel.js";
 import { GraphModal } from "./components/GraphModal.js";
 
+function Toast() {
+  const toast = useStore((s) => s.toast);
+  if (!toast) return null;
+  return <div className="tf-toast">{toast}</div>;
+}
+
 export function App() {
   const { caseId, connectWs } = useStore();
   useEffect(() => { connectWs(); }, [connectWs]);
@@ -27,6 +33,7 @@ export function App() {
           </div>
           <CaseLauncher variant="hero" />
         </div>
+        <Toast />
       </div>
     );
   }
@@ -40,6 +47,7 @@ export function App() {
         <KnowledgePanel />
       </section>
       <GraphModal />
+      <Toast />
     </div>
   );
 }

@@ -57,6 +57,12 @@ export function createDb(path: string) {
       suggested_action TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_warnings_case ON observer_warnings(case_id);
+    CREATE TABLE IF NOT EXISTS agent_events (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL, case_id TEXT NOT NULL, kind TEXT NOT NULL,
+      text TEXT NOT NULL, tool TEXT, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_events_case ON agent_events(case_id);
   `);
   return drizzle(sqlite);
 }

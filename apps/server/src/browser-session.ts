@@ -18,19 +18,25 @@ export class BrowserSession {
   private page: Page | null = null;
   private _controller: Controller = "llm";
 
+  // scopeRules 用 getter 实时取：对话中批准纳入的新 host 立即对正在运行的浏览器生效，
+  // 不再是 start 时的快照（否则对话扩范围后已开的浏览器仍按旧空范围过滤掉一切流量）。
+  private scopeRules: () => ScopeRule[];
+
   constructor(
     private caseId: string,
-    private scopeRules: ScopeRule[],
+    scopeRules: ScopeRule[] | (() => ScopeRule[]),
     private traffic: TrafficStore,
     private bus: EventBus,
-  ) {}
+  ) {
+    this.scopeRules = typeof scopeRules === "function" ? scopeRules : () => scopeRules;
+  }
 
   async start(): Promise<void> {
     if (this.browser) return; // 幂等
     this.browser = await chromium.launch({ headless: false });
     this.page = await this.browser.newPage();
     this.page.on("response", (res) => {
-      const verdict = checkScope(res.url(), this.scopeRules);
+      const verdict = checkScope(res.url(), this.scopeRules());
       if (!verdict.allowed) return;
       this.traffic.add({
         id: `traf_${randomUUID()}`,
@@ -81,7 +87,7 @@ export class BrowserSession {
 
   // ---- 浏览器操作（BrowserController 接口）----
   async navigate(url: string): Promise<{ ok: boolean; content: string }> {
-    const verdict = checkScope(url, this.scopeRules);
+    const verdict = checkScope(url, this.scopeRules());
     if (!verdict.allowed) return { ok: false, content: `out of scope: ${verdict.reason}` };
     if (!this.page) return { ok: false, content: "浏览器未启动" };
     await this.page.goto(url, { waitUntil: "domcontentloaded" }).catch(() => {});

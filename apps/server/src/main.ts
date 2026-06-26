@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import cors from "@fastify/cors";
@@ -29,8 +30,10 @@ export async function buildServer(dbPath = "traceforge.sqlite") {
   return app;
 }
 
-// 直接运行时启动
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const app = await buildServer();
+// 直接运行时启动（用 pathToFileURL 规范化，跨平台可靠：Windows 下 argv[1] 是反斜杠路径，
+// 直接拼 file:// 永不等于 import.meta.url，会导致 listen 不执行、进程空跑退出）
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const app = await buildServer(process.env.TRACEFORGE_DB ?? "live.sqlite");
   await app.listen({ port: 4000, host: "127.0.0.1" });
+  console.log("TraceForge server listening on http://127.0.0.1:4000");
 }
