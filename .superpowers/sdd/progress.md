@@ -83,3 +83,6 @@ Realtime Task 2: complete (commit 90a712c, db cols + store methods)
 Realtime Task 3: complete (commit 8ce0f86, upsert tools)
 Realtime Task 4-5: complete (commit 7ae2a7e, verify + README + db rebuild)
 Realtime entity data (round 1): ALL TASKS COMPLETE
+GraphEngine Task 1: complete (commit 2e5330c, buildGraph meta)
+GraphEngine Task 2: complete (commit bf87f6f, GraphView rewrite)
+GraphEngine Task 3: complete (commit 52cabdd, light graph styles)
