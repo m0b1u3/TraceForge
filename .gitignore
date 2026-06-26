@@ -9,3 +9,6 @@ cases/
 config/llm.json
 config/mcp.json
 .env
+flow/dist/
+flow/node_modules/
+flow/*.tsbuildinfo
