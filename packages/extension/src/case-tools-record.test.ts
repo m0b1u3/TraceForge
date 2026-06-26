@@ -8,11 +8,16 @@ import type { RuntimeEvent } from "@traceforge/shared";
 function memFacts() {
   const arr: Fact[] = [];
   return {
-    create: (caseId: string, input: Omit<Fact, "id" | "caseId" | "createdAt">) => {
+    create: (caseId: string, input: Omit<Fact, "id" | "caseId" | "createdAt" | "updateCount" | "updatedAt" | "validity">) => {
       const f = FactSchema.parse({ ...input, id: `fact_${randomUUID()}`, caseId, createdAt: "now" });
       arr.push(f); return f;
     },
     listByCase: (caseId: string) => arr.filter((f) => f.caseId === caseId),
+    getById: (id: string) => arr.find((f) => f.id === id),
+    update: (id: string, patch: Partial<Fact>) => {
+      const i = arr.findIndex((f) => f.id === id); if (i === -1) return undefined;
+      arr[i] = { ...arr[i], ...patch, updateCount: arr[i].updateCount + 1 } as Fact; return arr[i];
+    },
     _arr: arr,
   };
 }

@@ -18,14 +18,16 @@ export function createDb(path: string) {
     CREATE TABLE IF NOT EXISTS facts (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL,
       value_json TEXT NOT NULL, source_json TEXT NOT NULL, confidence REAL NOT NULL,
-      tags_json TEXT NOT NULL, created_at TEXT NOT NULL
+      tags_json TEXT NOT NULL, created_at TEXT NOT NULL,
+      update_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '', validity TEXT NOT NULL DEFAULT 'valid'
     );
     CREATE INDEX IF NOT EXISTS idx_facts_case ON facts(case_id);
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
       reason TEXT NOT NULL, blocked_by_json TEXT NOT NULL, trigger_when_json TEXT NOT NULL,
       related_facts_json TEXT NOT NULL, priority TEXT NOT NULL,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      update_count INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_tasks_case ON tasks(case_id);
     CREATE TABLE IF NOT EXISTS timeline (

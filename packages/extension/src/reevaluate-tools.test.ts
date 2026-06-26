@@ -4,7 +4,7 @@ import type { Fact, Task } from "@traceforge/shared";
 
 function mkFacts(ids: string[]) {
   const list = ids.map((id) => ({ id, caseId: "c" }) as Fact);
-  return { listByCase: () => list, create: () => ({}) as Fact };
+  return { listByCase: () => list, create: () => ({}) as Fact, getById: () => undefined, update: () => undefined };
 }
 function mkTasks(rows: Array<{ id: string; title: string; status: string }>) {
   const map = new Map(rows.map((r) => [r.id, { ...r }]));

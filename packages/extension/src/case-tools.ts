@@ -47,11 +47,15 @@ export function makeGetTrafficTool(caseId: string, traffic: TrafficReader): Tool
 }
 
 export interface FactWriter {
-  create(caseId: string, input: Omit<Fact, "id" | "caseId" | "createdAt">): Fact;
+  create(caseId: string, input: Omit<Fact, "id" | "caseId" | "createdAt" | "updateCount" | "updatedAt" | "validity"> & Partial<Pick<Fact, "validity">>): Fact;
   listByCase(caseId: string): Fact[];
+  getById(id: string): Fact | undefined;
+  update(id: string, patch: Partial<Pick<Fact, "type" | "title" | "value" | "confidence" | "tags" | "validity">>): Fact | undefined;
 }
 export interface TaskWriter {
-  create(caseId: string, input: Omit<Task, "id" | "caseId" | "createdAt" | "updatedAt">): Task;
+  create(caseId: string, input: Omit<Task, "id" | "caseId" | "createdAt" | "updatedAt" | "updateCount">): Task;
+  getById(id: string): Task | undefined;
+  update(id: string, patch: Partial<Pick<Task, "title" | "status" | "reason" | "priority" | "blockedBy" | "triggerWhen" | "relatedFacts">>): Task | undefined;
 }
 export interface ActionWriter {
   create(a: ActionCard): ActionCard;

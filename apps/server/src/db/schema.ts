@@ -29,6 +29,9 @@ export const facts = sqliteTable("facts", {
   confidence: integer("confidence", { mode: "number" }).notNull(),
   tagsJson: text("tags_json").notNull(),
   createdAt: text("created_at").notNull(),
+  updateCount: integer("update_count", { mode: "number" }).notNull().default(0),
+  updatedAt: text("updated_at").notNull().default(""),
+  validity: text("validity").notNull().default("valid"),
 });
 
 export const tasks = sqliteTable("tasks", {
@@ -43,6 +46,7 @@ export const tasks = sqliteTable("tasks", {
   priority: text("priority").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+  updateCount: integer("update_count", { mode: "number" }).notNull().default(0),
 });
 
 export const timeline = sqliteTable("timeline", {

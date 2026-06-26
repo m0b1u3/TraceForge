@@ -7,11 +7,13 @@ function mkTasks() {
   return {
     created,
     writer: {
-      create: (caseId: string, input: Omit<Task, "id" | "caseId" | "createdAt" | "updatedAt">) => {
-        const t = { ...input, id: `task_${created.length}`, caseId, createdAt: "t", updatedAt: "t" } as Task;
+      create: (caseId: string, input: Omit<Task, "id" | "caseId" | "createdAt" | "updatedAt" | "updateCount">) => {
+        const t = { ...input, id: `task_${created.length}`, caseId, createdAt: "t", updatedAt: "t", updateCount: 0 } as Task;
         created.push(t);
         return t;
       },
+      getById: () => undefined,
+      update: () => undefined,
     },
   };
 }
