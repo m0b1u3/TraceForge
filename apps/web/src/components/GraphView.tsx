@@ -1,112 +1,165 @@
-import { useMemo, useState } from "react";
-import ReactFlow, {
-  Background, Controls, Handle, Position, MarkerType,
-  type Node, type Edge, type NodeMouseHandler, type NodeProps,
-} from "reactflow";
-import "reactflow/dist/style.css";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Background, BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, Position,
+  ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow,
+  type Edge, type EdgeProps, type Node, type NodeProps, type NodeMouseHandler,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import ELK from "elkjs/lib/elk.bundled.js";
+import { Notebook, ShieldCheck, Lightning } from "@phosphor-icons/react";
 import { buildGraph, type Graph } from "@traceforge/shared";
 import { useStore } from "../store.js";
 
-const KIND = {
-  fact: { label: "FACT", color: "#5cc99a", dim: "rgba(92,201,154,0.5)" },
-  task: { label: "TASK", color: "#4ad6e0", dim: "rgba(74,214,224,0.5)" },
-  action: { label: "ACTION", color: "#b79bff", dim: "rgba(183,155,255,0.5)" },
-} as const;
+const elk = new ELK();
+const KIND_COLOR: Record<string, string> = { fact: "#047857", task: "#1d4ed8", action: "#7c3aed" };
 
-interface NodeData {
-  kind: keyof typeof KIND;
-  title: string;
-  meta: Record<string, unknown>;
-  selected: boolean;
+function clip(v: unknown, max = 96) {
+  const s = String(v ?? "").replace(/\s+/g, " ").trim();
+  return s.length <= max ? s : `${s.slice(0, max)}…`;
 }
 
-// BreachWeave 风格节点：深色卡片 + 左侧类型色条 + 类型徽章 + 标题 + 副信息
-function GraphNode({ data }: NodeProps<NodeData>) {
-  const k = KIND[data.kind] ?? KIND.fact;
-  const metaStr = Object.entries(data.meta).slice(0, 2).map(([key, v]) => `${key}: ${String(v)}`).join(" · ");
+type NodeData = {
+  kind: "fact" | "task" | "action";
+  title: string;
+  body: string;
+  updates: number;
+  superseded: boolean;
+  meta: Record<string, unknown>;
+};
+
+function BwNode({ data }: NodeProps<Node<NodeData>>) {
+  const Icon = data.kind === "task" ? ShieldCheck : data.kind === "action" ? Lightning : Notebook;
   return (
-    <div className={`tf-gnode ${data.selected ? "is-sel" : ""}`} style={{ ["--gn" as string]: k.color }}>
-      <Handle type="target" position={Position.Top} className="tf-gnode-h" />
-      <div className="tf-gnode-bar" />
-      <div className="tf-gnode-in">
-        <div className="tf-gnode-badge" style={{ color: k.color }}>{k.label}</div>
-        <div className="tf-gnode-title">{data.title}</div>
-        {metaStr && <div className="tf-gnode-meta">{metaStr}</div>}
+    <div className={`flow-card ${data.kind} ${data.superseded ? "superseded" : ""}`}>
+      <Handle className="flow-handle" position={Position.Top} type="target" />
+      <Handle className="flow-handle" position={Position.Bottom} type="source" />
+      <div className="flow-card-head">
+        <span className="flow-icon" style={{ color: KIND_COLOR[data.kind] }}><Icon size={13} weight="bold" /></span>
+        <div>
+          <span style={{ color: KIND_COLOR[data.kind] }}>{data.kind.toUpperCase()}</span>
+          <strong>{clip(data.title, 52)}</strong>
+        </div>
       </div>
-      <Handle type="source" position={Position.Bottom} className="tf-gnode-h" />
+      {data.body && <p>{clip(data.body, 100)}</p>}
+      {data.updates > 0 && <small>{data.updates} updates</small>}
     </div>
   );
 }
+const nodeTypes = { bw: BwNode };
 
-const nodeTypes = { tf: GraphNode };
+function EventEdge(props: EdgeProps) {
+  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, label } = props;
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  const active = (props.data as { active?: boolean } | undefined)?.active === true;
+  return (
+    <g>
+      <path d={path} fill="none" markerEnd={markerEnd}
+        style={{ stroke: "#94a3b8", strokeWidth: active ? 2 : 1.25, strokeOpacity: active ? 0.95 : 0.5, strokeDasharray: active ? "9 7" : undefined }}>
+        {active ? <animate attributeName="stroke-dashoffset" dur="1.2s" repeatCount="indefinite" values="0;-16" /> : null}
+      </path>
+      <BaseEdge id={id} path={path} style={{ stroke: "transparent", strokeWidth: 10 }} />
+      {label ? (
+        <EdgeLabelRenderer>
+          <div className="edge-label" style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}>{String(label)}</div>
+        </EdgeLabelRenderer>
+      ) : null}
+    </g>
+  );
+}
+const edgeTypes = { event: EventEdge };
+
+function toFlow(graph: Graph): { nodes: Node<NodeData>[]; edges: Edge[]; latestId?: string } {
+  let latestId: string | undefined; let latestAt = "";
+  const nodes: Node<NodeData>[] = graph.nodes.map((n) => {
+    const updatedAt = String(n.meta.updatedAt ?? "");
+    if (updatedAt > latestAt) { latestAt = updatedAt; latestId = n.id; }
+    const body = n.kind === "fact" ? String(n.meta.type ?? "") : n.kind === "task" ? String(n.meta.status ?? "") : String(n.meta.tool ?? "");
+    return {
+      id: n.id, type: "bw", position: { x: 0, y: 0 },
+      data: { kind: n.kind, title: n.label, body, updates: Number(n.meta.updateCount ?? 0), superseded: n.meta.validity === "superseded", meta: n.meta },
+    };
+  });
+  const edges: Edge[] = graph.edges.map((e) => ({
+    id: e.id, source: e.source, target: e.target, type: "event", label: e.label,
+    markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "#64748b" },
+    data: { active: e.target === latestId },
+  }));
+  return { nodes, edges, latestId };
+}
+
+async function elkLayout(nodes: Node<NodeData>[], edges: Edge[]): Promise<Node<NodeData>[]> {
+  try {
+    const g = {
+      id: "root",
+      layoutOptions: {
+        "elk.algorithm": "layered", "elk.direction": "DOWN",
+        "elk.spacing.nodeNode": "80", "elk.layered.spacing.nodeNodeBetweenLayers": "120",
+        "elk.edgeRouting": "ORTHOGONAL", "elk.padding": "[top=24,left=24,bottom=24,right=24]",
+      },
+      children: nodes.map((n) => ({ id: n.id, width: 224, height: 104 })),
+      edges: edges.map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
+    };
+    const res = await elk.layout(g);
+    return nodes.map((n) => {
+      const p = res.children?.find((c) => c.id === n.id);
+      return { ...n, position: { x: p?.x ?? 0, y: p?.y ?? 0 }, sourcePosition: Position.Bottom, targetPosition: Position.Top };
+    });
+  } catch {
+    return nodes.map((n, i) => ({ ...n, position: { x: (i % 4) * 240, y: Math.floor(i / 4) * 150 } }));
+  }
+}
+
+function FocusLatest({ latestId, version }: { latestId?: string; version: number }) {
+  const { fitView, setCenter, getNode } = useReactFlow();
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const n = latestId ? getNode(latestId) : undefined;
+      if (n) void setCenter(n.position.x + 112, n.position.y + 52, { zoom: 0.85, duration: 200 });
+      else void fitView({ padding: 0.25, duration: 150 });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [fitView, setCenter, getNode, latestId, version]);
+  return null;
+}
 
 function DetailPanel({ graph, nodeId, onClose }: { graph: Graph; nodeId: string; onClose: () => void }) {
   const node = graph.nodes.find((n) => n.id === nodeId);
   if (!node) return null;
-  const outgoing = graph.edges.filter((e) => e.source === nodeId);
-  const incoming = graph.edges.filter((e) => e.target === nodeId);
+  const out = graph.edges.filter((e) => e.source === nodeId);
+  const inc = graph.edges.filter((e) => e.target === nodeId);
   const labelOf = (id: string) => graph.nodes.find((n) => n.id === id)?.label ?? id;
-  const k = KIND[node.kind as keyof typeof KIND] ?? KIND.fact;
   return (
     <div className="tf-gdetail">
       <div className="tf-gdetail-head">
-        <span style={{ color: k.color, fontWeight: 600, fontSize: 11, letterSpacing: "0.08em" }}>{k.label}</span>
+        <span style={{ color: KIND_COLOR[node.kind], fontWeight: 600, fontSize: 11, letterSpacing: "0.08em" }}>{node.kind.toUpperCase()}</span>
         <button className="tf-btn" onClick={onClose}>关闭</button>
       </div>
       <div className="tf-gdetail-title">{node.label}</div>
       <div className="tf-gdetail-id">{node.id}</div>
-      {Object.keys(node.meta).length > 0 && (
-        <div className="tf-gdetail-meta">
-          {Object.entries(node.meta).map(([key, v]) => (
-            <div key={key} className="tf-gdetail-kv"><span>{key}</span><span>{String(v)}</span></div>
-          ))}
-        </div>
-      )}
-      {outgoing.length > 0 && (
-        <div className="tf-gdetail-rel">
-          <div className="tf-gdetail-rel-h">依赖证据 →</div>
-          {outgoing.map((e) => <div key={e.id} className="tf-gdetail-link">{labelOf(e.target)}</div>)}
-        </div>
-      )}
-      {incoming.length > 0 && (
-        <div className="tf-gdetail-rel">
-          <div className="tf-gdetail-rel-h">← 被引用</div>
-          {incoming.map((e) => <div key={e.id} className="tf-gdetail-link">{labelOf(e.source)}</div>)}
-        </div>
-      )}
-      {outgoing.length === 0 && incoming.length === 0 && <div className="tf-empty">无关联节点。</div>}
+      <div className="tf-gdetail-meta">
+        {Object.entries(node.meta).map(([k, v]) => (
+          <div key={k} className="tf-gdetail-kv"><span>{k}</span><span>{String(v)}</span></div>
+        ))}
+      </div>
+      {out.length > 0 && <div className="tf-gdetail-rel"><div className="tf-gdetail-rel-h">依赖证据 →</div>{out.map((e) => <div key={e.id} className="tf-gdetail-link">{labelOf(e.target)}</div>)}</div>}
+      {inc.length > 0 && <div className="tf-gdetail-rel"><div className="tf-gdetail-rel-h">← 被引用</div>{inc.map((e) => <div key={e.id} className="tf-gdetail-link">{labelOf(e.source)}</div>)}</div>}
     </div>
   );
 }
 
-export function GraphView({ interactive }: { interactive: boolean }) {
+function GraphInner({ interactive }: { interactive: boolean }) {
   const { facts, tasks, actions } = useStore();
   const [selected, setSelected] = useState<string | null>(null);
-
   const graph = useMemo(() => buildGraph(facts, tasks, actions), [facts, tasks, actions]);
-  const { nodes, edges } = useMemo(() => {
-    // 按 kind 分层：fact 一行、task 一行、action 一行，列内均布
-    const rows: Record<string, number> = { fact: 0, task: 1, action: 2 };
-    const colIdx: Record<string, number> = { fact: 0, task: 0, action: 0 };
-    const rfNodes: Node<NodeData>[] = graph.nodes.map((n) => {
-      const row = rows[n.kind] ?? 0;
-      const col = colIdx[n.kind]++;
-      return {
-        id: n.id, type: "tf",
-        data: { kind: n.kind as keyof typeof KIND, title: n.label, meta: n.meta, selected: n.id === selected },
-        position: { x: col * 230, y: row * 150 },
-      };
-    });
-    const rfEdges: Edge[] = graph.edges.map((e) => ({
-      id: e.id, source: e.source, target: e.target, label: e.label,
-      type: "smoothstep", animated: true,
-      style: { stroke: "rgba(92,201,154,0.45)", strokeWidth: 1.5 },
-      labelStyle: { fill: "#79808f", fontSize: 10, fontFamily: "var(--tf-mono, monospace)" },
-      labelBgStyle: { fill: "#101216" }, labelBgPadding: [4, 2] as [number, number], labelBgBorderRadius: 4,
-      markerEnd: { type: MarkerType.ArrowClosed, color: "rgba(92,201,154,0.6)", width: 14, height: 14 },
-    }));
-    return { nodes: rfNodes, edges: rfEdges };
-  }, [graph, selected]);
+  const flow = useMemo(() => toFlow(graph), [graph]);
+  const [laid, setLaid] = useState<Node<NodeData>[]>([]);
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    void elkLayout(flow.nodes, flow.edges).then((n) => { if (active) { setLaid(n); setVersion((v) => v + 1); } });
+    return () => { active = false; };
+  }, [flow]);
 
   const onNodeClick: NodeMouseHandler = (_e, node) => { if (interactive) setSelected(node.id); };
 
@@ -114,18 +167,23 @@ export function GraphView({ interactive }: { interactive: boolean }) {
     return <div className="tf-empty" style={{ padding: 12 }}>暂无图谱数据（记录 Fact/Action 后出现）。</div>;
   }
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+    <div className="tf-graph" style={{ position: "relative", width: "100%", height: "100%" }}>
       <ReactFlow
-        nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView
-        nodesDraggable={interactive} nodesConnectable={false} elementsSelectable={interactive}
-        panOnDrag={interactive} zoomOnScroll={interactive} zoomOnPinch={interactive}
-        onNodeClick={onNodeClick} minZoom={0.3}
-        proOptions={{ hideAttribution: true }}
+        nodes={laid} edges={flow.edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView
+        nodesDraggable={false} nodesConnectable={false} elementsSelectable={interactive}
+        panOnDrag={interactive} zoomOnScroll={interactive} zoomOnPinch={interactive} minZoom={0.2}
+        onNodeClick={onNodeClick} proOptions={{ hideAttribution: true }}
+        defaultEdgeOptions={{ type: "event" }}
       >
-        <Background color="#1c2029" gap={22} size={1} />
+        <FocusLatest latestId={flow.latestId} version={version} />
+        <Background color="rgba(148,163,184,0.22)" gap={22} />
         {interactive && <Controls showInteractive={false} />}
       </ReactFlow>
       {interactive && selected && <DetailPanel graph={graph} nodeId={selected} onClose={() => setSelected(null)} />}
     </div>
   );
+}
+
+export function GraphView({ interactive }: { interactive: boolean }) {
+  return <ReactFlowProvider><GraphInner interactive={interactive} /></ReactFlowProvider>;
 }
