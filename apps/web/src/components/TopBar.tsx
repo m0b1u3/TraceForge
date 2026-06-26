@@ -10,26 +10,19 @@ export function TopBar() {
   const controlClass = browserController === "human" ? "is-human" : browserController === "llm" ? "is-llm" : "";
 
   return (
-    <div className="tf-topbar">
-      <span className="tf-brand">TraceForge</span>
-      <span className="tf-topbar-div" />
-      <CaseLauncher variant="bar" />
-      <span className="tf-spacer" />
-      {caseId && (
-        <>
-          <span className="tf-stat">Facts <b>{facts.length}</b></span>
-          <span className="tf-stat-sep" />
-          <span className="tf-stat">Tasks <b>{tasks.length}</b></span>
-          <span className="tf-stat-sep" />
-          <span className={`tf-stat ${warnCls}`} title="Observer 监督提示"><Warning size={13} weight="fill" /> <b>{warnings.length}</b></span>
-          <span className="tf-stat-sep" />
-          <span className={`tf-pill ${controlClass}`}>
-            <ShieldCheck size={13} weight="fill" style={{ opacity: 0.7 }} />
-            {controlLabel}
-            {browserUrl && <span style={{ color: "var(--tf-faint)" }}>· {browserUrl}</span>}
-          </span>
-        </>
-      )}
-    </div>
+    <header className="topbar">
+      <div className="brand"><span><ShieldCheck size={16} /></span><div><strong>TraceForge</strong><small>授权红队工作台</small></div></div>
+      <nav><CaseLauncher variant="bar" /></nav>
+      <div className="run-id">
+        {caseId && (
+          <>
+            <span className="tf-stat">Facts <b>{facts.length}</b></span>
+            <span className="tf-stat">Tasks <b>{tasks.length}</b></span>
+            <span className={`tf-stat ${warnCls}`} title="Observer 提示"><Warning size={13} weight="fill" /> <b>{warnings.length}</b></span>
+            <span className={`tf-pill ${controlClass}`}><ShieldCheck size={13} weight="fill" />{controlLabel}{browserUrl && <span style={{ color: "var(--faint)" }}>· {browserUrl}</span>}</span>
+          </>
+        )}
+      </div>
+    </header>
   );
 }
