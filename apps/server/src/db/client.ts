@@ -76,6 +76,12 @@ export function createDb(path: string) {
       updated_at TEXT NOT NULL, update_count INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_hypotheses_case ON hypotheses(case_id);
+    CREATE TABLE IF NOT EXISTS context_summaries (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL, case_id TEXT NOT NULL,
+      covers_up_to_event_seq INTEGER NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_context_summaries_case ON context_summaries(case_id);
   `);
   return drizzle(sqlite);
 }

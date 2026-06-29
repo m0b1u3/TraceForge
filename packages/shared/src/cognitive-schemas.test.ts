@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SessionStateSchema, HypothesisSchema } from "./schemas.js";
+import { SessionStateSchema, HypothesisSchema, ContextSummarySchema } from "./schemas.js";
 
 describe("SessionStateSchema", () => {
   it("parses with defaults and closed phase enum", () => {
@@ -23,5 +23,12 @@ describe("HypothesisSchema", () => {
   });
   it("rejects invalid status", () => {
     expect(() => HypothesisSchema.parse({ id: "h1", caseId: "c1", statement: "x", basedOnFactIds: ["f1"], status: "maybe", createdAt: "t", updatedAt: "t" })).toThrow();
+  });
+});
+
+describe("ContextSummarySchema", () => {
+  it("parses", () => {
+    const s = ContextSummarySchema.parse({ id: "s1", caseId: "c1", coversUpToEventSeq: 5, content: "x", createdAt: "t" });
+    expect(s.coversUpToEventSeq).toBe(5);
   });
 });

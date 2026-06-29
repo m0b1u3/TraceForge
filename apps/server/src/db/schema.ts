@@ -132,3 +132,12 @@ export const hypotheses = sqliteTable("hypotheses", {
   updatedAt: text("updated_at").notNull(),
   updateCount: integer("update_count").notNull(),
 });
+
+export const contextSummaries = sqliteTable("context_summaries", {
+  seq: integer("seq").primaryKey({ autoIncrement: true }),
+  id: text("id").notNull(),
+  caseId: text("case_id").notNull(),
+  coversUpToEventSeq: integer("covers_up_to_event_seq").notNull(),
+  content: text("content").notNull(),
+  createdAt: text("created_at").notNull(),
+});

@@ -198,3 +198,12 @@ export const HypothesisSchema = z.object({
   updateCount: z.number().default(0),
 });
 export type Hypothesis = z.infer<typeof HypothesisSchema>;
+
+export const ContextSummarySchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  coversUpToEventSeq: z.number(),
+  content: z.string(),
+  createdAt: z.string(),
+});
+export type ContextSummary = z.infer<typeof ContextSummarySchema>;
