@@ -28,7 +28,7 @@ import { SessionStateStore } from "./stores/session-state-store.js";
 import { HypothesisStore } from "./stores/hypothesis-store.js";
 import { ContextSummaryStore } from "./stores/context-summary-store.js";
 import { buildContext, compressFar } from "@traceforge/reasoning-core";
-import { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool } from "@traceforge/extension";
+import { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool, makeSearchFactsTool, makeGetFactDetailTool, makeSearchTrafficTool, makeRecallConversationTool } from "@traceforge/extension";
 
 export function registerRoutes(
   app: FastifyInstance,
@@ -227,6 +227,10 @@ export function registerRoutes(
     registry.register(makeUpdateSessionStateTool(id, sessionStore));
     registry.register(makeRecordHypothesisTool(id, hypothesisStore, factStore));
     registry.register(makeResolveHypothesisTool(id, hypothesisStore, factStore));
+    registry.register(makeSearchFactsTool(id, factStore));
+    registry.register(makeGetFactDetailTool(id, factStore));
+    registry.register(makeSearchTrafficTool(id, traffic));
+    registry.register(makeRecallConversationTool(id, agentEventStore, contextSummaryStore));
 
     // 若该 case 有共享浏览器会话，把浏览器工具纳入 agent 工具集
     const browserSession = browserSessions.get(id);

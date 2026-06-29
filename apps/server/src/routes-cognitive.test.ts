@@ -84,3 +84,29 @@ describe("Fix 1: compressor wired into agent/run", () => {
     await localApp.close();
   });
 });
+
+describe("pull-mode fact retrieval", () => {
+  it("agent can search facts via search_facts tool", async () => {
+    const app2 = Fastify();
+    const db2 = createDb(":memory:");
+    const bus2 = new EventBus();
+    // 第一轮：agent 调 search_facts（query 用英文以匹配 title）；第二轮：done
+    const provider2 = new MockProvider({}, [
+      { text: "", toolCalls: [{ id: "c1", name: "search_facts", input: { query: "login" } }], done: false },
+      { text: "找到了登录接口", toolCalls: [], done: true },
+    ]);
+    registerRoutes(app2, db2, bus2, provider2);
+    await app2.ready();
+    const cid = (await app2.inject({ method: "POST", url: "/api/cases", payload: { name: "d", allowHosts: [] } })).json().id;
+    // 先落一个 fact
+    await app2.inject({ method: "POST", url: `/api/cases/${cid}/facts`, payload: { type: "login_endpoint", title: "/api/login", value: {} } });
+    // 跑 agent
+    const res = await app2.inject({ method: "POST", url: `/api/cases/${cid}/agent/run`, payload: { goal: "找登录接口" } });
+    expect(res.statusCode).toBe(200);
+    // agent 事件里应出现 search_facts 的 tool_result，且命中 /api/login
+    const events = (await app2.inject({ url: `/api/cases/${cid}/agent/events` })).json();
+    const toolResults = events.filter((e: { kind: string }) => e.kind === "tool_result").map((e: { text: string }) => e.text);
+    expect(toolResults.some((t: string) => t.includes("/api/login"))).toBe(true);
+    await app2.close();
+  });
+});
