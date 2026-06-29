@@ -1,31 +1,26 @@
-import type { Fact, Task, SessionState, Hypothesis } from "@traceforge/shared";
+import type { Task, SessionState, Hypothesis } from "@traceforge/shared";
 import { estimateTokens } from "./token-estimate.js";
-import { topK, type Focus } from "./relevance.js";
 
 export interface ConvoEntry { role: "user" | "assistant"; text: string }
 export interface ContextInput {
   goal: string;
   state?: SessionState;
   recentConvo: ConvoEntry[];
-  facts: Fact[];
+  factCount: number;
+  trafficCount: number;
+  summaryCount: number;
   activeHypotheses: Hypothesis[];
   activeTasks: Task[];
   doneTaskSummaries: string[];
   farSummary?: string;
   scopeHosts: string[];
-  protectedFactIds: Set<string>;
 }
 export interface ContextBudget { maxTokens: number; focusReserve: number }
 export interface BuiltMessage { role: "user" | "assistant"; content: string }
 export interface BuildResult { messages: BuiltMessage[]; injectedFactIds: string[]; estimatedTokens: number; degraded: string[] }
 
-function focusFrom(input: ContextInput): Focus {
-  return { host: input.state?.focus.host, url: input.state?.focus.url, note: input.state?.focus.note, goal: input.goal };
-}
-
 export function buildContext(input: ContextInput, budget: ContextBudget): BuildResult {
   const degraded: string[] = [];
-  const focus = focusFrom(input);
 
   // ---- Layer 1 焦点（永不裁剪，仅长文本可截断）----
   const stateLine = input.state
@@ -35,18 +30,12 @@ export function buildContext(input: ContextInput, budget: ContextBudget): BuildR
   const taskLine = input.activeTasks.length
     ? `活跃任务：\n${input.activeTasks.map((t) => `- [${t.status}] ${t.title}`).join("\n")}`
     : "活跃任务：（无）";
+  const inventoryLine = `📁 本 Case 已积累：${input.factCount} 个 Fact、${input.trafficCount} 条流量、${input.summaryCount} 条远期对话摘要。需要历史发现时用 search_facts("关键词") / search_traffic(...) / recall_conversation(...) 检索；要某 Fact 细节用 get_fact_detail(id)。`;
 
-  // ---- Layer 2 相关（受预算调 K）----
-  let k = 12;
-  const buildLayer2 = (kk: number): { text: string; ids: string[] } => {
-    const picked = topK(input.facts, focus, kk);
-    const ids = new Set(picked.map((f) => f.id));
-    for (const f of input.facts) if (input.protectedFactIds.has(f.id)) ids.add(f.id);
-    const chosen = input.facts.filter((f) => ids.has(f.id));
-    const factText = chosen.length ? chosen.map((f) => `- ${f.id} [${f.type}] ${f.title}`).join("\n") : "（无相关 Fact）";
-    const hypoText = input.activeHypotheses.length ? input.activeHypotheses.map((h) => `- ${h.id} [${h.status}] ${h.statement}`).join("\n") : "";
-    const text = `相关 Fact：\n${factText}` + (hypoText ? `\n活跃假设：\n${hypoText}` : "");
-    return { text, ids: chosen.map((f) => f.id) };
+  // ---- Layer 2 活跃假设----
+  const buildLayer2 = (): string => {
+    if (!input.activeHypotheses.length) return "";
+    return `活跃假设：\n${input.activeHypotheses.map((h) => `- ${h.id} [${h.status}] ${h.statement}`).join("\n")}`;
   };
 
   // ---- Layer 3 摘要（最先被砍）----
@@ -57,10 +46,11 @@ export function buildContext(input: ContextInput, budget: ContextBudget): BuildR
     return parts.join("\n");
   };
   let layer3 = buildLayer3();
+  const layer2 = buildLayer2();
 
-  let l2 = buildLayer2(k);
   const assemble = (): string => {
-    const sections = [stateLine, scopeLine, taskLine, l2.text];
+    const sections = [stateLine, scopeLine, taskLine, inventoryLine];
+    if (layer2) sections.push(layer2);
     if (layer3) sections.push(layer3);
     return sections.join("\n\n");
   };
@@ -70,9 +60,7 @@ export function buildContext(input: ContextInput, budget: ContextBudget): BuildR
 
   // 降级 1：砍 Layer3
   if (total() > budget.maxTokens && layer3) { layer3 = ""; degraded.push("dropped-layer3"); ctx = assemble(); }
-  // 降级 2：降 K
-  while (total() > budget.maxTokens && k > 3) { k -= 3; l2 = buildLayer2(k); degraded.push(`reduced-k-${k}`); ctx = assemble(); }
-  // 降级 3：截断焦点长文本
+  // 降级 2：截断焦点长文本
   if (total() > budget.maxTokens) {
     const reserveChars = budget.focusReserve * 4;
     if (ctx.length > reserveChars) { ctx = ctx.slice(0, reserveChars) + "\n…（上下文已截断）"; degraded.push("truncated-context"); }
@@ -82,5 +70,5 @@ export function buildContext(input: ContextInput, budget: ContextBudget): BuildR
   for (const c of input.recentConvo) messages.push({ role: c.role, content: c.text });
   messages.push({ role: "user", content: input.goal });
 
-  return { messages, injectedFactIds: l2.ids, estimatedTokens: total(), degraded };
+  return { messages, injectedFactIds: [], estimatedTokens: total(), degraded };
 }

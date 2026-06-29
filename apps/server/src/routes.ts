@@ -267,18 +267,18 @@ export function registerRoutes(
       .filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done")
       .slice(-20)
       .map((e) => ({ role: e.kind === "user" ? ("user" as const) : ("assistant" as const), text: e.text }));
-    const evidenceRefIds = new Set(actionStore.listByCase(id).flatMap((a) => a.evidenceRefs));
     const built = buildContext({
       goal,
       state: sessionStore.get(id),
       recentConvo,
-      facts: factStore.listByCase(id),
+      factCount: factStore.listByCase(id).length,
+      trafficCount: traffic.listByCase(id).length,
+      summaryCount: contextSummaryStore.latest(id) ? 1 : 0,
       activeHypotheses: hypothesisStore.listByCase(id).filter((h) => h.status === "open"),
       activeTasks: taskStore.listByCase(id).filter((t) => ["open", "blocked", "running", "recheck_candidate"].includes(t.status)),
       doneTaskSummaries: taskStore.listByCase(id).filter((t) => t.status === "done").map((t) => `${t.title}：${t.reason || "完成"}`),
       farSummary: contextSummaryStore.latest(id)?.content,
       scopeHosts: c.scopeRules.flatMap((r) => r.allowHosts),
-      protectedFactIds: evidenceRefIds,
     }, { maxTokens: 60000, focusReserve: 3000 });
 
     agentEventStore.append(id, "user", goal); // 存用户这句目标，刷新/切 Case 后历史可见完整双边对话
