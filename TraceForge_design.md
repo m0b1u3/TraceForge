@@ -2847,5 +2847,6 @@ TraceForge 应该像一个有经验的渗透测试搭档：
 4. **重新评估机制（原阶段 8，去硬编码重设计）** — 原 Trigger Rules（「新凭据→触发登录任务」等写死映射）违反第 3.0 原则。改为：新 Fact 入库时由 **LLM 判断**是否应重启/新建相关 Task，规则不写进代码。✅ 已完成（reopen_task/revert_done_task 两工具，LLM 判断 Fact↔Task 关联，去 factTypeToTriggers 硬编码；revert done 过 ApprovalGate 人工确认）。
 5. **Observer（原阶段 9，形态不变）** — 监督 agent：查无依据猜测、低效路径、过早结束，向 Manager 发纠偏建议。✅ 已完成（run 后旁路 LLM 监督，10 检查项作 prompt 指引去硬编码，ObserverWarning 存库 + 工作台 Tab，只提醒不干预）。
 6. **Plan B 工具插件（按需）** — 仅当某关键工具无 MCP 封装时单独写；MCP 已是主扩展通道，B 降为补充。
+7. **Agent 认知内核（落地 §14 规划器 + §25 上下文与证据检索，P0）** — ✅ 已完成。把无状态工具循环升级为有记忆/会有规划的 agent，归 packages/reasoning-core。① SessionState 会话状态机（phase 闭枚举，LLM 经 update_session_state 工具维护）② Hypothesis 假设驱动规划（record/resolve_hypothesis，basedOnFactIds 非空且引用已存 Fact 的证据驱动硬规则）③ ContextBuilder 三层上下文（Focus 不裁 + Relevant Top-K 检索 + Summary 远期摘要）+ token 预算降级 ④ relevanceScore 规则检索（同 host/关键词 bigram/新鲜度/已消费，跨 scope 置 0，无向量库，预留 RetrievalStrategy 接口）⑤ token 字符估算 ⑥ Compressor 远期对话增量 LLM 摘要 + 规则回退。agent/run 前组装三层 messages、run 后 LLM 经工具更新状态，根治「跨轮不认上文」。容错降级不崩，零硬编码（状态/假设转换全 LLM 决定）。设计见 docs/superpowers/specs/2026-06-26-agent-cognitive-core-design.md。**§25 第 5 步降级（上下文过载 Observer warning）、§3.1 图距离维度、置信度传播（§27）留后续 backlog。**
 
-> 横切关注（第 25-30 章：上下文/证据检索、自身安全、置信度传播、多 Case 隔离、并发恢复、可观测性）随各功能推进逐步落实，不单列为阶段。
+> 横切关注（第 25-30 章：上下文/证据检索、自身安全、置信度传播、多 Case 隔离、并发恢复、可观测性）随各功能推进逐步落实，不单列为阶段。**上下文/证据检索（§25）+ 规划器（§14）已由「Agent 认知内核」落地（见上第 7 项）。**
