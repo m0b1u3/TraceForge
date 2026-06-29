@@ -27,7 +27,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 `config/llm.json` 不纳入版本控制；未配置时 AI 提取返回空候选（其余功能不受影响）。
 
-## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 A + agent 交互 E1/E2 + 共享浏览器 F1/F2 + MCP 集成 C + 工作台 UI + PoC MCP server + LLM 重评估 + Observer 监督 + Agent 认知内核）
+## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 A + agent 交互 E1/E2 + 共享浏览器 F1/F2 + MCP 集成 C + 工作台 UI + PoC MCP server + LLM 重评估 + Observer 监督 + Agent 认知内核 + Pull 式记忆检索）
 
 - pnpm monorepo 骨架
 - Scope Guard 安全地基（deny-by-default + 通配符，单元测试覆盖）
@@ -52,10 +52,11 @@ export ANTHROPIC_API_KEY=sk-ant-...
 - 工作流图谱引擎（图谱重做 第 2 轮 / 共 3 轮）：GraphView 换 @xyflow/react v12 + elkjs 自动布局，照 BreachWeave 风做成浅色白卡片节点（类型徽章 + 标题 + body + N updates，validity=superseded 置灰划线）+ 流动贝塞尔连线 + 最新 updatedAt 节点自动聚焦。节点随真实 agent 事件实时出现/更新
 - 整体 demo 风样式（图谱重做 第 3 轮 / 共 3 轮 · 收尾）：以 BreachWeave demo 的 styles.css 为基底重做整个工作台为浅色专业风（.app-shell/.topbar/.workspace/.panel/.request-row/.message/.composer），各组件结构对齐 demo；演示专用部分（重放/假导航/写死 id）换成真功能（Case 选择/控制权状态/真事件流）；去图谱作用域整体浅色统一。保留 Geist + 思源黑字体
 - Agent 认知内核（packages/reasoning-core）：给 agent 加跨轮记忆 + 上下文管理 + 规划 + 会话状态，把无状态工具循环升级为有记忆能连续作业的红队搭档。落地设计文档 §14（规划器）+ §25（上下文与证据检索，P0）。① 会话状态 SessionState（currentGoal/phase 闭枚举/focus，LLM 经 update_session_state 工具维护）② 假设驱动规划 Hypothesis（statement/status，record_hypothesis 强制 basedOnFactIds 引用已存 Fact—证据驱动硬规则；resolve confirmed 须引证实 Fact）③ 三层上下文 ContextBuilder（Focus 焦点不裁 + Relevant 相关性 Top-K 检索 + Summary 远期摘要）受 token 预算约束，超预算逐级降级（砍摘要→降 K→截断）④ 相关性检索 relevanceScore（同 host/关键词 bigram/新鲜度/已消费，跨 scope 置 0，无向量库）⑤ token 字符估算（无 tokenizer 库）⑥ Compressor 远期对话增量 LLM 摘要（失败回退规则截断，存 context_summaries 复用）。agent/run 前用 ContextBuilder 把历史对话+相关证据+会话状态组装成三层 messages 传给 LLM，run 后 LLM 经工具更新状态——根治「发新对话不认上文（同意/继续）」。容错：认知层任一环失败降级不崩，agent run 退回至少能跑。零硬编码：状态/假设转换全由 LLM 决定，代码不写领域规则
+- Pull 式记忆检索（packages/extension/memory-tools + reasoning-core/keyword-search）：把认知内核的 push 式 Fact 预塑（ContextBuilder 用 relevanceScore 替 LLM 猜 12 个 Fact 塞进 context）改为 pull 式——给 agent 检索工具自己拉，向 Claude Code「系统提示轻量 + 工具按需拉取」形态靠拢，把「哪些 Fact 相关」的决策权从代码规则交还 LLM。① 4 个检索工具 search_facts（搜 type/title/value/tags，命中返摘要）/ get_fact_detail（拉完整 value）/ search_traffic（搜 url/method）/ recall_conversation（搜远期对话+摘要），均复用现有 store 方法、risk=normal、结果带「下一步提示」② keywordScore 公共 bigram 打分纯函数（支持中文连续串，留 embedding 升级接口）③ ContextBuilder 瘦身：删 Layer2 Fact 预塑，Layer1 改放「资源清单」行（告诉 agent 有 N 个 Fact/流量/远期摘要可查 + 提示用检索工具），入参 facts[]→count。混合式：轻量确定性上下文（目标/host/近期对话）仍 push，大量证据按需 pull。第一版关键词检索（中英文不互通是已知盲区，留向量语义为后续迭代）
 
 ## 测试
 
 ```bash
-pnpm test     # 216 个单元测试
+pnpm test     # 232 个单元测试
 pnpm -r build # 全量构建
 ```
