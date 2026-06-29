@@ -14,11 +14,18 @@ export interface ReplayResponse {
 
 export type Fetcher = (req: ReplayRequest) => Promise<ReplayResponse>;
 
+// 受限网络下，对目标发包需经 HTTP 代理。node 原生 fetch 不读 HTTPS_PROXY/HTTP_PROXY 环境变量、
+// 也不可靠地透传 dispatcher 选项，故直接用 undici 的 fetch（原生支持 dispatcher）+ ProxyAgent。
+// 无代理 env 时仍用 undici fetch 直连，行为与原生一致。
 const defaultFetcher: Fetcher = async (req) => {
-  const res = await fetch(req.url, {
+  const { fetch: undiciFetch, ProxyAgent } = await import("undici");
+  const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy;
+  const dispatcher = proxy ? new ProxyAgent(proxy) : undefined;
+  const res = await undiciFetch(req.url, {
     method: req.method,
     headers: req.headers,
     body: req.body,
+    ...(dispatcher ? { dispatcher } : {}),
   });
   const body = await res.text();
   const headers: Record<string, string> = {};

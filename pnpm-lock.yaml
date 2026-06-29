@@ -179,7 +179,11 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
-  packages/tools: {}
+  packages/tools:
+    dependencies:
+      undici:
+        specifier: ^8.5.0
+        version: 8.5.0
 
 packages:
 
