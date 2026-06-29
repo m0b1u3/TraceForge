@@ -27,8 +27,16 @@ export function makeUpdateSessionStateTool(caseId: string, ss: SessionStateWrite
     risk: "normal",
     source: "builtin",
     execute: async (input) => {
-      const p = (input ?? {}) as Parameters<SessionStateWriter["upsert"]>[1];
-      const r = ss.upsert(caseId, p);
+      const p = { ...((input ?? {}) as Record<string, unknown>) };
+      // 容忍 LLM 不规范输入：focus 本应是对象 {host,url,note}，但真实 LLM 常传字符串
+      // 或被序列化成 JSON 字符串。规范化为对象，避免 schema.parse 抛错导致整轮 run 失败。
+      if (typeof p.focus === "string") {
+        const raw = p.focus.trim();
+        let parsed: unknown;
+        try { parsed = JSON.parse(raw); } catch { parsed = null; }
+        p.focus = parsed && typeof parsed === "object" ? parsed : { note: raw };
+      }
+      const r = ss.upsert(caseId, p as Parameters<SessionStateWriter["upsert"]>[1]);
       return { ok: true, content: `会话状态已更新（phase=${r.phase}）` };
     },
   };

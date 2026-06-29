@@ -12,6 +12,23 @@ describe("update_session_state tool", () => {
     expect(r.ok).toBe(true);
     expect(calls[0]).toMatchObject({ currentGoal: "测越权", phase: "analyze" });
   });
+  // 真实 LLM 测试发现：LLM 常把 focus 传成 JSON 字符串而非对象 —— 工具须容错，不能崩。
+  it("normalizes focus when LLM passes a JSON string", async () => {
+    const calls: { focus?: unknown }[] = [];
+    const ss = { upsert: (_c: string, p: { focus?: unknown }) => { calls.push(p); return { phase: "recon" }; } };
+    const t = makeUpdateSessionStateTool("c1", ss);
+    const r = await t.execute({ focus: '{"host": "example.com", "note": "登录越权"}' });
+    expect(r.ok).toBe(true);
+    expect(calls[0].focus).toEqual({ host: "example.com", note: "登录越权" });
+  });
+  it("normalizes focus when LLM passes a plain string", async () => {
+    const calls: { focus?: unknown }[] = [];
+    const ss = { upsert: (_c: string, p: { focus?: unknown }) => { calls.push(p); return { phase: "recon" }; } };
+    const t = makeUpdateSessionStateTool("c1", ss);
+    const r = await t.execute({ focus: "登录接口" });
+    expect(r.ok).toBe(true);
+    expect(calls[0].focus).toEqual({ note: "登录接口" });
+  });
 });
 
 describe("record_hypothesis tool", () => {

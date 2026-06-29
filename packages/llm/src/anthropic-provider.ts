@@ -35,21 +35,35 @@ export class AnthropicProvider implements LlmProvider {
   async runTools(args: RunToolsArgs): Promise<RunTurn> {
     // 用 Anthropic 原生 tool-calling：tools 参数 + tool_use/tool_result 块。
     // SDK 类型对 thinking:adaptive 不全，整体断言兜底（同 extractJson）。
-    const anthropicMessages = args.messages.map((m) => {
+    // Anthropic 协议：一条 assistant 里的 N 个 tool_use，必须紧跟"一条" user 消息且其中含全部 N 个
+    // tool_result。AgentRuntime 把每个工具结果存为独立的 role:"tool" 消息，这里要把**连续的** tool
+    // 消息合并进同一条 user 消息，否则 DeepSeek/Anthropic 端点报 "tool_use ids without tool_result"。
+    const anthropicMessages: Array<{ role: "user" | "assistant"; content: unknown }> = [];
+    for (const m of args.messages) {
       if (m.role === "tool") {
-        return { role: "user" as const, content: [{ type: "tool_result", tool_use_id: m.toolCallId, content: m.content }] };
+        const block = { type: "tool_result", tool_use_id: m.toolCallId, content: m.content };
+        const last = anthropicMessages[anthropicMessages.length - 1];
+        // 若上一条已是承载 tool_result 的 user 消息，追加进去（合并连续工具结果）
+        if (last && last.role === "user" && Array.isArray(last.content)
+            && (last.content as Array<{ type: string }>)[0]?.type === "tool_result") {
+          (last.content as unknown[]).push(block);
+        } else {
+          anthropicMessages.push({ role: "user", content: [block] });
+        }
+        continue;
       }
       if (m.role === "assistant" && m.toolCalls?.length) {
-        return {
-          role: "assistant" as const,
+        anthropicMessages.push({
+          role: "assistant",
           content: [
             ...(m.content ? [{ type: "text", text: m.content }] : []),
             ...m.toolCalls.map((tc) => ({ type: "tool_use", id: tc.id, name: tc.name, input: tc.input })),
           ],
-        };
+        });
+        continue;
       }
-      return { role: m.role as "user" | "assistant", content: m.content };
-    });
+      anthropicMessages.push({ role: m.role as "user" | "assistant", content: m.content });
+    }
     const params = {
       model: this.opts.model,
       max_tokens: 4096,
