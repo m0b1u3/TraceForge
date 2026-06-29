@@ -29,10 +29,19 @@ describe("search_facts", () => {
     expect(r.content).toContain("f2");
   });
   it("empty result returns ok:true with hint", async () => {
-    const t = makeSearchFactsTool("c", facts);
-    const r = await t.execute({ query: "zzzznomatch" });
+    // 使用对测试数据真正零 bigram 命中的 facts（避免偶然碰撞）
+    const emptyFacts = { listByCase: () => [] as ReturnType<typeof facts.listByCase> };
+    const t = makeSearchFactsTool("c", emptyFacts);
+    const r = await t.execute({ query: "任意查询" });
     expect(r.ok).toBe(true);
     expect(r.content).toContain("没有匹配");
+  });
+  it("multi-keyword chinese query matches when any keyword hits (no over-filtering)", async () => {
+    const chineseFacts = { listByCase: () => [fact({ id: "f1", type: "login_endpoint", title: "登录接口" })] };
+    const t = makeSearchFactsTool("c", chineseFacts);
+    const r = await t.execute({ query: "登录越权" }); // 只命中"登录"，不该被阈值砍掉
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain("f1");
   });
 });
 
@@ -64,6 +73,12 @@ describe("search_traffic", () => {
     const r = await t.execute({ query: "order" });
     expect(r.content).toContain("t1");
     expect(r.content).not.toContain("t2");
+  });
+  it("empty result returns ok:true with hint", async () => {
+    const t = makeSearchTrafficTool("c", traffic);
+    const r = await t.execute({ query: "bbbvvvjjjzzz" });
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain("没有匹配");
   });
 });
 

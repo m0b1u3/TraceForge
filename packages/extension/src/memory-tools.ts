@@ -13,15 +13,6 @@ function clip(s: string, max = 120): string {
   return one.length <= max ? one : `${one.slice(0, max)}…`;
 }
 
-/** 最低命中阈值：单字 query 直接用 > 0；多字 query 要求命中 >= 2 或覆盖 >= 40% 的 bigram。 */
-function minScore(query: string): number {
-  const q = query.replace(/[\s,，。/]+/g, "");
-  if (q.length <= 1) return 1;
-  const totalBigrams = q.length - 1;
-  // 至少命中 40% bigram，且不低于 1；若 query 本身只有 2 个 bigram 则要求至少 1
-  return Math.max(1, Math.ceil(totalBigrams * 0.4));
-}
-
 export function makeSearchFactsTool(caseId: string, facts: FactSearchReader): ToolDescriptor {
   return {
     name: "search_facts",
@@ -31,10 +22,9 @@ export function makeSearchFactsTool(caseId: string, facts: FactSearchReader): To
     execute: async (input) => {
       const { query, limit = 10 } = (input ?? {}) as { query?: string; limit?: number };
       if (!query) return { ok: false, content: "缺少 query" };
-      const threshold = minScore(query);
       const hits = facts.listByCase(caseId)
         .map((f) => ({ f, s: keywordScore(query, `${f.type} ${f.title} ${JSON.stringify(f.value)} ${f.tags.join(" ")}`) }))
-        .filter((x) => x.s >= threshold).sort((a, b) => b.s - a.s).slice(0, limit);
+        .filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, limit);
       if (hits.length === 0) return { ok: true, content: `没有匹配"${query}"的 Fact` };
       return { ok: true, content: `${hits.map((h) => `${h.f.id} [${h.f.type}] ${h.f.title}`).join("\n")}\n（用 get_fact_detail(id) 看完整内容）` };
     },
@@ -67,10 +57,9 @@ export function makeSearchTrafficTool(caseId: string, traffic: TrafficSearchRead
     execute: async (input) => {
       const { query, limit = 10 } = (input ?? {}) as { query?: string; limit?: number };
       if (!query) return { ok: false, content: "缺少 query" };
-      const threshold = minScore(query);
       const hits = traffic.listByCase(caseId)
         .map((e) => ({ e, s: keywordScore(query, `${e.url} ${e.method} ${e.responseStatus ?? ""}`) }))
-        .filter((x) => x.s >= threshold).sort((a, b) => b.s - a.s).slice(0, limit);
+        .filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, limit);
       if (hits.length === 0) return { ok: true, content: `没有匹配"${query}"的流量` };
       return { ok: true, content: `${hits.map((h) => `${h.e.id} ${h.e.method} ${h.e.responseStatus ?? "-"} ${h.e.url}`).join("\n")}\n（用 get_traffic(id) 看 headers/body）` };
     },
@@ -86,15 +75,14 @@ export function makeRecallConversationTool(caseId: string, events: ConvoSearchRe
     execute: async (input) => {
       const { query, limit = 10 } = (input ?? {}) as { query?: string; limit?: number };
       if (!query) return { ok: false, content: "缺少 query" };
-      const threshold = minScore(query);
       const hits = events.listByCase(caseId)
         .filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done")
         .map((e) => ({ e, s: keywordScore(query, e.text) }))
-        .filter((x) => x.s >= threshold).sort((a, b) => b.s - a.s).slice(0, limit);
+        .filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, limit);
       const parts: string[] = [];
       if (hits.length) parts.push(hits.map((h) => `[${h.e.kind}] ${clip(h.e.text)}`).join("\n"));
       const sum = summaries.latest(caseId);
-      if (sum && keywordScore(query, sum.content) >= threshold) parts.push(`远期摘要相关段：${clip(sum.content, 200)}`);
+      if (sum && keywordScore(query, sum.content) > 0) parts.push(`远期摘要相关段：${clip(sum.content, 200)}`);
       if (parts.length === 0) return { ok: true, content: `没有匹配"${query}"的历史对话` };
       return { ok: true, content: parts.join("\n\n") };
     },
