@@ -27,7 +27,7 @@ import { ApprovalRegistry } from "./agent-approvals.js";
 import { SessionStateStore } from "./stores/session-state-store.js";
 import { HypothesisStore } from "./stores/hypothesis-store.js";
 import { ContextSummaryStore } from "./stores/context-summary-store.js";
-import { buildContext } from "@traceforge/reasoning-core";
+import { buildContext, compressFar } from "@traceforge/reasoning-core";
 import { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool } from "@traceforge/extension";
 
 export function registerRoutes(
@@ -264,7 +264,7 @@ export function registerRoutes(
     // 先取历史（此时不含当前 goal），构造近期对话
     const history = agentEventStore.listByCase(id);
     const recentConvo = history
-      .filter((e) => e.kind === "user" || e.kind === "done")
+      .filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done")
       .slice(-20)
       .map((e) => ({ role: e.kind === "user" ? ("user" as const) : ("assistant" as const), text: e.text }));
     const evidenceRefIds = new Set(actionStore.listByCase(id).flatMap((a) => a.evidenceRefs));
@@ -298,6 +298,35 @@ export function registerRoutes(
     }
 
     timelineStore.append(id, "context_built", `注入 ${built.injectedFactIds.length} facts, ~${built.estimatedTokens} tokens, 降级:${built.degraded.join(",") || "无"}`);
+
+    // 增量远期摘要：run 结束后压缩远期对话，失败不影响已完成的 run
+    const FAR_THRESHOLD = 30;   // 超过此数量才压缩
+    const RECENT_WINDOW = 20;   // 保留最近 N 条不压缩（近期）
+    try {
+      const allEvents = agentEventStore.listByCase(id);
+      if (allEvents.length > FAR_THRESHOLD) {
+        // 已摘要到第几条（用事件总数做游标，避免依赖 schema seq 字段）
+        const alreadyCovered = contextSummaryStore.latest(id)?.coversUpToEventSeq ?? 0;
+        // 远期窗口：[alreadyCovered, allEvents.length - RECENT_WINDOW)
+        const farEndIdx = allEvents.length - RECENT_WINDOW;
+        if (farEndIdx > alreadyCovered) {
+          const farEvents = allEvents.slice(alreadyCovered, farEndIdx);
+          const convoText = farEvents
+            .filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done")
+            .map((e) => `${e.kind === "user" ? "User" : "Agent"}: ${e.text}`)
+            .join("\n");
+          if (convoText.trim()) {
+            const doneTaskLines = taskStore.listByCase(id)
+              .filter((t) => t.status === "done")
+              .map((t) => `${t.title}：${t.reason || "完成"}`);
+            const summary = await compressFar({ convoText, doneTaskLines }, llm);
+            contextSummaryStore.append(id, farEndIdx, summary);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[compressor]", (e as Error).message);
+    }
 
     // 旁路监督：run 结束后触发 Observer，失败不影响已完成的 run
     try {
