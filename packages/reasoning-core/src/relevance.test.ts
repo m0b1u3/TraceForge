@@ -19,6 +19,13 @@ describe("relevanceScore", () => {
     const miss = relevanceScore(fact({ type: "note", title: "无关页面" }), focus);
     expect(hit).toBeGreaterThan(miss);
   });
+  it("freshness decay applies to default-confidence facts (confidence=1)", () => {
+    // confidence=1 is NOT isKey after fix, so freshness decay applies
+    const fresh = fact({ id: "f-fresh", confidence: 1, createdAt: new Date().toISOString() });
+    const stale = fact({ id: "f-stale", confidence: 1, createdAt: new Date(Date.now() - 30 * 86_400_000).toISOString() });
+    const focus = {}; // no host, avoids same-host bonus interference
+    expect(relevanceScore(fresh, focus)).toBeGreaterThan(relevanceScore(stale, focus));
+  });
   it("consumed exploratory fact is penalized", () => {
     const focus = { host: "a.com" };
     const f = fact({ id: "f1", title: "x on a.com", tags: ["host:a.com"] });

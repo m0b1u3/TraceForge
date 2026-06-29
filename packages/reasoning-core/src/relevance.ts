@@ -31,7 +31,7 @@ export function relevanceScore(fact: Fact, focus: Focus, consumed?: ConsumedSet)
   // 时间新鲜度：越新越高（confirmed 关键事实不衰减——validity=valid 且 confidence≥1 视为关键）
   const ageMs = Date.now() - new Date(fact.createdAt).getTime();
   const ageDays = ageMs / 86_400_000;
-  const isKey = fact.validity === "valid" && fact.confidence >= 1;
+  const isKey = fact.validity === "valid" && fact.confidence > 1;
   if (!isKey) score += Math.max(0, 2 - ageDays * 0.1);
 
   // 已消费惩罚（已被采纳进成功 Action 的探索性 fact 降权）
