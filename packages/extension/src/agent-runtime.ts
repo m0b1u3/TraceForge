@@ -13,8 +13,14 @@ const MAX_TURNS = 25;
 export class AgentRuntime {
   constructor(private provider: LlmProvider, private registry: ToolRegistry, private gate: ApprovalGate) {}
 
-  async run(system: string, userGoal: string, onEvent: (e: AgentEvent) => void): Promise<void> {
-    const messages: TurnMessage[] = [{ role: "user", content: userGoal }];
+  async run(
+    system: string,
+    initial: string | { role: "user" | "assistant"; content: string }[],
+    onEvent: (e: AgentEvent) => void,
+  ): Promise<void> {
+    const messages: TurnMessage[] = typeof initial === "string"
+      ? [{ role: "user", content: initial }]
+      : initial.map((m) => ({ role: m.role, content: m.content }));
 
     for (let turnCount = 0; turnCount < MAX_TURNS; turnCount++) {
       const turn = await this.provider.runTools({ system, messages, tools: this.registry.toLlmTools() });

@@ -65,4 +65,23 @@ describe("AgentRuntime", () => {
     await new AgentRuntime(provider, registry, autoGate).run("sys", "go", (e) => events.push(`${e.type}:${e.content}`));
     expect(events.some((e) => e.includes("unknown tool"))).toBe(true);
   });
+
+  it("accepts pre-assembled messages array as initial context", async () => {
+    let seen: { content: string }[] = [];
+    const provider = new SeqProvider([{ text: "ok", toolCalls: [], done: true }]);
+    const capturingProvider: LlmProvider = {
+      extractJson: async () => ({}),
+      runTools: async (a: RunToolsArgs) => {
+        seen = a.messages;
+        return { text: "ok", toolCalls: [], done: true };
+      },
+    };
+    const registry = new ToolRegistry();
+    await new AgentRuntime(capturingProvider, registry, autoGate).run(
+      "sys",
+      [{ role: "user", content: "a" }, { role: "assistant", content: "b" }, { role: "user", content: "c" }],
+      () => {},
+    );
+    expect(seen.map((m) => m.content)).toEqual(["a", "b", "c"]);
+  });
 });
