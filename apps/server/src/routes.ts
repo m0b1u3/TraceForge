@@ -24,6 +24,11 @@ import { BrowserSession } from "./browser-session.js";
 import { ObserverWarningStore } from "./stores/observer-store.js";
 import { AgentEventStore } from "./stores/agent-event-store.js";
 import { ApprovalRegistry } from "./agent-approvals.js";
+import { SessionStateStore } from "./stores/session-state-store.js";
+import { HypothesisStore } from "./stores/hypothesis-store.js";
+import { ContextSummaryStore } from "./stores/context-summary-store.js";
+import { buildContext } from "@traceforge/reasoning-core";
+import { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool } from "@traceforge/extension";
 
 export function registerRoutes(
   app: FastifyInstance,
@@ -44,6 +49,9 @@ export function registerRoutes(
   const decisionStore = new DecisionStore(db);
   const observerStore = new ObserverWarningStore(db);
   const agentEventStore = new AgentEventStore(db);
+  const sessionStore = new SessionStateStore(db);
+  const hypothesisStore = new HypothesisStore(db);
+  const contextSummaryStore = new ContextSummaryStore(db);
 
   app.post("/api/cases", async (req) => {
     const body = req.body as { name: string; allowHosts: string[]; denyHosts?: string[] };
@@ -216,6 +224,9 @@ export function registerRoutes(
     registry.register(makeHttpReplayTool(c.scopeRules));
     registry.register(makeProposeScopeExpansionTool((host, reason) =>
       bus.emit({ type: "scope_expansion_proposed", caseId: id, host, reason })));
+    registry.register(makeUpdateSessionStateTool(id, sessionStore));
+    registry.register(makeRecordHypothesisTool(id, hypothesisStore, factStore));
+    registry.register(makeResolveHypothesisTool(id, hypothesisStore, factStore));
 
     // 若该 case 有共享浏览器会话，把浏览器工具纳入 agent 工具集
     const browserSession = browserSessions.get(id);
@@ -249,11 +260,32 @@ export function registerRoutes(
 完成后用一句话总结。`;
 
     const trajectory: string[] = [];
+
+    // 先取历史（此时不含当前 goal），构造近期对话
+    const history = agentEventStore.listByCase(id);
+    const recentConvo = history
+      .filter((e) => e.kind === "user" || e.kind === "done")
+      .slice(-20)
+      .map((e) => ({ role: e.kind === "user" ? ("user" as const) : ("assistant" as const), text: e.text }));
+    const evidenceRefIds = new Set(actionStore.listByCase(id).flatMap((a) => a.evidenceRefs));
+    const built = buildContext({
+      goal,
+      state: sessionStore.get(id),
+      recentConvo,
+      facts: factStore.listByCase(id),
+      activeHypotheses: hypothesisStore.listByCase(id).filter((h) => h.status === "open"),
+      activeTasks: taskStore.listByCase(id).filter((t) => ["open", "blocked", "running", "recheck_candidate"].includes(t.status)),
+      doneTaskSummaries: taskStore.listByCase(id).filter((t) => t.status === "done").map((t) => `${t.title}：${t.reason || "完成"}`),
+      farSummary: contextSummaryStore.latest(id)?.content,
+      scopeHosts: c.scopeRules.flatMap((r) => r.allowHosts),
+      protectedFactIds: evidenceRefIds,
+    }, { maxTokens: 60000, focusReserve: 3000 });
+
     agentEventStore.append(id, "user", goal); // 存用户这句目标，刷新/切 Case 后历史可见完整双边对话
     bus.emit({ type: "agent_started", caseId: id, goal });
     agentEventStore.append(id, "started", `开始：${goal}`);
     try {
-      await new AgentRuntime(llm, registry, gate).run(system, goal, (e) => {
+      await new AgentRuntime(llm, registry, gate).run(system, built.messages, (e) => {
         if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
         else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined); trajectory.push(`[result] ${e.name} → ${e.content}`); }
         else if (e.type === "text") { bus.emit({ type: "agent_text", caseId: id, content: e.content }); agentEventStore.append(id, "text", e.content); trajectory.push(`[text] ${e.content}`); }
@@ -264,6 +296,8 @@ export function registerRoutes(
       agentEventStore.append(id, "error", (err as Error).message);
       return reply.code(500).send({ error: "agent run failed", reason: (err as Error).message });
     }
+
+    timelineStore.append(id, "context_built", `注入 ${built.injectedFactIds.length} facts, ~${built.estimatedTokens} tokens, 降级:${built.degraded.join(",") || "无"}`);
 
     // 旁路监督：run 结束后触发 Observer，失败不影响已完成的 run
     try {
