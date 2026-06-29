@@ -118,6 +118,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@3.25.76)
+      '@traceforge/reasoning-core':
+        specifier: workspace:*
+        version: link:../reasoning-core
       '@traceforge/shared':
         specifier: workspace:*
         version: link:../shared

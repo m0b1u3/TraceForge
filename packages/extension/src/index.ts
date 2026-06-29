@@ -19,3 +19,4 @@ export {
 } from "./case-tools.js";
 export { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool } from "./cognitive-tools.js";
 export type { SessionStateWriter, HypothesisWriter, FactReader } from "./cognitive-tools.js";
+export * from "./memory-tools.js";
