@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { proxyFetch } from "./proxy.js";
+import { proxyFetch } from "@traceforge/shared";
 import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall } from "./provider.js";
 
 export interface OpenAIOptions {

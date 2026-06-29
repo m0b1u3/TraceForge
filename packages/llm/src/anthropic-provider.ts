@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { proxyFetch } from "./proxy.js";
+import { proxyFetch } from "@traceforge/shared";
 import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall } from "./provider.js";
 
 export interface AnthropicOptions {

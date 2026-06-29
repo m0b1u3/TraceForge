@@ -4,7 +4,14 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "build": "tsc -p tsconfig.json" },
-  "dependencies": { "zod": "^3.24.0" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "undici": "^8.5.0",
+    "zod": "^3.24.0"
+  }
 }
