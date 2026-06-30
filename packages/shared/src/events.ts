@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning } from "./schemas.js";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, AgentRun } from "./schemas.js";
 
 export type RuntimeEvent =
   | { type: "case_created"; case: Case }
@@ -20,6 +20,14 @@ export type RuntimeEvent =
   | { type: "agent_tool_result"; caseId: string; tool: string; content: string }
   | { type: "agent_done"; caseId: string; content: string }
   | { type: "agent_error"; caseId: string; content: string }
+  | { type: "agent_run_started"; run: AgentRun }
+  | { type: "agent_stream_start"; caseId: string; runId: string; messageId: string }
+  | { type: "agent_stream_delta"; caseId: string; runId: string; messageId: string; delta: string }
+  | { type: "agent_stream_end"; caseId: string; runId: string; messageId: string; content: string }
+  | { type: "agent_steering_added"; caseId: string; runId: string; content: string }
+  | { type: "agent_run_interrupted"; run: AgentRun }
+  | { type: "agent_run_completed"; run: AgentRun; content: string }
+  | { type: "agent_run_failed"; run: AgentRun; error: string }
   | { type: "approval_requested"; caseId: string; approvalId: string; tool: string; input: string }
   | { type: "approval_resolved"; caseId: string; approvalId: string; decision: "approved" | "rejected" }
   | { type: "action_recorded"; action: ActionCard }

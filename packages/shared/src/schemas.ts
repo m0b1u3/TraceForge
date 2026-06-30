@@ -207,3 +207,26 @@ export const ContextSummarySchema = z.object({
   createdAt: z.string(),
 });
 export type ContextSummary = z.infer<typeof ContextSummarySchema>;
+
+export const AgentRunStatusSchema = z.enum([
+  "queued",
+  "running",
+  "interrupting",
+  "interrupted",
+  "completed",
+  "failed",
+]);
+export type AgentRunStatus = z.infer<typeof AgentRunStatusSchema>;
+
+export const AgentRunSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  goal: z.string(),
+  status: AgentRunStatusSchema,
+  createdAt: z.string(),
+  startedAt: z.string().nullable().default(null),
+  finishedAt: z.string().nullable().default(null),
+  interruptReason: z.string().nullable().default(null),
+  error: z.string().nullable().default(null),
+});
+export type AgentRun = z.infer<typeof AgentRunSchema>;
