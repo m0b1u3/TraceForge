@@ -28,8 +28,9 @@ This checklist must be run with a real configured LLM. Mock providers are allowe
 
 ## Result Log
 
-- Provider/model:
-- Streaming mode observed:
-- Steering message:
-- Interrupt result:
-- Bugs observed:
+- Provider/model: anthropic-compatible DeepSeek endpoint, `deepseek-chat`.
+- Streaming mode observed: fallback stream events, because the configured Anthropic provider has no `streamTools` implementation. Observed `agent_stream_start`, `agent_stream_delta`, and `agent_stream_end`.
+- Steering message: `补充要求：总结里明确写出 REAL_LLM_E2E_STEERED。`
+- Steering result: real model output included `REAL_LLM_E2E_STEERED`; tool calls observed: `list_traffic`, then `record_task`.
+- Interrupt result: `POST /api/agent/runs/:runId/interrupt` returned `interrupting`; terminal event became `agent_run_interrupted`; active run cleared.
+- Bugs observed: initial verification was incorrectly reported before running this real LLM E2E. No runtime bug observed in the real E2E after running it.
