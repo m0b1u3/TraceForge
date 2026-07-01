@@ -20,3 +20,4 @@ export {
 export { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool } from "./cognitive-tools.js";
 export type { SessionStateWriter, HypothesisWriter, FactReader } from "./cognitive-tools.js";
 export * from "./memory-tools.js";
+export * from "./query-expander.js";
