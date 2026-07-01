@@ -8,7 +8,7 @@
 
 | # | 缺口 | 档位 | 状态 |
 |---|---|---|---|
-| 0 | 上下文向量语义检索（中英盲区：搜「越权」匹不到「IDOR」） | 已知 | 待做 |
+| 0 | 上下文语义检索（中英盲区：搜「越权」匹不到「IDOR」） | 已知 | ✅ 第一阶段完成 |
 | 1 | 流式输出（streaming） | 🔴 最高 | ✅ 已完成 |
 | 2 | 运行中人工中断 / 转向（interrupt / steering） | 🔴 最高 | ✅ 已完成 |
 | 3 | 工具并行调用 | 🟠 高 | ✅ 已完成 |
@@ -26,9 +26,9 @@
 ## 详细说明
 
 ### 0. 上下文向量语义检索
-- **现状**：search_facts/recall_conversation 用关键词 bigram（keyword-search.ts），中英不互通——LLM 摘要写「IDOR」，用户/agent 搜「越权」匹不到。真实 LLM 测试已印证。
-- **目标**：embedding 语义检索，keywordScore 已预留升级接口（换成 embeddingSimilarity，调用方不变）。
-- **影响**：漏洞挖掘场景语义检索是刚需，关键词漏召回严重。
+- **现状**：✅ 第一阶段完成。`search_facts` / `recall_conversation` 先让 LLM 做 Query Expansion，再用现有 `keywordScore` 多词检索、去重排序，并在结果里标出 `matched` 扩展词。真实 LLM E2E 已验证：`search_facts({"query":"越权"})` 命中只写了 `IDOR` 的 Fact。
+- **边界**：本阶段不上 embedding、不建向量表、不写死漏洞同义词表。DeepSeek 当前不支持 `json_schema` response_format，`LlmQueryExpander` 会先试 `extractJson`，失败后走普通 JSON 文本 fallback，再失败才退回原始 query。
+- **后续**：如果真实任务里扩词召回仍不够，再进入第二阶段 embedding / 向量语义索引。
 
 ### 1. 流式输出（streaming）🔴
 - **现状**：provider.runTools 一次性等整轮生成完才返回；前端干等数秒~数十秒，看不到 agent 实时思考。`grep stream` 在 llm/agent-runtime 无结果。

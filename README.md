@@ -27,7 +27,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 `config/llm.json` 不纳入版本控制；未配置时 AI 提取返回空候选（其余功能不受影响）。
 
-## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 A + agent 交互 E1/E2 + 共享浏览器 F1/F2 + MCP 集成 C + 工作台 UI + PoC MCP server + LLM 重评估 + Observer 监督 + Agent 认知内核 + Pull 式记忆检索 + Agent Run Control + LLM/Tool Reliability + Tool Parallelism）
+## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 A + agent 交互 E1/E2 + 共享浏览器 F1/F2 + MCP 集成 C + 工作台 UI + PoC MCP server + LLM 重评估 + Observer 监督 + Agent 认知内核 + Pull 式记忆检索 + Agent Run Control + LLM/Tool Reliability + Tool Parallelism + LLM Query Expansion Retrieval）
 
 - pnpm monorepo 骨架
 - Scope Guard 安全地基（deny-by-default + 通配符，单元测试覆盖）
@@ -56,10 +56,11 @@ export ANTHROPIC_API_KEY=sk-ant-...
 - Agent Run Control（Streaming + Interrupt/Steering）：agent run 升级为可管理后台运行对象，启动后返回 runId；前端通过 stream 事件实时显示输出，运行中可追加 steering 指令并可停止当前 run。OpenAI-compatible provider 优先真流式，其它 provider 走统一 fallback；真实 LLM 验证见 `docs/superpowers/plans/2026-06-30-agent-run-control-real-llm-check.md`。
 - LLM/Tool Reliability：LLM provider 调用增加中断感知 transient retry（429/5xx/网络抖动，abort 不重试），runtime 把工具异常转成 `[tool_error]` tool_result 交还 LLM 自主恢复，并通过 `agent_retrying` 事件向工作台显示重试状态。真实 OpenAI-compatible 流式和 interrupt E2E 已验证，结果见 `docs/superpowers/plans/2026-07-01-llm-tool-reliability.md`。
 - Tool Parallelism：工具描述增加 `executionMode` 并默认串行；显式标记的只读工具（流量读取、记忆检索、页面文本/链接提取）会在同一 LLM 轮次内按连续批次并发执行，`risk=command`、未知工具、写库/导航/点击/填表工具保持串行。runtime 并发执行但按原始 tool_call 顺序回写 tool_result，避免破坏 LLM tool-calling 协议。验证结果见 `docs/superpowers/plans/2026-07-01-tool-parallelism.md`。
+- LLM Query Expansion Retrieval：`search_facts` / `recall_conversation` 在关键词检索前调用 LLM 扩写相关检索词（中英术语、缩写、相邻安全表达），再复用 `keywordScore` 多词检索并显示 matched 扩展词；扩词失败自动退回原始 query。本阶段不上 embedding、不建向量表、不写死漏洞同义词表。真实 DeepSeek/OpenAI-compatible E2E 已验证 `search_facts("越权")` 能召回仅写有 `IDOR` 的 Fact，结果见 `docs/superpowers/plans/2026-07-01-llm-query-expansion-retrieval.md`。
 
 ## 测试
 
 ```bash
-pnpm test     # 267 个单元测试
+pnpm test     # 283 个单元测试
 pnpm -r build # 全量构建
 ```

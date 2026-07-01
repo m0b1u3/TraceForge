@@ -2852,5 +2852,6 @@ TraceForge 应该像一个有经验的渗透测试搭档：
 9. **Agent Run Control（Streaming + Interrupt/Steering）** — ✅ 已完成。把 agent/run 从阻塞长请求升级为可管理后台 run：AgentRun 状态模型、stream 事件、OpenAI-compatible 真流式、非流式 fallback、Abort interrupt、soft steering（下一轮注入人工补充指令）和前端停止/插话 UI。对应 `docs/agent-gap-backlog.md` #1/#2。
 10. **LLM/Tool Reliability（重试 + 错误恢复）** — ✅ 已完成。LLM provider 调用增加中断感知 transient retry（429/5xx/网络抖动，Abort/Stop 不重试）；runtime 将工具异常转为 `[tool_error]` tool_result 反馈给 LLM，由 LLM 自主决定换策略/重试/记录 blocked task；新增 `agent_retrying` 事件让工作台显示重试状态。对应 `docs/agent-gap-backlog.md` #4。
 11. **Tool Parallelism（只读工具并行调用）** — ✅ 已完成。ToolDescriptor 增加 `executionMode?: "parallel" | "serial"`，默认串行；只读流量查询、记忆检索、浏览器页面文本/链接提取显式标为 parallel。AgentRuntime 会把连续 parallel-safe tool_calls 分批并发执行，并按原始 tool_call 顺序回写 tool_result；`risk=command`、未知工具、写库/导航/点击/填表类动作保持串行。对应 `docs/agent-gap-backlog.md` #3。
+12. **LLM Query Expansion Retrieval（上下文检索第一阶段）** — ✅ 已完成。`search_facts` / `recall_conversation` 在 `keywordScore` 前增加 LLM Query Expansion，让 agent 搜「越权」时可扩展出 IDOR/BOLA/broken access control 等相关检索词，再用确定性关键词检索合并排序并在结果中显示 matched terms。不上 embedding、不建向量表、不写死漏洞同义词表；DeepSeek 不支持 `json_schema` 时走普通 JSON 文本 fallback。对应 `docs/agent-gap-backlog.md` #0 第一阶段。
 
 > 横切关注（第 25-30 章：上下文/证据检索、自身安全、置信度传播、多 Case 隔离、并发恢复、可观测性）随各功能推进逐步落实，不单列为阶段。**上下文/证据检索（§25）+ 规划器（§14）已由「Agent 认知内核」（第 7 项）+「Pull 式记忆检索」（第 8 项）落地。**

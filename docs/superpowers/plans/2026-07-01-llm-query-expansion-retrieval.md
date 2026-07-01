@@ -797,3 +797,20 @@ Update:
 git add docs/agent-gap-backlog.md README.md TraceForge_design.md docs/superpowers/plans/2026-07-01-llm-query-expansion-retrieval.md
 git commit -m "docs: record query expansion retrieval validation"
 ```
+
+---
+
+## Result Log
+
+- Task 1 RED: `node_modules\.bin\vitest.cmd run packages/reasoning-core/src/expanded-keyword-search.test.ts` failed because `expanded-keyword-search.ts` did not exist.
+- Task 1 GREEN: `node_modules\.bin\vitest.cmd run packages/reasoning-core/src/expanded-keyword-search.test.ts packages/reasoning-core/src/keyword-search.test.ts` passed 2 files / 9 tests. The original no-hit query in the plan (`ssrf`) was adjusted to `zzqqxx` because current bigram matching legitimately collides with `ss` in existing fixture text.
+- Task 2 RED: `node_modules\.bin\vitest.cmd run packages/extension/src/query-expander.test.ts` failed because `query-expander.ts` did not exist.
+- Task 2 GREEN: `node_modules\.bin\vitest.cmd run packages/extension/src/query-expander.test.ts` passed. After real DeepSeek validation showed `400 This response_format type is unavailable now` for `json_schema`, `LlmQueryExpander` gained a plain `runTools` JSON-text fallback and the query-expander test suite passed 8 tests.
+- Task 3 RED: `node_modules\.bin\vitest.cmd run packages/extension/src/memory-tools.test.ts` failed the new expansion cases because memory tools were still using only the original query.
+- Task 3 GREEN: `node_modules\.bin\vitest.cmd run packages/extension/src/memory-tools.test.ts packages/reasoning-core/src/expanded-keyword-search.test.ts` passed 2 files / 17 tests.
+- Task 4 RED: `node_modules\.bin\vitest.cmd run apps/server/src/routes-cognitive.test.ts` timed out waiting for the IDOR hit because routes had not injected `LlmQueryExpander`.
+- Task 4 GREEN: `node_modules\.bin\vitest.cmd run apps/server/src/routes-cognitive.test.ts packages/extension/src/memory-tools.test.ts packages/extension/src/query-expander.test.ts packages/reasoning-core/src/expanded-keyword-search.test.ts` passed 4 files / 29 tests.
+- Final focused verification after DeepSeek fallback fix: `node_modules\.bin\vitest.cmd run packages/reasoning-core/src/expanded-keyword-search.test.ts packages/extension/src/query-expander.test.ts packages/extension/src/memory-tools.test.ts apps/server/src/routes-cognitive.test.ts` passed 4 files / 30 tests.
+- Full verification: `pnpm test` passed 68 files / 283 tests.
+- Build verification: `pnpm -r build` passed. Existing Vite warnings about `undici` browser externalization and large chunks remain.
+- Real OpenAI-compatible E2E: used current `config/llm.json` and `.env` without printing API keys. Provider `openai`, model `deepseek-v4-flash`, baseUrl `https://api.deepseek.com`, native `streamTools=true`. Run id `run_baa8a081-988f-47ab-b9dc-117aa49038d1`; `extractCalls=2`; `expansionRunToolsCalls=1` because DeepSeek rejected `json_schema` and the plain JSON-text fallback was used; stream events start=2, delta=165, end=2; terminal event `agent_run_completed`; tool call was `search_facts({"query":"越权"})`; tool result returned `Possible IDOR on /api/user/:id` with matched terms including `IDOR`; errors=[].
