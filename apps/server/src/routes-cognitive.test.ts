@@ -135,4 +135,60 @@ describe("pull-mode fact retrieval", () => {
     expect(toolResults.some((t: string) => t.includes("/api/login"))).toBe(true);
     await app2.close();
   });
+
+  it("agent can retrieve an IDOR fact when searching 越权 through query expansion", async () => {
+    const app2 = Fastify();
+    const db2 = createDb(":memory:");
+    const bus2 = new EventBus();
+    let extractCalls = 0;
+    const provider2 = new MockProvider(
+      () => {
+        extractCalls += 1;
+        return ["IDOR", "BOLA", "broken access control"];
+      },
+      [
+        { text: "", done: false, toolCalls: [{ id: "call_1", name: "search_facts", input: { query: "越权" } }] },
+        { text: "找到了 IDOR 相关事实", done: true, toolCalls: [] },
+      ],
+    );
+    registerRoutes(app2, db2, bus2, provider2);
+    await app2.ready();
+
+    const cid = (await app2.inject({
+      method: "POST",
+      url: "/api/cases",
+      payload: { name: "c", allowHosts: ["example.com"] },
+    })).json().id;
+
+    await app2.inject({
+      method: "POST",
+      url: `/api/cases/${cid}/facts`,
+      payload: {
+        type: "finding",
+        title: "Possible IDOR on /api/user/:id",
+        value: { endpoint: "/api/user/:id" },
+        confidence: 0.8,
+        tags: ["access-control"],
+      },
+    });
+
+    const res = await app2.inject({
+      method: "POST",
+      url: `/api/cases/${cid}/agent/run`,
+      payload: { goal: "检索越权相关历史发现" },
+    });
+    expect(res.statusCode).toBe(200);
+
+    await waitFor(async () => {
+      const events = (await app2.inject({ url: `/api/cases/${cid}/agent/events` })).json();
+      return JSON.stringify(events).includes("Possible IDOR");
+    });
+    const events = (await app2.inject({ url: `/api/cases/${cid}/agent/events` })).json();
+
+    expect(extractCalls).toBeGreaterThan(0);
+    expect(JSON.stringify(events)).toContain("Possible IDOR");
+    expect(JSON.stringify(events)).toContain("matched: IDOR");
+
+    await app2.close();
+  });
 });

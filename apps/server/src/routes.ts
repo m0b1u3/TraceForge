@@ -18,7 +18,7 @@ import {
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
   makeReopenTaskTool, makeRevertDoneTaskTool,
   makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools,
-  McpManager, mcpToolToDescriptor, Observer,
+  McpManager, mcpToolToDescriptor, Observer, LlmQueryExpander,
 } from "@traceforge/extension";
 import { BrowserSession } from "./browser-session.js";
 import { ObserverWarningStore } from "./stores/observer-store.js";
@@ -46,6 +46,7 @@ export function registerRoutes(
 
   // model/baseUrl/provider 全部来自 config/llm.json；无配置或无 key 回退空候选 Mock
   const llm: LlmProvider = provider ?? createProviderOrMock(loadLlmConfig());
+  const queryExpander = new LlmQueryExpander(llm);
   const actionStore = new ActionCardStore(db);
   const decisionStore = new DecisionStore(db);
   const observerStore = new ObserverWarningStore(db);
@@ -243,10 +244,10 @@ export function registerRoutes(
     registry.register(makeUpdateSessionStateTool(id, sessionStore));
     registry.register(makeRecordHypothesisTool(id, hypothesisStore, factStore));
     registry.register(makeResolveHypothesisTool(id, hypothesisStore, factStore));
-    registry.register(makeSearchFactsTool(id, factStore));
+    registry.register(makeSearchFactsTool(id, factStore, { expander: queryExpander }));
     registry.register(makeGetFactDetailTool(id, factStore));
     registry.register(makeSearchTrafficTool(id, traffic));
-    registry.register(makeRecallConversationTool(id, agentEventStore, contextSummaryStore));
+    registry.register(makeRecallConversationTool(id, agentEventStore, contextSummaryStore, { expander: queryExpander }));
 
     // 若该 case 有共享浏览器会话，把浏览器工具纳入 agent 工具集
     const browserSession = browserSessions.get(id);
