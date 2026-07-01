@@ -5,3 +5,4 @@ export * from "./relevance.js";
 export * from "./context-builder.js";
 export * from "./compressor.js";
 export * from "./keyword-search.js";
+export * from "./expanded-keyword-search.js";
