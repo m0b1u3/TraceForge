@@ -69,6 +69,7 @@ export function makeBrowserTools(session: BrowserController, scopeRules: ScopeRu
       inputSchema: { type: "object", properties: {}, required: [] },
       risk: "normal",
       source: "builtin",
+      executionMode: "parallel",
       execute: () =>
         guarded(async () => {
           const links = await session.extractLinks();
@@ -81,6 +82,7 @@ export function makeBrowserTools(session: BrowserController, scopeRules: ScopeRu
       inputSchema: { type: "object", properties: {}, required: [] },
       risk: "normal",
       source: "builtin",
+      executionMode: "parallel",
       execute: () =>
         guarded(async () => {
           const text = await session.getPageText();

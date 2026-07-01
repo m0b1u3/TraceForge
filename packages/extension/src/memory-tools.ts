@@ -18,7 +18,7 @@ export function makeSearchFactsTool(caseId: string, facts: FactSearchReader): To
     name: "search_facts",
     description: "按关键词检索本 Case 已记录的 Fact（接口/凭据/漏洞线索等），搜索范围含类型/标题/内容/标签。返回命中的 id+类型+标题摘要；要完整内容用 get_fact_detail(id)。",
     inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] },
-    risk: "normal", source: "builtin",
+    risk: "normal", source: "builtin", executionMode: "parallel",
     execute: async (input) => {
       const { query, limit = 10 } = (input ?? {}) as { query?: string; limit?: number };
       if (!query) return { ok: false, content: "缺少 query" };
@@ -37,7 +37,7 @@ export function makeGetFactDetailTool(caseId: string, facts: FactDetailReader): 
     name: "get_fact_detail",
     description: "按 id 取一条 Fact 的完整内容（含 value/source/confidence/tags）。先用 search_facts 找到 id。",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-    risk: "normal", source: "builtin",
+    risk: "normal", source: "builtin", executionMode: "parallel",
     execute: async (input) => {
       const { id } = (input ?? {}) as { id?: string };
       if (!id) return { ok: false, content: "缺少 id" };
@@ -53,7 +53,7 @@ export function makeSearchTrafficTool(caseId: string, traffic: TrafficSearchRead
     name: "search_traffic",
     description: "按关键词检索本 Case 已捕获的 HTTP 流量（搜 url/method/状态码）。返回命中的 id+method+状态+url；要 headers/body 用 get_traffic(id)。",
     inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] },
-    risk: "normal", source: "builtin",
+    risk: "normal", source: "builtin", executionMode: "parallel",
     execute: async (input) => {
       const { query, limit = 10 } = (input ?? {}) as { query?: string; limit?: number };
       if (!query) return { ok: false, content: "缺少 query" };
@@ -71,7 +71,7 @@ export function makeRecallConversationTool(caseId: string, events: ConvoSearchRe
     name: "recall_conversation",
     description: "按关键词检索更早的（已滚出近期窗口的）历史对话与远期摘要。想不起之前讨论过什么时用。",
     inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] },
-    risk: "normal", source: "builtin",
+    risk: "normal", source: "builtin", executionMode: "parallel",
     execute: async (input) => {
       const { query, limit = 10 } = (input ?? {}) as { query?: string; limit?: number };
       if (!query) return { ok: false, content: "缺少 query" };

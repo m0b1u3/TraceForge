@@ -16,6 +16,7 @@ export function makeListTrafficTool(caseId: string, traffic: TrafficReader): Too
     inputSchema: { type: "object", properties: {} },
     risk: "normal",
     source: "builtin",
+    executionMode: "parallel",
     execute: async () => {
       const list = traffic.listByCase(caseId);
       const summary = list.map((e) => `${e.id} ${e.method} ${e.responseStatus ?? "-"} ${e.url}`).join("\n");
@@ -31,6 +32,7 @@ export function makeGetTrafficTool(caseId: string, traffic: TrafficReader): Tool
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
     risk: "normal",
     source: "builtin",
+    executionMode: "parallel",
     execute: async (input) => {
       const { id } = input as { id: string };
       const entry = traffic.listByCase(caseId).find((e) => e.id === id);

@@ -12,6 +12,7 @@ describe("makeListTrafficTool", () => {
   it("lists traffic summaries for the case", async () => {
     const tool = makeListTrafficTool("c", reader);
     expect(tool.risk).toBe("normal");
+    expect(tool.executionMode).toBe("parallel");
     const res = await tool.execute({});
     expect(res.ok).toBe(true);
     expect(res.content).toContain("traf_1");
@@ -23,6 +24,7 @@ describe("makeListTrafficTool", () => {
 describe("makeGetTrafficTool", () => {
   it("returns a single entry detail by id", async () => {
     const tool = makeGetTrafficTool("c", reader);
+    expect(tool.executionMode).toBe("parallel");
     const res = await tool.execute({ id: "traf_1" });
     expect(res.ok).toBe(true);
     expect(res.content).toContain("hi");

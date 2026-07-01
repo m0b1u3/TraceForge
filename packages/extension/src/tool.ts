@@ -4,12 +4,15 @@ export interface ToolResult {
   meta?: Record<string, unknown>;
 }
 
+export type ToolExecutionMode = "parallel" | "serial";
+
 export interface ToolDescriptor {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
   risk: "command" | "normal";
   source: string;
+  executionMode?: ToolExecutionMode;
   execute: (input: unknown) => Promise<ToolResult>;
 }
 

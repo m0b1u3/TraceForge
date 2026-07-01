@@ -48,6 +48,11 @@ describe("makeBrowserTools (LLM holds control)", () => {
     const tools = makeBrowserTools(mockController(), rules);
     expect(tools.every((t) => t.risk === "normal")).toBe(true);
     expect(tools.map((t) => t.name).sort()).toEqual(["click", "extract_links", "fill", "get_page_text", "navigate"]);
+    expect(tool(tools, "extract_links").executionMode).toBe("parallel");
+    expect(tool(tools, "get_page_text").executionMode).toBe("parallel");
+    expect(tool(tools, "navigate").executionMode).not.toBe("parallel");
+    expect(tool(tools, "click").executionMode).not.toBe("parallel");
+    expect(tool(tools, "fill").executionMode).not.toBe("parallel");
   });
 });
 

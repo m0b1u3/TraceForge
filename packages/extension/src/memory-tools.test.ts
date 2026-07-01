@@ -18,6 +18,7 @@ describe("search_facts", () => {
   };
   it("matches by title/type and returns id summaries", async () => {
     const t = makeSearchFactsTool("c", facts);
+    expect(t.executionMode).toBe("parallel");
     const r = await t.execute({ query: "login" });
     expect(r.ok).toBe(true);
     expect(r.content).toContain("f1");
@@ -49,6 +50,7 @@ describe("get_fact_detail", () => {
   const facts = { getById: (id: string) => (id === "f1" ? fact({ id: "f1", title: "x", value: { k: "v" } }) : undefined) };
   it("returns full value for existing id", async () => {
     const t = makeGetFactDetailTool("c", facts);
+    expect(t.executionMode).toBe("parallel");
     const r = await t.execute({ id: "f1" });
     expect(r.ok).toBe(true);
     expect(r.content).toContain("\"k\"");
@@ -70,6 +72,7 @@ describe("search_traffic", () => {
   };
   it("matches by url", async () => {
     const t = makeSearchTrafficTool("c", traffic);
+    expect(t.executionMode).toBe("parallel");
     const r = await t.execute({ query: "order" });
     expect(r.content).toContain("t1");
     expect(r.content).not.toContain("t2");
@@ -92,6 +95,7 @@ describe("recall_conversation", () => {
   const summaries = { latest: () => ({ content: "早期发现了 3 个 API" }) };
   it("matches conversation events by query", async () => {
     const t = makeRecallConversationTool("c", events, summaries);
+    expect(t.executionMode).toBe("parallel");
     const r = await t.execute({ query: "登录" });
     expect(r.ok).toBe(true);
     expect(r.content).toContain("测试登录越权");
