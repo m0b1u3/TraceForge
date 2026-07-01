@@ -177,7 +177,10 @@ export const useStore = create<State>((set, get) => ({
         return { streamingMessages: rest };
       });
     }
-    else if (event.type === "agent_steering_added" && event.caseId === cid) get().addAgentEvent({ kind: "user", text: `[steering] ${event.content}` });
+    else if (event.type === "agent_steering_added" && event.caseId === cid) {
+      const text = `[steering] ${event.content}`;
+      if (get().agentEvents.at(-1)?.text !== text) get().addAgentEvent({ kind: "user", text });
+    }
     else if (event.type === "agent_run_completed" && event.run.caseId === cid) {
       get().setActiveRun(null);
       get().setAgentBusy(false);
@@ -192,8 +195,15 @@ export const useStore = create<State>((set, get) => ({
       get().setAgentBusy(false);
       get().addAgentEvent({ kind: "error", text: event.error });
     }
-    else if (event.type === "agent_started" && event.caseId === cid) { get().setAgentBusy(true); get().addAgentEvent({ kind: "started", text: `开始：${event.goal}` }); }
-    else if (event.type === "agent_text" && event.caseId === cid) get().addAgentEvent({ kind: "text", text: event.content });
+    else if (event.type === "agent_started" && event.caseId === cid) {
+      get().setAgentBusy(true);
+      const text = `开始：${event.goal}`;
+      if (get().agentEvents.at(-1)?.text !== text) get().addAgentEvent({ kind: "started", text });
+    }
+    else if (event.type === "agent_text" && event.caseId === cid) {
+      const last = get().agentEvents.at(-1);
+      if (!(last?.kind === "text" && last.text === event.content)) get().addAgentEvent({ kind: "text", text: event.content });
+    }
     else if (event.type === "agent_tool_call" && event.caseId === cid) get().addAgentEvent({ kind: "tool_call", text: `${event.tool}(${event.input})` });
     else if (event.type === "agent_tool_result" && event.caseId === cid) get().addAgentEvent({ kind: "tool_result", text: `${event.tool} → ${event.content}` });
     else if (event.type === "agent_done" && event.caseId === cid) { get().setAgentBusy(false); get().addAgentEvent({ kind: "done", text: event.content }); }

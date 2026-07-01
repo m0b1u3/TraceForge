@@ -84,6 +84,8 @@ button { cursor: pointer; }
 .composer { align-items: flex-end; }
 .composer input, .composer textarea { min-width: 0; flex: 1; border: 0; outline: 0; color: #182230; font-size: 13px; background: none; font-family: inherit; resize: none; line-height: 1.5; max-height: 120px; padding: 4px 0; }
 .composer button { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 8px; color: #fff; background: #1d2939; }
+.composer .tf-btn { display: inline-flex; align-items: center; justify-content: center; width: auto; min-width: 54px; height: 30px; white-space: nowrap; color: #344054; background: #fff; }
+.composer .tf-btn:hover { background: #f8fafc; }
 .composer button:disabled { opacity: 0.45; }
 .composer button:active { transform: translateY(1px) scale(0.99); }
 

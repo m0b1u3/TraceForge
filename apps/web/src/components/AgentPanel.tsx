@@ -1,10 +1,14 @@
 import { useState } from "react";
 import { Sparkle, PaperPlaneTilt, ShieldWarning, Globe, CircleNotch } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
-import { runAgent, resolveApproval, approveScope } from "../api.js";
+import { runAgent, resolveApproval, approveScope, steerAgentRun, interruptAgentRun } from "../api.js";
 
 export function AgentPanel() {
-  const { caseId, agentEvents, agentBusy, setAgentBusy, showToast, pendingApproval, pendingScope, setPendingScope, clearPendingApproval, resetAgent, addAgentEvent } = useStore();
+  const {
+    caseId, agentEvents, agentBusy, setAgentBusy, showToast, pendingApproval,
+    pendingScope, setPendingScope, clearPendingApproval, resetAgent, addAgentEvent,
+    activeRun, setActiveRun,
+  } = useStore();
   const [goal, setGoal] = useState("");
   const [busy, setBusy] = useState<"approved" | "rejected" | null>(null);
   if (!caseId) return null;
@@ -28,13 +32,35 @@ export function AgentPanel() {
 
   // 累积保留对话/事件，不在每次发送时清空（历史可往上翻看）；并发运行时禁止再发
   const send = async () => {
-    if (!goal.trim() || agentBusy) return;
+    if (!goal.trim()) return;
     const g = goal.trim();
-    addAgentEvent({ kind: "user", text: g });
     setGoal("");
-    setAgentBusy(true); // 立即置忙（不等 WS agent_started 回来），失败时回滚
-    try { await runAgent(caseId, g); }
-    catch (e) { showToast((e as Error).message); setAgentBusy(false); }
+    try {
+      if (activeRun) {
+        addAgentEvent({ kind: "user", text: `[steering] ${g}` });
+        const run = await steerAgentRun(activeRun.id, g);
+        setActiveRun(run);
+        return;
+      }
+      addAgentEvent({ kind: "user", text: g });
+      setAgentBusy(true); // 立即置忙（不等 WS agent_started 回来），失败时回滚
+      const run = await runAgent(caseId, g);
+      setActiveRun(run);
+    }
+    catch (e) {
+      showToast((e as Error).message);
+      if (!activeRun) setAgentBusy(false);
+    }
+  };
+
+  const stopRun = async () => {
+    if (!activeRun) return;
+    try {
+      const run = await interruptAgentRun(activeRun.id, "用户停止");
+      setActiveRun(run);
+    } catch (e) {
+      showToast((e as Error).message);
+    }
   };
 
   return (
@@ -91,9 +117,14 @@ export function AgentPanel() {
         <textarea
           rows={1} value={goal} onChange={(e) => setGoal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder={agentBusy ? "Agent 运行中，请稍候…" : "给 agent 一个目标（Enter 发送，Shift+Enter 换行）…"}
+          placeholder={activeRun ? "给当前 run 补充指令（Enter 发送）…" : agentBusy ? "Agent 运行中，请稍候…" : "给 agent 一个目标（Enter 发送，Shift+Enter 换行）…"}
         />
-        <button disabled={!goal.trim() || agentBusy} onClick={send}>
+        {activeRun && (
+          <button className="tf-btn" type="button" onClick={stopRun}>
+            停止
+          </button>
+        )}
+        <button disabled={!goal.trim()} onClick={send}>
           {agentBusy ? <CircleNotch size={15} className="tf-spin" /> : <PaperPlaneTilt size={15} weight="fill" />}
         </button>
       </div>
