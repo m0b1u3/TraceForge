@@ -8,6 +8,16 @@ import { MockProvider } from "@traceforge/llm";
 let app: FastifyInstance;
 let caseId: string;
 
+async function waitForWarningCount(count: number) {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    const res = await app.inject({ url: `/api/cases/${caseId}/warnings` });
+    if (res.json().length === count) return res;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for Observer warnings");
+}
+
 function buildWith(extractResult: unknown) {
   app = Fastify();
   const db = createDb(":memory:");
@@ -24,7 +34,7 @@ beforeEach(async () => {
 describe("observer integration", () => {
   it("agent run triggers Observer; GET /warnings returns produced warnings", async () => {
     await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "测登录" } });
-    const res = await app.inject({ url: `/api/cases/${caseId}/warnings` });
+    const res = await waitForWarningCount(1);
     expect(res.statusCode).toBe(200);
     const warnings = res.json();
     expect(warnings).toHaveLength(1);

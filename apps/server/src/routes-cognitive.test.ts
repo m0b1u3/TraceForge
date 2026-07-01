@@ -10,6 +10,22 @@ import { ContextSummaryStore } from "./stores/context-summary-store.js";
 let app: FastifyInstance;
 let caseId: string;
 
+async function waitFor(assertion: () => Promise<boolean> | boolean) {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    if (await assertion()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for background agent run");
+}
+
+async function waitForDoneEvents(targetApp: FastifyInstance, targetCaseId: string, count: number) {
+  await waitFor(async () => {
+    const events = (await targetApp.inject({ url: `/api/cases/${targetCaseId}/agent/events` })).json();
+    return events.filter((e: { kind: string }) => e.kind === "done").length >= count;
+  });
+}
+
 beforeEach(async () => {
   app = Fastify();
   const db = createDb(":memory:");
@@ -26,7 +42,9 @@ beforeEach(async () => {
 describe("cognitive context across runs", () => {
   it("second run sees first run conversation in history", async () => {
     await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "测 a.com" } });
+    await waitForDoneEvents(app, caseId, 1);
     await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "同意" } });
+    await waitForDoneEvents(app, caseId, 2);
     const events = (await app.inject({ url: `/api/cases/${caseId}/agent/events` })).json();
     const userTexts = events.filter((e: { kind: string }) => e.kind === "user").map((e: { text: string }) => e.text);
     expect(userTexts).toContain("测 a.com");
@@ -38,6 +56,7 @@ describe("cognitive context across runs", () => {
   it("text events from agent turns are persisted (Fix 2: recentConvo includes text kind)", async () => {
     // MockProvider returns text="" and done="..." -- both are persisted as agent events
     await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "第一轮" } });
+    await waitForDoneEvents(app, caseId, 1);
     const events = (await app.inject({ url: `/api/cases/${caseId}/agent/events` })).json();
     // text event exists: MockProvider turns have text="" but done event is present
     // Verify the run completed and text-kind events are NOT filtered out by routes
@@ -49,7 +68,8 @@ describe("cognitive context across runs", () => {
     // Verify a second run also succeeds (recentConvo with text won't crash)
     const res = await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "第二轮" } });
     expect(res.statusCode).toBe(200);
-    expect(res.json().ok).toBe(true);
+    expect(res.json().run.id).toEqual(expect.any(String));
+    await waitForDoneEvents(app, caseId, 2);
   });
 });
 
@@ -73,6 +93,7 @@ describe("Fix 1: compressor wired into agent/run", () => {
     // Run enough times to exceed FAR_THRESHOLD=30 events
     for (let i = 0; i < 12; i++) {
       await localApp.inject({ method: "POST", url: `/api/cases/${localCaseId}/agent/run`, payload: { goal: `轮次 ${i}` } });
+      await waitForDoneEvents(localApp, localCaseId, i + 1);
     }
 
     const summaryStore = new ContextSummaryStore(db);
@@ -103,6 +124,11 @@ describe("pull-mode fact retrieval", () => {
     // 跑 agent
     const res = await app2.inject({ method: "POST", url: `/api/cases/${cid}/agent/run`, payload: { goal: "找登录接口" } });
     expect(res.statusCode).toBe(200);
+    await waitFor(async () => {
+      const events = (await app2.inject({ url: `/api/cases/${cid}/agent/events` })).json();
+      const toolResults = events.filter((e: { kind: string }) => e.kind === "tool_result").map((e: { text: string }) => e.text);
+      return toolResults.some((t: string) => t.includes("/api/login"));
+    });
     // agent 事件里应出现 search_facts 的 tool_result，且命中 /api/login
     const events = (await app2.inject({ url: `/api/cases/${cid}/agent/events` })).json();
     const toolResults = events.filter((e: { kind: string }) => e.kind === "tool_result").map((e: { text: string }) => e.text);
