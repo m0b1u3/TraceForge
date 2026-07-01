@@ -3,6 +3,7 @@ import { AgentRuntime } from "./agent-runtime.js";
 import { ToolRegistry } from "./registry.js";
 import { ApprovalGate } from "./approval-gate.js";
 import type { ToolDescriptor } from "./tool.js";
+import type { AgentEvent } from "./agent-runtime.js";
 import type { LlmProvider, RunTurn, RunToolsArgs } from "./provider.js";
 
 class SeqProvider implements LlmProvider {
@@ -83,5 +84,49 @@ describe("AgentRuntime", () => {
       () => {},
     );
     expect(seen.map((m) => m.content)).toEqual(["a", "b", "c"]);
+  });
+
+  it("emits stream events through fallback runTools when provider has no streamTools", async () => {
+    const provider = {
+      runTools: async () => ({ text: "hello", toolCalls: [], done: true }),
+      extractJson: async () => ({}),
+    };
+    const events: AgentEvent[] = [];
+    await new AgentRuntime(provider, new ToolRegistry(), new ApprovalGate(async () => "approved"))
+      .run("sys", "goal", (e) => events.push(e));
+    expect(events.map((e) => e.type)).toEqual(["stream_start", "stream_delta", "stream_end", "text", "done"]);
+    expect(events.find((e) => e.type === "stream_delta")?.content).toBe("hello");
+  });
+
+  it("injects soft steering messages after tool results", async () => {
+    const seen: string[][] = [];
+    const provider = {
+      extractJson: async () => ({}),
+      runTools: async ({ messages }: RunToolsArgs) => {
+        seen.push(messages.map((m) => m.content));
+        if (seen.length === 1) {
+          return { text: "need tool", toolCalls: [{ id: "tc_1", name: "read", input: {} }], done: false };
+        }
+        return { text: "steered", toolCalls: [], done: true };
+      },
+    };
+    const registry = new ToolRegistry();
+    registry.register({ name: "read", description: "read", inputSchema: { type: "object" }, risk: "normal", source: "test", execute: async () => ({ ok: true, content: "read ok" }) });
+    await new AgentRuntime(provider, registry, new ApprovalGate(async () => "approved"))
+      .run("sys", "goal", () => {}, { getSteeringMessages: () => ["look at orders"] });
+    expect(seen[1].some((m) => m.includes("[Human steering]") && m.includes("look at orders"))).toBe(true);
+  });
+
+  it("stops before the next turn when signal is aborted", async () => {
+    const ac = new AbortController();
+    ac.abort("stop");
+    const provider = {
+      extractJson: async () => ({}),
+      runTools: async () => { throw new Error("should not call provider"); },
+    };
+    const events: AgentEvent[] = [];
+    await new AgentRuntime(provider, new ToolRegistry(), new ApprovalGate(async () => "approved"))
+      .run("sys", "goal", (e) => events.push(e), { signal: ac.signal });
+    expect(events.at(-1)?.type).toBe("interrupted");
   });
 });

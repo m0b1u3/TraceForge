@@ -1,11 +1,20 @@
+import { randomUUID } from "node:crypto";
 import type { LlmProvider, TurnMessage, ToolCall } from "./provider.js";
 import type { ToolRegistry } from "./registry.js";
 import type { ApprovalGate } from "./approval-gate.js";
 
 export interface AgentEvent {
-  type: "tool_call" | "tool_result" | "tool_rejected" | "text" | "done";
+  type: "tool_call" | "tool_result" | "tool_rejected" | "text" | "done" |
+    "stream_start" | "stream_delta" | "stream_end" | "interrupted";
   name?: string;
+  messageId?: string;
   content: string;
+}
+
+export interface AgentRunOptions {
+  signal?: AbortSignal;
+  runId?: string;
+  getSteeringMessages?: () => string[];
 }
 
 const MAX_TURNS = 25;
@@ -17,13 +26,38 @@ export class AgentRuntime {
     system: string,
     initial: string | { role: "user" | "assistant"; content: string }[],
     onEvent: (e: AgentEvent) => void,
+    options: AgentRunOptions = {},
   ): Promise<void> {
     const messages: TurnMessage[] = typeof initial === "string"
       ? [{ role: "user", content: initial }]
       : initial.map((m) => ({ role: m.role, content: m.content }));
 
     for (let turnCount = 0; turnCount < MAX_TURNS; turnCount++) {
-      const turn = await this.provider.runTools({ system, messages, tools: this.registry.toLlmTools() });
+      if (this.interrupted(options)) {
+        this.emitInterrupted(onEvent);
+        return;
+      }
+
+      const messageId = `msg_${randomUUID()}`;
+      let streamed = "";
+      onEvent({ type: "stream_start", messageId, content: "" });
+      const turn = this.provider.streamTools
+        ? await this.provider.streamTools(
+          { system, messages, tools: this.registry.toLlmTools() },
+          {
+            signal: options.signal,
+            onTextDelta: (delta) => {
+              streamed += delta;
+              onEvent({ type: "stream_delta", messageId, content: delta });
+            },
+          },
+        )
+        : await this.provider.runTools({ system, messages, tools: this.registry.toLlmTools() });
+      if (!this.provider.streamTools && turn.text) {
+        streamed += turn.text;
+        onEvent({ type: "stream_delta", messageId, content: turn.text });
+      }
+      onEvent({ type: "stream_end", messageId, content: streamed || turn.text });
       if (turn.text) onEvent({ type: "text", content: turn.text });
 
       if (turn.toolCalls.length === 0 || turn.done) {
@@ -35,11 +69,32 @@ export class AgentRuntime {
       messages.push({ role: "assistant", content: turn.text, toolCalls: turn.toolCalls });
 
       for (const call of turn.toolCalls) {
+        if (this.interrupted(options)) {
+          this.emitInterrupted(onEvent);
+          return;
+        }
         const result = await this.runOneTool(call, onEvent);
         messages.push({ role: "tool", content: result, toolCallId: call.id });
+        if (this.interrupted(options)) {
+          this.emitInterrupted(onEvent);
+          return;
+        }
+      }
+
+      const steering = options.getSteeringMessages?.() ?? [];
+      for (const text of steering) {
+        messages.push({ role: "user", content: `[Human steering]\n用户运行中补充指令：${text}` });
       }
     }
     onEvent({ type: "done", content: "max turns reached" });
+  }
+
+  private interrupted(options?: AgentRunOptions): boolean {
+    return options?.signal?.aborted === true;
+  }
+
+  private emitInterrupted(onEvent: (e: AgentEvent) => void): void {
+    onEvent({ type: "interrupted", content: "agent run interrupted" });
   }
 
   private async runOneTool(call: ToolCall, onEvent: (e: AgentEvent) => void): Promise<string> {

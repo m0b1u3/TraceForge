@@ -31,7 +31,13 @@ export interface RunToolsArgs {
   tools: NativeToolDef[];
 }
 
+export interface StreamToolsHandlers {
+  onTextDelta?: (delta: string) => void;
+  signal?: AbortSignal;
+}
+
 export interface LlmProvider {
   extractJson(args: ExtractJsonArgs): Promise<unknown>;
   runTools(args: RunToolsArgs): Promise<RunTurn>;
+  streamTools?(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn>;
 }
