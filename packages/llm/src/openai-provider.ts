@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { proxyFetch } from "@traceforge/shared";
 import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall, StreamToolsHandlers } from "./provider.js";
+import { withRetry } from "./retry.js";
 
 export interface OpenAIOptions {
   apiKey: string;
@@ -55,7 +56,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
   }
 
   async extractJson(args: ExtractJsonArgs): Promise<unknown> {
-    const res = await this.client.chat.completions.create({
+    const res = await withRetry("openai.extractJson", () => this.client.chat.completions.create({
       model: this.opts.model,
       response_format: {
         type: "json_schema",
@@ -65,7 +66,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
         { role: "system", content: args.system },
         { role: "user", content: args.user },
       ],
-    });
+    }));
     const content = res.choices[0]?.message?.content;
     if (!content) throw new Error("no content in response");
     return JSON.parse(content);
@@ -74,11 +75,11 @@ export class OpenAICompatibleProvider implements LlmProvider {
   async runTools(args: RunToolsArgs): Promise<RunTurn> {
     // 用 OpenAI 原生 tool-calling：tools(function) 参数 + tool_calls/tool 消息。
     const msgs = this.toOpenAIMessages(args);
-    const res = await this.client.chat.completions.create({
+    const res = await withRetry("openai.runTools", () => this.client.chat.completions.create({
       model: this.opts.model,
       messages: msgs as never,
       tools: args.tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
-    });
+    }), { onRetry: mapRetry(args.onRetry) });
     const choice = res.choices[0];
     const toolCalls: ToolCall[] = (choice.message.tool_calls ?? []).map((tc) => {
       const fn = (tc as { function: { name: string; arguments: string } }).function;
@@ -89,19 +90,21 @@ export class OpenAICompatibleProvider implements LlmProvider {
 
   async streamTools(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn> {
     const msgs = this.toOpenAIMessages(args);
-    const chunks: OpenAIStreamChunk[] = [];
-    const stream = await this.client.chat.completions.create({
-      model: this.opts.model,
-      messages: msgs as never,
-      tools: args.tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
-      stream: true,
-    }, handlers.signal ? { signal: handlers.signal } : undefined);
-    for await (const chunk of stream) {
-      chunks.push(chunk as OpenAIStreamChunk);
-      const delta = chunk.choices[0]?.delta?.content ?? "";
-      if (delta) handlers.onTextDelta?.(delta);
-    }
-    return assembleOpenAIStreamChoice(chunks);
+    return withRetry("openai.streamTools", async () => {
+      const chunks: OpenAIStreamChunk[] = [];
+      const stream = await this.client.chat.completions.create({
+        model: this.opts.model,
+        messages: msgs as never,
+        tools: args.tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
+        stream: true,
+      }, handlers.signal ? { signal: handlers.signal } : undefined);
+      for await (const chunk of stream) {
+        chunks.push(chunk as OpenAIStreamChunk);
+        const delta = chunk.choices[0]?.delta?.content ?? "";
+        if (delta) handlers.onTextDelta?.(delta);
+      }
+      return assembleOpenAIStreamChoice(chunks);
+    }, { signal: handlers.signal, onRetry: mapRetry(handlers.onRetry) });
   }
 
   private toOpenAIMessages(args: RunToolsArgs): Array<Record<string, unknown>> {
@@ -120,4 +123,11 @@ export class OpenAICompatibleProvider implements LlmProvider {
     }
     return msgs;
   }
+}
+
+function mapRetry(onRetry: RunToolsArgs["onRetry"]) {
+  return onRetry
+    ? (event: { attempt: number; maxAttempts: number; reason: string }) =>
+      onRetry({ attempt: event.attempt, maxAttempts: event.maxAttempts, reason: event.reason })
+    : undefined;
 }

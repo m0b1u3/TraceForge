@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { proxyFetch } from "@traceforge/shared";
 import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall } from "./provider.js";
+import { withRetry } from "./retry.js";
 
 export interface AnthropicOptions {
   apiKey: string;
@@ -26,7 +27,7 @@ export class AnthropicProvider implements LlmProvider {
       system: args.system,
       messages: [{ role: "user", content: args.user }],
     } as unknown as Anthropic.MessageCreateParamsNonStreaming;
-    const res = await this.client.messages.create(params);
+    const res = await withRetry("anthropic.extractJson", () => this.client.messages.create(params));
     const text = res.content.find((b) => b.type === "text");
     if (!text || text.type !== "text") throw new Error("no text block in response");
     return JSON.parse(text.text);
@@ -72,7 +73,7 @@ export class AnthropicProvider implements LlmProvider {
       tools: args.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })),
       messages: anthropicMessages,
     } as unknown as Anthropic.MessageCreateParamsNonStreaming;
-    const res = await this.client.messages.create(params);
+    const res = await withRetry("anthropic.runTools", () => this.client.messages.create(params), { onRetry: mapRetry(args.onRetry) });
     let text = "";
     const toolCalls: ToolCall[] = [];
     for (const block of res.content) {
@@ -81,4 +82,11 @@ export class AnthropicProvider implements LlmProvider {
     }
     return { text, toolCalls, done: res.stop_reason !== "tool_use" };
   }
+}
+
+function mapRetry(onRetry: RunToolsArgs["onRetry"]) {
+  return onRetry
+    ? (event: { attempt: number; maxAttempts: number; reason: string }) =>
+      onRetry({ attempt: event.attempt, maxAttempts: event.maxAttempts, reason: event.reason })
+    : undefined;
 }

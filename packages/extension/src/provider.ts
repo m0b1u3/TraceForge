@@ -29,11 +29,13 @@ export interface RunToolsArgs {
   system: string;
   messages: TurnMessage[];
   tools: NativeToolDef[];
+  onRetry?: (event: { attempt: number; maxAttempts: number; reason: string }) => void;
 }
 
 export interface StreamToolsHandlers {
   onTextDelta?: (delta: string) => void;
   signal?: AbortSignal;
+  onRetry?: (event: { attempt: number; maxAttempts: number; reason: string }) => void;
 }
 
 export interface LlmProvider {
