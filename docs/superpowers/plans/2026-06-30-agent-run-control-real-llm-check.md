@@ -34,3 +34,13 @@ This checklist must be run with a real configured LLM. Mock providers are allowe
 - Steering result: real model output included `REAL_LLM_E2E_STEERED`; tool calls observed: `list_traffic`, then `record_task`.
 - Interrupt result: `POST /api/agent/runs/:runId/interrupt` returned `interrupting`; terminal event became `agent_run_interrupted`; active run cleared.
 - Bugs observed: initial verification was incorrectly reported before running this real LLM E2E. No runtime bug observed in the real E2E after running it.
+
+## Native OpenAI-Compatible Streaming Result
+
+- Provider/model: OpenAI-compatible DeepSeek endpoint, `deepseek-v4-flash`.
+- Base URL: `https://api.deepseek.com`.
+- Native streaming: provider exposed `streamTools`; observed 1 `agent_stream_start`, 67 `agent_stream_delta`, and 1 `agent_stream_end`.
+- Delta shape: deltas arrived as small token/text fragments such as `第一`, `句`, `：`, `我`, proving this was native stream output rather than fallback whole-text streaming.
+- Completion result: terminal event became `agent_run_completed`; active run cleared.
+- Marker result: final real model output included `OPENAI_STREAM_E2E_OK`.
+- Errors observed: none.
