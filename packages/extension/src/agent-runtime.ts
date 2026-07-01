@@ -21,6 +21,11 @@ export interface AgentRunOptions {
 
 const MAX_TURNS = 25;
 
+interface ToolCallBatch {
+  parallel: boolean;
+  calls: ToolCall[];
+}
+
 export class AgentRuntime {
   constructor(private provider: LlmProvider, private registry: ToolRegistry, private gate: ApprovalGate) {}
 
@@ -80,13 +85,20 @@ export class AgentRuntime {
       // 记录 assistant 这一轮（含 tool_calls），LLM 自主决定了调哪些工具
       messages.push({ role: "assistant", content: turn.text, toolCalls: turn.toolCalls });
 
-      for (const call of turn.toolCalls) {
+      for (const batch of this.groupToolCalls(turn.toolCalls)) {
         if (this.interrupted(options)) {
           this.emitInterrupted(onEvent);
           return;
         }
-        const result = await this.runOneTool(call, onEvent);
-        messages.push({ role: "tool", content: result, toolCallId: call.id });
+        const results = batch.parallel
+          ? await Promise.all(batch.calls.map((call) => this.runOneTool(call, onEvent, { deferResultEvent: true })))
+          : [await this.runOneTool(batch.calls[0], onEvent, { deferResultEvent: true })];
+        for (let i = 0; i < batch.calls.length; i++) {
+          const call = batch.calls[i];
+          const result = results[i];
+          onEvent({ type: "tool_result", name: call.name, content: result });
+          messages.push({ role: "tool", content: result, toolCallId: call.id });
+        }
         if (this.interrupted(options)) {
           this.emitInterrupted(onEvent);
           return;
@@ -116,11 +128,42 @@ export class AgentRuntime {
     onEvent({ type: "retrying", content: event.reason, attempt: event.attempt, maxAttempts: event.maxAttempts });
   }
 
-  private async runOneTool(call: ToolCall, onEvent: (e: AgentEvent) => void): Promise<string> {
+  private groupToolCalls(calls: ToolCall[]): ToolCallBatch[] {
+    const batches: ToolCallBatch[] = [];
+    let parallelCalls: ToolCall[] = [];
+    const flushParallel = () => {
+      if (parallelCalls.length > 0) {
+        batches.push({ parallel: true, calls: parallelCalls });
+        parallelCalls = [];
+      }
+    };
+
+    for (const call of calls) {
+      if (this.isParallelSafe(call)) {
+        parallelCalls.push(call);
+      } else {
+        flushParallel();
+        batches.push({ parallel: false, calls: [call] });
+      }
+    }
+    flushParallel();
+    return batches;
+  }
+
+  private isParallelSafe(call: ToolCall): boolean {
+    const tool = this.registry.get(call.name);
+    return tool?.risk !== "command" && tool?.executionMode === "parallel";
+  }
+
+  private async runOneTool(
+    call: ToolCall,
+    onEvent: (e: AgentEvent) => void,
+    opts: { deferResultEvent?: boolean } = {},
+  ): Promise<string> {
     const tool = this.registry.get(call.name);
     if (!tool) {
       const msg = `unknown tool: ${call.name}`;
-      onEvent({ type: "tool_result", name: call.name, content: msg });
+      if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: msg });
       return msg;
     }
     onEvent({ type: "tool_call", name: call.name, content: JSON.stringify(call.input) });
@@ -133,11 +176,11 @@ export class AgentRuntime {
 
     try {
       const res = await tool.execute(call.input);
-      onEvent({ type: "tool_result", name: call.name, content: res.content });
+      if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: res.content });
       return res.content;
     } catch (error) {
       const content = `[tool_error] ${call.name}: ${(error as Error).message}`;
-      onEvent({ type: "tool_result", name: call.name, content });
+      if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content });
       return content;
     }
   }

@@ -21,6 +21,7 @@ function replayTool(executed: string[]): ToolDescriptor {
 }
 
 const autoGate = new ApprovalGate(async () => "approved");
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("AgentRuntime", () => {
   it("executes a tool the LLM calls, feeds result back, ends on done", async () => {
@@ -126,6 +127,77 @@ describe("AgentRuntime", () => {
     await new AgentRuntime(provider, registry, autoGate).run("sys", "go", (e) => events.push(`${e.type}:${e.content}`));
     expect(events).toContain("tool_result:[tool_error] boom: tool exploded");
     expect(events).toContain("done:handled");
+  });
+
+  it("runs contiguous parallel-safe tools concurrently", async () => {
+    const provider = new SeqProvider([
+      { text: "", toolCalls: [{ id: "a", name: "read_a", input: {} }, { id: "b", name: "read_b", input: {} }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    const registry = new ToolRegistry();
+    registry.register({ name: "read_a", description: "read", inputSchema: {}, risk: "normal", source: "test", executionMode: "parallel", execute: async () => { await sleep(50); return { ok: true, content: "A" }; } });
+    registry.register({ name: "read_b", description: "read", inputSchema: {}, risk: "normal", source: "test", executionMode: "parallel", execute: async () => { await sleep(50); return { ok: true, content: "B" }; } });
+    const started = Date.now();
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "go", () => {});
+    expect(Date.now() - started).toBeLessThan(90);
+  });
+
+  it("emits parallel tool results in original tool call order", async () => {
+    const provider = new SeqProvider([
+      { text: "", toolCalls: [{ id: "a", name: "slow", input: {} }, { id: "b", name: "fast", input: {} }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    const registry = new ToolRegistry();
+    registry.register({ name: "slow", description: "slow", inputSchema: {}, risk: "normal", source: "test", executionMode: "parallel", execute: async () => { await sleep(40); return { ok: true, content: "A" }; } });
+    registry.register({ name: "fast", description: "fast", inputSchema: {}, risk: "normal", source: "test", executionMode: "parallel", execute: async () => { await sleep(5); return { ok: true, content: "B" }; } });
+    const results: string[] = [];
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "go", (e) => {
+      if (e.type === "tool_result") results.push(e.content);
+    });
+    expect(results.slice(0, 2)).toEqual(["A", "B"]);
+  });
+
+  it("keeps serial tools sequential", async () => {
+    const provider = new SeqProvider([
+      { text: "", toolCalls: [{ id: "a", name: "write_a", input: {} }, { id: "b", name: "write_b", input: {} }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    const registry = new ToolRegistry();
+    registry.register({ name: "write_a", description: "write", inputSchema: {}, risk: "normal", source: "test", execute: async () => { await sleep(30); return { ok: true, content: "A" }; } });
+    registry.register({ name: "write_b", description: "write", inputSchema: {}, risk: "normal", source: "test", execute: async () => { await sleep(30); return { ok: true, content: "B" }; } });
+    const started = Date.now();
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "go", () => {});
+    expect(Date.now() - started).toBeGreaterThanOrEqual(55);
+  });
+
+  it("keeps command-risk tools sequential even when marked parallel", async () => {
+    const provider = new SeqProvider([
+      { text: "", toolCalls: [{ id: "a", name: "cmd_a", input: {} }, { id: "b", name: "cmd_b", input: {} }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    const registry = new ToolRegistry();
+    registry.register({ name: "cmd_a", description: "cmd", inputSchema: {}, risk: "command", source: "test", executionMode: "parallel", execute: async () => { await sleep(30); return { ok: true, content: "A" }; } });
+    registry.register({ name: "cmd_b", description: "cmd", inputSchema: {}, risk: "command", source: "test", executionMode: "parallel", execute: async () => { await sleep(30); return { ok: true, content: "B" }; } });
+    let approvals = 0;
+    const started = Date.now();
+    await new AgentRuntime(provider, registry, new ApprovalGate(async () => { approvals += 1; return "approved"; })).run("sys", "go", () => {});
+    expect(Date.now() - started).toBeGreaterThanOrEqual(55);
+    expect(approvals).toBe(2);
+  });
+
+  it("keeps ordered tool_error results inside a parallel batch", async () => {
+    const provider = new SeqProvider([
+      { text: "", toolCalls: [{ id: "a", name: "bad", input: {} }, { id: "b", name: "good", input: {} }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    const registry = new ToolRegistry();
+    registry.register({ name: "bad", description: "bad", inputSchema: {}, risk: "normal", source: "test", executionMode: "parallel", execute: async () => { await sleep(20); throw new Error("bad exploded"); } });
+    registry.register({ name: "good", description: "good", inputSchema: {}, risk: "normal", source: "test", executionMode: "parallel", execute: async () => ({ ok: true, content: "good ok" }) });
+    const results: string[] = [];
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "go", (e) => {
+      if (e.type === "tool_result") results.push(e.content);
+    });
+    expect(results.slice(0, 2)).toEqual(["[tool_error] bad: bad exploded", "good ok"]);
   });
 
   it("injects soft steering messages after tool results", async () => {
