@@ -24,6 +24,7 @@ import { BrowserSession } from "./browser-session.js";
 import { ObserverWarningStore } from "./stores/observer-store.js";
 import { AgentEventStore } from "./stores/agent-event-store.js";
 import { ApprovalRegistry } from "./agent-approvals.js";
+import { AgentRunRegistry } from "./agent-runs.js";
 import { SessionStateStore } from "./stores/session-state-store.js";
 import { HypothesisStore } from "./stores/hypothesis-store.js";
 import { ContextSummaryStore } from "./stores/context-summary-store.js";
@@ -207,11 +208,26 @@ export function registerRoutes(
   });
 
   const approvals = new ApprovalRegistry();
+  const runs = new AgentRunRegistry();
 
   app.post("/api/cases/:id/agent/run", async (req, reply) => {
     const { id } = req.params as { id: string };
     const c = cases.get(id);
     if (!c) return reply.code(404).send({ error: "case not found" });
+
+    const { goal } = req.body as { goal: string };
+    if (!goal?.trim()) return reply.code(400).send({ error: "goal required" });
+    let active;
+    try {
+      active = runs.start(id, goal.trim());
+    } catch (err) {
+      return reply.code(409).send({ error: "active run exists", reason: (err as Error).message });
+    }
+
+    const runAgentInBackground = async (runId: string) => {
+      const running = runs.get(runId);
+      if (!running) return;
+      const goal = running.run.goal;
 
     const registry = new ToolRegistry();
     registry.register(makeListTrafficTool(id, traffic));
@@ -251,7 +267,6 @@ export function registerRoutes(
       return decision;
     });
 
-    const { goal } = req.body as { goal: string };
     const allowHosts = c.scopeRules.flatMap((r) => r.allowHosts);
     const scopeGuidance =
       allowHosts.length === 0
@@ -286,19 +301,25 @@ export function registerRoutes(
     }, { maxTokens: 60000, focusReserve: 3000 });
 
     agentEventStore.append(id, "user", goal); // 存用户这句目标，刷新/切 Case 后历史可见完整双边对话
-    bus.emit({ type: "agent_started", caseId: id, goal });
     agentEventStore.append(id, "started", `开始：${goal}`);
-    try {
-      await new AgentRuntime(llm, registry, gate).run(system, built.messages, (e) => {
-        if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
-        else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined); trajectory.push(`[result] ${e.name} → ${e.content}`); }
-        else if (e.type === "text") { bus.emit({ type: "agent_text", caseId: id, content: e.content }); agentEventStore.append(id, "text", e.content); trajectory.push(`[text] ${e.content}`); }
-        else if (e.type === "done") { bus.emit({ type: "agent_done", caseId: id, content: e.content }); agentEventStore.append(id, "done", e.content); trajectory.push(`[done] ${e.content}`); }
-      });
-    } catch (err) {
-      bus.emit({ type: "agent_error", caseId: id, content: (err as Error).message });
-      agentEventStore.append(id, "error", (err as Error).message);
-      return reply.code(500).send({ error: "agent run failed", reason: (err as Error).message });
+    await new AgentRuntime(llm, registry, gate).run(system, built.messages, (e) => {
+      if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
+      else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined); trajectory.push(`[result] ${e.name} → ${e.content}`); }
+      else if (e.type === "text") { bus.emit({ type: "agent_text", caseId: id, content: e.content }); agentEventStore.append(id, "text", e.content); trajectory.push(`[text] ${e.content}`); }
+      else if (e.type === "done") { bus.emit({ type: "agent_done", caseId: id, content: e.content }); agentEventStore.append(id, "done", e.content); trajectory.push(`[done] ${e.content}`); }
+      else if (e.type === "stream_start") bus.emit({ type: "agent_stream_start", caseId: id, runId, messageId: e.messageId ?? "" });
+      else if (e.type === "stream_delta") bus.emit({ type: "agent_stream_delta", caseId: id, runId, messageId: e.messageId ?? "", delta: e.content });
+      else if (e.type === "stream_end") bus.emit({ type: "agent_stream_end", caseId: id, runId, messageId: e.messageId ?? "", content: e.content });
+      else if (e.type === "interrupted") {
+        const interrupted = runs.markInterrupted(runId, running.run.interruptReason ?? e.content);
+        if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });
+      }
+    }, { signal: running.abortController.signal, runId, getSteeringMessages: () => runs.consumeSteering(runId) });
+
+    const afterRun = runs.get(runId)?.run;
+    if (afterRun && afterRun.status !== "interrupted") {
+      const completed = runs.complete(runId);
+      if (completed) bus.emit({ type: "agent_run_completed", run: completed, content: trajectory.at(-1) ?? "" });
     }
 
     timelineStore.append(id, "context_built", `注入 ${built.injectedFactIds.length} facts, ~${built.estimatedTokens} tokens, 降级:${built.degraded.join(",") || "无"}`);
@@ -344,7 +365,51 @@ export function registerRoutes(
     } catch (e) {
       console.error("[observer]", (e as Error).message);
     }
-    return { ok: true };
+    };
+
+    bus.emit({ type: "agent_run_started", run: active.run });
+    bus.emit({ type: "agent_started", caseId: id, goal: active.run.goal });
+    setImmediate(() => {
+      void runAgentInBackground(active.run.id).catch((err) => {
+        const current = runs.get(active.run.id);
+        if (current?.run.status === "interrupting") {
+          const interrupted = runs.markInterrupted(active.run.id, current.run.interruptReason ?? (err as Error).message);
+          if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });
+        } else {
+          const failed = runs.fail(active.run.id, (err as Error).message);
+          if (failed) {
+          bus.emit({ type: "agent_run_failed", run: failed, error: (err as Error).message });
+          bus.emit({ type: "agent_error", caseId: id, content: (err as Error).message });
+          agentEventStore.append(id, "error", (err as Error).message);
+          }
+        }
+      });
+    });
+    return { run: active.run };
+  });
+
+  app.post("/api/agent/runs/:runId/steer", async (req, reply) => {
+    const { runId } = req.params as { runId: string };
+    const { content } = (req.body ?? {}) as { content?: string };
+    if (!content?.trim()) return reply.code(400).send({ error: "content required" });
+    const run = runs.addSteering(runId, content.trim());
+    if (!run) return reply.code(404).send({ error: "run not found or not active" });
+    agentEventStore.append(run.caseId, "user", `[steering] ${content.trim()}`);
+    bus.emit({ type: "agent_steering_added", caseId: run.caseId, runId, content: content.trim() });
+    return { run };
+  });
+
+  app.post("/api/agent/runs/:runId/interrupt", async (req, reply) => {
+    const { runId } = req.params as { runId: string };
+    const { reason } = (req.body ?? {}) as { reason?: string };
+    const run = runs.interrupt(runId, reason);
+    if (!run) return reply.code(404).send({ error: "run not found" });
+    return { run };
+  });
+
+  app.get("/api/cases/:id/agent/runs/active", async (req) => {
+    const { id } = req.params as { id: string };
+    return runs.getActiveByCase(id)?.run ?? null;
   });
 
   app.post("/api/agent/approvals/:approvalId", async (req, reply) => {

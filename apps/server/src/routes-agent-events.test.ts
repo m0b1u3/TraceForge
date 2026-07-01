@@ -8,6 +8,16 @@ import { MockProvider } from "@traceforge/llm";
 let app: FastifyInstance;
 let caseId: string;
 
+async function waitForAgentHistory(): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    const res = await app.inject({ url: `/api/cases/${caseId}/agent/events` });
+    if (res.json().some((e: { kind: string }) => e.kind === "done")) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error("timed out waiting for background agent history");
+}
+
 beforeEach(async () => {
   app = Fastify();
   const db = createDb(":memory:");
@@ -24,6 +34,7 @@ beforeEach(async () => {
 describe("agent events history", () => {
   it("persists agent events during a run and exposes them via the history endpoint", async () => {
     await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "找接口" } });
+    await waitForAgentHistory();
 
     const res = await app.inject({ url: `/api/cases/${caseId}/agent/events` });
     expect(res.statusCode).toBe(200);
@@ -42,6 +53,7 @@ describe("agent events history", () => {
 
   it("isolates agent events by case", async () => {
     await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "找接口" } });
+    await waitForAgentHistory();
     const other = (await app.inject({ method: "POST", url: "/api/cases", payload: { name: "o", allowHosts: ["t.com"] } })).json().id;
     const res = await app.inject({ url: `/api/cases/${other}/agent/events` });
     expect(res.json()).toHaveLength(0);

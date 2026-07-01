@@ -10,6 +10,15 @@ let app: FastifyInstance;
 let events: RuntimeEvent[];
 let caseId: string;
 
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error("timed out waiting for background agent run");
+}
+
 beforeEach(async () => {
   app = Fastify();
   const db = createDb(":memory:");
@@ -31,6 +40,8 @@ describe("agent run route", () => {
   it("runs the agent which records a fact via tool, emitting events", async () => {
     const res = await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "找接口" } });
     expect(res.statusCode).toBe(200);
+    expect(res.json().run.id).toMatch(/^run_/);
+    await waitFor(() => events.some((e) => e.type === "agent_done"));
     const facts = (await app.inject({ url: `/api/cases/${caseId}/facts` })).json();
     expect(facts).toHaveLength(1);
     expect(facts[0].source.type).toBe("ai");

@@ -58,6 +58,10 @@ export class AgentRuntime {
         onEvent({ type: "stream_delta", messageId, content: turn.text });
       }
       onEvent({ type: "stream_end", messageId, content: streamed || turn.text });
+      if (this.interrupted(options)) {
+        this.emitInterrupted(onEvent);
+        return;
+      }
       if (turn.text) onEvent({ type: "text", content: turn.text });
 
       if (turn.toolCalls.length === 0 || turn.done) {
