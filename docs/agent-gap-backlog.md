@@ -2,17 +2,17 @@
 
 > 记录于 2026-06-29。对比对象：Claude Code / Codex 类成熟编码 / 调查 agent。
 > 用途：后续依次 brainstorm → 计划 → 真实 LLM 验证（铁律：凡 LLM 行为一律真实 LLM 测，不用 mock 下结论）。
-> 当前 agent 形态：单线程串行循环（AgentRuntime，MAX_TURNS=25），无流式 / 无中断 / 无并行 / 无重试。
+> 当前 agent 形态：单线程串行循环（AgentRuntime，MAX_TURNS=25），已支持 OpenAI-compatible 原生流式、fallback 流式、运行中 steering、interrupt、LLM transient retry、工具错误恢复；暂无线程级工具并行 / 子 agent。
 
 ## 优先级总览
 
 | # | 缺口 | 档位 | 状态 |
 |---|---|---|---|
 | 0 | 上下文向量语义检索（中英盲区：搜「越权」匹不到「IDOR」） | 已知 | 待做 |
-| 1 | 流式输出（streaming） | 🔴 最高 | 待做 |
-| 2 | 运行中人工中断 / 转向（interrupt / steering） | 🔴 最高 | 待做 |
+| 1 | 流式输出（streaming） | 🔴 最高 | ✅ 已完成 |
+| 2 | 运行中人工中断 / 转向（interrupt / steering） | 🔴 最高 | ✅ 已完成 |
 | 3 | 工具并行调用 | 🟠 高 | 待做 |
-| 4 | 重试 / 错误恢复 | 🟠 高 | 待做 |
+| 4 | 重试 / 错误恢复 | 🟠 高 | ✅ 已完成 |
 | 5 | 动态轮次（去掉固定 MAX_TURNS=25 硬停） | 🟠 中 | 待做 |
 | 6 | 子 agent / 任务分解并行执行 | 🟠 看需求 | 待做 |
 | 7 | 真 tokenizer（替代 chars/4 字符估算） | 🟠 中 | 待做 |

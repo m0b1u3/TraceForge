@@ -600,3 +600,22 @@ Append verification results to this plan under a `## Result Log` section.
 git add docs/agent-gap-backlog.md docs/superpowers/plans/2026-07-01-llm-tool-reliability.md
 git commit -m "docs: record llm reliability validation"
 ```
+
+## Result Log
+
+- Focused tests: `node_modules\.bin\vitest.cmd run packages/llm/src/retry.test.ts packages/llm/src/provider-retry.test.ts packages/extension/src/agent-runtime.test.ts apps/server/src/routes-agent-run-control.test.ts apps/web/src/store.test.ts` passed, 5 files / 25 tests.
+- Full tests: `pnpm test` passed, 66 files / 262 tests.
+- Build: `pnpm -r build` passed. Existing Vite warnings remain for `undici` browser externalization and large web chunks.
+- Real LLM streaming E2E:
+  - Provider/model: OpenAI-compatible DeepSeek endpoint, `deepseek-v4-flash`.
+  - Native streaming: provider exposed `streamTools`; observed 1 `agent_stream_start`, 32 `agent_stream_delta`, and 1 `agent_stream_end`.
+  - Marker result: final real model output included `RELIABILITY_STREAM_OK`.
+  - Retry events during healthy run: 0.
+  - Errors observed: none.
+- Real LLM interrupt E2E:
+  - Provider/model: OpenAI-compatible DeepSeek endpoint, `deepseek-v4-flash`.
+  - Interrupt route returned `interrupting`.
+  - Terminal event became `agent_run_interrupted`; active run cleared.
+  - Later completion count for the interrupted run: 0.
+  - Retry events after interrupt: 0.
+  - Errors observed: none.
