@@ -1,19 +1,25 @@
-import { keywordScore } from "@traceforge/reasoning-core";
+import { expandedKeywordSearch, keywordScore } from "@traceforge/reasoning-core";
 import type { Fact, TrafficEntry, AgentEvent } from "@traceforge/shared";
 import type { ToolDescriptor } from "./tool.js";
+import type { QueryExpander } from "./query-expander.js";
 
 export interface FactSearchReader { listByCase(caseId: string): Fact[] }
 export interface FactDetailReader { getById(id: string): Fact | undefined }
 export interface TrafficSearchReader { listByCase(caseId: string): TrafficEntry[] }
 export interface ConvoSearchReader { listByCase(caseId: string): AgentEvent[] }
 export interface SummaryReader { latest(caseId: string): { content: string } | undefined }
+export interface MemoryToolOptions { expander?: QueryExpander }
 
 function clip(s: string, max = 120): string {
   const one = s.replace(/\s+/g, " ").trim();
   return one.length <= max ? one : `${one.slice(0, max)}…`;
 }
 
-export function makeSearchFactsTool(caseId: string, facts: FactSearchReader): ToolDescriptor {
+async function expandQuery(options: MemoryToolOptions | undefined, caseId: string, toolName: string, query: string): Promise<string[]> {
+  return options?.expander?.expand({ caseId, toolName, query }) ?? [query];
+}
+
+export function makeSearchFactsTool(caseId: string, facts: FactSearchReader, options: MemoryToolOptions = {}): ToolDescriptor {
   return {
     name: "search_facts",
     description: "按关键词检索本 Case 已记录的 Fact（接口/凭据/漏洞线索等），搜索范围含类型/标题/内容/标签。返回命中的 id+类型+标题摘要；要完整内容用 get_fact_detail(id)。",
@@ -22,11 +28,21 @@ export function makeSearchFactsTool(caseId: string, facts: FactSearchReader): To
     execute: async (input) => {
       const { query, limit = 10 } = (input ?? {}) as { query?: string; limit?: number };
       if (!query) return { ok: false, content: "缺少 query" };
-      const hits = facts.listByCase(caseId)
-        .map((f) => ({ f, s: keywordScore(query, `${f.type} ${f.title} ${JSON.stringify(f.value)} ${f.tags.join(" ")}`) }))
-        .filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, limit);
-      if (hits.length === 0) return { ok: true, content: `没有匹配"${query}"的 Fact` };
-      return { ok: true, content: `${hits.map((h) => `${h.f.id} [${h.f.type}] ${h.f.title}`).join("\n")}\n（用 get_fact_detail(id) 看完整内容）` };
+      const terms = await expandQuery(options, caseId, "search_facts", query);
+      const hits = expandedKeywordSearch(
+        facts.listByCase(caseId),
+        terms,
+        (f) => `${f.type} ${f.title} ${JSON.stringify(f.value)} ${f.tags.join(" ")}`,
+        { originalQuery: query, limit },
+      );
+      if (hits.length === 0) return { ok: true, content: `没有匹配"${query}"的 Fact\n已尝试扩展词：${terms.join(", ")}` };
+      return {
+        ok: true,
+        content: `${hits.map((h) => {
+          const matched = h.matchedTerms.length ? `\n  matched: ${h.matchedTerms.join(", ")}` : "";
+          return `${h.item.id} [${h.item.type}] ${h.item.title}${matched}`;
+        }).join("\n")}\n（用 get_fact_detail(id) 看完整内容）`,
+      };
     },
   };
 }
@@ -66,7 +82,7 @@ export function makeSearchTrafficTool(caseId: string, traffic: TrafficSearchRead
   };
 }
 
-export function makeRecallConversationTool(caseId: string, events: ConvoSearchReader, summaries: SummaryReader): ToolDescriptor {
+export function makeRecallConversationTool(caseId: string, events: ConvoSearchReader, summaries: SummaryReader, options: MemoryToolOptions = {}): ToolDescriptor {
   return {
     name: "recall_conversation",
     description: "按关键词检索更早的（已滚出近期窗口的）历史对话与远期摘要。想不起之前讨论过什么时用。",
@@ -75,15 +91,20 @@ export function makeRecallConversationTool(caseId: string, events: ConvoSearchRe
     execute: async (input) => {
       const { query, limit = 10 } = (input ?? {}) as { query?: string; limit?: number };
       if (!query) return { ok: false, content: "缺少 query" };
-      const hits = events.listByCase(caseId)
-        .filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done")
-        .map((e) => ({ e, s: keywordScore(query, e.text) }))
-        .filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, limit);
+      const terms = await expandQuery(options, caseId, "recall_conversation", query);
+      const hits = expandedKeywordSearch(
+        events.listByCase(caseId).filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done"),
+        terms,
+        (e) => e.text,
+        { originalQuery: query, limit },
+      );
       const parts: string[] = [];
-      if (hits.length) parts.push(hits.map((h) => `[${h.e.kind}] ${clip(h.e.text)}`).join("\n"));
+      if (hits.length) parts.push(hits.map((h) => `[${h.item.kind}] ${clip(h.item.text)}`).join("\n"));
       const sum = summaries.latest(caseId);
-      if (sum && keywordScore(query, sum.content) > 0) parts.push(`远期摘要相关段：${clip(sum.content, 200)}`);
-      if (parts.length === 0) return { ok: true, content: `没有匹配"${query}"的历史对话` };
+      if (sum && expandedKeywordSearch([sum], terms, (s) => s.content, { originalQuery: query, limit: 1 }).length > 0) {
+        parts.push(`远期摘要相关段：${clip(sum.content, 200)}`);
+      }
+      if (parts.length === 0) return { ok: true, content: `没有匹配"${query}"的历史对话\n已尝试扩展词：${terms.join(", ")}` };
       return { ok: true, content: parts.join("\n\n") };
     },
   };

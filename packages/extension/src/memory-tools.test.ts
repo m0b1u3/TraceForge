@@ -106,3 +106,57 @@ describe("recall_conversation", () => {
     expect(r.content).toContain("早期发现");
   });
 });
+
+describe("search_facts query expansion", () => {
+  it("finds IDOR facts when original query is 越权 and expander supplies IDOR", async () => {
+    const facts = {
+      listByCase: () => [
+        fact({ id: "f1", type: "finding", title: "Possible IDOR on /api/user/:id", value: {} }),
+      ],
+    };
+    const expander = {
+      expand: async () => ["越权", "IDOR", "BOLA", "broken access control"],
+    };
+    const t = makeSearchFactsTool("c", facts, { expander });
+
+    const r = await t.execute({ query: "越权" });
+
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain("f1");
+    expect(r.content).toContain("matched: IDOR");
+  });
+
+  it("falls back to original keyword behavior when no expander is provided", async () => {
+    const facts = {
+      listByCase: () => [
+        fact({ id: "f1", type: "finding", title: "Possible IDOR on /api/user/:id", value: {} }),
+      ],
+    };
+    const t = makeSearchFactsTool("c", facts);
+
+    const r = await t.execute({ query: "越权" });
+
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain("没有匹配");
+  });
+});
+
+describe("recall_conversation query expansion", () => {
+  it("finds earlier conversation text through expanded terms", async () => {
+    const events = {
+      listByCase: (): AgentEvent[] => [
+        { id: "e1", caseId: "c", kind: "done", text: "Earlier note: possible BOLA in profile API", tool: null, createdAt: "t" },
+      ],
+    };
+    const summaries = { latest: () => undefined };
+    const expander = {
+      expand: async () => ["越权", "BOLA"],
+    };
+    const t = makeRecallConversationTool("c", events, summaries, { expander });
+
+    const r = await t.execute({ query: "越权" });
+
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain("possible BOLA");
+  });
+});
