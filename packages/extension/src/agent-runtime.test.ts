@@ -98,6 +98,36 @@ describe("AgentRuntime", () => {
     expect(events.find((e) => e.type === "stream_delta")?.content).toBe("hello");
   });
 
+  it("emits retrying events from provider retry callbacks", async () => {
+    const provider: LlmProvider = {
+      extractJson: async () => ({}),
+      runTools: async (args) => {
+        args.onRetry?.({ attempt: 2, maxAttempts: 3, reason: "rate limited" });
+        return { text: "ok", toolCalls: [], done: true };
+      },
+    };
+    const events: string[] = [];
+    await new AgentRuntime(provider, new ToolRegistry(), new ApprovalGate(async () => "approved"))
+      .run("sys", "go", (e) => events.push(`${e.type}:${e.content}`));
+    expect(events).toContain("retrying:rate limited");
+  });
+
+  it("returns tool execution exceptions to the LLM as tool_result", async () => {
+    const provider = new SeqProvider([
+      { text: "", toolCalls: [{ id: "t1", name: "boom", input: {} }], done: false },
+      { text: "handled", toolCalls: [], done: true },
+    ]);
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "boom", description: "boom", inputSchema: {}, risk: "normal", source: "test",
+      execute: async () => { throw new Error("tool exploded"); },
+    });
+    const events: string[] = [];
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "go", (e) => events.push(`${e.type}:${e.content}`));
+    expect(events).toContain("tool_result:[tool_error] boom: tool exploded");
+    expect(events).toContain("done:handled");
+  });
+
   it("injects soft steering messages after tool results", async () => {
     const seen: string[][] = [];
     const provider = {

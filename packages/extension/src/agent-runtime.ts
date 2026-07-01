@@ -5,9 +5,11 @@ import type { ApprovalGate } from "./approval-gate.js";
 
 export interface AgentEvent {
   type: "tool_call" | "tool_result" | "tool_rejected" | "text" | "done" |
-    "stream_start" | "stream_delta" | "stream_end" | "interrupted";
+    "stream_start" | "stream_delta" | "stream_end" | "interrupted" | "retrying";
   name?: string;
   messageId?: string;
+  attempt?: number;
+  maxAttempts?: number;
   content: string;
 }
 
@@ -46,13 +48,19 @@ export class AgentRuntime {
           { system, messages, tools: this.registry.toLlmTools() },
           {
             signal: options.signal,
+            onRetry: (event) => this.emitRetrying(event, onEvent),
             onTextDelta: (delta) => {
               streamed += delta;
               onEvent({ type: "stream_delta", messageId, content: delta });
             },
           },
         )
-        : await this.provider.runTools({ system, messages, tools: this.registry.toLlmTools() });
+        : await this.provider.runTools({
+          system,
+          messages,
+          tools: this.registry.toLlmTools(),
+          onRetry: (event) => this.emitRetrying(event, onEvent),
+        });
       if (!this.provider.streamTools && turn.text) {
         streamed += turn.text;
         onEvent({ type: "stream_delta", messageId, content: turn.text });
@@ -101,6 +109,13 @@ export class AgentRuntime {
     onEvent({ type: "interrupted", content: "agent run interrupted" });
   }
 
+  private emitRetrying(
+    event: { attempt: number; maxAttempts: number; reason: string },
+    onEvent: (e: AgentEvent) => void,
+  ): void {
+    onEvent({ type: "retrying", content: event.reason, attempt: event.attempt, maxAttempts: event.maxAttempts });
+  }
+
   private async runOneTool(call: ToolCall, onEvent: (e: AgentEvent) => void): Promise<string> {
     const tool = this.registry.get(call.name);
     if (!tool) {
@@ -116,8 +131,14 @@ export class AgentRuntime {
       return "用户拒绝执行此动作。";
     }
 
-    const res = await tool.execute(call.input);
-    onEvent({ type: "tool_result", name: call.name, content: res.content });
-    return res.content;
+    try {
+      const res = await tool.execute(call.input);
+      onEvent({ type: "tool_result", name: call.name, content: res.content });
+      return res.content;
+    } catch (error) {
+      const content = `[tool_error] ${call.name}: ${(error as Error).message}`;
+      onEvent({ type: "tool_result", name: call.name, content });
+      return content;
+    }
   }
 }
