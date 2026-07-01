@@ -62,6 +62,18 @@ describe("LlmQueryExpander", () => {
     expect(terms).toEqual(["越权"]);
   });
 
+  it("uses plain runTools JSON text when extractJson is unavailable", async () => {
+    const jsonTextProvider: LlmProvider = {
+      extractJson: async () => { throw new Error("json_schema unavailable"); },
+      runTools: async () => ({ text: "[\"IDOR\", \"BOLA\"]", toolCalls: [], done: true }),
+    };
+    const expander = new LlmQueryExpander(jsonTextProvider);
+
+    const terms = await expander.expand({ query: "越权", toolName: "search_facts" });
+
+    expect(terms).toEqual(["越权", "IDOR", "BOLA"]);
+  });
+
   it("caches expansion by tool and normalized query", async () => {
     let calls = 0;
     const counting: LlmProvider = {

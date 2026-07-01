@@ -28,6 +28,12 @@ function normalizeQuery(query: string): string {
   return query.trim();
 }
 
+function parseJsonArrayText(text: string): unknown {
+  const trimmed = text.trim();
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+  return JSON.parse(fenced ? fenced[1] : trimmed);
+}
+
 function sanitizeTerms(originalQuery: string, rawTerms: unknown, maxTerms: number): string[] {
   if (!Array.isArray(rawTerms)) return [normalizeQuery(originalQuery)].filter(Boolean);
   const seen = new Set<string>();
@@ -75,7 +81,17 @@ export class LlmQueryExpander implements QueryExpander {
         input.currentGoal ? `currentGoal: ${input.currentGoal}` : undefined,
         `query: ${query}`,
       ].filter(Boolean).join("\n");
-      const raw = await this.provider.extractJson({ system: SYSTEM, user, schema: SCHEMA });
+      let raw: unknown;
+      try {
+        raw = await this.provider.extractJson({ system: SYSTEM, user, schema: SCHEMA });
+      } catch {
+        const turn = await this.provider.runTools({
+          system: `${SYSTEM}\nReturn only the raw JSON array. Do not wrap it in prose.`,
+          messages: [{ role: "user", content: user }],
+          tools: [],
+        });
+        raw = parseJsonArrayText(turn.text);
+      }
       const terms = sanitizeTerms(query, raw, maxTerms);
       this.cache.set(cacheKey, terms);
       return terms;
