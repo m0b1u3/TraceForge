@@ -1,11 +1,50 @@
 import OpenAI from "openai";
 import { proxyFetch } from "@traceforge/shared";
-import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall } from "./provider.js";
+import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall, StreamToolsHandlers } from "./provider.js";
 
 export interface OpenAIOptions {
   apiKey: string;
   model: string;
   baseUrl?: string;
+}
+
+interface ToolAccumulator { id: string; name: string; args: string }
+
+type OpenAIStreamChunk = {
+  choices?: Array<{
+    delta?: {
+      content?: string | null;
+      tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>;
+    };
+    finish_reason?: string | null;
+  }>;
+};
+
+export function assembleOpenAIStreamChoice(chunks: OpenAIStreamChunk[]): RunTurn {
+  let text = "";
+  let finish: string | null | undefined;
+  const tools = new Map<number, ToolAccumulator>();
+  for (const chunk of chunks) {
+    const choice = chunk.choices?.[0];
+    if (!choice) continue;
+    if (choice.finish_reason) finish = choice.finish_reason;
+    const delta = choice.delta;
+    if (!delta) continue;
+    if (delta.content) text += delta.content;
+    for (const tc of delta.tool_calls ?? []) {
+      const cur = tools.get(tc.index) ?? { id: "", name: "", args: "" };
+      if (tc.id) cur.id = tc.id;
+      if (tc.function?.name) cur.name = tc.function.name;
+      if (tc.function?.arguments) cur.args += tc.function.arguments;
+      tools.set(tc.index, cur);
+    }
+  }
+  const toolCalls: ToolCall[] = [...tools.values()].map((tc) => ({
+    id: tc.id,
+    name: tc.name,
+    input: JSON.parse(tc.args || "{}"),
+  }));
+  return { text, toolCalls, done: finish !== "tool_calls" };
 }
 
 export class OpenAICompatibleProvider implements LlmProvider {
@@ -34,6 +73,38 @@ export class OpenAICompatibleProvider implements LlmProvider {
 
   async runTools(args: RunToolsArgs): Promise<RunTurn> {
     // 用 OpenAI 原生 tool-calling：tools(function) 参数 + tool_calls/tool 消息。
+    const msgs = this.toOpenAIMessages(args);
+    const res = await this.client.chat.completions.create({
+      model: this.opts.model,
+      messages: msgs as never,
+      tools: args.tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
+    });
+    const choice = res.choices[0];
+    const toolCalls: ToolCall[] = (choice.message.tool_calls ?? []).map((tc) => {
+      const fn = (tc as { function: { name: string; arguments: string } }).function;
+      return { id: tc.id, name: fn.name, input: JSON.parse(fn.arguments || "{}") };
+    });
+    return { text: choice.message.content ?? "", toolCalls, done: choice.finish_reason !== "tool_calls" };
+  }
+
+  async streamTools(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn> {
+    const msgs = this.toOpenAIMessages(args);
+    const chunks: OpenAIStreamChunk[] = [];
+    const stream = await this.client.chat.completions.create({
+      model: this.opts.model,
+      messages: msgs as never,
+      tools: args.tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
+      stream: true,
+    }, handlers.signal ? { signal: handlers.signal } : undefined);
+    for await (const chunk of stream) {
+      chunks.push(chunk as OpenAIStreamChunk);
+      const delta = chunk.choices[0]?.delta?.content ?? "";
+      if (delta) handlers.onTextDelta?.(delta);
+    }
+    return assembleOpenAIStreamChoice(chunks);
+  }
+
+  private toOpenAIMessages(args: RunToolsArgs): Array<Record<string, unknown>> {
     const msgs: Array<Record<string, unknown>> = [{ role: "system", content: args.system }];
     for (const m of args.messages) {
       if (m.role === "tool") {
@@ -47,16 +118,6 @@ export class OpenAICompatibleProvider implements LlmProvider {
         msgs.push({ role: m.role, content: m.content });
       }
     }
-    const res = await this.client.chat.completions.create({
-      model: this.opts.model,
-      messages: msgs as never,
-      tools: args.tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
-    });
-    const choice = res.choices[0];
-    const toolCalls: ToolCall[] = (choice.message.tool_calls ?? []).map((tc) => {
-      const fn = (tc as { function: { name: string; arguments: string } }).function;
-      return { id: tc.id, name: fn.name, input: JSON.parse(fn.arguments || "{}") };
-    });
-    return { text: choice.message.content ?? "", toolCalls, done: choice.finish_reason !== "tool_calls" };
+    return msgs;
   }
 }
