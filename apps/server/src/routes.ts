@@ -310,6 +310,16 @@ export function registerRoutes(
       else if (e.type === "stream_start") bus.emit({ type: "agent_stream_start", caseId: id, runId, messageId: e.messageId ?? "" });
       else if (e.type === "stream_delta") bus.emit({ type: "agent_stream_delta", caseId: id, runId, messageId: e.messageId ?? "", delta: e.content });
       else if (e.type === "stream_end") bus.emit({ type: "agent_stream_end", caseId: id, runId, messageId: e.messageId ?? "", content: e.content });
+      else if (e.type === "retrying") {
+        bus.emit({
+          type: "agent_retrying",
+          caseId: id,
+          runId,
+          attempt: e.attempt ?? 1,
+          maxAttempts: e.maxAttempts ?? 1,
+          reason: e.content,
+        });
+      }
       else if (e.type === "interrupted") {
         const interrupted = runs.markInterrupted(runId, running.run.interruptReason ?? e.content);
         if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });

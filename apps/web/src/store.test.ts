@@ -54,4 +54,20 @@ describe("agent run control event handling", () => {
     } });
     expect(useStore.getState().activeRun).toBeNull();
   });
+
+  it("records retrying events as agent status text", () => {
+    useStore.getState().setCase("case_1");
+    useStore.getState().handleRuntimeEvent({
+      type: "agent_retrying",
+      caseId: "case_1",
+      runId: "run_1",
+      attempt: 2,
+      maxAttempts: 3,
+      reason: "rate limited",
+    });
+    expect(useStore.getState().agentEvents.at(-1)).toEqual({
+      kind: "text",
+      text: "正在重试 LLM 调用 2/3：rate limited",
+    });
+  });
 });

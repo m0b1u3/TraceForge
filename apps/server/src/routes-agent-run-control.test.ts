@@ -20,6 +20,15 @@ function delayedProvider(): LlmProvider {
   };
 }
 
+async function waitFor(predicate: () => boolean) {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error("Timed out waiting for runtime event");
+}
+
 beforeEach(async () => {
   app = Fastify();
   const db = createDb(":memory:");
@@ -71,5 +80,27 @@ describe("agent run control routes", () => {
     expect(active.json()).toBeNull();
     expect(events.some((e) => e.type === "agent_run_interrupted" && e.run.id === run.id)).toBe(true);
     expect(events.some((e) => e.type === "agent_run_completed" && e.run.id === run.id)).toBe(false);
+  });
+
+  it("emits retrying events from provider retry callbacks", async () => {
+    const retryingProvider: LlmProvider = {
+      extractJson: async () => ({ warnings: [] }),
+      runTools: async (args: RunToolsArgs) => {
+        args.onRetry?.({ attempt: 2, maxAttempts: 3, reason: "rate limited" });
+        return { text: "done", toolCalls: [], done: true };
+      },
+    };
+    const localApp = Fastify();
+    const bus = new EventBus();
+    const localEvents: RuntimeEvent[] = [];
+    bus.subscribe((e) => localEvents.push(e));
+    registerRoutes(localApp, createDb(":memory:"), bus, retryingProvider);
+    await localApp.ready();
+    const cid = (await localApp.inject({ method: "POST", url: "/api/cases", payload: { name: "retry", allowHosts: ["example.com"] } })).json().id;
+    await localApp.inject({ method: "POST", url: `/api/cases/${cid}/agent/run`, payload: { goal: "go" } });
+    await waitFor(() => localEvents.some((e) => e.type === "agent_run_completed"));
+
+    expect(localEvents.some((e) => e.type === "agent_retrying" && e.attempt === 2 && e.reason === "rate limited")).toBe(true);
+    await localApp.close();
   });
 });

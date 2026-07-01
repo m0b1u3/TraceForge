@@ -24,6 +24,7 @@ export type RuntimeEvent =
   | { type: "agent_stream_start"; caseId: string; runId: string; messageId: string }
   | { type: "agent_stream_delta"; caseId: string; runId: string; messageId: string; delta: string }
   | { type: "agent_stream_end"; caseId: string; runId: string; messageId: string; content: string }
+  | { type: "agent_retrying"; caseId: string; runId: string; attempt: number; maxAttempts: number; reason: string }
   | { type: "agent_steering_added"; caseId: string; runId: string; content: string }
   | { type: "agent_run_interrupted"; run: AgentRun }
   | { type: "agent_run_completed"; run: AgentRun; content: string }

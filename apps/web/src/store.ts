@@ -177,6 +177,9 @@ export const useStore = create<State>((set, get) => ({
         return { streamingMessages: rest };
       });
     }
+    else if (event.type === "agent_retrying" && event.caseId === cid) {
+      get().addAgentEvent({ kind: "text", text: `正在重试 LLM 调用 ${event.attempt}/${event.maxAttempts}：${event.reason}` });
+    }
     else if (event.type === "agent_steering_added" && event.caseId === cid) {
       const text = `[steering] ${event.content}`;
       if (get().agentEvents.at(-1)?.text !== text) get().addAgentEvent({ kind: "user", text });
