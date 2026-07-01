@@ -16,7 +16,7 @@ vi.mock("./api.js", () => ({
 import { useStore } from "./store.js";
 
 beforeEach(() => {
-  useStore.setState({ caseId: null, agentEvents: [] });
+  useStore.setState({ caseId: null, agentEvents: [], activeRun: null, streamingMessages: {} });
 });
 
 describe("enterCase agent history hydration", () => {
@@ -26,5 +26,32 @@ describe("enterCase agent history hydration", () => {
     expect(events.map((e) => e.kind)).toEqual(["started", "tool_call"]);
     expect(events[0].text).toBe("开始：找接口");
     expect(events[1].text).toContain("record_fact");
+  });
+});
+
+describe("agent run control event handling", () => {
+  it("tracks active run and concatenates streaming deltas", () => {
+    const s = useStore.getState();
+    s.setCase("case_1");
+    useStore.getState().handleRuntimeEvent({ type: "agent_run_started", run: {
+      id: "run_1", caseId: "case_1", goal: "go", status: "running", createdAt: "t",
+      startedAt: "t", finishedAt: null, interruptReason: null, error: null,
+    } });
+    useStore.getState().handleRuntimeEvent({ type: "agent_stream_start", caseId: "case_1", runId: "run_1", messageId: "m1" });
+    useStore.getState().handleRuntimeEvent({ type: "agent_stream_delta", caseId: "case_1", runId: "run_1", messageId: "m1", delta: "hel" });
+    useStore.getState().handleRuntimeEvent({ type: "agent_stream_delta", caseId: "case_1", runId: "run_1", messageId: "m1", delta: "lo" });
+    expect(useStore.getState().activeRun?.id).toBe("run_1");
+    expect(useStore.getState().agentEvents.at(-1)?.text).toBe("hello");
+  });
+
+  it("records steering and clears active run on interruption", () => {
+    useStore.getState().setCase("case_1");
+    useStore.getState().handleRuntimeEvent({ type: "agent_steering_added", caseId: "case_1", runId: "run_1", content: "look at orders" });
+    expect(useStore.getState().agentEvents.at(-1)?.kind).toBe("user");
+    useStore.getState().handleRuntimeEvent({ type: "agent_run_interrupted", run: {
+      id: "run_1", caseId: "case_1", goal: "go", status: "interrupted", createdAt: "t",
+      startedAt: "t", finishedAt: "t2", interruptReason: "stop", error: null,
+    } });
+    expect(useStore.getState().activeRun).toBeNull();
   });
 });

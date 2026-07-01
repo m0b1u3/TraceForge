@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent } from "@traceforge/shared";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 /** 对会改状态的请求统一检查 r.ok：失败时抛带后端原因的错误，供调用方提示用户。 */
@@ -87,10 +87,29 @@ export async function listTimeline(caseId: string): Promise<TimelineEntry[]> {
   return (await fetch(`/api/cases/${caseId}/timeline`)).json();
 }
 
-export async function runAgent(caseId: string, goal: string): Promise<void> {
-  await ensureOk(await fetch(`/api/cases/${caseId}/agent/run`, {
+export async function runAgent(caseId: string, goal: string): Promise<AgentRun> {
+  const r = await ensureOk(await fetch(`/api/cases/${caseId}/agent/run`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ goal }),
   }), "运行 Agent");
+  return (await r.json()).run;
+}
+
+export async function steerAgentRun(runId: string, content: string): Promise<AgentRun> {
+  const r = await ensureOk(await fetch(`/api/agent/runs/${runId}/steer`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ content }),
+  }), "补充指令");
+  return (await r.json()).run;
+}
+
+export async function interruptAgentRun(runId: string, reason?: string): Promise<AgentRun> {
+  const r = await ensureOk(await fetch(`/api/agent/runs/${runId}/interrupt`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason }),
+  }), "停止 Agent");
+  return (await r.json()).run;
+}
+
+export async function getActiveAgentRun(caseId: string): Promise<AgentRun | null> {
+  return (await fetch(`/api/cases/${caseId}/agent/runs/active`)).json();
 }
 
 export async function resolveApproval(approvalId: string, decision: "approved" | "rejected"): Promise<void> {
