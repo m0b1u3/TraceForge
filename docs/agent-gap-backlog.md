@@ -2,7 +2,7 @@
 
 > 记录于 2026-06-29。对比对象：Claude Code / Codex 类成熟编码 / 调查 agent。
 > 用途：后续依次 brainstorm → 计划 → 真实 LLM 验证（铁律：凡 LLM 行为一律真实 LLM 测，不用 mock 下结论）。
-> 当前 agent 形态：单线程串行循环（AgentRuntime，MAX_TURNS=25），已支持 OpenAI-compatible 原生流式、fallback 流式、运行中 steering、interrupt、LLM transient retry、工具错误恢复；暂无线程级工具并行 / 子 agent。
+> 当前 agent 形态：单 agent 多轮循环（AgentRuntime，MAX_TURNS=25），已支持 OpenAI-compatible 原生流式、fallback 流式、运行中 steering、interrupt、LLM transient retry、工具错误恢复、显式只读工具并行执行；暂无子 agent。
 
 ## 优先级总览
 
@@ -11,7 +11,7 @@
 | 0 | 上下文向量语义检索（中英盲区：搜「越权」匹不到「IDOR」） | 已知 | 待做 |
 | 1 | 流式输出（streaming） | 🔴 最高 | ✅ 已完成 |
 | 2 | 运行中人工中断 / 转向（interrupt / steering） | 🔴 最高 | ✅ 已完成 |
-| 3 | 工具并行调用 | 🟠 高 | 待做 |
+| 3 | 工具并行调用 | 🟠 高 | ✅ 已完成 |
 | 4 | 重试 / 错误恢复 | 🟠 高 | ✅ 已完成 |
 | 5 | 动态轮次（去掉固定 MAX_TURNS=25 硬停） | 🟠 中 | 待做 |
 | 6 | 子 agent / 任务分解并行执行 | 🟠 看需求 | 待做 |
@@ -41,9 +41,9 @@
 - **影响**：**与产品核心定位直接冲突**——设计强调「人随时介入、把关方向」，但当前 run 期间人被锁在外面。#1+#2 是一对，应一起做。
 
 ### 3. 工具并行调用 🟠
-- **现状**：`for (const call of turn.toolCalls)` 串行 await（agent-runtime.ts:37）。LLM 一轮返回的多个 tool_call 被串行化。
-- **目标**：并行执行只读工具（同时查多个接口/读多个页面）；写操作仍按需串行。
-- **影响**：多目标侦察慢。
+- **现状**：✅ 已完成。ToolDescriptor 增加 `executionMode?: "parallel" | "serial"`；`AgentRuntime` 会把连续的显式只读工具调用分批 `Promise.all` 并发执行，同时按原始 tool_call 顺序写回 tool_result。`risk: "command"` 与未知工具强制串行。
+- **已覆盖工具**：`list_traffic` / `get_traffic` / `search_facts` / `get_fact_detail` / `search_traffic` / `recall_conversation` / `extract_links` / `get_page_text`。
+- **影响**：多接口查询、证据检索、页面只读提取可并发，写库/导航/点击/填表/命令类动作仍保持顺序与审批边界。
 
 ### 4. 重试 / 错误恢复 🟠
 - **现状**：工具失败只把错误字符串塞回 LLM；LLM 调用失败（限流/超时）直接整轮 500。无自动重试 / 退避。
@@ -86,8 +86,7 @@
 
 1. **#1 + #2（流式 + 中断/转向）** —— 一对，最高优先，直击「人机协同、随时把关」产品定位矛盾。
 2. **#4 重试/错误恢复** —— 真实网络稳健性，已踩坑。
-3. **#3 工具并行** —— 侦察效率。
-4. **#0 向量检索** —— 语义召回（独立、可随时插入）。
+3. **#0 向量检索** —— 语义召回（独立、可随时插入）。
 5. 其余按需（#5/#7/#8 成熟度，#6/#10 规模上来再做，#11 安全深化）。
 
 > 每项推进都走：brainstorm → writing-plans → subagent-driven 实现 → **真实 LLM 端到端验证**（不用 mock 下结论）。

@@ -260,3 +260,16 @@ Update:
 git add docs/agent-gap-backlog.md README.md TraceForge_design.md docs/superpowers/plans/2026-07-01-tool-parallelism.md
 git commit -m "docs: record tool parallelism validation"
 ```
+
+---
+
+## Result Log
+
+- Tool metadata RED: `node_modules\.bin\vitest.cmd run packages/extension/src/case-tools.test.ts packages/extension/src/memory-tools.test.ts packages/extension/src/browser-tools.test.ts` failed before `executionMode` existed, as expected.
+- Tool metadata GREEN: same command passed after marking explicitly read-only tools parallel-safe.
+- Runtime batching RED: `node_modules\.bin\vitest.cmd run packages/extension/src/agent-runtime.test.ts` failed the concurrency timing assertion while all tool calls were still serial.
+- Runtime batching GREEN: same command passed after adding contiguous parallel-safe batching and ordered result flushing.
+- Focused verification: `node_modules\.bin\vitest.cmd run packages/extension/src/agent-runtime.test.ts packages/extension/src/case-tools.test.ts packages/extension/src/memory-tools.test.ts packages/extension/src/browser-tools.test.ts` passed 4 files / 32 tests.
+- Full verification: `pnpm test` passed 66 files / 267 tests.
+- Build verification: `pnpm -r build` passed. Existing Vite warnings about `undici` browser externalization and large chunks remain.
+- Real OpenAI-compatible E2E: used current `config/llm.json` and `.env` without printing API keys. Provider `openai`, model `deepseek-v4-flash`, baseUrl `https://api.deepseek.com`, native `streamTools=true`. `/agent/run` returned `run_0fa2d2cd-522c-4759-87b7-ddc0c6358440` in 5ms; terminal event was `agent_run_completed`; stream events were start=1, delta=28, end=1; final text included `TOOL_PARALLELISM_E2E_OK`; `agent_error` count was 0. This real LLM run verifies no streaming regression after batching. Deterministic multi-tool concurrency behavior is covered by the unit tests above.
