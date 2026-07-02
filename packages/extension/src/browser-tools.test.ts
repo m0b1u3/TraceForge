@@ -4,7 +4,7 @@ import type { ScopeRule } from "@traceforge/shared";
 
 const rules: ScopeRule[] = [{ caseId: "c", allowHosts: ["t.com"], denyHosts: [] }];
 
-function mockController(opts: { controller?: "llm" | "human" } = {}): BrowserController {
+function scriptedController(opts: { controller?: "llm" | "human" } = {}): BrowserController {
   return {
     controllerIs: (c) => (opts.controller ?? "llm") === c,
     navigate: async (url) => ({ ok: true, content: `navigated ${url}` }),
@@ -23,21 +23,21 @@ function tool(tools: ReturnType<typeof makeBrowserTools>, name: string) {
 
 describe("makeBrowserTools (LLM holds control)", () => {
   it("navigate executes for an in-scope url", async () => {
-    const tools = makeBrowserTools(mockController(), rules);
+    const tools = makeBrowserTools(scriptedController(), rules);
     const res = await tool(tools, "navigate").execute({ url: "https://t.com/x" });
     expect(res.ok).toBe(true);
     expect(res.content).toContain("navigated");
   });
 
   it("navigate refuses an out-of-scope url (scope guard)", async () => {
-    const tools = makeBrowserTools(mockController(), rules);
+    const tools = makeBrowserTools(scriptedController(), rules);
     const res = await tool(tools, "navigate").execute({ url: "https://evil.com/x" });
     expect(res.ok).toBe(false);
     expect(res.content).toMatch(/scope/i);
   });
 
   it("click/fill/extract_links/get_page_text execute", async () => {
-    const tools = makeBrowserTools(mockController(), rules);
+    const tools = makeBrowserTools(scriptedController(), rules);
     expect((await tool(tools, "click").execute({ selector: "#a" })).ok).toBe(true);
     expect((await tool(tools, "fill").execute({ selector: "#u", value: "admin" })).ok).toBe(true);
     expect((await tool(tools, "extract_links").execute({})).content).toContain("t.com/a");
@@ -45,7 +45,7 @@ describe("makeBrowserTools (LLM holds control)", () => {
   });
 
   it("all browser tools are normal risk", () => {
-    const tools = makeBrowserTools(mockController(), rules);
+    const tools = makeBrowserTools(scriptedController(), rules);
     expect(tools.every((t) => t.risk === "normal")).toBe(true);
     expect(tools.map((t) => t.name).sort()).toEqual(["click", "extract_links", "fill", "get_page_text", "navigate"]);
     expect(tool(tools, "extract_links").executionMode).toBe("parallel");
@@ -58,7 +58,7 @@ describe("makeBrowserTools (LLM holds control)", () => {
 
 describe("makeBrowserTools (human took over)", () => {
   it("blocks every browser tool while human controls", async () => {
-    const tools = makeBrowserTools(mockController({ controller: "human" }), rules);
+    const tools = makeBrowserTools(scriptedController({ controller: "human" }), rules);
     for (const name of ["navigate", "click", "fill", "extract_links", "get_page_text"]) {
       const input = name === "navigate" ? { url: "https://t.com/x" } : name === "fill" ? { selector: "#a", value: "v" } : name === "click" ? { selector: "#a" } : {};
       const res = await tool(tools, name).execute(input);

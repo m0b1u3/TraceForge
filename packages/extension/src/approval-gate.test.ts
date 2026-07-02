@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { ApprovalGate } from "./approval-gate.js";
 import type { ToolDescriptor } from "./tool.js";
 
@@ -8,17 +8,25 @@ function tool(risk: "command" | "normal"): ToolDescriptor {
 
 describe("ApprovalGate", () => {
   it("auto-approves normal-risk tools without asking", async () => {
-    const asker = vi.fn();
+    const calls: unknown[] = [];
+    const asker = async (...args: unknown[]) => {
+      calls.push(args);
+      return "approved" as const;
+    };
     const gate = new ApprovalGate(asker);
     expect(await gate.check(tool("normal"), {})).toBe("auto");
-    expect(asker).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
   });
 
   it("asks the human for command-risk tools", async () => {
-    const asker = vi.fn().mockResolvedValue("approved");
+    const calls: unknown[] = [];
+    const asker = async (...args: unknown[]) => {
+      calls.push(args);
+      return "approved" as const;
+    };
     const gate = new ApprovalGate(asker);
     expect(await gate.check(tool("command"), {})).toBe("approved");
-    expect(asker).toHaveBeenCalledOnce();
+    expect(calls).toHaveLength(1);
   });
 
   it("relays a rejection for command-risk tools", async () => {

@@ -9,7 +9,7 @@ import { TimelineStore } from "./stores/timeline-store.js";
 import { EventBus } from "./event-bus.js";
 import type { Task } from "@traceforge/shared";
 import type { LlmProvider } from "@traceforge/llm";
-import { loadLlmConfig, createProviderOrMock } from "@traceforge/llm";
+import { loadLlmConfig, createProviderFromConfig } from "@traceforge/llm";
 import { ActionCardStore } from "./stores/action-store.js";
 import { DecisionStore } from "./stores/decision-store.js";
 import {
@@ -45,8 +45,8 @@ export function registerRoutes(
   const taskStore = new TaskStore(db);
   const timelineStore = new TimelineStore(db);
 
-  // model/baseUrl/provider 全部来自 config/llm.json；无配置或无 key 回退空候选 Mock
-  const llm: LlmProvider = provider ?? createProviderOrMock(loadLlmConfig());
+  // model/baseUrl/provider 全部来自 config/llm.json；无配置或无 key 直接失败，禁止静默空跑。
+  const llm: LlmProvider = provider ?? createProviderFromConfig(loadLlmConfig());
   const queryExpander = new LlmQueryExpander(llm);
   const actionStore = new ActionCardStore(db);
   const decisionStore = new DecisionStore(db);

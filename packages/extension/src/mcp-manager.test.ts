@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { McpManager, type McpClient, type McpClientFactory } from "./mcp-manager.js";
 import type { McpServerConfig } from "./mcp-config.js";
 
@@ -27,16 +27,21 @@ describe("McpManager", () => {
   });
 
   it("isolates a server whose connection fails (others still load)", async () => {
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const originalError = console.error;
+    const errors: unknown[][] = [];
+    console.error = (...args: unknown[]) => { errors.push(args); };
     const factory: McpClientFactory = async (c) => {
       if (c.name === "bad") throw new Error("spawn failed");
       return fakeClient([{ name: "ok_tool" }]);
     };
-    const m = new McpManager(factory);
-    await m.connectAll([cfg({ name: "bad" }), cfg({ name: "good" })]);
-    expect(m.listTools().map((h) => h.serverName)).toEqual(["good"]);
-    expect(errSpy).toHaveBeenCalled();
-    errSpy.mockRestore();
+    try {
+      const m = new McpManager(factory);
+      await m.connectAll([cfg({ name: "bad" }), cfg({ name: "good" })]);
+      expect(m.listTools().map((h) => h.serverName)).toEqual(["good"]);
+      expect(errors.length).toBeGreaterThan(0);
+    } finally {
+      console.error = originalError;
+    }
   });
 
   it("callTool forwards to the right client and returns text content", async () => {

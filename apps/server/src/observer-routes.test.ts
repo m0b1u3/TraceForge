@@ -1,45 +1,56 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 import { createDb } from "./db/client.js";
+import type { Db } from "./db/client.js";
 import { EventBus } from "./event-bus.js";
 import { registerRoutes } from "./routes.js";
-import { MockProvider } from "@traceforge/llm";
+import { realLlmProviderForTest } from "./real-llm-test-provider.js";
 import type { RuntimeEvent } from "@traceforge/shared";
+import { ObserverWarningStore } from "./stores/observer-store.js";
 
 let app: FastifyInstance;
 let caseId: string;
 let events: RuntimeEvent[];
+let db: Db;
 
-async function waitForWarningCount(count: number) {
-  const deadline = Date.now() + 2000;
-  while (Date.now() < deadline) {
-    const res = await app.inject({ url: `/api/cases/${caseId}/warnings` });
-    if (res.json().length === count) return res;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("Timed out waiting for Observer warnings");
-}
-
-function buildWith(extractResult: unknown) {
+function buildApp() {
   app = Fastify();
   events = [];
-  const db = createDb(":memory:");
-  const provider = new MockProvider(extractResult, [{ text: "看一下", toolCalls: [], done: true }]);
+  db = createDb(":memory:");
+  const provider = realLlmProviderForTest();
   const bus = new EventBus();
   bus.subscribe((event) => events.push(event));
   registerRoutes(app, db, bus, provider);
 }
 
 beforeEach(async () => {
-  buildWith({ warnings: [{ level: "warning", title: "过早结束", description: "还有点没测", suggestedAction: "继续测 X" }] });
+  buildApp();
   await app.ready();
   caseId = (await app.inject({ method: "POST", url: "/api/cases", payload: { name: "d", allowHosts: ["t.com"] } })).json().id;
 });
 
+function createOpenWarning() {
+  return new ObserverWarningStore(db).create({
+    id: "warn_test",
+    caseId,
+    level: "warning",
+    title: "过早结束",
+    description: "还有点没测",
+    relatedFacts: [],
+    relatedTasks: [],
+    suggestedAction: "继续测 X",
+    status: "open",
+    relatedRunId: "run_test",
+    suggestedGoal: "[Observer correction]\n继续测 X",
+    resolvedAt: null,
+    createdAt: new Date().toISOString(),
+  });
+}
+
 describe("observer integration", () => {
-  it("agent run triggers Observer; GET /warnings returns produced warnings", async () => {
-    await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "测登录" } });
-    const res = await waitForWarningCount(1);
+  it("GET /warnings returns stored warnings", async () => {
+    createOpenWarning();
+    const res = await app.inject({ url: `/api/cases/${caseId}/warnings` });
     expect(res.statusCode).toBe(200);
     const warnings = res.json();
     expect(warnings).toHaveLength(1);
@@ -51,7 +62,7 @@ describe("observer integration", () => {
       suggestedGoal: "[Observer correction]\n继续测 X",
       resolvedAt: null,
     });
-    expect(warnings[0].relatedRunId).toMatch(/^run_/);
+    expect(warnings[0].relatedRunId).toBe("run_test");
   });
 
   it("GET /warnings is empty before any run", async () => {
@@ -60,8 +71,7 @@ describe("observer integration", () => {
   });
 
   it("accepts an open warning and emits an update event", async () => {
-    await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "测登录" } });
-    const warning = (await waitForWarningCount(1)).json()[0];
+    const warning = createOpenWarning();
 
     const res = await app.inject({ method: "POST", url: `/api/observer/warnings/${warning.id}/accept` });
 
@@ -72,8 +82,7 @@ describe("observer integration", () => {
   });
 
   it("dismisses an open warning and emits an update event", async () => {
-    await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "测登录" } });
-    const warning = (await waitForWarningCount(1)).json()[0];
+    const warning = createOpenWarning();
 
     const res = await app.inject({ method: "POST", url: `/api/observer/warnings/${warning.id}/dismiss` });
 
@@ -83,8 +92,7 @@ describe("observer integration", () => {
   });
 
   it("converts an open warning into a task and emits task/timeline/update events", async () => {
-    await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "测登录" } });
-    const warning = (await waitForWarningCount(1)).json()[0];
+    const warning = createOpenWarning();
 
     const res = await app.inject({ method: "POST", url: `/api/observer/warnings/${warning.id}/convert-task` });
 

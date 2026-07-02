@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createProvider, createProviderOrMock } from "./factory.js";
-import { MockProvider } from "./mock-provider.js";
+import { createProvider, createProviderFromConfig } from "./factory.js";
 import { AnthropicProvider } from "./anthropic-provider.js";
 import { OpenAICompatibleProvider } from "./openai-provider.js";
 
@@ -38,12 +37,12 @@ describe("createProvider", () => {
   });
 });
 
-describe("createProviderOrMock", () => {
-  it("returns a MockProvider when config is null", () => {
-    expect(createProviderOrMock(null)).toBeInstanceOf(MockProvider);
+describe("createProviderFromConfig", () => {
+  it("throws when config is null", () => {
+    expect(() => createProviderFromConfig(null)).toThrow("LLM config missing");
   });
 
-  it("returns a MockProvider when the api key is missing", () => {
-    expect(createProviderOrMock({ provider: "anthropic", model: "m", apiKeyEnv: KEY })).toBeInstanceOf(MockProvider);
+  it("throws when the api key is missing", () => {
+    expect(() => createProviderFromConfig({ provider: "anthropic", model: "m", apiKeyEnv: KEY })).toThrow(`env var ${KEY} not set`);
   });
 });
