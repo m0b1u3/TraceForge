@@ -7,7 +7,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import ELK from "elkjs/lib/elk.bundled.js";
 import { Notebook, ShieldCheck, Lightning } from "@phosphor-icons/react";
-import { buildGraph, type Graph } from "@traceforge/shared";
+import { buildGraph, type Graph } from "@traceforge/shared/graph";
 import { useStore } from "../store.js";
 
 const elk = new ELK();

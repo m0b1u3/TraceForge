@@ -102,6 +102,7 @@ export const useStore = create<State>((set, get) => ({
     const [traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents] = await Promise.all([
       listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id), listAgentEvents(id),
     ]);
+    if (get().caseId !== id) return;
     set({ traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents: agentEvents.map((e) => ({ kind: e.kind, text: e.text })) });
   },
   addEntry: (e) => set((s) => ({ traffic: [...s.traffic, e] })),

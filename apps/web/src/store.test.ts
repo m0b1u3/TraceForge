@@ -13,10 +13,33 @@ vi.mock("./api.js", () => ({
   ]),
 }));
 
+import { listAgentEvents, listFacts, listMcpTools, listTasks, listTimeline, listTraffic, listWarnings } from "./api.js";
 import { useStore } from "./store.js";
 
 beforeEach(() => {
-  useStore.setState({ caseId: null, agentEvents: [], activeRun: null, agentBusy: false, streamingMessages: {} });
+  vi.mocked(listTraffic).mockResolvedValue([]);
+  vi.mocked(listFacts).mockResolvedValue([]);
+  vi.mocked(listTasks).mockResolvedValue([]);
+  vi.mocked(listTimeline).mockResolvedValue([]);
+  vi.mocked(listMcpTools).mockResolvedValue([]);
+  vi.mocked(listWarnings).mockResolvedValue([]);
+  vi.mocked(listAgentEvents).mockResolvedValue([
+    { id: "ae_1", caseId: "c1", kind: "started", text: "开始：找接口", tool: null, createdAt: "t1" },
+    { id: "ae_2", caseId: "c1", kind: "tool_call", text: "record_fact(...)", tool: "record_fact", createdAt: "t2" },
+  ]);
+  useStore.setState({
+    caseId: null,
+    traffic: [],
+    facts: [],
+    tasks: [],
+    timeline: [],
+    mcpTools: [],
+    warnings: [],
+    agentEvents: [],
+    activeRun: null,
+    agentBusy: false,
+    streamingMessages: {},
+  });
 });
 
 describe("enterCase agent history hydration", () => {
@@ -26,6 +49,40 @@ describe("enterCase agent history hydration", () => {
     expect(events.map((e) => e.kind)).toEqual(["started", "tool_call"]);
     expect(events[0].text).toBe("开始：找接口");
     expect(events[1].text).toContain("record_fact");
+  });
+
+  it("ignores stale hydration results after switching to another case", async () => {
+    let releaseSlowFacts!: (value: []) => void;
+    vi.mocked(listFacts).mockImplementation(async (id) => {
+      if (id === "slow") return new Promise<[]>((resolve) => { releaseSlowFacts = resolve; });
+      return [];
+    });
+    vi.mocked(listWarnings).mockImplementation(async (id) => id === "fast"
+      ? [{
+        id: "warn_fast",
+        caseId: "fast",
+        level: "warning",
+        title: "fast warning",
+        description: "d",
+        relatedFacts: [],
+        relatedTasks: [],
+        suggestedAction: "s",
+        status: "open",
+        relatedRunId: null,
+        suggestedGoal: "",
+        resolvedAt: null,
+        createdAt: "t",
+      }]
+      : []);
+
+    const slow = useStore.getState().enterCase("slow");
+    const fast = useStore.getState().enterCase("fast");
+    await fast;
+    releaseSlowFacts([]);
+    await slow;
+
+    expect(useStore.getState().caseId).toBe("fast");
+    expect(useStore.getState().warnings.map((w) => w.id)).toEqual(["warn_fast"]);
   });
 });
 

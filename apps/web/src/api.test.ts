@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWarning } from "./api.js";
+import { acceptObserverWarning, convertObserverWarningToTask, createFact, createTask, dismissObserverWarning } from "./api.js";
 
 const fetchMock = vi.fn();
 
@@ -38,5 +38,31 @@ describe("observer warning API helpers", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/observer/warnings/warn_1/convert-task", { method: "POST" });
     expect(result.task.id).toBe("task_1");
     expect(result.warning.status).toBe("converted_to_task");
+  });
+
+  it("throws backend errors for createFact", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: "invalid fact" }), { status: 400 }));
+
+    await expect(createFact("case_1", {
+      type: "note",
+      title: "bad",
+      value: {},
+      source: { type: "manual", ref: "test" },
+    })).rejects.toThrow("创建 Fact失败：invalid fact");
+  });
+
+  it("throws backend errors for createTask", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ reason: "invalid task" }), { status: 400 }));
+
+    await expect(createTask("case_1", {
+      title: "bad",
+      status: "open",
+      reason: "",
+      blockedBy: [],
+      triggerWhen: [],
+      relatedFacts: [],
+      priority: "medium",
+      updateCount: 0,
+    })).rejects.toThrow("创建 Task失败：invalid task");
   });
 });

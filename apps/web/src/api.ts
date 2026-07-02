@@ -50,6 +50,7 @@ export async function createFact(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
+  await ensureOk(r, "创建 Fact");
   return r.json();
 }
 
@@ -66,6 +67,7 @@ export async function createTask(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
+  await ensureOk(r, "创建 Task");
   return r.json();
 }
 

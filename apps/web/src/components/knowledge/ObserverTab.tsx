@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ListPlus, Play, X } from "@phosphor-icons/react";
-import type { ObserverWarning } from "@traceforge/shared";
+import type { AgentRun, ObserverWarning } from "@traceforge/shared";
 import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWarning, runAgent } from "../../api.js";
 import { useStore } from "../../store.js";
 
@@ -20,16 +20,24 @@ export function observerWarningRunGoal(warning: Pick<ObserverWarning, "suggested
   return warning.suggestedGoal.trim() || warning.suggestedAction;
 }
 
+export function observerWarningContinueDisabled(activeRun: Pick<AgentRun, "status"> | null, agentBusy: boolean, busy: string | null): boolean {
+  return busy !== null || agentBusy || activeRun !== null;
+}
+
 export function ObserverTab() {
   const {
     caseId, warnings, showToast, addAgentEvent, setAgentBusy, setActiveRun,
-    upsertWarning, upsertTask,
+    upsertWarning, upsertTask, activeRun, agentBusy,
   } = useStore();
   const [busy, setBusy] = useState<string | null>(null);
   if (warnings.length === 0) return <div className="tf-guide"><div className="tf-guide-title">暂无监督提示</div><div className="tf-guide-hint">每轮 Agent 运行结束，Observer 会旁路审视它有无无依据猜测、忽略已有信息、过早结束等问题，并在此提示。</div></div>;
 
   const continueRun = async (w: ObserverWarning) => {
     if (!caseId) return;
+    if (observerWarningContinueDisabled(activeRun, agentBusy, busy)) {
+      showToast("已有 Agent run 正在运行，请等待结束后再继续 Observer 提示");
+      return;
+    }
     const goal = observerWarningRunGoal(w);
     setBusy(`${w.id}:continue`);
     try {
@@ -41,7 +49,7 @@ export function ObserverTab() {
       upsertWarning(warning);
     } catch (e) {
       showToast((e as Error).message);
-      setAgentBusy(false);
+      if (!activeRun) setAgentBusy(false);
     } finally {
       setBusy(null);
     }
@@ -73,6 +81,9 @@ export function ObserverTab() {
   };
 
   return <>{warnings.map((w) => (
+    (() => {
+      const continueDisabled = observerWarningContinueDisabled(activeRun, agentBusy, busy);
+      return (
     <div className="tf-row" key={w.id} style={{ borderLeft: `2px solid ${LEVEL_COLOR[w.level]}`, paddingLeft: 8 }}>
       <span style={{ color: LEVEL_COLOR[w.level] }}>[{w.level}]</span>
       <span className="tf-tag">{observerWarningStatusLabel(w.status)}</span>
@@ -81,7 +92,7 @@ export function ObserverTab() {
       <div style={{ color: "var(--faint)", marginTop: 2 }}>建议：{w.suggestedAction}</div>
       {w.status === "open" && (
         <div className="tf-row-actions">
-          <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={busy !== null} onClick={() => continueRun(w)} title="按 Observer 建议启动一个新的 Agent run">
+          <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={continueDisabled} onClick={() => continueRun(w)} title="按 Observer 建议启动一个新的 Agent run">
             <Play size={13} weight="fill" /> 继续运行
           </button>
           <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={busy !== null} onClick={() => convertToTask(w)} title="把该提示转成 Tasks 面板中的待办">
@@ -93,5 +104,7 @@ export function ObserverTab() {
         </div>
       )}
     </div>
+      );
+    })()
   ))}</>;
 }
