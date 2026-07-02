@@ -213,6 +213,7 @@ export const AgentRunStatusSchema = z.enum([
   "running",
   "interrupting",
   "interrupted",
+  "needs_continuation",
   "completed",
   "failed",
 ]);
@@ -227,6 +228,7 @@ export const AgentRunSchema = z.object({
   startedAt: z.string().nullable().default(null),
   finishedAt: z.string().nullable().default(null),
   interruptReason: z.string().nullable().default(null),
+  completionReason: z.string().nullable().default(null),
   error: z.string().nullable().default(null),
 });
 export type AgentRun = z.infer<typeof AgentRunSchema>;

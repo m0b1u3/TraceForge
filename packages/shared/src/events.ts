@@ -27,6 +27,7 @@ export type RuntimeEvent =
   | { type: "agent_retrying"; caseId: string; runId: string; attempt: number; maxAttempts: number; reason: string }
   | { type: "agent_steering_added"; caseId: string; runId: string; content: string }
   | { type: "agent_run_interrupted"; run: AgentRun }
+  | { type: "agent_run_needs_continuation"; run: AgentRun; reason: string }
   | { type: "agent_run_completed"; run: AgentRun; content: string }
   | { type: "agent_run_failed"; run: AgentRun; error: string }
   | { type: "approval_requested"; caseId: string; approvalId: string; tool: string; input: string }
