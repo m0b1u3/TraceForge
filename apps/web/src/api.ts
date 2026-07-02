@@ -130,6 +130,21 @@ export async function listWarnings(caseId: string): Promise<ObserverWarning[]> {
   return (await fetch(`/api/cases/${caseId}/warnings`)).json();
 }
 
+export async function acceptObserverWarning(warningId: string): Promise<ObserverWarning> {
+  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/accept`, { method: "POST" }), "继续 Observer 提示");
+  return r.json();
+}
+
+export async function dismissObserverWarning(warningId: string): Promise<ObserverWarning> {
+  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/dismiss`, { method: "POST" }), "忽略 Observer 提示");
+  return r.json();
+}
+
+export async function convertObserverWarningToTask(warningId: string): Promise<{ warning: ObserverWarning; task: Task }> {
+  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/convert-task`, { method: "POST" }), "创建 Observer Task");
+  return r.json();
+}
+
 export async function listAgentEvents(caseId: string): Promise<AgentEvent[]> {
   return (await fetch(`/api/cases/${caseId}/agent/events`)).json();
 }

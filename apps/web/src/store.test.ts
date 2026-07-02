@@ -114,4 +114,48 @@ describe("agent run control event handling", () => {
       text: "正在重试 LLM 调用 2/3：rate limited",
     });
   });
+
+  it("upserts observer warning updates from runtime events", () => {
+    useStore.getState().setCase("case_1");
+    useStore.setState({
+      warnings: [{
+        id: "warn_1",
+        caseId: "case_1",
+        level: "warning",
+        title: "过早结束",
+        description: "还有点没测",
+        relatedFacts: [],
+        relatedTasks: [],
+        suggestedAction: "继续测 X",
+        status: "open",
+        relatedRunId: "run_1",
+        suggestedGoal: "[Observer correction]\n继续测 X",
+        resolvedAt: null,
+        createdAt: "t1",
+      }],
+    });
+
+    useStore.getState().handleRuntimeEvent({
+      type: "observer_warning_updated",
+      warning: {
+        id: "warn_1",
+        caseId: "case_1",
+        level: "warning",
+        title: "过早结束",
+        description: "还有点没测",
+        relatedFacts: [],
+        relatedTasks: [],
+        suggestedAction: "继续测 X",
+        status: "accepted",
+        relatedRunId: "run_1",
+        suggestedGoal: "[Observer correction]\n继续测 X",
+        resolvedAt: "t2",
+        createdAt: "t1",
+      },
+    });
+
+    expect(useStore.getState().warnings).toHaveLength(1);
+    expect(useStore.getState().warnings[0].status).toBe("accepted");
+    expect(useStore.getState().warnings[0].resolvedAt).toBe("t2");
+  });
 });
