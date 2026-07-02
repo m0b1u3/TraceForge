@@ -39,4 +39,27 @@ describe("AgentRunRegistry", () => {
     expect(reg.fail(second.run.id, "boom")?.error).toBe("boom");
     expect(reg.getActiveByCase("case_1")).toBeUndefined();
   });
+
+  it("marks needs_continuation as terminal and records completionReason", () => {
+    const reg = new AgentRunRegistry();
+    const active = reg.start("case_1", "goal");
+
+    const run = reg.needsContinuation(active.run.id, "run budget exhausted after 2 turns");
+
+    expect(run?.status).toBe("needs_continuation");
+    expect(run?.finishedAt).toBeDefined();
+    expect(run?.completionReason).toBe("run budget exhausted after 2 turns");
+    expect(reg.getActiveByCase("case_1")).toBeUndefined();
+  });
+
+  it("allows a later run after a previous run needs continuation", () => {
+    const reg = new AgentRunRegistry();
+    const first = reg.start("case_1", "goal");
+
+    reg.needsContinuation(first.run.id, "run budget exhausted after 2 turns");
+    const second = reg.start("case_1", "continue");
+
+    expect(second.run.status).toBe("running");
+    expect(second.run.id).not.toBe(first.run.id);
+  });
 });

@@ -19,6 +19,7 @@ import {
   makeReopenTaskTool, makeRevertDoneTaskTool,
   makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools,
   McpManager, mcpToolToDescriptor, Observer, LlmQueryExpander,
+  type AgentRunBudget,
 } from "@traceforge/extension";
 import { BrowserSession } from "./browser-session.js";
 import { ObserverWarningStore } from "./stores/observer-store.js";
@@ -216,7 +217,7 @@ export function registerRoutes(
     const c = cases.get(id);
     if (!c) return reply.code(404).send({ error: "case not found" });
 
-    const { goal } = req.body as { goal: string };
+    const { goal, budget } = req.body as { goal: string; budget?: Partial<AgentRunBudget> };
     if (!goal?.trim()) return reply.code(400).send({ error: "goal required" });
     let active;
     try {
@@ -308,6 +309,20 @@ export function registerRoutes(
       else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined); trajectory.push(`[result] ${e.name} → ${e.content}`); }
       else if (e.type === "text") { bus.emit({ type: "agent_text", caseId: id, content: e.content }); agentEventStore.append(id, "text", e.content); trajectory.push(`[text] ${e.content}`); }
       else if (e.type === "done") { bus.emit({ type: "agent_done", caseId: id, content: e.content }); agentEventStore.append(id, "done", e.content); trajectory.push(`[done] ${e.content}`); }
+      else if (e.type === "budget_warning") {
+        const content = `运行预算提醒：${e.content}`;
+        bus.emit({ type: "agent_text", caseId: id, content });
+        agentEventStore.append(id, "text", content);
+        trajectory.push(`[budget_warning] ${e.content}`);
+      }
+      else if (e.type === "budget_exhausted") {
+        const run = runs.needsContinuation(runId, e.content);
+        if (run) {
+          agentEventStore.append(id, "done", "Agent 已到达本次运行预算，需要继续运行。");
+          bus.emit({ type: "agent_run_needs_continuation", run, reason: e.content });
+          trajectory.push(`[budget_exhausted] ${e.content}`);
+        }
+      }
       else if (e.type === "stream_start") bus.emit({ type: "agent_stream_start", caseId: id, runId, messageId: e.messageId ?? "" });
       else if (e.type === "stream_delta") bus.emit({ type: "agent_stream_delta", caseId: id, runId, messageId: e.messageId ?? "", delta: e.content });
       else if (e.type === "stream_end") bus.emit({ type: "agent_stream_end", caseId: id, runId, messageId: e.messageId ?? "", content: e.content });
@@ -325,11 +340,11 @@ export function registerRoutes(
         const interrupted = runs.markInterrupted(runId, running.run.interruptReason ?? e.content);
         if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });
       }
-    }, { signal: running.abortController.signal, runId, getSteeringMessages: () => runs.consumeSteering(runId) });
+    }, { signal: running.abortController.signal, runId, budget, getSteeringMessages: () => runs.consumeSteering(runId) });
 
     const afterRun = runs.get(runId)?.run;
-    if (afterRun && afterRun.status !== "interrupted") {
-      const completed = runs.complete(runId);
+    if (afterRun && afterRun.status === "running") {
+      const completed = runs.complete(runId, trajectory.at(-1) ?? "completed");
       if (completed) bus.emit({ type: "agent_run_completed", run: completed, content: trajectory.at(-1) ?? "" });
     }
 

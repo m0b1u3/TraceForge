@@ -103,4 +103,43 @@ describe("agent run control routes", () => {
     expect(localEvents.some((e) => e.type === "agent_retrying" && e.attempt === 2 && e.reason === "rate limited")).toBe(true);
     await localApp.close();
   });
+
+  it("emits agent_run_needs_continuation when the runtime budget is exhausted", async () => {
+    const loopingProvider: LlmProvider = {
+      extractJson: async () => ({ queries: [] }),
+      runTools: async () => ({
+        text: "searching again",
+        toolCalls: [{ id: `tc_${Date.now()}`, name: "search_facts", input: { query: "trace" } }],
+        done: false,
+      }),
+    };
+    const localApp = Fastify();
+    const bus = new EventBus();
+    const localEvents: RuntimeEvent[] = [];
+    bus.subscribe((e) => localEvents.push(e));
+    registerRoutes(localApp, createDb(":memory:"), bus, loopingProvider);
+    await localApp.ready();
+    const cid = (await localApp.inject({ method: "POST", url: "/api/cases", payload: { name: "budget", allowHosts: ["example.com"] } })).json().id;
+
+    const response = await localApp.inject({
+      method: "POST",
+      url: `/api/cases/${cid}/agent/run`,
+      payload: {
+        goal: "keep searching",
+        budget: { maxTurns: 1, warningTurnsRemaining: 0 },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    await waitFor(() => localEvents.some((e) => e.type === "agent_run_needs_continuation"));
+
+    const continuation = localEvents.find(
+      (e): e is Extract<RuntimeEvent, { type: "agent_run_needs_continuation" }> =>
+        e.type === "agent_run_needs_continuation",
+    );
+    expect(continuation?.run.status).toBe("needs_continuation");
+    expect(continuation?.reason).toContain("run budget exhausted");
+    expect(localEvents.some((e) => e.type === "agent_run_completed" && e.run.id === continuation?.run.id)).toBe(false);
+    await localApp.close();
+  });
 });

@@ -12,7 +12,7 @@ function now(): string {
 }
 
 function terminal(status: AgentRun["status"]): boolean {
-  return status === "completed" || status === "failed" || status === "interrupted";
+  return status === "completed" || status === "failed" || status === "interrupted" || status === "needs_continuation";
 }
 
 export class AgentRunRegistry {
@@ -33,6 +33,7 @@ export class AgentRunRegistry {
         startedAt: createdAt,
         finishedAt: null,
         interruptReason: null,
+        completionReason: null,
         error: null,
       },
       abortController: new AbortController(),
@@ -77,26 +78,34 @@ export class AgentRunRegistry {
   }
 
   markInterrupted(runId: string, reason = "user interrupted"): AgentRun | undefined {
-    const active = this.runs.get(runId);
-    if (!active) return undefined;
-    active.run = { ...active.run, status: "interrupted", interruptReason: reason, finishedAt: now() };
-    this.activeByCase.delete(active.run.caseId);
-    return active.run;
+    return this.finish(runId, { status: "interrupted", interruptReason: reason, completionReason: reason });
   }
 
-  complete(runId: string): AgentRun | undefined {
-    const active = this.runs.get(runId);
-    if (!active) return undefined;
-    active.run = { ...active.run, status: "completed", finishedAt: now() };
-    this.activeByCase.delete(active.run.caseId);
-    return active.run;
+  needsContinuation(runId: string, reason: string): AgentRun | undefined {
+    return this.finish(runId, { status: "needs_continuation", completionReason: reason });
+  }
+
+  complete(runId: string, reason = "completed normally"): AgentRun | undefined {
+    return this.finish(runId, { status: "completed", completionReason: reason });
   }
 
   fail(runId: string, error: string): AgentRun | undefined {
+    return this.finish(runId, { status: "failed", error, completionReason: error });
+  }
+
+  private finish(
+    runId: string,
+    patch: Partial<Pick<AgentRun, "error" | "interruptReason" | "completionReason">> & Pick<AgentRun, "status">,
+  ): AgentRun | undefined {
     const active = this.runs.get(runId);
     if (!active) return undefined;
-    active.run = { ...active.run, status: "failed", error, finishedAt: now() };
-    this.activeByCase.delete(active.run.caseId);
+    active.run = {
+      ...active.run,
+      ...patch,
+      finishedAt: now(),
+      completionReason: patch.completionReason ?? active.run.completionReason,
+    };
+    if (terminal(active.run.status)) this.activeByCase.delete(active.run.caseId);
     return active.run;
   }
 }
