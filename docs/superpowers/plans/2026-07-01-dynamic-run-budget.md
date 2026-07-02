@@ -990,4 +990,17 @@ git commit -m "docs: record dynamic run budget validation"
 
 ## Result Log
 
-- Plan authored: pending execution.
+- Shared schema tests: `pnpm exec vitest run packages/shared/src/agent-run.test.ts` -> PASS, 7 tests.
+- Runtime budget tests: `pnpm exec vitest run packages/extension/src/agent-runtime.test.ts` -> PASS, 19 tests.
+- Server continuation tests: `pnpm exec vitest run apps/server/src/agent-runs.test.ts apps/server/src/routes-agent-run-control.test.ts` -> PASS, 13 tests.
+- Web store tests: `pnpm exec vitest run apps/web/src/store.test.ts` -> PASS, 5 tests.
+- Focused dynamic budget tests: `pnpm exec vitest run packages/shared/src/agent-run.test.ts packages/extension/src/agent-runtime.test.ts apps/server/src/agent-runs.test.ts apps/server/src/routes-agent-run-control.test.ts apps/web/src/store.test.ts` -> PASS, 44 tests.
+- Full test/build: `pnpm test` -> PASS, 68 files / 296 tests. `pnpm build` -> PASS; Vite still reports existing browser-compat externalization warnings for `undici` Node built-ins.
+- Real LLM validation:
+  - Server E2E with real OpenAI-compatible DeepSeek provider (`deepseek-v4-flash`, `https://api.deepseek.com`) and `budget: { maxTurns: 1, warningTurnsRemaining: 1 }` emitted `agent_text` budget warning and then `agent_run_completed`; the real model completed in one turn and did not call a tool, so this did not prove exhaustion.
+  - Direct `AgentRuntime` E2E with the same real provider and a required `search_facts` tool emitted `budget_warning`, `stream_start`, `stream_end`, `tool_call`, `tool_result`, `budget_exhausted`; terminal content was `run budget exhausted after 1 turns`. This proves real LLM tool-call budget exhaustion without mock.
+- Commits:
+  - `dcd9183 feat(shared): add agent run continuation status`
+  - `3f761b4 feat(agent): add dynamic run budget`
+  - `3a35316 feat(server): mark budget exhaustion as continuation`
+  - `ee643ae feat(web): show agent continuation status`

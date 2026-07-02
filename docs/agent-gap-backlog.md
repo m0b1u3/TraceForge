@@ -2,7 +2,7 @@
 
 > 记录于 2026-06-29。对比对象：Claude Code / Codex 类成熟编码 / 调查 agent。
 > 用途：后续依次 brainstorm → 计划 → 真实 LLM 验证（铁律：凡 LLM 行为一律真实 LLM 测，不用 mock 下结论）。
-> 当前 agent 形态：单 agent 多轮循环（AgentRuntime，MAX_TURNS=25），已支持 OpenAI-compatible 原生流式、fallback 流式、运行中 steering、interrupt、LLM transient retry、工具错误恢复、显式只读工具并行执行；暂无子 agent。
+> 当前 agent 形态：单 agent 多轮循环（AgentRuntime，显式 `DEFAULT_RUN_BUDGET`），已支持 OpenAI-compatible 原生流式、fallback 流式、运行中 steering、interrupt、LLM transient retry、工具错误恢复、显式只读工具并行执行、预算耗尽 continuation 状态；暂无子 agent。
 
 ## 优先级总览
 
@@ -13,7 +13,7 @@
 | 2 | 运行中人工中断 / 转向（interrupt / steering） | 🔴 最高 | ✅ 已完成 |
 | 3 | 工具并行调用 | 🟠 高 | ✅ 已完成 |
 | 4 | 重试 / 错误恢复 | 🟠 高 | ✅ 已完成 |
-| 5 | 动态轮次（去掉固定 MAX_TURNS=25 硬停） | 🟠 中 | 待做 |
+| 5 | 动态轮次（去掉固定 MAX_TURNS=25 硬停） | 🟠 中 | ✅ 第一阶段完成 |
 | 6 | 子 agent / 任务分解并行执行 | 🟠 看需求 | 待做 |
 | 7 | 真 tokenizer（替代 chars/4 字符估算） | 🟠 中 | 待做 |
 | 8 | 成本 / 用量追踪（每轮 token 与花费） | 🟡 中 | 待做 |
@@ -51,9 +51,9 @@
 - **影响**：真实网络下脆（已踩到 fetch failed 直接挂）。
 
 ### 5. 动态轮次 🟠
-- **现状**：MAX_TURNS=25 硬上限，到顶 `done: "max turns reached"`，任务没完也停。
+- **现状**：✅ 第一阶段完成。Dynamic run budget is now explicit: the runtime warns near exhaustion and reports `needs_continuation` instead of `completed` when the budget is spent. Remaining work: add a first-class Continue button that starts a follow-up run from the previous trajectory.
 - **目标**：动态判断、可继续、agent 自判该收尾。
-- **影响**：复杂深度侦察可能 25 轮不够被硬截断。
+- **影响**：复杂深度侦察不会再被伪装成 completed；预算耗尽会作为非成功终态暴露给 UI 和后续继续运行能力。
 
 ### 6. 子 agent / 任务分解并行 🟠
 - **现状**：单 agent 线性跑，不能派子 agent 并行做独立子任务。
