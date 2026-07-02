@@ -193,6 +193,11 @@ export const useStore = create<State>((set, get) => ({
       get().setAgentBusy(false);
       get().addAgentEvent({ kind: "done", text: "Agent 已停止" });
     }
+    else if (event.type === "agent_run_needs_continuation" && event.run.caseId === cid) {
+      get().setActiveRun(null);
+      get().setAgentBusy(false);
+      get().addAgentEvent({ kind: "done", text: "Agent 已到达本次运行预算，需要继续运行。" });
+    }
     else if (event.type === "agent_run_failed" && event.run.caseId === cid) {
       get().setActiveRun(null);
       get().setAgentBusy(false);

@@ -16,7 +16,7 @@ vi.mock("./api.js", () => ({
 import { useStore } from "./store.js";
 
 beforeEach(() => {
-  useStore.setState({ caseId: null, agentEvents: [], activeRun: null, streamingMessages: {} });
+  useStore.setState({ caseId: null, agentEvents: [], activeRun: null, agentBusy: false, streamingMessages: {} });
 });
 
 describe("enterCase agent history hydration", () => {
@@ -35,7 +35,7 @@ describe("agent run control event handling", () => {
     s.setCase("case_1");
     useStore.getState().handleRuntimeEvent({ type: "agent_run_started", run: {
       id: "run_1", caseId: "case_1", goal: "go", status: "running", createdAt: "t",
-      startedAt: "t", finishedAt: null, interruptReason: null, error: null,
+      startedAt: "t", finishedAt: null, interruptReason: null, completionReason: null, error: null,
     } });
     useStore.getState().handleRuntimeEvent({ type: "agent_stream_start", caseId: "case_1", runId: "run_1", messageId: "m1" });
     useStore.getState().handleRuntimeEvent({ type: "agent_stream_delta", caseId: "case_1", runId: "run_1", messageId: "m1", delta: "hel" });
@@ -50,9 +50,53 @@ describe("agent run control event handling", () => {
     expect(useStore.getState().agentEvents.at(-1)?.kind).toBe("user");
     useStore.getState().handleRuntimeEvent({ type: "agent_run_interrupted", run: {
       id: "run_1", caseId: "case_1", goal: "go", status: "interrupted", createdAt: "t",
-      startedAt: "t", finishedAt: "t2", interruptReason: "stop", error: null,
+      startedAt: "t", finishedAt: "t2", interruptReason: "stop", completionReason: "stop", error: null,
     } });
     expect(useStore.getState().activeRun).toBeNull();
+  });
+
+  it("clears busy state and records a done event when an agent run needs continuation", () => {
+    useStore.getState().setCase("case_1");
+    useStore.setState({
+      activeRun: {
+        id: "run_1",
+        caseId: "case_1",
+        goal: "go",
+        status: "running",
+        createdAt: "t",
+        startedAt: "t",
+        finishedAt: null,
+        interruptReason: null,
+        completionReason: null,
+        error: null,
+      },
+      agentBusy: true,
+      agentEvents: [],
+    });
+
+    useStore.getState().handleRuntimeEvent({
+      type: "agent_run_needs_continuation",
+      reason: "run budget exhausted after 1 turns",
+      run: {
+        id: "run_1",
+        caseId: "case_1",
+        goal: "go",
+        status: "needs_continuation",
+        createdAt: "t",
+        startedAt: "t",
+        finishedAt: "t2",
+        interruptReason: null,
+        completionReason: "run budget exhausted after 1 turns",
+        error: null,
+      },
+    });
+
+    expect(useStore.getState().agentBusy).toBe(false);
+    expect(useStore.getState().activeRun).toBeNull();
+    expect(useStore.getState().agentEvents.at(-1)).toEqual({
+      kind: "done",
+      text: "Agent 已到达本次运行预算，需要继续运行。",
+    });
   });
 
   it("records retrying events as agent status text", () => {
