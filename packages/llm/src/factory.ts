@@ -7,7 +7,7 @@ import { OpenAICompatibleProvider } from "./openai-provider.js";
 export function createProvider(config: LlmConfig): LlmProvider {
   const apiKey = process.env[config.apiKeyEnv];
   if (!apiKey) throw new Error(`env var ${config.apiKeyEnv} not set`);
-  const opts = { apiKey, model: config.model, baseUrl: config.baseUrl };
+  const opts = { apiKey, model: config.model, baseUrl: config.baseUrl, jsonMode: config.jsonMode };
   return config.provider === "anthropic"
     ? new AnthropicProvider(opts)
     : new OpenAICompatibleProvider(opts);

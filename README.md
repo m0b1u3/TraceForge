@@ -25,6 +25,8 @@ export DEEPSEEK_API_KEY=sk-...
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
+DeepSeek 这类只支持 JSON Object 的 OpenAI 兼容端点，需要在 `config/llm.json` 里保留 `"jsonMode": "json_object"`。
+
 `config/llm.json` 不纳入版本控制；未配置时 AI 提取返回空候选（其余功能不受影响）。
 
 ## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 A + agent 交互 E1/E2 + 共享浏览器 F1/F2 + MCP 集成 C + 工作台 UI + PoC MCP server + LLM 重评估 + Observer 监督 + Agent 认知内核 + Pull 式记忆检索 + Agent Run Control + LLM/Tool Reliability + Tool Parallelism + LLM Query Expansion Retrieval + Dynamic Run Budget + Observer Warning Action Loop）

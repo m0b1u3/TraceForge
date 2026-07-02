@@ -20,6 +20,19 @@ describe("createProvider", () => {
     expect(p).toBeInstanceOf(OpenAICompatibleProvider);
   });
 
+  it("passes JSON mode to OpenAICompatibleProvider", () => {
+    process.env[KEY] = "sk-x";
+    const p = createProvider({
+      provider: "openai",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com",
+      apiKeyEnv: KEY,
+      jsonMode: "json_object",
+    });
+    const holder = p as unknown as { opts: { jsonMode?: string } };
+    expect(holder.opts.jsonMode).toBe("json_object");
+  });
+
   it("throws when the api key env var is missing", () => {
     expect(() => createProvider({ provider: "anthropic", model: "m", apiKeyEnv: KEY })).toThrow();
   });

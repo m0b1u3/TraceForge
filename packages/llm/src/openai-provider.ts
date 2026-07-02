@@ -7,6 +7,7 @@ export interface OpenAIOptions {
   apiKey: string;
   model: string;
   baseUrl?: string;
+  jsonMode?: "json_schema" | "json_object";
 }
 
 interface ToolAccumulator { id: string; name: string; args: string }
@@ -56,6 +57,8 @@ export class OpenAICompatibleProvider implements LlmProvider {
   }
 
   async extractJson(args: ExtractJsonArgs): Promise<unknown> {
+    if (this.opts.jsonMode === "json_object") return this.extractJsonObject(args);
+
     let res;
     try {
       res = await withRetry("openai.extractJson", () => this.client.chat.completions.create({
@@ -79,6 +82,25 @@ export class OpenAICompatibleProvider implements LlmProvider {
         ],
       }));
     }
+    const content = res.choices[0]?.message?.content;
+    if (!content) throw new Error("no content in response");
+    return JSON.parse(content);
+  }
+
+  private async extractJsonObject(args: ExtractJsonArgs): Promise<unknown> {
+    const res = await withRetry("openai.extractJson.jsonObject", async () => {
+      const response = await this.client.chat.completions.create({
+        model: this.opts.model,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: jsonObjectSystemPrompt(args.system, args.schema) },
+          { role: "user", content: args.user },
+        ],
+      });
+      const content = response.choices[0]?.message?.content;
+      if (!content) throw retryableEmptyContentError();
+      return response;
+    });
     const content = res.choices[0]?.message?.content;
     if (!content) throw new Error("no content in response");
     return JSON.parse(content);
@@ -148,4 +170,40 @@ function isResponseFormatUnavailable(error: unknown): boolean {
   const err = error as { status?: number; message?: string; error?: { message?: string } };
   const message = `${err.message ?? ""} ${err.error?.message ?? ""}`.toLowerCase();
   return err.status === 400 && message.includes("response_format") && message.includes("unavailable");
+}
+
+function jsonObjectSystemPrompt(system: string, schema: Record<string, unknown>): string {
+  return [
+    system,
+    "只输出一个 JSON object，不要输出 Markdown 或解释文字。",
+    `JSON 必须符合这个 schema：${JSON.stringify(schema)}`,
+    `JSON 输出示例：${exampleJsonForSchema(schema)}`,
+  ].join("\n");
+}
+
+function exampleJsonForSchema(schema: Record<string, unknown>): string {
+  const properties = schema.properties && typeof schema.properties === "object"
+    ? schema.properties as Record<string, unknown>
+    : {};
+  const example: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(properties)) {
+    example[key] = exampleValue(value);
+  }
+  return JSON.stringify(example);
+}
+
+function exampleValue(schema: unknown): unknown {
+  if (!schema || typeof schema !== "object") return null;
+  const type = (schema as { type?: unknown }).type;
+  if (type === "array") return [];
+  if (type === "object") return {};
+  if (type === "number" || type === "integer") return 0;
+  if (type === "boolean") return false;
+  return "";
+}
+
+function retryableEmptyContentError(): Error & { status: number } {
+  const error = new Error("empty content in JSON response") as Error & { status: number };
+  error.status = 503;
+  return error;
 }

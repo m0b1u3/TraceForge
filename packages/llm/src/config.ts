@@ -6,6 +6,7 @@ export const LlmConfigSchema = z.object({
   model: z.string(),
   baseUrl: z.string().optional(),
   apiKeyEnv: z.string(),
+  jsonMode: z.enum(["json_schema", "json_object"]).optional(),
 });
 export type LlmConfig = z.infer<typeof LlmConfigSchema>;
 

@@ -19,6 +19,17 @@ describe("LlmConfigSchema", () => {
     expect(c.baseUrl).toBe("https://api.deepseek.com");
   });
 
+  it("accepts JSON object mode for OpenAI-compatible providers", () => {
+    const c = LlmConfigSchema.parse({
+      provider: "openai",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com",
+      apiKeyEnv: "DEEPSEEK_API_KEY",
+      jsonMode: "json_object",
+    });
+    expect(c.jsonMode).toBe("json_object");
+  });
+
   it("rejects an unknown provider", () => {
     expect(() => LlmConfigSchema.parse({ provider: "grok", model: "m", apiKeyEnv: "K" })).toThrow();
   });
@@ -34,6 +45,20 @@ describe("loadLlmConfig", () => {
     writeFileSync(p, JSON.stringify({ provider: "openai", model: "deepseek-chat", baseUrl: "https://api.deepseek.com", apiKeyEnv: "DEEPSEEK_API_KEY" }));
     const c = loadLlmConfig(p);
     expect(c?.model).toBe("deepseek-chat");
+    rmSync(p);
+  });
+
+  it("loads JSON object mode from config file", () => {
+    const p = join(tmpdir(), `llm-json-mode-${Date.now()}.json`);
+    writeFileSync(p, JSON.stringify({
+      provider: "openai",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com",
+      apiKeyEnv: "DEEPSEEK_API_KEY",
+      jsonMode: "json_object",
+    }));
+    const c = loadLlmConfig(p);
+    expect(c?.jsonMode).toBe("json_object");
     rmSync(p);
   });
 
