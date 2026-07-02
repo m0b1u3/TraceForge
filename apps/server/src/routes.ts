@@ -199,6 +199,44 @@ export function registerRoutes(
     return observerStore.listByCase(id);
   });
 
+  app.post("/api/observer/warnings/:warningId/accept", async (req, reply) => {
+    const { warningId } = req.params as { warningId: string };
+    const warning = observerStore.updateStatus(warningId, "accepted");
+    if (!warning) return reply.code(404).send({ error: "warning not found" });
+    bus.emit({ type: "observer_warning_updated", warning });
+    return warning;
+  });
+
+  app.post("/api/observer/warnings/:warningId/dismiss", async (req, reply) => {
+    const { warningId } = req.params as { warningId: string };
+    const warning = observerStore.updateStatus(warningId, "dismissed");
+    if (!warning) return reply.code(404).send({ error: "warning not found" });
+    bus.emit({ type: "observer_warning_updated", warning });
+    return warning;
+  });
+
+  app.post("/api/observer/warnings/:warningId/convert-task", async (req, reply) => {
+    const { warningId } = req.params as { warningId: string };
+    const cur = observerStore.getById(warningId);
+    if (!cur) return reply.code(404).send({ error: "warning not found" });
+    const task = taskStore.create(cur.caseId, {
+      title: cur.title,
+      status: "open",
+      reason: `${cur.description}\n\nObserver 建议：${cur.suggestedAction}`,
+      blockedBy: [],
+      triggerWhen: [],
+      relatedFacts: cur.relatedFacts,
+      priority: cur.level === "critical" ? "high" : cur.level === "warning" ? "medium" : "low",
+    });
+    const entry = timelineStore.append(cur.caseId, "task_created", `Task: ${task.title}`, task.id);
+    const warning = observerStore.updateStatus(warningId, "converted_to_task");
+    if (!warning) return reply.code(404).send({ error: "warning not found" });
+    bus.emit({ type: "task_created", task });
+    bus.emit({ type: "timeline_appended", entry });
+    bus.emit({ type: "observer_warning_updated", warning });
+    return { warning, task };
+  });
+
   app.post("/api/cases/:id/scope/approve", async (req, reply) => {
     const { id } = req.params as { id: string };
     const { host } = (req.body ?? {}) as { host?: string };
@@ -385,8 +423,14 @@ export function registerRoutes(
       const tasksSummary = taskStore.listByCase(id).map((t) => `${t.id} [${t.status}] ${t.title}`).join("\n") || "(无)";
       const warnings = await new Observer(llm).review(id, { goal, trajectory: trajectory.join("\n"), factsSummary, tasksSummary });
       for (const w of warnings) {
-        observerStore.create(w);
-        bus.emit({ type: "observer_warning", warning: w });
+        const warning = observerStore.create({
+          ...w,
+          status: "open",
+          relatedRunId: runId,
+          suggestedGoal: w.suggestedGoal || `[Observer correction]\n${w.suggestedAction}`,
+          resolvedAt: null,
+        });
+        bus.emit({ type: "observer_warning", warning });
       }
     } catch (e) {
       console.error("[observer]", (e as Error).message);

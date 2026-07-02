@@ -109,6 +109,10 @@ export const observerWarnings = sqliteTable("observer_warnings", {
   relatedFactsJson: text("related_facts_json").notNull(),
   relatedTasksJson: text("related_tasks_json").notNull(),
   suggestedAction: text("suggested_action").notNull(),
+  status: text("status").notNull().default("open"),
+  relatedRunId: text("related_run_id"),
+  suggestedGoal: text("suggested_goal").notNull().default(""),
+  resolvedAt: text("resolved_at"),
   createdAt: text("created_at").notNull(),
 });
 
