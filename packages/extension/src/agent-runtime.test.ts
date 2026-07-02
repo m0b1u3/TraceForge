@@ -219,6 +219,86 @@ describe("AgentRuntime", () => {
     expect(seen[1].some((m) => m.includes("[Human steering]") && m.includes("look at orders"))).toBe(true);
   });
 
+  it("emits budget_exhausted instead of done when maxTurns is reached", async () => {
+    const registry = new ToolRegistry();
+    registry.register({ name: "read", description: "read", inputSchema: { type: "object" }, risk: "normal", source: "test", execute: async () => ({ ok: true, content: "read ok" }) });
+    const provider = new SeqProvider([
+      { text: "need tool", toolCalls: [{ id: "tc_1", name: "read", input: {} }], done: false },
+      { text: "need tool", toolCalls: [{ id: "tc_2", name: "read", input: {} }], done: false },
+    ]);
+    const events: AgentEvent[] = [];
+
+    await new AgentRuntime(provider, registry, autoGate)
+      .run("sys", "goal", (e) => events.push(e), { budget: { maxTurns: 2, warningTurnsRemaining: 0 } });
+
+    expect(events.some((e) => e.type === "budget_exhausted")).toBe(true);
+    expect(events).not.toContainEqual({ type: "done", content: "max turns reached" });
+  });
+
+  it("emits one budget_warning when the warning threshold is reached", async () => {
+    const registry = new ToolRegistry();
+    registry.register({ name: "read", description: "read", inputSchema: { type: "object" }, risk: "normal", source: "test", execute: async () => ({ ok: true, content: "read ok" }) });
+    const provider = new SeqProvider([
+      { text: "need tool", toolCalls: [{ id: "tc_1", name: "read", input: {} }], done: false },
+      { text: "need tool", toolCalls: [{ id: "tc_2", name: "read", input: {} }], done: false },
+      { text: "need tool", toolCalls: [{ id: "tc_3", name: "read", input: {} }], done: false },
+    ]);
+    const events: AgentEvent[] = [];
+
+    await new AgentRuntime(provider, registry, autoGate)
+      .run("sys", "goal", (e) => events.push(e), { budget: { maxTurns: 3, warningTurnsRemaining: 2 } });
+
+    const warnings = events.filter((e) => e.type === "budget_warning");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].content).toContain("2");
+  });
+
+  it("injects the run budget notice before the provider call on the warning turn", async () => {
+    const seen: string[][] = [];
+    const provider: LlmProvider = {
+      extractJson: async () => ({}),
+      runTools: async ({ messages }: RunToolsArgs) => {
+        seen.push(messages.map((m) => m.content));
+        return { text: "need tool", toolCalls: [{ id: `tc_${seen.length}`, name: "read", input: {} }], done: false };
+      },
+    };
+    const registry = new ToolRegistry();
+    registry.register({ name: "read", description: "read", inputSchema: { type: "object" }, risk: "normal", source: "test", execute: async () => ({ ok: true, content: "read ok" }) });
+
+    await new AgentRuntime(provider, registry, autoGate)
+      .run("sys", "goal", () => {}, { budget: { maxTurns: 2, warningTurnsRemaining: 1 } });
+
+    expect(seen[1].some((m) => m.includes("[Run budget notice]"))).toBe(true);
+    expect(seen[1].some((m) => m.includes("本次运行即将到达预算上限"))).toBe(true);
+  });
+
+  it("does not emit budget_exhausted when the model completes before the budget is spent", async () => {
+    const provider = new SeqProvider([{ text: "done", toolCalls: [], done: true }]);
+    const events: AgentEvent[] = [];
+
+    await new AgentRuntime(provider, new ToolRegistry(), autoGate)
+      .run("sys", "goal", (e) => events.push(e), { budget: { maxTurns: 2, warningTurnsRemaining: 1 } });
+
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    expect(events.some((e) => e.type === "budget_exhausted")).toBe(false);
+  });
+
+  it("keeps interruption terminal when interrupt is requested before exhaustion", async () => {
+    const ac = new AbortController();
+    ac.abort("stop");
+    const provider = {
+      extractJson: async () => ({}),
+      runTools: async () => { throw new Error("should not call provider"); },
+    };
+    const events: AgentEvent[] = [];
+
+    await new AgentRuntime(provider, new ToolRegistry(), autoGate)
+      .run("sys", "goal", (e) => events.push(e), { signal: ac.signal, budget: { maxTurns: 1, warningTurnsRemaining: 0 } });
+
+    expect(events.some((e) => e.type === "interrupted")).toBe(true);
+    expect(events.some((e) => e.type === "budget_exhausted")).toBe(false);
+  });
+
   it("stops before the next turn when signal is aborted", async () => {
     const ac = new AbortController();
     ac.abort("stop");

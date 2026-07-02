@@ -4,7 +4,14 @@ export { ApprovalGate, type ApprovalDecision, type ApprovalAsker } from "./appro
 export type {
   LlmProvider, ExtractJsonArgs, ToolCall, TurnMessage, RunTurn, RunToolsArgs, StreamToolsHandlers,
 } from "./provider.js";
-export { AgentRuntime, type AgentEvent, type AgentRunOptions } from "./agent-runtime.js";
+export {
+  AgentRuntime,
+  DEFAULT_RUN_BUDGET,
+  normalizeRunBudget,
+  type AgentEvent,
+  type AgentRunBudget,
+  type AgentRunOptions,
+} from "./agent-runtime.js";
 export { makeHttpReplayTool, makeProposeScopeExpansionTool } from "./builtin-tools.js";
 export { makeBrowserTools, type BrowserController } from "./browser-tools.js";
 export { loadMcpConfig, McpServerConfigSchema, McpConfigSchema, type McpServerConfig } from "./mcp-config.js";

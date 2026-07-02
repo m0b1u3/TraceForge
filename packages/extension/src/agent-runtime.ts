@@ -5,7 +5,8 @@ import type { ApprovalGate } from "./approval-gate.js";
 
 export interface AgentEvent {
   type: "tool_call" | "tool_result" | "tool_rejected" | "text" | "done" |
-    "stream_start" | "stream_delta" | "stream_end" | "interrupted" | "retrying";
+    "stream_start" | "stream_delta" | "stream_end" | "interrupted" | "retrying" |
+    "budget_warning" | "budget_exhausted";
   name?: string;
   messageId?: string;
   attempt?: number;
@@ -13,13 +14,46 @@ export interface AgentEvent {
   content: string;
 }
 
+export interface AgentRunBudget {
+  maxTurns: number;
+  warningTurnsRemaining: number;
+}
+
 export interface AgentRunOptions {
   signal?: AbortSignal;
   runId?: string;
   getSteeringMessages?: () => string[];
+  budget?: Partial<AgentRunBudget>;
 }
 
-const MAX_TURNS = 25;
+export const DEFAULT_RUN_BUDGET: AgentRunBudget = {
+  maxTurns: 25,
+  warningTurnsRemaining: 3,
+};
+
+export function normalizeRunBudget(input?: Partial<AgentRunBudget>): AgentRunBudget {
+  const maxTurns =
+    Number.isFinite(input?.maxTurns) && input?.maxTurns !== undefined && input.maxTurns > 0
+      ? Math.floor(input.maxTurns)
+      : DEFAULT_RUN_BUDGET.maxTurns;
+
+  const rawWarningTurnsRemaining =
+    Number.isFinite(input?.warningTurnsRemaining) && input?.warningTurnsRemaining !== undefined
+      ? Math.floor(input.warningTurnsRemaining)
+      : DEFAULT_RUN_BUDGET.warningTurnsRemaining;
+
+  return {
+    maxTurns,
+    warningTurnsRemaining: Math.max(0, rawWarningTurnsRemaining),
+  };
+}
+
+const RUN_BUDGET_NOTICE = `[Run budget notice]
+本次运行即将到达预算上限。请优先判断：
+1. 如果任务已经完成，直接总结并结束。
+2. 如果任务未完成但有明确下一步，请说明下一步和为什么需要继续。
+3. 如果缺少证据、权限、输入或外部条件，请记录 blocked task 或明确说明阻塞原因。
+不要为了消耗轮次而继续调用无关工具。`;
 
 interface ToolCallBatch {
   parallel: boolean;
@@ -38,11 +72,23 @@ export class AgentRuntime {
     const messages: TurnMessage[] = typeof initial === "string"
       ? [{ role: "user", content: initial }]
       : initial.map((m) => ({ role: m.role, content: m.content }));
+    const budget = normalizeRunBudget(options.budget);
+    let warned = false;
 
-    for (let turnCount = 0; turnCount < MAX_TURNS; turnCount++) {
+    for (let turnCount = 0; turnCount < budget.maxTurns; turnCount++) {
       if (this.interrupted(options)) {
         this.emitInterrupted(onEvent);
         return;
+      }
+
+      const turnsRemaining = budget.maxTurns - turnCount;
+      if (!warned && turnsRemaining <= budget.warningTurnsRemaining) {
+        warned = true;
+        onEvent({
+          type: "budget_warning",
+          content: `${turnsRemaining} turns remaining before run budget exhaustion`,
+        });
+        messages.push({ role: "user", content: RUN_BUDGET_NOTICE });
       }
 
       const messageId = `msg_${randomUUID()}`;
@@ -110,7 +156,7 @@ export class AgentRuntime {
         messages.push({ role: "user", content: `[Human steering]\n用户运行中补充指令：${text}` });
       }
     }
-    onEvent({ type: "done", content: "max turns reached" });
+    onEvent({ type: "budget_exhausted", content: `run budget exhausted after ${budget.maxTurns} turns` });
   }
 
   private interrupted(options?: AgentRunOptions): boolean {
