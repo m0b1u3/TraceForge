@@ -158,6 +158,10 @@ export const ObserverWarningSchema = z.object({
   relatedFacts: z.array(z.string()).default([]),
   relatedTasks: z.array(z.string()).default([]),
   suggestedAction: z.string(),
+  status: z.enum(["open", "accepted", "dismissed", "converted_to_task"]).default("open"),
+  relatedRunId: z.string().nullable().default(null),
+  suggestedGoal: z.string().default(""),
+  resolvedAt: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type ObserverWarning = z.infer<typeof ObserverWarningSchema>;

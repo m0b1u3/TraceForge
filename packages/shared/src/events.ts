@@ -39,4 +39,5 @@ export type RuntimeEvent =
   | { type: "browser_control_changed"; caseId: string; controller: "llm" | "human" }
   | { type: "browser_navigated"; caseId: string; url: string }
   | { type: "observer_warning"; warning: ObserverWarning }
+  | { type: "observer_warning_updated"; warning: ObserverWarning }
   | { type: "scope_updated"; caseId: string; allowHosts: string[] };
