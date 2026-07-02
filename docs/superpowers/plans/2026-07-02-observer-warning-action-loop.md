@@ -949,4 +949,32 @@ git commit -m "docs: record observer warning action loop validation"
 
 ## Result Log
 
-- Plan authored: pending execution.
+- Shared tests:
+  - RED: `pnpm exec vitest run packages/shared/src/observer-schema.test.ts` failed because workflow fields defaulted to `undefined`.
+  - GREEN: `pnpm exec vitest run packages/shared/src/observer-schema.test.ts` passed, 4 tests.
+- Server tests:
+  - RED: `pnpm exec vitest run apps/server/src/observer-routes.test.ts` failed on missing `suggestedGoal` enrichment and missing action endpoints.
+  - GREEN: `pnpm exec vitest run apps/server/src/observer-routes.test.ts` passed, 5 tests.
+- Web tests:
+  - RED: `pnpm exec vitest run apps/web/src/api.test.ts apps/web/src/store.test.ts` failed on missing API helpers and missing `observer_warning_updated` handling.
+  - GREEN: `pnpm exec vitest run apps/web/src/api.test.ts apps/web/src/store.test.ts` passed, 9 tests.
+  - RED: `pnpm exec vitest run apps/web/src/components/knowledge/ObserverTab.test.ts` failed on missing helper exports.
+  - GREEN: `pnpm exec vitest run apps/web/src/components/knowledge/ObserverTab.test.ts apps/web/src/api.test.ts apps/web/src/store.test.ts` passed, 11 tests.
+- Provider compatibility:
+  - RED: `pnpm exec vitest run packages/llm/src/openai-provider.test.ts` failed because OpenAI-compatible `extractJson` did not fallback when `json_schema` response_format was unavailable.
+  - GREEN: `pnpm exec vitest run packages/llm/src/openai-provider.test.ts packages/llm/src/provider-retry.test.ts` passed, 2 tests.
+- Focused verification:
+  - `pnpm exec vitest run packages/llm/src/openai-provider.test.ts packages/llm/src/provider-retry.test.ts packages/extension/src/observer.test.ts packages/shared/src/observer-schema.test.ts apps/server/src/observer-routes.test.ts apps/web/src/api.test.ts apps/web/src/store.test.ts apps/web/src/components/knowledge/ObserverTab.test.ts` passed, 8 test files / 28 tests.
+- Full test/build:
+  - `pnpm test` passed, 71 test files / 309 tests.
+  - `pnpm build` passed. Vite still prints existing browser externalization warnings for `undici` Node modules and a chunk-size warning; no build failure.
+- Real LLM validation:
+  - First real run with configured OpenAI-compatible provider/model `deepseek-v4-flash` failed before producing warnings: provider returned `400 This response_format type is unavailable now` for `json_schema` response_format.
+  - After adding `extractJson` fallback, `pnpm exec vitest run apps/server/src/real-observer-validation.test.ts --reporter verbose` passed using the real configured provider/model `deepseek-v4-flash`: warningCount=1, level=`critical`, title=`Agent过早结束，忽略关键任务和证据`, status=`open`, relatedRunId=`null`, suggestedGoal=`""`, resolvedAt=`null`. This validates real Observer warning production. Server tests validate action endpoints and server-side `relatedRunId`/`suggestedGoal` enrichment.
+- Commits:
+  - `9c92ee2 feat(shared): add observer warning workflow state`
+  - `63a3cae feat(server): add observer warning actions`
+  - `df2e586 feat(web): wire observer warning actions`
+  - `31198e4 feat(web): add observer warning actions`
+  - `5e8178b fix(extension): default observer warning workflow fields`
+  - `2147552 fix(llm): fallback when json schema response format is unavailable`

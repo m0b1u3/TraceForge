@@ -27,7 +27,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 `config/llm.json` 不纳入版本控制；未配置时 AI 提取返回空候选（其余功能不受影响）。
 
-## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 A + agent 交互 E1/E2 + 共享浏览器 F1/F2 + MCP 集成 C + 工作台 UI + PoC MCP server + LLM 重评估 + Observer 监督 + Agent 认知内核 + Pull 式记忆检索 + Agent Run Control + LLM/Tool Reliability + Tool Parallelism + LLM Query Expansion Retrieval + Dynamic Run Budget）
+## 当前进度（阶段 0-4 + 通用重放引擎 + 扩展地基 A + agent 交互 E1/E2 + 共享浏览器 F1/F2 + MCP 集成 C + 工作台 UI + PoC MCP server + LLM 重评估 + Observer 监督 + Agent 认知内核 + Pull 式记忆检索 + Agent Run Control + LLM/Tool Reliability + Tool Parallelism + LLM Query Expansion Retrieval + Dynamic Run Budget + Observer Warning Action Loop）
 
 - pnpm monorepo 骨架
 - Scope Guard 安全地基（deny-by-default + 通配符，单元测试覆盖）
@@ -58,10 +58,11 @@ export ANTHROPIC_API_KEY=sk-ant-...
 - Tool Parallelism：工具描述增加 `executionMode` 并默认串行；显式标记的只读工具（流量读取、记忆检索、页面文本/链接提取）会在同一 LLM 轮次内按连续批次并发执行，`risk=command`、未知工具、写库/导航/点击/填表工具保持串行。runtime 并发执行但按原始 tool_call 顺序回写 tool_result，避免破坏 LLM tool-calling 协议。验证结果见 `docs/superpowers/plans/2026-07-01-tool-parallelism.md`。
 - LLM Query Expansion Retrieval：`search_facts` / `recall_conversation` 在关键词检索前调用 LLM 扩写相关检索词（中英术语、缩写、相邻安全表达），再复用 `keywordScore` 多词检索并显示 matched 扩展词；扩词失败自动退回原始 query。本阶段不上 embedding、不建向量表、不写死漏洞同义词表。真实 DeepSeek/OpenAI-compatible E2E 已验证 `search_facts("越权")` 能召回仅写有 `IDOR` 的 Fact，结果见 `docs/superpowers/plans/2026-07-01-llm-query-expansion-retrieval.md`。
 - Dynamic Run Budget：Agent runs use an explicit turn budget. If the model spends the budget before finishing, the run ends with `needs_continuation` instead of `completed`, and clients receive `agent_run_needs_continuation`. The optional `/api/cases/:id/agent/run` request field `budget` supports `maxTurns` and `warningTurnsRemaining`; omitted values use the runtime default.
+- Observer Warning Action Loop：Observer warning 不再只是展示，可由人工一键继续运行、转换成 Task 或忽略；转换 Task 会进入现有 Tasks 工作流，继续运行复用现有 agent/run。Observer 仍不自动干预，所有纠偏动作由人触发。OpenAI-compatible `extractJson` 在兼容端点不支持 `json_schema` response_format 时会降级为普通 JSON prompt，避免真实 Observer 因 schema 模式不可用静默失效。
 
 ## 测试
 
 ```bash
-pnpm test     # 283 个单元测试
+pnpm test     # 309 个单元测试
 pnpm -r build # 全量构建
 ```
