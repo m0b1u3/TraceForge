@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { LlmProvider } from "./provider.js";
-import type { ObserverWarning } from "@traceforge/shared";
+import { ObserverWarningSchema, type ObserverWarning } from "@traceforge/shared";
 
 export interface ReviewInput {
   goal: string;
@@ -59,7 +59,7 @@ export class Observer {
       return arr.map((w) => {
         const x = w as Record<string, unknown>;
         const level = typeof x.level === "string" && LEVELS.has(x.level) ? (x.level as ObserverWarning["level"]) : "info";
-        return {
+        return ObserverWarningSchema.parse({
           id: `warn_${randomUUID()}`, caseId, level,
           title: typeof x.title === "string" ? x.title : "(无标题)",
           description: typeof x.description === "string" ? x.description : "",
@@ -67,7 +67,7 @@ export class Observer {
           relatedTasks: Array.isArray(x.relatedTasks) ? (x.relatedTasks as unknown[]).filter((r): r is string => typeof r === "string") : [],
           suggestedAction: typeof x.suggestedAction === "string" ? x.suggestedAction : "",
           createdAt: now,
-        };
+        });
       });
     } catch {
       return [];

@@ -23,6 +23,19 @@ describe("Observer.review", () => {
     expect(out[1].relatedFacts).toEqual(["f1"]);
   });
 
+  it("defaults warning workflow fields", async () => {
+    const obs = new Observer(provider({ warnings: [
+      { level: "warning", title: "过早结束", description: "d", suggestedAction: "继续测 X" },
+    ] }));
+    const out = await obs.review("c", input);
+    expect(out[0]).toMatchObject({
+      status: "open",
+      relatedRunId: null,
+      suggestedGoal: "",
+      resolvedAt: null,
+    });
+  });
+
   it("coerces an invalid level to info", async () => {
     const obs = new Observer(provider({ warnings: [{ level: "fatal", title: "x", description: "d", suggestedAction: "s" }] }));
     const out = await obs.review("c", input);
