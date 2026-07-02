@@ -56,17 +56,29 @@ export class OpenAICompatibleProvider implements LlmProvider {
   }
 
   async extractJson(args: ExtractJsonArgs): Promise<unknown> {
-    const res = await withRetry("openai.extractJson", () => this.client.chat.completions.create({
-      model: this.opts.model,
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "extraction", schema: args.schema },
-      },
-      messages: [
-        { role: "system", content: args.system },
-        { role: "user", content: args.user },
-      ],
-    }));
+    let res;
+    try {
+      res = await withRetry("openai.extractJson", () => this.client.chat.completions.create({
+        model: this.opts.model,
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "extraction", schema: args.schema },
+        },
+        messages: [
+          { role: "system", content: args.system },
+          { role: "user", content: args.user },
+        ],
+      }));
+    } catch (error) {
+      if (!isResponseFormatUnavailable(error)) throw error;
+      res = await withRetry("openai.extractJson.fallback", () => this.client.chat.completions.create({
+        model: this.opts.model,
+        messages: [
+          { role: "system", content: `${args.system}\n只输出一个 JSON 对象，不要输出 Markdown 或解释文字。JSON 必须符合这个 schema：${JSON.stringify(args.schema)}` },
+          { role: "user", content: args.user },
+        ],
+      }));
+    }
     const content = res.choices[0]?.message?.content;
     if (!content) throw new Error("no content in response");
     return JSON.parse(content);
@@ -130,4 +142,10 @@ function mapRetry(onRetry: RunToolsArgs["onRetry"]) {
     ? (event: { attempt: number; maxAttempts: number; reason: string }) =>
       onRetry({ attempt: event.attempt, maxAttempts: event.maxAttempts, reason: event.reason })
     : undefined;
+}
+
+function isResponseFormatUnavailable(error: unknown): boolean {
+  const err = error as { status?: number; message?: string; error?: { message?: string } };
+  const message = `${err.message ?? ""} ${err.error?.message ?? ""}`.toLowerCase();
+  return err.status === 400 && message.includes("response_format") && message.includes("unavailable");
 }
