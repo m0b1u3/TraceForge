@@ -18,7 +18,50 @@ The current workbench UI has rough edges left over from rapid iteration: inconsi
 
 ## 3. Token Redefinition
 
-### 3.1 Color
+### 3.1 Typography
+
+Match Vercel's Geist Sans crispness. Use only standard font weights (400/500/600/700) to avoid synthetic bolding. Keep Chinese fallback lightweight so it does not dominate the Latin texture.
+
+```css
+:root {
+  --font: "Geist Sans", "Noto Sans SC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
+
+  --font-regular: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+}
+
+body {
+  font-family: var(--font);
+  font-weight: var(--font-regular);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+```
+
+Type scale:
+
+| Token | Size | Line height | Weight | Letter spacing | Use |
+|---|---|---|---|---|---|
+| `--text-hero` | 40px | 1.1 | 600 | -0.03em | Onboarding title |
+| `--text-title` | 18px | 1.25 | 600 | -0.02em | Modal titles, section headers |
+| `--text-heading` | 14px | 1.35 | 600 | -0.01em | Panel titles |
+| `--text-body` | 13px | 1.55 | 400 | 0 | Body, messages, rows |
+| `--text-small` | 12px | 1.45 | 500 | 0 | Badges, pills, timestamps |
+| `--text-micro` | 11px | 1.35 | 600 | 0.02em | Kicker/label |
+| `--text-mono` | 12px | 1.45 | 400 | 0 | URLs, IDs, code |
+
+Rules:
+
+- **No custom weights** like 650/720/760/820. Use 400/500/600/700 only.
+- **Negative letter-spacing on headings** for tighter, Vercel-like display type.
+- **Noto Sans SC** used only for CJK fallback; keep it at normal weight so Chinese characters sit cleanly next to Geist's Latin glyphs.
+- **Line height is tighter** than the current loose 1.65–1.75, especially for labels and panel titles.
+
+### 3.2 Color
 
 ```css
 :root {
@@ -46,7 +89,7 @@ The current workbench UI has rough edges left over from rapid iteration: inconsi
 }
 ```
 
-### 3.2 Shadow
+### 3.3 Shadow
 
 ```css
 --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
@@ -54,7 +97,7 @@ The current workbench UI has rough edges left over from rapid iteration: inconsi
 --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.08);
 ```
 
-### 3.3 Radius
+### 3.4 Radius
 
 ```css
 --radius-sm: 8px;
@@ -64,8 +107,7 @@ The current workbench UI has rough edges left over from rapid iteration: inconsi
 --radius-full: 999px;
 ```
 
-### 3.4 Spacing
-
+### 3.5 Spacing
 Strict 4px grid, exposed as CSS variables:
 
 ```css
@@ -78,6 +120,8 @@ Strict 4px grid, exposed as CSS variables:
 ```
 
 ## 4. Component Primitives
+
+All primitives use the typography tokens above. Headings use `-0.01em` to `-0.03em` letter-spacing; body text uses `0`.
 
 ### 4.1 Buttons
 
