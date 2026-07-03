@@ -15,6 +15,7 @@ The current workbench UI has rough edges left over from rapid iteration: inconsi
 - **Consistency.** One spacing grid, one radius scale, one set of component primitives.
 - **Clarity of state.** Run status, pending approvals, warnings are immediately readable.
 - **No AI sheen.** Avoid chatbot clichés: bubbly avatars, multi-color confetti states, explanatory filler text.
+- **English UI by default.** All user-facing labels, hints, placeholders, and empty states are in English. i18n Chinese localization is deferred to a later phase.
 
 ## 3. Token Redefinition
 
@@ -263,8 +264,8 @@ Stats move to panel headers. Browser URL moves to Traffic panel header.
   background: var(--panel);
 }
 .panel-header-main { display: flex; align-items: center; gap: var(--space-3); }
-.panel-header-main h2 { font-size: 14px; font-weight: 650; color: var(--text); margin: 0; }
-.section-kicker { font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-tertiary); }
+.panel-header-main h2 { font-size: 14px; font-weight: 600; color: var(--text); margin: 0; }
+.section-kicker { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-tertiary); }
 ```
 
 ## 6. Agent Panel
