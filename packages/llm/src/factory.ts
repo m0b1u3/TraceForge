@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, parse } from "node:path";
 import type { LlmProvider } from "./provider.js";
 import type { LlmConfig } from "./config.js";
 import { AnthropicProvider } from "./anthropic-provider.js";
@@ -20,8 +21,9 @@ export function createProviderFromConfig(config: LlmConfig | null): LlmProvider 
 }
 
 function loadDotEnvIfPresent(): void {
-  if (!existsSync(".env")) return;
-  const lines = readFileSync(".env", "utf8").split(/\r?\n/);
+  const path = findUp(".env");
+  if (!path) return;
+  const lines = readFileSync(path, "utf8").split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -30,5 +32,16 @@ function loadDotEnvIfPresent(): void {
     const key = trimmed.slice(0, eq).trim();
     const raw = trimmed.slice(eq + 1).trim();
     process.env[key] ??= raw.replace(/^['"]|['"]$/g, "");
+  }
+}
+
+function findUp(file: string, startDir = process.cwd()): string | null {
+  let dir = startDir;
+  const root = parse(dir).root;
+  while (true) {
+    const candidate = join(dir, file);
+    if (existsSync(candidate)) return candidate;
+    if (dir === root) return null;
+    dir = dirname(dir);
   }
 }

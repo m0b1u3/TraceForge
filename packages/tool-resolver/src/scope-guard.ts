@@ -8,26 +8,34 @@ function hostMatches(host: string, pattern: string): boolean {
   return host === pattern;
 }
 
+function candidateHosts(url: URL): string[] {
+  const host = url.hostname;
+  const hostWithPort = url.port ? `${url.hostname}:${url.port}` : url.hostname;
+  return hostWithPort === host ? [host] : [hostWithPort, host];
+}
+
 export function checkScope(
   url: string,
   rules: ScopeRule[],
 ): { allowed: boolean; reason: string } {
-  let host: string;
+  let parsed: URL;
   try {
-    host = new URL(url).hostname;
+    parsed = new URL(url);
   } catch {
     return { allowed: false, reason: "invalid URL" };
   }
+  const hosts = candidateHosts(parsed);
+  const displayHost = hosts[0];
 
   for (const rule of rules) {
-    if (rule.denyHosts.some((p) => hostMatches(host, p))) {
-      return { allowed: false, reason: `host ${host} is explicitly denied` };
+    if (rule.denyHosts.some((p) => hosts.some((h) => hostMatches(h, p)))) {
+      return { allowed: false, reason: `host ${displayHost} is explicitly denied` };
     }
   }
   for (const rule of rules) {
-    if (rule.allowHosts.some((p) => hostMatches(host, p))) {
-      return { allowed: true, reason: `host ${host} is in scope` };
+    if (rule.allowHosts.some((p) => hosts.some((h) => hostMatches(h, p)))) {
+      return { allowed: true, reason: `host ${displayHost} is in scope` };
     }
   }
-  return { allowed: false, reason: `host ${host} is out of scope (deny-by-default)` };
+  return { allowed: false, reason: `host ${displayHost} is out of scope (deny-by-default)` };
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type LaunchOptions, type Page, type Response } from "playwright";
 import { checkScope } from "@traceforge/tool-resolver";
 import type { ScopeRule } from "@traceforge/shared";
 import type { EventBus } from "./event-bus.js";
@@ -15,6 +15,7 @@ type Controller = "llm" | "human";
  */
 export class BrowserSession {
   private browser: Browser | null = null;
+  private context: BrowserContext | null = null;
   private page: Page | null = null;
   private _controller: Controller = "llm";
 
@@ -27,39 +28,60 @@ export class BrowserSession {
     scopeRules: ScopeRule[] | (() => ScopeRule[]),
     private traffic: TrafficStore,
     private bus: EventBus,
+    private launchOptions: LaunchOptions = { headless: false },
   ) {
     this.scopeRules = typeof scopeRules === "function" ? scopeRules : () => scopeRules;
   }
 
   async start(): Promise<void> {
     if (this.browser) return; // 幂等
-    this.browser = await chromium.launch({ headless: false });
-    this.page = await this.browser.newPage();
-    this.page.on("response", (res) => {
-      const verdict = checkScope(res.url(), this.scopeRules());
-      if (!verdict.allowed) return;
-      this.traffic.add({
-        id: `traf_${randomUUID()}`,
-        caseId: this.caseId,
-        url: res.url(),
-        method: res.request().method(),
-        requestHeaders: res.request().headers(),
-        responseStatus: res.status(),
-        responseBody: null,
-        createdAt: new Date().toISOString(),
-      });
-      this.bus.emit({
-        type: "response_captured",
-        entry: this.traffic.listByCase(this.caseId).at(-1)!,
-      });
-    });
+    this.browser = await chromium.launch(this.launchOptions);
+    this.context = await this.browser.newContext();
+    this.context.on("page", (page) => this.attachPage(page));
+    this.page = await this.context.newPage();
+    this.attachPage(this.page);
     this.bus.emit({ type: "browser_started", caseId: this.caseId });
+  }
+
+  private attachPage(page: Page): void {
+    this.page = page;
+    page.on("response", (res) => this.captureResponse(res));
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) {
+        this.page = page;
+        this.bus.emit({ type: "browser_navigated", caseId: this.caseId, url: page.url() });
+      }
+    });
+    page.on("close", () => {
+      if (this.page !== page) return;
+      this.page = this.context?.pages().find((candidate) => !candidate.isClosed()) ?? null;
+    });
+  }
+
+  private captureResponse(res: Response): void {
+    const verdict = checkScope(res.url(), this.scopeRules());
+    if (!verdict.allowed) return;
+    this.traffic.add({
+      id: `traf_${randomUUID()}`,
+      caseId: this.caseId,
+      url: res.url(),
+      method: res.request().method(),
+      requestHeaders: res.request().headers(),
+      responseStatus: res.status(),
+      responseBody: null,
+      createdAt: new Date().toISOString(),
+    });
+    this.bus.emit({
+      type: "response_captured",
+      entry: this.traffic.listByCase(this.caseId).at(-1)!,
+    });
   }
 
   async stop(): Promise<void> {
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
+      this.context = null;
       this.page = null;
     }
     this.bus.emit({ type: "browser_stopped", caseId: this.caseId });

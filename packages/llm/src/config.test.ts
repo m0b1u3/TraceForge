@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { LlmConfigSchema, loadLlmConfig } from "./config.js";
-import { writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -60,6 +60,23 @@ describe("loadLlmConfig", () => {
     const c = loadLlmConfig(p);
     expect(c?.jsonMode).toBe("json_object");
     rmSync(p);
+  });
+
+  it("finds a relative config path in parent directories", () => {
+    const root = join(tmpdir(), `llm-parent-${Date.now()}`);
+    const nested = join(root, "apps", "server");
+    mkdirSync(join(root, "config"), { recursive: true });
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(root, "config", "llm.json"), JSON.stringify({
+      provider: "openai",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com",
+      apiKeyEnv: "DEEPSEEK_API_KEY",
+      jsonMode: "json_object",
+    }));
+    const c = loadLlmConfig("config/llm.json", nested);
+    expect(c?.model).toBe("deepseek-chat");
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("returns null on malformed json", () => {

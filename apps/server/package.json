@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "node --import tsx --watch src/main.ts"
+    "dev": "tsx watch src/main.ts"
   },
   "dependencies": {
     "@traceforge/shared": "workspace:*",

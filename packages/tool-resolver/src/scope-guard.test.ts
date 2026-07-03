@@ -11,6 +11,22 @@ describe("checkScope", () => {
     expect(checkScope("https://target.com/login", rules).allowed).toBe(true);
   });
 
+  it("allows a host with an explicit port when that host:port is approved", () => {
+    const portRules: ScopeRule[] = [
+      { caseId: "c1", allowHosts: ["10.0.13.192:8080"], denyHosts: [] },
+    ];
+
+    expect(checkScope("http://10.0.13.192:8080/login", portRules).allowed).toBe(true);
+  });
+
+  it("allows an approved bare host to match URLs that include a port", () => {
+    const portRules: ScopeRule[] = [
+      { caseId: "c1", allowHosts: ["10.0.13.192"], denyHosts: [] },
+    ];
+
+    expect(checkScope("http://10.0.13.192:8080/login", portRules).allowed).toBe(true);
+  });
+
   it("allows a wildcard subdomain", () => {
     expect(checkScope("https://api.target.com/v1", rules).allowed).toBe(true);
   });

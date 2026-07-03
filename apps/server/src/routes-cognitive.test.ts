@@ -8,8 +8,8 @@ import { realLlmProviderForTest } from "./real-llm-test-provider.js";
 let app: FastifyInstance;
 let caseId: string;
 
-async function waitFor(assertion: () => Promise<boolean> | boolean) {
-  const deadline = Date.now() + 30000;
+async function waitFor(assertion: () => Promise<boolean> | boolean, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await assertion()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));

@@ -27,8 +27,8 @@ export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" })
 
   if (variant === "bar") {
     return (
-      <>
-        <Select value={caseId} placeholder="选择 Case" options={cases.map((c) => ({ value: c.id, label: c.name }))} onChange={(v) => enterCase(v)} minWidth={150} />
+      <div className="tf-case-bar">
+        <Select className="tf-case-select" value={caseId} placeholder="选择 Case" options={cases.map((c) => ({ value: c.id, label: c.name }))} onChange={(v) => enterCase(v)} minWidth={150} />
         <button className="tf-btn tf-btn-icon" onClick={() => setCreating((v) => !v)}><Plus size={14} weight="bold" /> 新建</button>
         {creating && (
           <div className="tf-create-pop">
@@ -39,7 +39,7 @@ export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" })
             <button className="tf-btn" onClick={() => { setCreating(false); setName(""); }}>取消</button>
           </div>
         )}
-      </>
+      </div>
     );
   }
 

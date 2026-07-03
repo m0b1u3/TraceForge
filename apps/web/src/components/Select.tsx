@@ -6,13 +6,14 @@ export interface SelectOption {
 }
 
 export function Select({
-  value, options, placeholder, onChange, minWidth = 160,
+  value, options, placeholder, onChange, minWidth = 160, className,
 }: {
   value: string | null;
   options: SelectOption[];
   placeholder?: string;
   onChange: (value: string) => void;
   minWidth?: number;
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -28,9 +29,9 @@ export function Select({
   }, [open]);
 
   return (
-    <div className="tf-select" ref={ref} style={{ minWidth }}>
+    <div className={`tf-select ${className ?? ""}`} ref={ref} style={{ minWidth }}>
       <button type="button" className={`tf-select-trigger ${open ? "is-open" : ""}`} onClick={() => setOpen((v) => !v)}>
-        <span className={selected ? "" : "tf-select-ph"}>{selected ? selected.label : placeholder ?? "选择…"}</span>
+        <span className={selected ? "" : "tf-select-ph"} title={selected?.label}>{selected ? selected.label : placeholder ?? "选择…"}</span>
         <svg className="tf-select-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
       </button>
       {open && (
@@ -42,7 +43,7 @@ export function Select({
               className={`tf-select-opt ${o.value === value ? "is-sel" : ""}`}
               onClick={() => { onChange(o.value); setOpen(false); }}
             >
-              <span>{o.label}</span>
+              <span title={o.label}>{o.label}</span>
               {o.value === value && (
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
               )}
