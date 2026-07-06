@@ -413,6 +413,7 @@ button { cursor: pointer; }
 .brand small { display: block; margin-top: 2px; color: var(--text-secondary); font-size: 11px; }
 .topbar nav { display: inline-flex; justify-self: center; align-items: center; min-width: 0; max-width: min(100%, 420px); gap: 8px; }
 .run-id { gap: 12px; justify-self: end; color: var(--text-secondary); font-size: 11px; }
+.topbar-url { color: var(--text-tertiary); }
 
 .tf-btn-group { display: inline-flex; gap: var(--space-2); }
 
@@ -606,6 +607,8 @@ button { cursor: pointer; }
 /* 模态（图谱放大）浅色 */
 .tf-modal-bg { position: absolute; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(22,24,29,0.4); backdrop-filter: blur(3px); }
 .tf-modal { display: flex; flex-direction: column; width: 86vw; height: 80vh; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: #fff; box-shadow: 0 30px 80px rgba(22,24,29,0.25); }
+.graph-modal-header { justify-content: space-between; }
+.graph-modal-body { flex: 1; min-height: 0; }
 
 .panel-body { flex: 1; min-height: 0; overflow: auto; }
 

@@ -19,7 +19,7 @@ export function TopBar() {
           <span className={`tf-pill ${controlPillClass}`}>
             <ShieldCheck size={13} weight="fill" />
             {controlLabel}
-            {browserUrl && <span style={{ color: "var(--text-tertiary)" }}>· {browserUrl}</span>}
+            {browserUrl && <span className="topbar-url">· {browserUrl}</span>}
           </span>
         )}
       </div>

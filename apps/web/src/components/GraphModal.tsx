@@ -7,11 +7,11 @@ export function GraphModal() {
   return (
     <div className="tf-modal-bg" onClick={() => setGraphModalOpen(false)}>
       <div className="tf-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="panel-header" style={{ justifyContent: "space-between" }}>
-          <h2>证据关系图谱</h2>
-          <button className="tf-btn" onClick={() => setGraphModalOpen(false)}>关闭</button>
+        <div className="panel-header graph-modal-header">
+          <h2>Evidence graph</h2>
+          <button className="tf-btn" onClick={() => setGraphModalOpen(false)}>Close</button>
         </div>
-        <div style={{ flex: 1, minHeight: 0 }}><GraphView interactive /></div>
+        <div className="graph-modal-body"><GraphView interactive /></div>
       </div>
     </div>
   );
