@@ -18,6 +18,7 @@ import {
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
   makeReopenTaskTool, makeRevertDoneTaskTool,
   makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools,
+  makeReplayTrafficTool, makeExtractApiEndpointsTool,
   McpManager, mcpToolToDescriptor, Observer, LlmQueryExpander,
   type AgentRunBudget,
 } from "@traceforge/extension";
@@ -278,6 +279,13 @@ export function registerRoutes(
     registry.register(makeReopenTaskTool(id, taskStore, taskStore, factStore, timelineStore, (e) => bus.emit(e)));
     registry.register(makeRevertDoneTaskTool(id, taskStore, taskStore, factStore, timelineStore, (e) => bus.emit(e)));
     registry.register(makeHttpReplayTool(c.scopeRules, undefined, id, traffic, (e) => bus.emit(e)));
+    registry.register(makeReplayTrafficTool(c.scopeRules, traffic, undefined, id, traffic, (e) => bus.emit(e)));
+    registry.register(makeExtractApiEndpointsTool(id, c.scopeRules, {
+      traffic,
+      facts: factStore,
+      timeline: timelineStore,
+      emit: (e) => bus.emit(e),
+    }));
     registry.register(makeProposeScopeExpansionTool((host, reason) =>
       bus.emit({ type: "scope_expansion_proposed", caseId: id, host, reason })));
     registry.register(makeUpdateSessionStateTool(id, sessionStore));
@@ -315,7 +323,7 @@ export function registerRoutes(
 在用户批准纳入之前，绝不要对任何 host 发包（http_replay / navigate 都会被 Scope Guard 拦截）。如果从对话里识别不出明确目标，就直接询问用户要测哪个目标，不要擅自猜测或测试任意 host。`
         : `当前授权范围：${JSON.stringify(c.scopeRules)}。如需测试范围外的 host，先用 propose_scope_expansion 提议并等用户批准。`;
     const system = `你是 TraceForge 的授权渗透测试 agent。${scopeGuidance}
-你可以用工具查看流量、记录发现（Fact/Task/Action）、重放请求。证据驱动：记录动作前先记录支撑它的 Fact。
+你可以用工具查看流量、记录发现（Fact/Task/Action）、重放请求。黑盒流程：先 navigate/extract_links 访问首页，再用 extract_api_endpoints 从流量中提取接口并记录为 Fact，然后用 replay_traffic 或 http_replay 构造变体请求测试漏洞。证据驱动：记录动作前先记录支撑它的 Fact。
 完成后用一句话总结。`;
 
     const trajectory: string[] = [];

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { checkScope } from "@traceforge/tool-resolver";
 import {
   type TrafficEntry, type Fact, type Task, type ActionCard, type TimelineEntry,
-  ActionCardSchema, type RuntimeEvent,
+  ActionCardSchema, type RuntimeEvent, type ScopeRule,
 } from "@traceforge/shared";
 import type { ToolDescriptor } from "./tool.js";
 
@@ -313,6 +314,166 @@ export function makeRevertDoneTaskTool(
       emit({ type: "task_updated", task: updated });
       emit({ type: "timeline_appended", entry });
       return { ok: true, content: `Task ${task.title} 已打回 recheck_candidate` };
+    },
+  };
+}
+
+// ---- 黑盒 API 端点发现 ----
+
+const STATIC_EXT = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".css", ".woff", ".woff2",
+  ".ttf", ".eot", ".otf", ".mp3", ".mp4", ".webm", ".ogg", ".pdf", ".zip",
+]);
+const API_PATH_MARKERS = ["/api/", "/graphql", "/v1/", "/v2/", "/v3/", "/rest/", "/service", "/svc/", "/wp-json", "/ajax", "/json/", "/data/", "/endpoint"];
+const LOGIN_PATH_MARKERS = ["login", "signin", "auth", "token", "session", "oauth", "callback"];
+
+function isStatic(url: string): boolean {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    for (const ext of STATIC_EXT) {
+      if (path.endsWith(ext)) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeApi(path: string, responseBody: string | null): boolean {
+  const lowerPath = path.toLowerCase();
+  if (API_PATH_MARKERS.some((m) => lowerPath.includes(m))) return true;
+  if (LOGIN_PATH_MARKERS.some((m) => lowerPath.includes(m))) return true;
+  if (responseBody) {
+    const trimmed = responseBody.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) return true;
+  }
+  return false;
+}
+
+function resolveUrl(base: string, raw: string): string | null {
+  try {
+    if (raw.startsWith("http://") || raw.startsWith("https://")) return new URL(raw).href;
+    if (raw.startsWith("//")) return new URL(`https:${raw}`).href;
+    return new URL(raw, base).href;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeEndpoint(url: string): string {
+  try {
+    const u = new URL(url);
+    // 去查询参数与末尾斜杠，方便去重
+    u.search = "";
+    u.hash = "";
+    let path = u.pathname;
+    if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+    u.pathname = path;
+    return u.href;
+  } catch {
+    return url;
+  }
+}
+
+function extractPathsFromText(text: string, baseUrl: string, scopeRules: ScopeRule[]): string[] {
+  const found = new Set<string>();
+  // 双引号或单引号包裹的绝对/相对路径
+  const quoted = /["'`](https?:\/\/[^\s"'`<>{}|\\^`\[\]]+|[/][a-zA-Z0-9_\-./]*[^\s"'`<>{}|\\^`\[\]]*)["'`]/gi;
+  let m: RegExpExecArray | null;
+  while ((m = quoted.exec(text)) !== null) {
+    const raw = m[1];
+    const resolved = resolveUrl(baseUrl, raw);
+    if (!resolved) continue;
+    const verdict = checkScope(resolved, scopeRules);
+    if (!verdict.allowed) continue;
+    found.add(normalizeEndpoint(resolved));
+  }
+  return Array.from(found);
+}
+
+export interface EndpointExtractorDeps {
+  traffic: TrafficReader;
+  facts: FactWriter;
+  timeline: TimelineWriter;
+  emit: Emit;
+}
+
+export function makeExtractApiEndpointsTool(
+  caseId: string,
+  scopeRules: ScopeRule[],
+  deps: EndpointExtractorDeps,
+): ToolDescriptor {
+  return {
+    name: "extract_api_endpoints",
+    description: "从已捕获的流量（或指定 trafficId 的响应体）中提取 API 端点，去重后记录为 api_endpoint 类型 Fact，并返回端点列表供后续测试。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        trafficId: { type: "string" },
+        limit: { type: "number" },
+      },
+    },
+    risk: "normal",
+    source: "builtin",
+    executionMode: "parallel",
+    execute: async (input) => {
+      const { trafficId, limit = 50 } = input as { trafficId?: string; limit?: number };
+      const entries = deps.traffic.listByCase(caseId);
+      const sources = trafficId
+        ? entries.filter((e) => e.id === trafficId)
+        : entries.filter((e) => e.responseBody && !isStatic(e.url));
+      if (sources.length === 0) return { ok: true, content: "未发现可用于提取端点的流量。" };
+
+      const existingTitles = new Set(deps.facts.listByCase(caseId).map((f) => f.title));
+      const discovered = new Map<string, { method: string; status: number | null; sourceIds: string[] }>();
+
+      for (const entry of sources.slice(0, limit)) {
+        // 请求 URL 本身
+        const reqUrl = normalizeEndpoint(entry.url);
+        if (looksLikeApi(new URL(entry.url).pathname, entry.responseBody) || !isStatic(entry.url)) {
+          const cur = discovered.get(reqUrl);
+          if (cur) {
+            cur.sourceIds.push(entry.id);
+          } else {
+            discovered.set(reqUrl, { method: entry.method, status: entry.responseStatus, sourceIds: [entry.id] });
+          }
+        }
+        // 响应体中的路径
+        if (!entry.responseBody) continue;
+        for (const path of extractPathsFromText(entry.responseBody, entry.url, scopeRules)) {
+          if (isStatic(path)) continue;
+          const cur = discovered.get(path);
+          if (cur) {
+            if (!cur.sourceIds.includes(entry.id)) cur.sourceIds.push(entry.id);
+          } else {
+            discovered.set(path, { method: "GET", status: null, sourceIds: [entry.id] });
+          }
+        }
+      }
+
+      const recordedIds: string[] = [];
+      for (const [url, info] of discovered.entries()) {
+        if (existingTitles.has(url)) continue;
+        const isLogin = LOGIN_PATH_MARKERS.some((m) => url.toLowerCase().includes(m));
+        const fact = deps.facts.create(caseId, {
+          type: isLogin ? "login_endpoint" : "api_endpoint",
+          title: url,
+          value: { method: info.method, sampleStatus: info.status, sourceTrafficIds: info.sourceIds },
+          source: { type: "traffic", ref: info.sourceIds[0] ?? "case" },
+          confidence: 0.8,
+          tags: ["auto-discovery", "black-box"],
+        });
+        const entry = deps.timeline.append(caseId, "fact_created", `Fact (agent): ${fact.title}`, fact.id);
+        deps.emit({ type: "fact_created", fact });
+        deps.emit({ type: "timeline_appended", entry });
+        recordedIds.push(fact.id);
+      }
+
+      const lines = Array.from(discovered.entries()).map(([url, info]) => `${info.method} ${url} (${info.status ?? "-"})`);
+      return {
+        ok: true,
+        content: `发现 ${discovered.size} 个端点，记录 ${recordedIds.length} 条新 Fact:\n${lines.join("\n")}`,
+      };
     },
   };
 }

@@ -12,7 +12,7 @@ export {
   type AgentRunBudget,
   type AgentRunOptions,
 } from "./agent-runtime.js";
-export { makeHttpReplayTool, makeProposeScopeExpansionTool } from "./builtin-tools.js";
+export { makeHttpReplayTool, makeProposeScopeExpansionTool, makeReplayTrafficTool } from "./builtin-tools.js";
 export { makeBrowserTools, type BrowserController } from "./browser-tools.js";
 export { loadMcpConfig, McpServerConfigSchema, McpConfigSchema, type McpServerConfig } from "./mcp-config.js";
 export { mcpToolToDescriptor, type McpToolHandle, type McpCaller } from "./mcp-tools.js";
@@ -21,8 +21,10 @@ export { Observer, type ReviewInput } from "./observer.js";
 export {
   makeListTrafficTool, makeGetTrafficTool, type TrafficReader,
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
-  makeReopenTaskTool, makeRevertDoneTaskTool, type TaskStatusReader, type StatusWriter,
+  makeReopenTaskTool, makeRevertDoneTaskTool, makeExtractApiEndpointsTool,
+  type TaskStatusReader, type StatusWriter,
   type FactWriter, type TaskWriter, type ActionWriter, type DecisionWriter, type TimelineWriter, type Emit,
+  type EndpointExtractorDeps,
 } from "./case-tools.js";
 export { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool } from "./cognitive-tools.js";
 export type { SessionStateWriter, HypothesisWriter, FactReader } from "./cognitive-tools.js";

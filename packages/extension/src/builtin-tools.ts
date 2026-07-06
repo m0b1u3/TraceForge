@@ -49,6 +49,60 @@ export function makeHttpReplayTool(
   };
 }
 
+export function makeReplayTrafficTool(
+  scopeRules: ScopeRule[],
+  trafficReader: TrafficReader,
+  fetcher?: Fetcher,
+  caseId?: string,
+  trafficWriter?: TrafficWriter,
+  emit?: Emit,
+): ToolDescriptor {
+  return {
+    name: "replay_traffic",
+    description: "Replay an existing captured traffic entry by id, optionally overriding URL/method/headers/body. Use this to fuzz or retest discovered API endpoints.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        trafficId: { type: "string" },
+        url: { type: "string" },
+        method: { type: "string" },
+        headers: { type: "object" },
+        body: { type: "string" },
+      },
+      required: ["trafficId"],
+    },
+    risk: "normal",
+    source: "builtin",
+    execute: async (input) => {
+      const { trafficId, url, method, headers, body } = input as {
+        trafficId: string;
+        url?: string;
+        method?: string;
+        headers?: Record<string, string>;
+        body?: string;
+      };
+      if (!caseId) return { ok: false, content: "caseId not configured" };
+      const entry = trafficReader.listByCase(caseId).find((e) => e.id === trafficId);
+      if (!entry) return { ok: false, content: `traffic ${trafficId} not found` };
+      const req: ReplayRequest = {
+        url: url ?? entry.url,
+        method: method ?? entry.method,
+        headers: headers ?? entry.requestHeaders,
+        body: body ?? (entry.requestBody ?? undefined),
+      };
+      const verdict = checkScope(req.url, scopeRules);
+      if (!verdict.allowed) return { ok: false, content: `out of scope: ${verdict.reason}` };
+      const res = await replay(req, fetcher);
+      const recorded = recordReplay(caseId, trafficWriter, emit, req, res);
+      const bodyPreview = truncate(res.body, MAX_BODY_PREVIEW);
+      const content = recorded
+        ? `status=${res.status} bodyLength=${res.bodyLength}\n\nnewTrafficId=${recorded.id}\n\nbody preview:\n${bodyPreview}`
+        : `status=${res.status} bodyLength=${res.bodyLength}\n\nbody preview:\n${bodyPreview}`;
+      return { ok: true, content, meta: { status: res.status } };
+    },
+  };
+}
+
 function recordReplay(
   caseId: string | undefined,
   traffic: TrafficWriter | undefined,
