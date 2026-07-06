@@ -5,7 +5,7 @@ import type { AgentUiEvent } from "../store.js";
 import { runAgent, resolveApproval, approveScope, steerAgentRun, interruptAgentRun } from "../api.js";
 
 export function scopeApprovalContinuationGoal(host: string): string {
-  return `已批准将 ${host} 纳入授权范围。请继续测试该目标，优先启动共享浏览器并访问目标首页，记录真实观察结果，不要编造结论。`;
+  return `Approved ${host}. Continue testing this target. Start the shared browser and visit the homepage, record real observations, and do not fabricate conclusions.`;
 }
 
 export function scopeApprovalContinuationEventText(host: string, isSteering: boolean): string {
@@ -54,11 +54,11 @@ export function buildAgentConversationItems({
 function formatAgentEvent(event: AgentUiEvent): { kind: AgentUiEvent["kind"]; label: string; text: string } | null {
   const text = event.text.trim();
   if (!text || event.kind === "started") return null;
-  if (event.kind === "user") return { kind: event.kind, label: "你", text };
-  if (event.kind === "error") return { kind: event.kind, label: "错误", text };
-  if (event.kind === "tool_call") return { kind: event.kind, label: "工具调用", text: compactToolText(text) };
-  if (event.kind === "tool_result") return { kind: event.kind, label: "工具结果", text: compactToolText(text) };
-  if (event.kind === "done") return { kind: event.kind, label: "结果", text };
+  if (event.kind === "user") return { kind: event.kind, label: "You", text };
+  if (event.kind === "error") return { kind: event.kind, label: "Error", text };
+  if (event.kind === "tool_call") return { kind: event.kind, label: "Tool", text: compactToolText(text) };
+  if (event.kind === "tool_result") return { kind: event.kind, label: "Tool", text: compactToolText(text) };
+  if (event.kind === "done") return { kind: event.kind, label: "Done", text };
   return { kind: event.kind, label: "Agent", text };
 }
 
@@ -99,7 +99,7 @@ export function AgentPanel() {
     if (!pendingScope) return;
     const host = pendingScope.host;
     const continuation = scopeApprovalContinuationGoal(host);
-    setPendingScope(null); // 乐观清卡
+    setPendingScope(null); // optimistically clear the card
     try {
       await approveScope(caseId, host);
       if (activeRun) {
@@ -119,7 +119,7 @@ export function AgentPanel() {
     }
   };
 
-  // 累积保留对话/事件，不在每次发送时清空（历史可往上翻看）；并发运行时禁止再发
+  // Accumulate conversation/events; do not clear on each send so history can be scrolled; concurrent runs are blocked
   const send = async () => {
     if (!goal.trim()) return;
     const g = goal.trim();
@@ -132,7 +132,7 @@ export function AgentPanel() {
         return;
       }
       addAgentEvent({ kind: "user", text: g });
-      setAgentBusy(true); // 立即置忙（不等 WS agent_started 回来），失败时回滚
+      setAgentBusy(true); // set busy immediately (before WS agent_started arrives); roll back on failure
       const run = await runAgent(caseId, g);
       setActiveRun(run);
     }
@@ -145,7 +145,7 @@ export function AgentPanel() {
   const stopRun = async () => {
     if (!activeRun) return;
     try {
-      const run = await interruptAgentRun(activeRun.id, "用户停止");
+      const run = await interruptAgentRun(activeRun.id, "User stopped");
       setActiveRun(run);
     } catch (e) {
       showToast((e as Error).message);
@@ -158,7 +158,7 @@ export function AgentPanel() {
         <div><span className="section-kicker">Agent</span><h2>Run Console</h2></div>
         <div className="panel-header-actions">
           {agentEvents.length > 0 && (
-            <button className="tf-btn tf-btn-ghost" onClick={resetAgent} title="清空对话记录">清空</button>
+            <button className="tf-btn tf-btn-ghost" onClick={resetAgent} title="Clear conversation">Clear</button>
           )}
           <div className="session-state"><Sparkle size={14} /> autonomous</div>
         </div>
@@ -167,20 +167,20 @@ export function AgentPanel() {
         {conversationItems.length === 0 && (
           <div className="tf-guide">
             <div className="tf-guide-icon"><Sparkle size={22} weight="duotone" /></div>
-            <div className="tf-guide-title">Agent 待命</div>
-            <div className="tf-guide-hint">在下方输入一个目标（如「测试 example.com 的登录接口有没有越权」），Agent 会自主探索并把发现记录为 Fact。</div>
+            <div className="tf-guide-title">Agent is idle</div>
+            <div className="tf-guide-hint">Give it a target, e.g. "test example.com/login for IDOR."</div>
           </div>
         )}
         {conversationItems.map((item) => {
           if (item.type === "approval" && pendingApproval) {
             return (
               <div className="tf-confirm tf-confirm-warn" key={item.key}>
-                <div className="tf-confirm-head"><ShieldWarning size={15} weight="fill" /> 需要你确认</div>
-                <div className="tf-confirm-body">Agent 请求执行一个高风险动作：</div>
+                <div className="tf-confirm-head"><ShieldWarning size={15} weight="fill" /> Confirm action</div>
+                <div className="tf-confirm-body">The agent wants to run a high-risk tool.</div>
                 <code className="tf-confirm-code">{pendingApproval.tool}({pendingApproval.input})</code>
                 <div className="tf-confirm-actions">
-                  <button className="tf-btn tf-btn-accent" disabled={busy !== null} onClick={() => decide("approved")}>{busy === "approved" ? "批准中…" : "批准执行"}</button>
-                  <button className="tf-btn" disabled={busy !== null} onClick={() => decide("rejected")}>拒绝</button>
+                  <button className="tf-btn tf-btn-accent" disabled={busy !== null} onClick={() => decide("approved")}>{busy === "approved" ? "Approving…" : "Approve"}</button>
+                  <button className="tf-btn" disabled={busy !== null} onClick={() => decide("rejected")}>Reject</button>
                 </div>
               </div>
             );
@@ -188,18 +188,18 @@ export function AgentPanel() {
           if (item.type === "scope" && pendingScope) {
             return (
               <div className="tf-confirm tf-confirm-info" key={item.key}>
-                <div className="tf-confirm-head"><Globe size={15} weight="fill" /> 授权范围扩展请求</div>
-                <div className="tf-confirm-body">Agent 建议把 <code className="tf-confirm-inline">{pendingScope.host}</code> 纳入授权范围。</div>
+                <div className="tf-confirm-head"><Globe size={15} weight="fill" /> Scope expansion</div>
+                <div className="tf-confirm-body">Approve adding <code className="tf-confirm-inline">{pendingScope.host}</code> to the authorized scope.</div>
                 <div className="tf-confirm-reason">{pendingScope.reason}</div>
                 <div className="tf-confirm-actions">
-                  <button className="tf-btn tf-btn-accent" onClick={approveScopeNow}>批准纳入</button>
-                  <button className="tf-btn" onClick={() => setPendingScope(null)}>忽略</button>
+                  <button className="tf-btn tf-btn-accent" onClick={approveScopeNow}>Approve</button>
+                  <button className="tf-btn" onClick={() => setPendingScope(null)}>Ignore</button>
                 </div>
               </div>
             );
           }
           if (item.type === "busy") {
-            return <div className="tf-agent-busy" key={item.key}><CircleNotch size={14} className="tf-spin" /> Agent 运行中…</div>;
+            return <div className="tf-agent-busy" key={item.key}><CircleNotch size={14} className="tf-spin" /> Agent is running…</div>;
           }
           if (item.type === "event") {
             return (
@@ -215,14 +215,14 @@ export function AgentPanel() {
         <textarea
           rows={1} value={goal} onChange={(e) => setGoal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder={activeRun ? "给当前 run 补充指令（Enter 发送）…" : agentBusy ? "Agent 运行中，请稍候…" : "给 agent 一个目标（Enter 发送，Shift+Enter 换行）…"}
+          placeholder={activeRun ? "Add steering instruction…" : agentBusy ? "Agent is running…" : "Send a message…"}
         />
         {activeRun && (
-          <button className="tf-btn" type="button" onClick={stopRun}>
-            停止
+          <button className="tf-btn tf-btn-danger" type="button" onClick={stopRun}>
+            Stop
           </button>
         )}
-        <button disabled={!goal.trim()} onClick={send}>
+        <button className="tf-btn tf-btn-primary" disabled={!goal.trim()} onClick={send}>
           {agentBusy ? <CircleNotch size={15} className="tf-spin" /> : <PaperPlaneTilt size={15} weight="fill" />}
         </button>
       </div>

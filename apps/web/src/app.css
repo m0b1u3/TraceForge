@@ -441,20 +441,46 @@ button { cursor: pointer; }
 .chat-panel { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .session-state { gap: 6px; height: 26px; padding: 0 9px; border: 1px solid #bbf7d0; border-radius: 999px; color: #067647; background: #f0fdf4; font-size: 11px; font-weight: 680; }
 .messages { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; padding: 14px; }
-.message { max-width: 90%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
-.message.operator { margin-left: auto; border-color: #c7d7fe; background: #f8fbff; }
-.message.trace { border-style: dashed; border-color: #fedf89; background: #fffcf5; }
-.message.tool { max-width: 86%; border-style: dashed; background: #fbfcfd; }
+.message {
+  max-width: 86%;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.message.agent { background: var(--panel-soft); border: 1px solid var(--line); }
+.message.operator { margin-left: auto; background: var(--accent-soft); }
+.message.tool {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text-secondary);
+}
+.message.trace { border-left: 3px solid var(--amber); background: var(--panel); }
 .message span { display: block; margin-bottom: 5px; color: var(--text-secondary); font-size: 10px; font-weight: 760; letter-spacing: 0.04em; text-transform: uppercase; }
-.message p { margin: 0; color: #1d2939; font-size: 13px; line-height: 1.5; word-break: break-word; }
-.composer { gap: 10px; margin: 10px 14px 14px; padding: 8px 8px 8px 12px; border: 1px solid var(--line-strong); border-radius: 10px; color: var(--text-secondary); background: #fff; box-shadow: 0 9px 24px rgba(22,24,29,0.06); }
-.composer { align-items: flex-end; }
-.composer input, .composer textarea { min-width: 0; flex: 1; border: 0; outline: 0; color: #182230; font-size: 13px; background: none; font-family: inherit; resize: none; line-height: 1.5; max-height: 120px; padding: 4px 0; }
-.composer button { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 8px; color: #fff; background: #1d2939; }
-.composer .tf-btn { display: inline-flex; align-items: center; justify-content: center; width: auto; min-width: 54px; height: 30px; white-space: nowrap; color: #344054; background: #fff; }
-.composer .tf-btn:hover { background: #f8fafc; }
-.composer button:disabled { opacity: 0.45; }
-.composer button:active { transform: translateY(1px) scale(0.99); }
+.message p { margin: 0; color: var(--text); line-height: 1.5; word-break: break-word; }
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+.composer textarea {
+  flex: 1;
+  min-height: 38px;
+  max-height: 120px;
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  resize: none;
+  background: var(--panel);
+  outline: none;
+}
+.composer textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }
 
 .graph-panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
 .graph-canvas { position: relative; min-height: 0; overflow: hidden; background: #fbfdff; }
