@@ -47,7 +47,7 @@ export function TrafficPanel() {
         </div>
         <div className="panel-header-actions">
           <span className="tf-pill">{traffic.length} req</span>
-          <button className="tf-btn-ghost" onClick={clearTraffic}>Clear</button>
+          <button className="tf-btn tf-btn-ghost" onClick={clearTraffic}>Clear</button>
         </div>
       </header>
       <div className="browser-strip">

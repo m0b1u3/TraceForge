@@ -135,13 +135,13 @@ export const useStore = create<State>((set, get) => ({
   resetBrowser: () => set({ browserController: null, browserUrl: "" }),
   resetAgent: () => set({ agentEvents: [], pendingApproval: null, activeRun: null, streamingMessages: {}, agentBusy: false }),
   connectWs: () => {
-    // 带自动重连：后端重启 / 网络抖动后，WS 会重新建立，否则所有实时更新会静默失效。
+    // Auto-reconnect after backend restarts or network drops so live updates do not silently stall.
     let retry = 0;
     const open = () => {
       const ws = new WebSocket(`ws://${location.host}/ws`);
       ws.onopen = () => { retry = 0; };
       ws.onclose = () => {
-        const delay = Math.min(1000 * 2 ** retry, 10000); // 退避，封顶 10s
+        const delay = Math.min(1000 * 2 ** retry, 10000);
         retry += 1;
         setTimeout(open, delay);
       };

@@ -1,15 +1,14 @@
 import type { Case, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
-/** 对会改状态的请求统一检查 r.ok：失败时抛带后端原因的错误，供调用方提示用户。 */
 async function ensureOk(r: Response, action: string): Promise<Response> {
   if (r.ok) return r;
   let reason = `${r.status}`;
   try {
     const body = await r.json();
     reason = body.reason || body.error || reason;
-  } catch { /* 非 JSON 响应，保留状态码 */ }
-  throw new Error(`${action}失败：${reason}`);
+  } catch { /* Keep the status code for non-JSON responses. */ }
+  throw new Error(`${action} failed: ${reason}`);
 }
 
 export async function createCase(name: string, allowHosts: string[]): Promise<Case> {
@@ -18,21 +17,21 @@ export async function createCase(name: string, allowHosts: string[]): Promise<Ca
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name, allowHosts }),
   });
-  await ensureOk(r, "创建 Case");
+  await ensureOk(r, "Create case");
   return r.json();
 }
 
 export async function startBrowser(caseId: string): Promise<void> {
-  await ensureOk(await fetch(`/api/cases/${caseId}/browser/start`, { method: "POST" }), "启动浏览器");
+  await ensureOk(await fetch(`/api/cases/${caseId}/browser/start`, { method: "POST" }), "Start browser");
 }
 export async function stopBrowser(caseId: string): Promise<void> {
-  await ensureOk(await fetch(`/api/cases/${caseId}/browser/stop`, { method: "POST" }), "停止浏览器");
+  await ensureOk(await fetch(`/api/cases/${caseId}/browser/stop`, { method: "POST" }), "Stop browser");
 }
 export async function takeoverBrowser(caseId: string): Promise<void> {
-  await ensureOk(await fetch(`/api/cases/${caseId}/browser/takeover`, { method: "POST" }), "接管浏览器");
+  await ensureOk(await fetch(`/api/cases/${caseId}/browser/takeover`, { method: "POST" }), "Take over browser");
 }
 export async function releaseBrowser(caseId: string): Promise<void> {
-  await ensureOk(await fetch(`/api/cases/${caseId}/browser/release`, { method: "POST" }), "交回控制权");
+  await ensureOk(await fetch(`/api/cases/${caseId}/browser/release`, { method: "POST" }), "Return browser control");
 }
 
 export async function listTraffic(caseId: string): Promise<TrafficEntry[]> {
@@ -50,7 +49,7 @@ export async function createFact(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
-  await ensureOk(r, "创建 Fact");
+  await ensureOk(r, "Create fact");
   return r.json();
 }
 
@@ -67,7 +66,7 @@ export async function createTask(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
-  await ensureOk(r, "创建 Task");
+  await ensureOk(r, "Create task");
   return r.json();
 }
 
@@ -81,7 +80,7 @@ export async function patchTask(taskId: string, status: Task["status"], reason?:
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ status, reason }),
   });
-  await ensureOk(r, "更新 Task 状态");
+  await ensureOk(r, "Update task status");
   return r.json();
 }
 
@@ -92,21 +91,21 @@ export async function listTimeline(caseId: string): Promise<TimelineEntry[]> {
 export async function runAgent(caseId: string, goal: string): Promise<AgentRun> {
   const r = await ensureOk(await fetch(`/api/cases/${caseId}/agent/run`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ goal }),
-  }), "运行 Agent");
+  }), "Run Agent");
   return (await r.json()).run;
 }
 
 export async function steerAgentRun(runId: string, content: string): Promise<AgentRun> {
   const r = await ensureOk(await fetch(`/api/agent/runs/${runId}/steer`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ content }),
-  }), "补充指令");
+  }), "Add steering instruction");
   return (await r.json()).run;
 }
 
 export async function interruptAgentRun(runId: string, reason?: string): Promise<AgentRun> {
   const r = await ensureOk(await fetch(`/api/agent/runs/${runId}/interrupt`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason }),
-  }), "停止 Agent");
+  }), "Stop Agent");
   return (await r.json()).run;
 }
 
@@ -117,7 +116,7 @@ export async function getActiveAgentRun(caseId: string): Promise<AgentRun | null
 export async function resolveApproval(approvalId: string, decision: "approved" | "rejected"): Promise<void> {
   await ensureOk(await fetch(`/api/agent/approvals/${approvalId}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision }),
-  }), "提交审批");
+  }), "Submit approval");
 }
 
 export async function listCases(): Promise<Case[]> {
@@ -133,17 +132,17 @@ export async function listWarnings(caseId: string): Promise<ObserverWarning[]> {
 }
 
 export async function acceptObserverWarning(warningId: string): Promise<ObserverWarning> {
-  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/accept`, { method: "POST" }), "继续 Observer 提示");
+  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/accept`, { method: "POST" }), "Resume Observer warning");
   return r.json();
 }
 
 export async function dismissObserverWarning(warningId: string): Promise<ObserverWarning> {
-  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/dismiss`, { method: "POST" }), "忽略 Observer 提示");
+  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/dismiss`, { method: "POST" }), "Ignore Observer warning");
   return r.json();
 }
 
 export async function convertObserverWarningToTask(warningId: string): Promise<{ warning: ObserverWarning; task: Task }> {
-  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/convert-task`, { method: "POST" }), "创建 Observer Task");
+  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/convert-task`, { method: "POST" }), "Create Observer task");
   return r.json();
 }
 
@@ -154,5 +153,5 @@ export async function listAgentEvents(caseId: string): Promise<AgentEvent[]> {
 export async function approveScope(caseId: string, host: string): Promise<void> {
   await ensureOk(await fetch(`/api/cases/${caseId}/scope/approve`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ host }),
-  }), "纳入授权范围");
+  }), "Approve scope");
 }

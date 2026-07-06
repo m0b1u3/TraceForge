@@ -23,12 +23,12 @@ export function App() {
         <div className="hero-inner">
           <div className="hero-text">
             <div className="hero-brand"><span className="hero-dot" />TRACEFORGE</div>
-            <h1 className="hero-title">漏洞挖掘<br />智能体工作台</h1>
-            <p className="hero-sub">让 AI 像有经验的红队搭档一样自主探索、记录证据、持续推理。你随时介入、把关方向，每一步都有依据。</p>
+            <h1 className="hero-title">Autonomous<br />red-team workbench</h1>
+            <p className="hero-sub">Let the Agent explore, capture evidence, and reason through findings while you steer scope, approvals, and direction in real time.</p>
             <div className="hero-feats">
-              <span>人机共享浏览器</span><span className="hero-sep" />
-              <span>证据驱动 Agent</span><span className="hero-sep" />
-              <span>可回溯证据图谱</span>
+              <span>Shared browser</span><span className="hero-sep" />
+              <span>Evidence-driven Agent</span><span className="hero-sep" />
+              <span>Traceable graph</span>
             </div>
           </div>
           <CaseLauncher variant="hero" />

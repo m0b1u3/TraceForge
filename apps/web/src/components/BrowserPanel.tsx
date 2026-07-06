@@ -8,7 +8,7 @@ export function BrowserControls() {
   const [busy, setBusy] = useState(false);
   if (!caseId) return null;
 
-  // 包一层：失败提示用户、进行中禁用按钮（避免冷启动期间狂点触发多次 start）
+  // Show failures and disable controls while a browser action is in flight.
   const run = (fn: () => Promise<void>) => async () => {
     setBusy(true);
     try { await fn(); } catch (e) { showToast((e as Error).message); } finally { setBusy(false); }

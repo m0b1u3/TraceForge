@@ -179,7 +179,7 @@ export function AgentPanel() {
                 <div className="tf-confirm-body">The agent wants to run a high-risk tool.</div>
                 <code className="tf-confirm-code">{pendingApproval.tool}({pendingApproval.input})</code>
                 <div className="tf-confirm-actions">
-                  <button className="tf-btn tf-btn-accent" disabled={busy !== null} onClick={() => decide("approved")}>{busy === "approved" ? "Approving…" : "Approve"}</button>
+                  <button className="tf-btn tf-btn-primary" disabled={busy !== null} onClick={() => decide("approved")}>{busy === "approved" ? "Approving…" : "Approve"}</button>
                   <button className="tf-btn" disabled={busy !== null} onClick={() => decide("rejected")}>Reject</button>
                 </div>
               </div>
@@ -192,7 +192,7 @@ export function AgentPanel() {
                 <div className="tf-confirm-body">Approve adding <code className="tf-confirm-inline">{pendingScope.host}</code> to the authorized scope.</div>
                 <div className="tf-confirm-reason">{pendingScope.reason}</div>
                 <div className="tf-confirm-actions">
-                  <button className="tf-btn tf-btn-accent" onClick={approveScopeNow}>Approve</button>
+                  <button className="tf-btn tf-btn-primary" onClick={approveScopeNow}>Approve</button>
                   <button className="tf-btn" onClick={() => setPendingScope(null)}>Ignore</button>
                 </div>
               </div>

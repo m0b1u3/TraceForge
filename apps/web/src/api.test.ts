@@ -37,7 +37,7 @@ describe("observer warning API helpers", () => {
   it("calls the convert warning endpoint", async () => {
     responses.push(new Response(JSON.stringify({
       warning: { id: "warn_1", status: "converted_to_task" },
-      task: { id: "task_1", title: "过早结束" },
+      task: { id: "task_1", title: "Stopped too early" },
     }), { status: 200 }));
 
     const result = await convertObserverWarningToTask("warn_1");
@@ -55,7 +55,7 @@ describe("observer warning API helpers", () => {
       title: "bad",
       value: {},
       source: { type: "manual", ref: "test" },
-    })).rejects.toThrow("创建 Fact失败：invalid fact");
+    })).rejects.toThrow("Create fact failed: invalid fact");
   });
 
   it("throws backend errors for createTask", async () => {
@@ -70,6 +70,6 @@ describe("observer warning API helpers", () => {
       relatedFacts: [],
       priority: "medium",
       updateCount: 0,
-    })).rejects.toThrow("创建 Task失败：invalid task");
+    })).rejects.toThrow("Create task failed: invalid task");
   });
 });

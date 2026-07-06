@@ -35,7 +35,7 @@ export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" })
             <input className="tf-input case-launcher-input" value={name} autoFocus onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") setCreating(false); }}
               placeholder="Case name" />
-            <button className="tf-btn tf-btn-accent" disabled={!name.trim()} onClick={submit}>Create</button>
+            <button className="tf-btn tf-btn-primary" disabled={!name.trim()} onClick={submit}>Create</button>
             <button className="tf-btn" onClick={() => { setCreating(false); setName(""); }}>Cancel</button>
           </div>
         )}
@@ -55,7 +55,7 @@ export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" })
               <div className="tf-launcher-or"><span>or</span></div>
             </>
           )}
-          <button className="tf-btn tf-btn-accent tf-btn-block tf-btn-icon" onClick={() => setCreating(true)}>
+          <button className="tf-btn tf-btn-primary tf-btn-block tf-btn-icon" onClick={() => setCreating(true)}>
             <Plus size={15} weight="bold" /> Create new case
           </button>
         </>
@@ -67,7 +67,7 @@ export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" })
             placeholder="Name this session" />
           <div className="tf-launcher-hint">No need to set scope up front. After entering, tell the Agent what target to test in the chat. It will identify the host and propose adding it to the authorized scope for your approval.</div>
           <div className="case-launcher-actions">
-            <button className="tf-btn tf-btn-accent" disabled={!name.trim()} onClick={submit}>Create and enter</button>
+            <button className="tf-btn tf-btn-primary" disabled={!name.trim()} onClick={submit}>Create and enter</button>
             <button className="tf-btn" onClick={() => { setCreating(false); setName(""); }}>Cancel</button>
           </div>
         </>

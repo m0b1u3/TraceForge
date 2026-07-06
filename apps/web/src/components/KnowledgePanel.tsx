@@ -30,7 +30,7 @@ export function KnowledgePanel() {
         </div>
         {isGraph && (
           <div className="panel-header-actions">
-            <button className="tf-btn-ghost" onClick={toggleExpand}>Expand</button>
+            <button className="tf-btn tf-btn-ghost" onClick={toggleExpand}>Expand</button>
           </div>
         )}
       </div>
