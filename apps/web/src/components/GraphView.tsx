@@ -60,7 +60,7 @@ function EventEdge(props: EdgeProps) {
       <BaseEdge id={id} path={path} style={{ stroke: "transparent", strokeWidth: 10 }} />
       {label ? (
         <EdgeLabelRenderer>
-          <div className="edge-label" style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}>{String(label)}</div>
+          <div className={`edge-label ${props.data?.hideLabels ? "hidden" : ""}`} style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}>{String(label)}</div>
         </EdgeLabelRenderer>
       ) : null}
     </g>
@@ -93,7 +93,7 @@ async function elkLayout(nodes: Node<NodeData>[], edges: Edge[]): Promise<Node<N
       id: "root",
       layoutOptions: {
         "elk.algorithm": "layered", "elk.direction": "DOWN",
-        "elk.spacing.nodeNode": "80", "elk.layered.spacing.nodeNodeBetweenLayers": "120",
+        "elk.spacing.nodeNode": "110", "elk.layered.spacing.nodeNodeBetweenLayers": "120",
         "elk.edgeRouting": "ORTHOGONAL", "elk.padding": "[top=24,left=24,bottom=24,right=24]",
       },
       children: nodes.map((n) => ({ id: n.id, width: 224, height: 104 })),
@@ -129,10 +129,10 @@ function DetailPanel({ graph, nodeId, onClose }: { graph: Graph; nodeId: string;
   const inc = graph.edges.filter((e) => e.target === nodeId);
   const labelOf = (id: string) => graph.nodes.find((n) => n.id === id)?.label ?? id;
   return (
-    <div className="tf-gdetail">
+    <div className="graph-detail open">
       <div className="tf-gdetail-head">
         <span style={{ color: KIND_COLOR[node.kind], fontWeight: 600, fontSize: 11, letterSpacing: "0.08em" }}>{node.kind.toUpperCase()}</span>
-        <button className="tf-btn" onClick={onClose}>关闭</button>
+        <button className="tf-btn" onClick={onClose}>Close</button>
       </div>
       <div className="tf-gdetail-title">{node.label}</div>
       <div className="tf-gdetail-id">{node.id}</div>
@@ -141,8 +141,8 @@ function DetailPanel({ graph, nodeId, onClose }: { graph: Graph; nodeId: string;
           <div key={k} className="tf-gdetail-kv"><span>{k}</span><span>{String(v)}</span></div>
         ))}
       </div>
-      {out.length > 0 && <div className="tf-gdetail-rel"><div className="tf-gdetail-rel-h">依赖证据 →</div>{out.map((e) => <div key={e.id} className="tf-gdetail-link">{labelOf(e.target)}</div>)}</div>}
-      {inc.length > 0 && <div className="tf-gdetail-rel"><div className="tf-gdetail-rel-h">← 被引用</div>{inc.map((e) => <div key={e.id} className="tf-gdetail-link">{labelOf(e.source)}</div>)}</div>}
+      {out.length > 0 && <div className="tf-gdetail-rel"><div className="tf-gdetail-rel-h">Depends on →</div>{out.map((e) => <div key={e.id} className="tf-gdetail-link">{labelOf(e.target)}</div>)}</div>}
+      {inc.length > 0 && <div className="tf-gdetail-rel"><div className="tf-gdetail-rel-h">← Referenced by</div>{inc.map((e) => <div key={e.id} className="tf-gdetail-link">{labelOf(e.source)}</div>)}</div>}
     </div>
   );
 }
@@ -150,6 +150,7 @@ function DetailPanel({ graph, nodeId, onClose }: { graph: Graph; nodeId: string;
 function GraphInner({ interactive }: { interactive: boolean }) {
   const { facts, tasks, actions } = useStore();
   const [selected, setSelected] = useState<string | null>(null);
+  const [hideLabels, setHideLabels] = useState(false);
   const graph = useMemo(() => buildGraph(facts, tasks, actions), [facts, tasks, actions]);
   const flow = useMemo(() => toFlow(graph), [graph]);
   const [laid, setLaid] = useState<Node<NodeData>[]>([]);
@@ -164,16 +165,20 @@ function GraphInner({ interactive }: { interactive: boolean }) {
   const onNodeClick: NodeMouseHandler = (_e, node) => { if (interactive) setSelected(node.id); };
 
   if (graph.nodes.length === 0) {
-    return <div className="tf-empty" style={{ padding: 12 }}>暂无图谱数据（记录 Fact/Action 后出现）。</div>;
+    return <div className="tf-empty">No evidence to display.</div>;
   }
+
+  const edgesWithLabelState = flow.edges.map((e) => ({ ...e, data: { ...e.data, hideLabels } }));
+
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+    <div className="graph-wrapper">
       <ReactFlow
-        nodes={laid} edges={flow.edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView
+        nodes={laid} edges={edgesWithLabelState} nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView
         nodesDraggable={false} nodesConnectable={false} elementsSelectable={interactive}
         panOnDrag={interactive} zoomOnScroll={interactive} zoomOnPinch={interactive} minZoom={0.2}
         onNodeClick={onNodeClick} proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{ type: "event" }}
+        onMoveEnd={(_e, viewport) => setHideLabels((viewport.zoom || 1) < 0.65)}
       >
         <FocusLatest latestId={flow.latestId} version={version} />
         <Background color="rgba(148,163,184,0.22)" gap={22} />

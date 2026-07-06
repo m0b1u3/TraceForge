@@ -4,12 +4,12 @@ import type { AgentRun, ObserverWarning } from "@traceforge/shared";
 import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWarning, runAgent } from "../../api.js";
 import { useStore } from "../../store.js";
 
-const LEVEL_COLOR: Record<string, string> = { critical: "var(--red)", warning: "var(--amber)", info: "var(--muted)" };
+const LEVEL_CLASS: Record<string, string> = { critical: "critical", warning: "warning", info: "info" };
 const STATUS_LABEL: Record<ObserverWarning["status"], string> = {
-  open: "待处理",
-  accepted: "已继续",
-  converted_to_task: "已转 Task",
-  dismissed: "已忽略",
+  open: "Pending",
+  accepted: "Resumed",
+  converted_to_task: "Tasked",
+  dismissed: "Ignored",
 };
 
 export function observerWarningStatusLabel(status: ObserverWarning["status"]): string {
@@ -30,12 +30,12 @@ export function ObserverTab() {
     upsertWarning, upsertTask, activeRun, agentBusy,
   } = useStore();
   const [busy, setBusy] = useState<string | null>(null);
-  if (warnings.length === 0) return <div className="tf-guide"><div className="tf-guide-title">暂无监督提示</div><div className="tf-guide-hint">每轮 Agent 运行结束，Observer 会旁路审视它有无无依据猜测、忽略已有信息、过早结束等问题，并在此提示。</div></div>;
+  if (warnings.length === 0) return <div className="tf-guide"><div className="tf-guide-title">No observer warnings yet.</div><div className="tf-guide-hint">After each Agent run, the Observer reviews it for unfounded guesses, ignored prior information, premature exits, and surfaces warnings here.</div></div>;
 
   const continueRun = async (w: ObserverWarning) => {
     if (!caseId) return;
     if (observerWarningContinueDisabled(activeRun, agentBusy, busy)) {
-      showToast("已有 Agent run 正在运行，请等待结束后再继续 Observer 提示");
+      showToast("An Agent run is already in progress. Wait for it to finish before resuming an Observer warning.");
       return;
     }
     const goal = observerWarningRunGoal(w);
@@ -84,22 +84,22 @@ export function ObserverTab() {
     (() => {
       const continueDisabled = observerWarningContinueDisabled(activeRun, agentBusy, busy);
       return (
-    <div className="tf-row" key={w.id} style={{ borderLeft: `2px solid ${LEVEL_COLOR[w.level]}`, paddingLeft: 8 }}>
-      <span style={{ color: LEVEL_COLOR[w.level] }}>[{w.level}]</span>
+    <div className={`tf-row observer-row ${LEVEL_CLASS[w.level]}`} key={w.id}>
+      <span className={`tf-tag tf-row-level-${w.level}`}>[{w.level}]</span>
       <span className="tf-tag">{observerWarningStatusLabel(w.status)}</span>
       {w.title}
-      <div style={{ color: "var(--muted)", marginTop: 2 }}>{w.description}</div>
-      <div style={{ color: "var(--faint)", marginTop: 2 }}>建议：{w.suggestedAction}</div>
+      <div className="tf-text-muted">{w.description}</div>
+      <div className="tf-text-muted">Suggestion: {w.suggestedAction}</div>
       {w.status === "open" && (
         <div className="tf-row-actions">
-          <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={continueDisabled} onClick={() => continueRun(w)} title="按 Observer 建议启动一个新的 Agent run">
-            <Play size={13} weight="fill" /> 继续运行
+          <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={continueDisabled} onClick={() => continueRun(w)} title="Start a new Agent run based on the Observer suggestion">
+            <Play size={13} weight="fill" /> Resume
           </button>
-          <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={busy !== null} onClick={() => convertToTask(w)} title="把该提示转成 Tasks 面板中的待办">
-            <ListPlus size={13} weight="bold" /> 创建 Task
+          <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={busy !== null} onClick={() => convertToTask(w)} title="Convert this warning into a Task in the Tasks panel">
+            <ListPlus size={13} weight="bold" /> Create task
           </button>
-          <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={busy !== null} onClick={() => dismiss(w)} title="关闭该提示">
-            <X size={13} weight="bold" /> 忽略
+          <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={busy !== null} onClick={() => dismiss(w)} title="Dismiss this warning">
+            <X size={13} weight="bold" /> Ignore
           </button>
         </div>
       )}

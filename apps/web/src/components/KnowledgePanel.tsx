@@ -14,21 +14,32 @@ const TABS = [
 ] as const;
 
 const TAB_TITLE: Record<string, string> = {
-  facts: "Facts", tasks: "Tasks", timeline: "Timeline", mcp: "MCP 工具", graph: "证据图谱", observer: "Observer 监督",
+  facts: "Facts", tasks: "Tasks", timeline: "Timeline", mcp: "MCP", graph: "Graph", observer: "Observer",
 };
 
 export function KnowledgePanel() {
-  const { activeTab, setActiveTab } = useStore();
+  const { activeTab, setActiveTab, setGraphModalOpen } = useStore();
   const isGraph = activeTab === "graph";
+  const toggleExpand = () => setGraphModalOpen(true);
   return (
-    <aside className="panel" style={{ display: "flex", flexDirection: "column" }}>
-      <div className="panel-header"><div><span className="section-kicker">Knowledge</span><h2>{TAB_TITLE[activeTab]}</h2></div></div>
+    <aside className="panel">
+      <div className="panel-header">
+        <div>
+          <span className="section-kicker">Knowledge</span>
+          <h2>{TAB_TITLE[activeTab]}</h2>
+        </div>
+        {isGraph && (
+          <div className="panel-header-actions">
+            <button className="tf-btn-ghost" onClick={toggleExpand}>Expand</button>
+          </div>
+        )}
+      </div>
       <div className="tf-tabs">
         {TABS.map((t) => (
           <button key={t.key} className={`tf-tab ${activeTab === t.key ? "active" : ""}`} onClick={() => setActiveTab(t.key)}>{t.label}</button>
         ))}
       </div>
-      <div className="graph-canvas" style={{ overflow: isGraph ? "hidden" : "auto", padding: isGraph ? 0 : "10px 14px" }}>
+      <div className="panel-body">
         {activeTab === "facts" && <FactsTab />}
         {activeTab === "tasks" && <TasksTab />}
         {activeTab === "timeline" && <TimelineTab />}

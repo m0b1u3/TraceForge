@@ -10,16 +10,16 @@ function FactRow({ f }: { f: Fact }) {
       <div className="tf-row-head" onClick={() => setOpen((v) => !v)}>
         <span className="tf-tag">{f.type}</span>
         <span className="tf-row-title">{f.title}</span>
-        {f.updateCount > 0 && <span className="tf-row-badge">{f.updateCount} 次更新</span>}
-        {f.validity === "superseded" && <span className="tf-row-badge tf-row-badge-stale">已失效</span>}
+        {f.updateCount > 0 && <span className="tf-row-badge">{f.updateCount} updates</span>}
+        {f.validity === "superseded" && <span className="tf-row-badge tf-row-badge-stale">Stale</span>}
       </div>
       {open && (
         <div className="tf-row-detail">
-          <div className="kv"><span>置信度</span>{f.confidence}</div>
-          <div className="kv"><span>来源</span>{f.source.type} · {f.source.ref}</div>
-          {f.tags.length > 0 && <div className="kv"><span>标签</span>{f.tags.join(", ")}</div>}
+          <div className="kv"><span>Confidence</span>{f.confidence}</div>
+          <div className="kv"><span>Source</span>{f.source.type} · {f.source.ref}</div>
+          {f.tags.length > 0 && <div className="kv"><span>Tags</span>{f.tags.join(", ")}</div>}
           {valueStr && valueStr !== "{}" && valueStr !== '""' && (
-            <div className="tf-row-detail-block"><div className="request-detail-label">内容</div><pre>{valueStr}</pre></div>
+            <div className="tf-row-detail-block"><div className="request-detail-label">Content</div><pre>{valueStr}</pre></div>
           )}
         </div>
       )}
@@ -29,6 +29,6 @@ function FactRow({ f }: { f: Fact }) {
 
 export function FactsTab() {
   const facts = useStore((s) => s.facts);
-  if (facts.length === 0) return <div className="tf-guide"><div className="tf-guide-title">暂无 Fact</div><div className="tf-guide-hint">Agent 探索时把可靠发现（接口、凭据、漏洞线索）记为 Fact，会出现在这里。点开可看详情。</div></div>;
+  if (facts.length === 0) return <div className="tf-guide"><div className="tf-guide-title">No facts recorded yet.</div><div className="tf-guide-hint">Agent discoveries (interfaces, credentials, vulnerability clues) appear here as Facts. Click to expand details.</div></div>;
   return <>{facts.map((f) => <FactRow f={f} key={f.id} />)}</>;
 }

@@ -3,21 +3,21 @@ import { observerWarningContinueDisabled, observerWarningRunGoal, observerWarnin
 
 describe("ObserverTab helpers", () => {
   it("labels observer warning workflow states", () => {
-    expect(observerWarningStatusLabel("open")).toBe("待处理");
-    expect(observerWarningStatusLabel("accepted")).toBe("已继续");
-    expect(observerWarningStatusLabel("converted_to_task")).toBe("已转 Task");
-    expect(observerWarningStatusLabel("dismissed")).toBe("已忽略");
+    expect(observerWarningStatusLabel("open")).toBe("Pending");
+    expect(observerWarningStatusLabel("accepted")).toBe("Resumed");
+    expect(observerWarningStatusLabel("converted_to_task")).toBe("Tasked");
+    expect(observerWarningStatusLabel("dismissed")).toBe("Ignored");
   });
 
   it("uses suggestedGoal before falling back to suggestedAction", () => {
     expect(observerWarningRunGoal({
-      suggestedGoal: "[Observer correction]\n继续测 X",
-      suggestedAction: "继续测 X",
-    })).toBe("[Observer correction]\n继续测 X");
+      suggestedGoal: "[Observer correction]\nContinue testing X",
+      suggestedAction: "Continue testing X",
+    })).toBe("[Observer correction]\nContinue testing X");
     expect(observerWarningRunGoal({
       suggestedGoal: "",
-      suggestedAction: "继续测 X",
-    })).toBe("继续测 X");
+      suggestedAction: "Continue testing X",
+    })).toBe("Continue testing X");
   });
 
   it("disables continue while any agent run is active or busy", () => {

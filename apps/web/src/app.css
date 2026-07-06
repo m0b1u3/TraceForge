@@ -605,6 +605,54 @@ button { cursor: pointer; }
 .tf-modal-bg { position: absolute; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(22,24,29,0.4); backdrop-filter: blur(3px); }
 .tf-modal { display: flex; flex-direction: column; width: 86vw; height: 80vh; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: #fff; box-shadow: 0 30px 80px rgba(22,24,29,0.25); }
 
+.panel-body { flex: 1; min-height: 0; overflow: auto; }
+
+.timeline-item {
+  position: relative;
+  padding-left: 20px;
+  padding-bottom: var(--space-4);
+  border-left: 1px solid var(--line);
+}
+.timeline-item::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+.timeline-time { font-size: 11px; color: var(--text-tertiary); }
+
+.observer-row { border-left: 3px solid transparent; }
+.observer-row.critical { border-left-color: var(--red); }
+.observer-row.warning { border-left-color: var(--amber); }
+.observer-row.info { border-left-color: var(--accent); }
+
+.tf-text-muted { color: var(--text-tertiary); margin-top: 2px; }
+
+.tf-row-level-critical { background: var(--red-soft); color: var(--red); }
+.tf-row-level-warning { background: var(--amber-soft); color: var(--amber); }
+.tf-row-level-info { background: var(--panel-soft); color: var(--text-secondary); border: 1px solid var(--line); }
+
+.graph-wrapper { position: relative; width: 100%; height: 100%; }
+
+.graph-detail {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 320px;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(100%);
+  transition: transform 200ms ease;
+}
+.graph-detail.open { transform: translateX(0); }
+
+.edge-label { transition: opacity 120ms ease; }
+.edge-label.hidden { opacity: 0; }
+
 @media (max-width: 1120px) {
   body { overflow: auto; }
   .app-shell { min-height: 100vh; height: auto; grid-template-rows: auto auto; }
