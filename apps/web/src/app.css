@@ -511,8 +511,13 @@ button { cursor: pointer; }
 .react-flow__attribution { display: none; }
 
 .flow-card { width: 224px; padding: 10px 12px; border: 1.5px solid #d6dbe3; border-radius: 8px; color: #111827; background: #fff; box-shadow: 0 12px 22px rgba(22,24,29,0.13); animation: node-in 180ms ease both; }
-.flow-card.task { border-color: #c7d2fe; }
+.flow-card.task { border-color: #fed7aa; }
+.flow-card.fact { border-color: #bfdbfe; }
+.flow-card.memory { border-color: #bfdbfe; }
 .flow-card.action { border-color: #ddd6fe; }
+.flow-card.solver { border-color: #a7f3d0; }
+.flow-card.flag { border-color: #fde68a; }
+.flow-card.note { border-color: #d6dbe3; }
 .flow-card.superseded { opacity: 0.55; background: #f3f4f6; }
 .flow-card.superseded strong { text-decoration: line-through; }
 .flow-handle { width: 1px; height: 1px; border: 0; opacity: 0; pointer-events: none; }
@@ -524,6 +529,15 @@ button { cursor: pointer; }
 .flow-card small { display: block; margin-top: 7px; color: #2563eb; font-size: 9.5px; font-weight: 720; }
 .edge-label { padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; color: #475467; background: rgba(255,255,255,0.92); box-shadow: 0 2px 8px rgba(22,24,29,0.08); font-size: 9px; font-weight: 780; pointer-events: none; }
 @keyframes node-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+.graph-footer { display: grid; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); background: #fff; }
+.replay-controls { display: flex; align-items: center; gap: 6px; }
+.replay-controls button { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #344054; font-size: 12px; font-weight: 600; cursor: pointer; }
+.replay-controls button:hover { border-color: var(--line-strong); background: #f8fafc; }
+.replay-controls button.active { border-color: var(--accent); color: var(--accent); background: #eff6ff; }
+.graph-footer input[type="range"] { width: 100%; accent-color: var(--accent); }
+.current-event { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #475467; font-size: 12px; }
+.current-event strong { color: #101828; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .case-launcher-input { width: 180px; }
 .case-launcher-actions { display: flex; gap: var(--space-2); margin-top: 2px; }

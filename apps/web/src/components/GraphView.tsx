@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, memo } from "react";
 import {
   Background, BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, Position,
   ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow,
@@ -6,61 +6,123 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import ELK from "elkjs/lib/elk.bundled.js";
-import { Notebook, ShieldCheck, Lightning } from "@phosphor-icons/react";
-import { buildGraph, type Graph } from "@traceforge/shared/graph";
+import {
+  Notebook, ShieldCheck, Lightning, Robot, Flag, Lightbulb, Database, Clock, Play, Pause, ArrowCounterClockwise,
+} from "@phosphor-icons/react";
 import { useStore } from "../store.js";
+import type { Fact, Task, ActionCard, TimelineEntry } from "@traceforge/shared";
 
 const elk = new ELK();
-const KIND_COLOR: Record<string, string> = { fact: "#047857", task: "#1d4ed8", action: "#7c3aed" };
+
+const KIND_META: Record<string, { label: string; icon: typeof Notebook; color: string; border: string }> = {
+  fact: { label: "FACT", icon: Database, color: "#2563eb", border: "#bfdbfe" },
+  memory: { label: "MEMORY", icon: Database, color: "#2563eb", border: "#bfdbfe" },
+  task: { label: "TASK", icon: Lightbulb, color: "#b45309", border: "#fed7aa" },
+  idea: { label: "TASK", icon: Lightbulb, color: "#b45309", border: "#fed7aa" },
+  action: { label: "ACTION", icon: Lightning, color: "#7c3aed", border: "#ddd6fe" },
+  solver: { label: "AGENT", icon: Robot, color: "#059669", border: "#a7f3d0" },
+  flag: { label: "FLAG", icon: Flag, color: "#d97706", border: "#fde68a" },
+  note: { label: "EVENT", icon: Notebook, color: "#64748b", border: "#d6dbe3" },
+};
 
 function clip(v: unknown, max = 96) {
   const s = String(v ?? "").replace(/\s+/g, " ").trim();
   return s.length <= max ? s : `${s.slice(0, max)}…`;
 }
 
-type NodeData = {
-  kind: "fact" | "task" | "action";
+function formatTime(iso: string) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString(undefined, { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch {
+    return iso;
+  }
+}
+
+function kindOf(entry: TimelineEntry): string {
+  const t = entry.eventType;
+  if (t === "fact_created" || t === "fact_updated") return "fact";
+  if (t === "task_created" || t === "task_updated" || t === "task_reopened" || t === "task_reverted") return "task";
+  if (t === "action_recorded") return "action";
+  if (t === "context_built") return "solver";
+  if (t === "flag_submitted") return "flag";
+  return "note";
+}
+
+function titleOf(entry: TimelineEntry) {
+  const t = entry.eventType;
+  if (t === "fact_created") return "Fact created";
+  if (t === "fact_updated") return "Fact updated";
+  if (t === "task_created") return "Task created";
+  if (t === "task_updated") return "Task updated";
+  if (t === "task_reopened") return "Task reopened";
+  if (t === "task_reverted") return "Task reverted";
+  if (t === "action_recorded") return "Action recorded";
+  if (t === "context_built") return "Context built";
+  if (t === "timeline_appended") return "Timeline event";
+  return t.replace(/_/g, " ");
+}
+
+type FlowNodeData = {
+  entry: TimelineEntry;
+  kind: string;
   title: string;
   body: string;
-  updates: number;
-  superseded: boolean;
-  meta: Record<string, unknown>;
+  meta: string;
 };
 
-function BwNode({ data }: NodeProps<Node<NodeData>>) {
-  const Icon = data.kind === "task" ? ShieldCheck : data.kind === "action" ? Lightning : Notebook;
+function BwNode({ data }: NodeProps<Node<FlowNodeData>>) {
+  const meta = KIND_META[data.kind] ?? KIND_META.note;
+  const Icon = meta.icon;
   return (
-    <div className={`flow-card ${data.kind} ${data.superseded ? "superseded" : ""}`}>
+    <div className={`flow-card ${data.kind}`}>
       <Handle className="flow-handle" position={Position.Top} type="target" />
       <Handle className="flow-handle" position={Position.Bottom} type="source" />
-      <div className="flow-card-head">
-        <span className="flow-icon" style={{ color: KIND_COLOR[data.kind] }}><Icon size={13} weight="bold" /></span>
-        <div>
-          <span style={{ color: KIND_COLOR[data.kind] }}>{data.kind.toUpperCase()}</span>
-          <strong>{clip(data.title, 52)}</strong>
+      <Handle className="flow-handle" position={Position.Left} type="target" />
+      <Handle className="flow-handle" position={Position.Right} type="source" />
+      <div className="flow-card-content">
+        <div className="flow-card-head">
+          <span className="flow-icon" style={{ color: meta.color, borderColor: meta.border }}>
+            <Icon size={13} weight="bold" />
+          </span>
+          <div>
+            <span style={{ color: meta.color }}>{meta.label}</span>
+            <strong>{clip(data.title, 52)}</strong>
+          </div>
         </div>
+        <p>{clip(data.body, 108)}</p>
+        <small>{data.meta}</small>
       </div>
-      {data.body && <p>{clip(data.body, 100)}</p>}
-      {data.updates > 0 && <small>{data.updates} updates</small>}
     </div>
   );
 }
 const nodeTypes = { bw: BwNode };
 
 function EventEdge(props: EdgeProps) {
-  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, label } = props;
+  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, label, style } = props;
   const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const active = (props.data as { active?: boolean } | undefined)?.active === true;
   return (
     <g>
-      <path d={path} fill="none" markerEnd={markerEnd}
-        style={{ stroke: "#94a3b8", strokeWidth: active ? 2 : 1.25, strokeOpacity: active ? 0.95 : 0.5, strokeDasharray: active ? "9 7" : undefined }}>
+      <path
+        d={path}
+        fill="none"
+        markerEnd={markerEnd}
+        style={{
+          stroke: style?.stroke ?? "#94a3b8",
+          strokeWidth: active ? 2.1 : 1.25,
+          strokeOpacity: active ? 0.95 : 0.5,
+          strokeDasharray: active ? "9 7" : (style?.strokeDasharray as string | undefined),
+        }}
+      >
         {active ? <animate attributeName="stroke-dashoffset" dur="1.2s" repeatCount="indefinite" values="0;-16" /> : null}
       </path>
       <BaseEdge id={id} path={path} style={{ stroke: "transparent", strokeWidth: 10 }} />
       {label ? (
         <EdgeLabelRenderer>
-          <div className={`edge-label ${props.data?.hideLabels ? "hidden" : ""}`} style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}>{String(label)}</div>
+          <div className="edge-label" style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}>
+            {clip(label, 28)}
+          </div>
         </EdgeLabelRenderer>
       ) : null}
     </g>
@@ -68,35 +130,80 @@ function EventEdge(props: EdgeProps) {
 }
 const edgeTypes = { event: EventEdge };
 
-function toFlow(graph: Graph): { nodes: Node<NodeData>[]; edges: Edge[]; latestId?: string } {
-  let latestId: string | undefined; let latestAt = "";
-  const nodes: Node<NodeData>[] = graph.nodes.map((n) => {
-    const updatedAt = String(n.meta.updatedAt ?? "");
-    if (updatedAt > latestAt) { latestAt = updatedAt; latestId = n.id; }
-    const body = n.kind === "fact" ? String(n.meta.type ?? "") : n.kind === "task" ? String(n.meta.status ?? "") : String(n.meta.tool ?? "");
-    return {
-      id: n.id, type: "bw", position: { x: 0, y: 0 },
-      data: { kind: n.kind, title: n.label, body, updates: Number(n.meta.updateCount ?? 0), superseded: n.meta.validity === "superseded", meta: n.meta },
-    };
-  });
-  const edges: Edge[] = graph.edges.map((e) => ({
-    id: e.id, source: e.source, target: e.target, type: "event", label: e.label,
-    markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "#64748b" },
-    data: { active: e.target === latestId },
-  }));
-  return { nodes, edges, latestId };
+function buildTimelineGraph(timeline: TimelineEntry[], goal?: string | null) {
+  if (timeline.length === 0) return { nodes: [] as Node<FlowNodeData>[], edges: [] as Edge[], focusNodeId: undefined as string | undefined };
+
+  const nodes: Node<FlowNodeData>[] = [];
+  const edges: Edge[] = [];
+
+  if (goal) {
+    nodes.push({
+      id: "__goal__",
+      type: "bw",
+      position: { x: 0, y: 0 },
+      width: 240,
+      height: 96,
+      data: {
+        entry: timeline[0],
+        kind: "solver",
+        title: "Objective",
+        body: goal,
+        meta: "case goal",
+      },
+    });
+  }
+
+  for (let i = 0; i < timeline.length; i++) {
+    const entry = timeline[i];
+    const kind = kindOf(entry);
+    nodes.push({
+      id: entry.id,
+      type: "bw",
+      position: { x: 0, y: 0 },
+      width: 240,
+      height: 104,
+      data: {
+        entry,
+        kind,
+        title: titleOf(entry),
+        body: entry.detail,
+        meta: formatTime(entry.createdAt),
+      },
+    });
+    const source = i === 0 ? (goal ? "__goal__" : undefined) : timeline[i - 1].id;
+    if (source) {
+      edges.push({
+        id: `${source}->${entry.id}`,
+        source,
+        target: entry.id,
+        type: "event",
+        label: i === 0 ? "start" : "next",
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "#64748b" },
+        style: { stroke: KIND_META[kind]?.color ?? "#94a3b8" },
+        data: { active: i === timeline.length - 1 },
+      });
+    }
+  }
+
+  return { nodes, edges, focusNodeId: timeline[timeline.length - 1]?.id };
 }
 
-async function elkLayout(nodes: Node<NodeData>[], edges: Edge[]): Promise<Node<NodeData>[]> {
+async function elkLayout(nodes: Node<FlowNodeData>[], edges: Edge[]): Promise<Node<FlowNodeData>[]> {
   try {
     const g = {
       id: "root",
       layoutOptions: {
-        "elk.algorithm": "layered", "elk.direction": "DOWN",
-        "elk.spacing.nodeNode": "110", "elk.layered.spacing.nodeNodeBetweenLayers": "120",
-        "elk.edgeRouting": "ORTHOGONAL", "elk.padding": "[top=24,left=24,bottom=24,right=24]",
+        "elk.algorithm": "layered",
+        "elk.direction": "DOWN",
+        "elk.spacing.nodeNode": "90",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "130",
+        "elk.edgeRouting": "ORTHOGONAL",
+        "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
+        "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+        "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
+        "elk.padding": "[top=36,left=36,bottom=36,right=36]",
       },
-      children: nodes.map((n) => ({ id: n.id, width: 224, height: 104 })),
+      children: nodes.map((n) => ({ id: n.id, width: n.width ?? 240, height: n.height ?? 104 })),
       edges: edges.map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
     };
     const res = await elk.layout(g);
@@ -105,86 +212,200 @@ async function elkLayout(nodes: Node<NodeData>[], edges: Edge[]): Promise<Node<N
       return { ...n, position: { x: p?.x ?? 0, y: p?.y ?? 0 }, sourcePosition: Position.Bottom, targetPosition: Position.Top };
     });
   } catch {
-    return nodes.map((n, i) => ({ ...n, position: { x: (i % 4) * 240, y: Math.floor(i / 4) * 150 } }));
+    return nodes.map((n, i) => ({ ...n, position: { x: (i % 4) * 260, y: Math.floor(i / 4) * 150 }, sourcePosition: Position.Bottom, targetPosition: Position.Top }));
   }
 }
 
-function FocusLatest({ latestId, version }: { latestId?: string; version: number }) {
-  const { fitView, setCenter, getNode } = useReactFlow();
+function FitOnChange({ focusNodeId, nodes, version }: { focusNodeId?: string; nodes: Node<FlowNodeData>[]; version: number }) {
+  const { fitView, setCenter } = useReactFlow();
   useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      const n = latestId ? getNode(latestId) : undefined;
-      if (n) void setCenter(n.position.x + 112, n.position.y + 52, { zoom: 0.85, duration: 200 });
-      else void fitView({ padding: 0.25, duration: 150 });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [fitView, setCenter, getNode, latestId, version]);
+    const frame = requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (nodes.length > 3 && focusNodeId) {
+          const focus = nodes.find((n) => n.id === focusNodeId);
+          if (focus) {
+            void setCenter(focus.position.x + (focus.width ?? 240) / 2, focus.position.y + (focus.height ?? 104) / 2, { zoom: 0.55, duration: 180 });
+            return;
+          }
+        }
+        void fitView({ padding: 0.28, duration: 120 });
+      }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [fitView, focusNodeId, nodes, setCenter, version]);
   return null;
 }
 
-function DetailPanel({ graph, nodeId, onClose }: { graph: Graph; nodeId: string; onClose: () => void }) {
-  const node = graph.nodes.find((n) => n.id === nodeId);
-  if (!node) return null;
-  const out = graph.edges.filter((e) => e.source === nodeId);
-  const inc = graph.edges.filter((e) => e.target === nodeId);
-  const labelOf = (id: string) => graph.nodes.find((n) => n.id === id)?.label ?? id;
-  return (
-    <div className="graph-detail open">
-      <div className="tf-gdetail-head">
-        <span style={{ color: KIND_COLOR[node.kind], fontWeight: 600, fontSize: 11, letterSpacing: "0.08em" }}>{node.kind.toUpperCase()}</span>
-        <button className="tf-btn" onClick={onClose}>Close</button>
-      </div>
-      <div className="tf-gdetail-title">{node.label}</div>
-      <div className="tf-gdetail-id">{node.id}</div>
-      <div className="tf-gdetail-meta">
-        {Object.entries(node.meta).map(([k, v]) => (
-          <div key={k} className="tf-gdetail-kv"><span>{k}</span><span>{String(v)}</span></div>
-        ))}
-      </div>
-      {out.length > 0 && <div className="tf-gdetail-rel"><div className="tf-gdetail-rel-h">Depends on →</div>{out.map((e) => <div key={e.id} className="tf-gdetail-link">{labelOf(e.target)}</div>)}</div>}
-      {inc.length > 0 && <div className="tf-gdetail-rel"><div className="tf-gdetail-rel-h">← Referenced by</div>{inc.map((e) => <div key={e.id} className="tf-gdetail-link">{labelOf(e.source)}</div>)}</div>}
-    </div>
-  );
-}
-
-function GraphInner({ interactive }: { interactive: boolean }) {
-  const { facts, tasks, actions } = useStore();
-  const [selected, setSelected] = useState<string | null>(null);
-  const [hideLabels, setHideLabels] = useState(false);
-  const graph = useMemo(() => buildGraph(facts, tasks, actions), [facts, tasks, actions]);
-  const flow = useMemo(() => toFlow(graph), [graph]);
-  const [laid, setLaid] = useState<Node<NodeData>[]>([]);
+function FlowCanvas({ nodes, edges, focusNodeId, onNodeClick }: { nodes: Node<FlowNodeData>[]; edges: Edge[]; focusNodeId?: string; onNodeClick?: NodeMouseHandler }) {
+  const [layouted, setLayouted] = useState<Node<FlowNodeData>[]>(nodes);
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
     let active = true;
-    void elkLayout(flow.nodes, flow.edges).then((n) => { if (active) { setLaid(n); setVersion((v) => v + 1); } });
+    void elkLayout(nodes, edges).then((next) => {
+      if (!active) return;
+      setLayouted(next);
+      setVersion((v) => v + 1);
+    });
     return () => { active = false; };
-  }, [flow]);
+  }, [nodes, edges]);
 
-  const onNodeClick: NodeMouseHandler = (_e, node) => { if (interactive) setSelected(node.id); };
+  return (
+    <ReactFlow
+      key={`flow-${nodes.length}`}
+      nodes={layouted}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      fitView
+      nodesDraggable={false}
+      nodesConnectable={false}
+      zoomOnScroll={false}
+      panOnScroll
+      minZoom={0.12}
+      maxZoom={1.25}
+      onNodeClick={onNodeClick}
+      defaultEdgeOptions={{
+        type: "event",
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "#64748b" },
+      }}
+      proOptions={{ hideAttribution: true }}
+    >
+      <FitOnChange focusNodeId={focusNodeId} nodes={layouted} version={version} />
+      <Background color="rgba(148,163,184,0.18)" gap={22} />
+      <Controls position="bottom-right" showInteractive={false} />
+    </ReactFlow>
+  );
+}
 
-  if (graph.nodes.length === 0) {
-    return <div className="tf-empty">No evidence to display.</div>;
+function findEntity(refId: string | null, facts: Fact[], tasks: Task[], actions: ActionCard[]) {
+  if (!refId) return undefined;
+  return facts.find((f) => f.id === refId) ?? tasks.find((t) => t.id === refId) ?? actions.find((a) => a.id === refId);
+}
+
+function DetailPanel({ entry, onClose, facts, tasks, actions }: { entry: TimelineEntry; onClose: () => void; facts: Fact[]; tasks: Task[]; actions: ActionCard[] }) {
+  const entity = findEntity(entry.refId, facts, tasks, actions);
+  return (
+    <div className="graph-detail open">
+      <div className="tf-gdetail-head">
+        <span>{titleOf(entry)}</span>
+        <button className="tf-btn" onClick={onClose}>Close</button>
+      </div>
+      <div className="tf-gdetail-title">{entry.detail}</div>
+      <div className="tf-gdetail-id">{entry.id}</div>
+      <div className="tf-gdetail-meta">
+        <div className="tf-gdetail-kv"><span>time</span><span>{formatTime(entry.createdAt)}</span></div>
+        <div className="tf-gdetail-kv"><span>type</span><span>{entry.eventType}</span></div>
+        {entry.refId && <div className="tf-gdetail-kv"><span>ref</span><span>{entry.refId}</span></div>}
+      </div>
+      {entity && (
+        <div className="tf-gdetail-rel">
+          <div className="tf-gdetail-rel-h">Referenced entity</div>
+          <div className="tf-gdetail-link">{entity.title}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SpeedButton = memo(function SpeedButton({ value, speed, setSpeed }: { value: number; speed: number; setSpeed: (speed: number) => void }) {
+  return (
+    <button className={speed === value ? "active" : ""} onClick={() => setSpeed(value)}>
+      {value}x
+    </button>
+  );
+});
+
+function GraphInner({ interactive }: { interactive: boolean }) {
+  const { timeline, activeRun, facts, tasks, actions } = useStore();
+  const [cursor, setCursor] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(2);
+  const [selected, setSelected] = useState<TimelineEntry | null>(null);
+
+  const visible = useMemo(() => timeline.slice(0, cursor), [timeline, cursor]);
+  const graph = useMemo(() => buildTimelineGraph(visible, activeRun?.goal), [visible, activeRun?.goal]);
+
+  useEffect(() => {
+    if (!playing) return;
+    if (cursor >= timeline.length) {
+      setPlaying(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setCursor((c) => Math.min(c + 1, timeline.length)), Math.max(60, 500 / speed));
+    return () => window.clearTimeout(timer);
+  }, [cursor, playing, speed, timeline.length]);
+
+  useEffect(() => {
+    // 新事件到达时自动推进 cursor 到最新，保持“活态”
+    if (!playing && timeline.length > 0 && cursor < timeline.length) {
+      setCursor(timeline.length);
+    }
+  }, [timeline.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const current = visible[visible.length - 1];
+
+  const onNodeClick: NodeMouseHandler = (_e, node) => {
+    if (!interactive) return;
+    const entry = visible.find((e) => e.id === node.id);
+    if (entry) setSelected(entry);
+  };
+
+  if (timeline.length === 0) {
+    return <div className="tf-empty">No events to replay. Start an agent run to see the reasoning chain.</div>;
   }
-
-  const edgesWithLabelState = flow.edges.map((e) => ({ ...e, data: { ...e.data, hideLabels } }));
 
   return (
     <div className="graph-wrapper">
-      <ReactFlow
-        nodes={laid} edges={edgesWithLabelState} nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView
-        nodesDraggable={false} nodesConnectable={false} elementsSelectable={interactive}
-        panOnDrag={interactive} zoomOnScroll={interactive} zoomOnPinch={interactive} minZoom={0.2}
-        onNodeClick={onNodeClick} proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{ type: "event" }}
-        onMoveEnd={(_e, viewport) => setHideLabels((viewport.zoom || 1) < 0.65)}
-      >
-        <FocusLatest latestId={flow.latestId} version={version} />
-        <Background color="rgba(148,163,184,0.22)" gap={22} />
-        {interactive && <Controls showInteractive={false} />}
-      </ReactFlow>
-      {interactive && selected && <DetailPanel graph={graph} nodeId={selected} onClose={() => setSelected(null)} />}
+      <div className="graph-canvas" onClick={() => setSelected(null)}>
+        <ReactFlowProvider>
+          <FlowCanvas nodes={graph.nodes} edges={graph.edges} focusNodeId={graph.focusNodeId} onNodeClick={onNodeClick} />
+        </ReactFlowProvider>
+      </div>
+      <div className="graph-footer">
+        <div className="replay-controls">
+          <button
+            onClick={() => {
+              if (playing) setPlaying(false);
+              else {
+                if (cursor >= timeline.length) setCursor(0);
+                setPlaying(true);
+              }
+            }}
+          >
+            {playing ? <Pause size={14} /> : <Play size={14} />}
+            {playing ? "Pause" : "Replay"}
+          </button>
+          <button
+            onClick={() => {
+              setPlaying(false);
+              setCursor(0);
+            }}
+          >
+            <ArrowCounterClockwise size={14} />
+          </button>
+          {[1, 2, 4].map((v) => (
+            <SpeedButton key={v} value={v} speed={speed} setSpeed={setSpeed} />
+          ))}
+        </div>
+        <input
+          max={timeline.length}
+          min={0}
+          type="range"
+          value={cursor}
+          onChange={(e) => {
+            setPlaying(false);
+            setCursor(Number(e.target.value));
+          }}
+        />
+        <div className="current-event">
+          <span>{cursor} / {timeline.length}</span>
+          <strong>{current ? clip(current.detail, 80) : "Ready"}</strong>
+        </div>
+      </div>
+      {interactive && selected && (
+        <DetailPanel entry={selected} onClose={() => setSelected(null)} facts={facts} tasks={tasks} actions={actions} />
+      )}
     </div>
   );
 }
