@@ -166,7 +166,7 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "decision_recorded" && event.decision.caseId === cid) get().addDecision(event.decision);
     else if (event.type === "agent_run_started" && event.run.caseId === cid) {
       get().setActiveRun(event.run);
-      get().addAgentEvent({ kind: "started", text: `开始：${event.run.goal}` });
+      get().addAgentEvent({ kind: "started", text: `Started: ${event.run.goal}` });
     }
     else if (event.type === "agent_stream_start" && event.caseId === cid) {
       set((s) => ({ streamingMessages: { ...s.streamingMessages, [event.messageId]: s.agentEvents.length } }));
@@ -190,7 +190,7 @@ export const useStore = create<State>((set, get) => ({
       });
     }
     else if (event.type === "agent_retrying" && event.caseId === cid) {
-      get().addAgentEvent({ kind: "text", text: `正在重试 LLM 调用 ${event.attempt}/${event.maxAttempts}：${event.reason}` });
+      get().addAgentEvent({ kind: "text", text: `Retrying LLM call ${event.attempt}/${event.maxAttempts}: ${event.reason}` });
     }
     else if (event.type === "agent_steering_added" && event.caseId === cid) {
       const text = `[steering] ${event.content}`;
@@ -203,12 +203,12 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "agent_run_interrupted" && event.run.caseId === cid) {
       get().setActiveRun(null);
       get().setAgentBusy(false);
-      get().addAgentEvent({ kind: "done", text: "Agent 已停止" });
+      get().addAgentEvent({ kind: "done", text: "Agent stopped" });
     }
     else if (event.type === "agent_run_needs_continuation" && event.run.caseId === cid) {
       get().setActiveRun(null);
       get().setAgentBusy(false);
-      get().addAgentEvent({ kind: "done", text: "Agent 已到达本次运行预算，需要继续运行。" });
+      get().addAgentEvent({ kind: "done", text: "Agent reached the run budget. Continue to proceed." });
     }
     else if (event.type === "agent_run_failed" && event.run.caseId === cid) {
       get().setActiveRun(null);
@@ -217,7 +217,7 @@ export const useStore = create<State>((set, get) => ({
     }
     else if (event.type === "agent_started" && event.caseId === cid) {
       get().setAgentBusy(true);
-      const text = `开始：${event.goal}`;
+      const text = `Started: ${event.goal}`;
       if (get().agentEvents.at(-1)?.text !== text) get().addAgentEvent({ kind: "started", text });
     }
     else if (event.type === "agent_text" && event.caseId === cid) {
