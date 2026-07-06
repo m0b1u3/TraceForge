@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Globe } from "@phosphor-icons/react";
 import type { TrafficEntry } from "@traceforge/shared";
 import { useStore } from "../store.js";
+import { BrowserControls } from "./BrowserPanel.js";
 
 function TrafficRow({ t }: { t: TrafficEntry }) {
   const [open, setOpen] = useState(false);
@@ -46,6 +47,7 @@ export function TrafficPanel() {
           </div>
         </div>
         <div className="panel-header-actions">
+          <BrowserControls />
           <span className="tf-pill">{traffic.length} req</span>
           <button className="tf-btn tf-btn-ghost" onClick={clearTraffic}>Clear</button>
         </div>

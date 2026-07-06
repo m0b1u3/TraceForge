@@ -11,7 +11,7 @@ export function createDb(path: string) {
     );
     CREATE TABLE IF NOT EXISTS traffic_entries (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, url TEXT NOT NULL, method TEXT NOT NULL,
-      request_headers_json TEXT NOT NULL, response_status INTEGER, response_body TEXT,
+      request_headers_json TEXT NOT NULL, request_body TEXT, response_status INTEGER, response_body TEXT,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_traffic_case ON traffic_entries(case_id);
@@ -91,6 +91,8 @@ export function createDb(path: string) {
   if (!hasWarningColumn("related_run_id")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN related_run_id TEXT");
   if (!hasWarningColumn("suggested_goal")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN suggested_goal TEXT NOT NULL DEFAULT ''");
   if (!hasWarningColumn("resolved_at")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN resolved_at TEXT");
+  const trafficColumns = sqlite.prepare("PRAGMA table_info(traffic_entries)").all() as Array<{ name: string }>;
+  if (!trafficColumns.some((c) => c.name === "request_body")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN request_body TEXT");
   return drizzle(sqlite);
 }
 

@@ -14,6 +14,7 @@ export const trafficEntries = sqliteTable("traffic_entries", {
   url: text("url").notNull(),
   method: text("method").notNull(),
   requestHeadersJson: text("request_headers_json").notNull(),
+  requestBody: text("request_body"),
   responseStatus: integer("response_status"),
   responseBody: text("response_body"),
   createdAt: text("created_at").notNull(),

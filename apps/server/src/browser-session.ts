@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type LaunchOptions, type Page, type Response } from "playwright";
 import { checkScope } from "@traceforge/tool-resolver";
-import type { ScopeRule } from "@traceforge/shared";
+import type { ScopeRule, TrafficEntry } from "@traceforge/shared";
 import type { EventBus } from "./event-bus.js";
 import type { TrafficStore } from "./stores/traffic-store.js";
 
@@ -61,20 +61,42 @@ export class BrowserSession {
   private captureResponse(res: Response): void {
     const verdict = checkScope(res.url(), this.scopeRules());
     if (!verdict.allowed) return;
-    this.traffic.add({
+    const req = res.request();
+    const entry: TrafficEntry = {
       id: `traf_${randomUUID()}`,
       caseId: this.caseId,
       url: res.url(),
-      method: res.request().method(),
-      requestHeaders: res.request().headers(),
+      method: req.method(),
+      requestHeaders: req.headers(),
+      requestBody: req.postData() ?? null,
       responseStatus: res.status(),
       responseBody: null,
       createdAt: new Date().toISOString(),
-    });
-    this.bus.emit({
-      type: "response_captured",
-      entry: this.traffic.listByCase(this.caseId).at(-1)!,
-    });
+    };
+    this.traffic.add(entry);
+    this.bus.emit({ type: "response_captured", entry });
+    void this.enrichBody(res, entry.id);
+  }
+
+  private async enrichBody(res: Response, entryId: string): Promise<void> {
+    const body = await this.captureBody(res);
+    if (body) this.traffic.updateBody(entryId, body);
+  }
+
+  private async captureBody(res: Response): Promise<string | null> {
+    try {
+      const headers = res.headers();
+      const contentType = String(headers["content-type"] ?? "").toLowerCase();
+      const contentLength = Number(headers["content-length"] ?? NaN);
+      if (contentLength > 256_000) return null;
+      if (!contentType || contentType.includes("image/") || contentType.includes("video/") || contentType.includes("audio/") || contentType.includes("application/octet-stream")) return null;
+      const buffer = await res.body();
+      if (!buffer) return null;
+      const text = buffer.toString("utf-8");
+      return text.length > 256_000 ? text.slice(0, 256_000) : text;
+    } catch {
+      return null;
+    }
   }
 
   async stop(): Promise<void> {

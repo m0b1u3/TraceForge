@@ -3,8 +3,8 @@ import { makeListTrafficTool, makeGetTrafficTool } from "./case-tools.js";
 import type { TrafficEntry } from "@traceforge/shared";
 
 const entries: TrafficEntry[] = [
-  { id: "traf_1", caseId: "c", url: "https://t.com/a", method: "GET", requestHeaders: {}, responseStatus: 200, responseBody: "hi", createdAt: "now" },
-  { id: "traf_2", caseId: "c", url: "https://t.com/b", method: "POST", requestHeaders: {}, responseStatus: 404, responseBody: null, createdAt: "now" },
+  { id: "traf_1", caseId: "c", url: "https://t.com/a", method: "GET", requestHeaders: {}, requestBody: null, responseStatus: 200, responseBody: "hi", createdAt: "now" },
+  { id: "traf_2", caseId: "c", url: "https://t.com/b", method: "POST", requestHeaders: {}, requestBody: null, responseStatus: 404, responseBody: null, createdAt: "now" },
 ];
 const reader = { listByCase: (cid: string) => (cid === "c" ? entries : []) };
 

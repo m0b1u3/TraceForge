@@ -66,8 +66,8 @@ describe("get_fact_detail", () => {
 describe("search_traffic", () => {
   const traffic = {
     listByCase: (): TrafficEntry[] => [
-      { id: "t1", caseId: "c", url: "https://x/api/order", method: "GET", requestHeaders: {}, responseStatus: 200, responseBody: null, createdAt: "t" },
-      { id: "t2", caseId: "c", url: "https://x/static/logo.png", method: "GET", requestHeaders: {}, responseStatus: 200, responseBody: null, createdAt: "t" },
+      { id: "t1", caseId: "c", url: "https://x/api/order", method: "GET", requestHeaders: {}, requestBody: null, responseStatus: 200, responseBody: null, createdAt: "t" },
+      { id: "t2", caseId: "c", url: "https://x/static/logo.png", method: "GET", requestHeaders: {}, requestBody: null, responseStatus: 200, responseBody: null, createdAt: "t" },
     ],
   };
   it("matches by url", async () => {

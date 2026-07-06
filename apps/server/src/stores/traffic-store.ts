@@ -11,8 +11,13 @@ export class TrafficStore {
     this.db.insert(trafficEntries).values({
       id: e.id, caseId: e.caseId, url: e.url, method: e.method,
       requestHeadersJson: JSON.stringify(e.requestHeaders),
+      requestBody: e.requestBody,
       responseStatus: e.responseStatus, responseBody: e.responseBody, createdAt: e.createdAt,
     }).run();
+  }
+
+  updateBody(id: string, responseBody: string | null): void {
+    this.db.update(trafficEntries).set({ responseBody }).where(eq(trafficEntries.id, id)).run();
   }
 
   listByCase(caseId: string): TrafficEntry[] {
@@ -22,6 +27,7 @@ export class TrafficStore {
         TrafficEntrySchema.parse({
           id: row.id, caseId: row.caseId, url: row.url, method: row.method,
           requestHeaders: JSON.parse(row.requestHeadersJson),
+          requestBody: row.requestBody,
           responseStatus: row.responseStatus, responseBody: row.responseBody, createdAt: row.createdAt,
         }),
       );

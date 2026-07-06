@@ -26,11 +26,11 @@ describe("TrafficStore", () => {
     const traffic = new TrafficStore(db);
     traffic.add({
       id: "traf_1", caseId: c.id, url: "https://target.com/a", method: "GET",
-      requestHeaders: {}, responseStatus: 200, responseBody: "ok", createdAt: "now",
+      requestHeaders: {}, requestBody: null, responseStatus: 200, responseBody: "ok", createdAt: "now",
     });
     traffic.add({
       id: "traf_2", caseId: "other", url: "https://x/b", method: "GET",
-      requestHeaders: {}, responseStatus: 200, responseBody: null, createdAt: "now",
+      requestHeaders: {}, requestBody: null, responseStatus: 200, responseBody: null, createdAt: "now",
     });
     const list = traffic.listByCase(c.id);
     expect(list).toHaveLength(1);

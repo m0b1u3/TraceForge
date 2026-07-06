@@ -277,7 +277,7 @@ export function registerRoutes(
     registry.register(makeRecordActionTool(id, factStore, actionStore, decisionStore, timelineStore, (e) => bus.emit(e)));
     registry.register(makeReopenTaskTool(id, taskStore, taskStore, factStore, timelineStore, (e) => bus.emit(e)));
     registry.register(makeRevertDoneTaskTool(id, taskStore, taskStore, factStore, timelineStore, (e) => bus.emit(e)));
-    registry.register(makeHttpReplayTool(c.scopeRules));
+    registry.register(makeHttpReplayTool(c.scopeRules, undefined, id, traffic, (e) => bus.emit(e)));
     registry.register(makeProposeScopeExpansionTool((host, reason) =>
       bus.emit({ type: "scope_expansion_proposed", caseId: id, host, reason })));
     registry.register(makeUpdateSessionStateTool(id, sessionStore));

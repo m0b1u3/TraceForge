@@ -22,6 +22,7 @@ export const TrafficEntrySchema = z.object({
   url: z.string(),
   method: z.string(),
   requestHeaders: z.record(z.string()).default({}),
+  requestBody: z.string().nullable().default(null),
   responseStatus: z.number().nullable().default(null),
   responseBody: z.string().nullable().default(null),
   createdAt: z.string(),
