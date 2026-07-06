@@ -16,17 +16,17 @@ export function BrowserControls() {
 
   if (browserController === null) {
     return (
-      <button className="browser-button" disabled={busy} onClick={run(() => startBrowser(caseId))}>
-        {busy ? <CircleNotch size={15} className="tf-spin" /> : <Browser size={15} />} {busy ? "启动中…" : "启动浏览器"}
+      <button className="tf-btn tf-btn-primary" disabled={busy} onClick={run(() => startBrowser(caseId))}>
+        {busy ? <CircleNotch size={15} className="tf-spin" /> : <Browser size={15} />} {busy ? "Launching…" : "Launch browser"}
       </button>
     );
   }
   return (
-    <div style={{ display: "flex", gap: 6 }}>
+    <div className="tf-btn-group">
       {browserController === "llm"
-        ? <button className="browser-button" disabled={busy} onClick={run(() => takeoverBrowser(caseId))}>接管</button>
-        : <button className="browser-button active" disabled={busy} onClick={run(() => releaseBrowser(caseId))}>交回 LLM</button>}
-      <button className="browser-button" disabled={busy} onClick={run(() => stopBrowser(caseId))}>停止</button>
+        ? <button className="tf-btn tf-btn-primary" disabled={busy} onClick={run(() => takeoverBrowser(caseId))}>Take over</button>
+        : <button className="tf-btn tf-btn-primary" disabled={busy} onClick={run(() => releaseBrowser(caseId))}>Return to LLM</button>}
+      <button className="tf-btn tf-btn-danger" disabled={busy} onClick={run(() => stopBrowser(caseId))}>Stop</button>
     </div>
   );
 }

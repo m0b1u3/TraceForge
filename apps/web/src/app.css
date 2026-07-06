@@ -414,11 +414,9 @@ button { cursor: pointer; }
 .topbar nav { display: inline-flex; justify-self: center; align-items: center; min-width: 0; max-width: min(100%, 420px); gap: 8px; }
 .run-id { gap: 12px; justify-self: end; color: var(--text-secondary); font-size: 11px; }
 
+.tf-btn-group { display: inline-flex; gap: var(--space-2); }
+
 .traffic-panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
-.browser-button { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; color: #182230; font-size: 12px; font-weight: 680; background: #fff; transition: background 160ms ease, border-color 160ms ease; }
-.browser-button:hover { background: #f8fafc; }
-.browser-button.active { border-color: #c7d7fe; background: #f8fbff; color: var(--accent); }
-.browser-button:active { transform: translateY(1px) scale(0.99); }
 .browser-strip {
   display: flex;
   align-items: center;

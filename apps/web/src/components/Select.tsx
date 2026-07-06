@@ -31,12 +31,12 @@ export function Select({
   return (
     <div className={`tf-select ${className ?? ""}`} ref={ref} style={{ minWidth }}>
       <button type="button" className={`tf-select-trigger ${open ? "is-open" : ""}`} onClick={() => setOpen((v) => !v)}>
-        <span className={selected ? "" : "tf-select-ph"} title={selected?.label}>{selected ? selected.label : placeholder ?? "选择…"}</span>
+        <span className={selected ? "" : "tf-select-ph"} title={selected?.label}>{selected ? selected.label : placeholder ?? "Select…"}</span>
         <svg className="tf-select-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
       </button>
       {open && (
         <div className="tf-select-menu" role="listbox">
-          {options.length === 0 && <div className="tf-select-empty">无可选项</div>}
+          {options.length === 0 && <div className="tf-select-empty">No options</div>}
           {options.map((o) => (
             <button
               key={o.value} type="button" role="option" aria-selected={o.value === value}
