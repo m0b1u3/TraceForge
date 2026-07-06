@@ -18,8 +18,12 @@ export function loadMcpConfig(path = "config/mcp.json"): McpServerConfig[] {
   try {
     const raw = readFileSync(path, "utf8");
     const parsed = McpConfigSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) {
+      console.error(`[mcp-config] ${path} schema invalid:`, parsed.error.format());
+    }
     return parsed.success ? parsed.data.servers : [];
-  } catch {
+  } catch (err) {
+    console.error(`[mcp-config] failed to load ${path}: ${(err as Error).message}`);
     return [];
   }
 }
