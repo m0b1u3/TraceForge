@@ -9,9 +9,9 @@ export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" })
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
 
-  useEffect(() => { listCases().then(setCases).catch(() => showToast("加载 Case 列表失败")); }, [setCases, showToast]);
+  useEffect(() => { listCases().then(setCases).catch(() => showToast("Failed to load cases")); }, [setCases, showToast]);
 
-  // 范围不在新建时填：测试边界由 Agent 在对话里分析并提议、你批准后纳入（见 propose_scope_expansion）。
+  // Scope is not set during creation: test boundaries are analyzed and proposed by the Agent in conversation, then approved by you (see propose_scope_expansion).
   const submit = async () => {
     if (!name.trim()) return;
     try {
@@ -28,47 +28,47 @@ export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" })
   if (variant === "bar") {
     return (
       <div className="tf-case-bar">
-        <Select className="tf-case-select" value={caseId} placeholder="选择 Case" options={cases.map((c) => ({ value: c.id, label: c.name }))} onChange={(v) => enterCase(v)} minWidth={150} />
-        <button className="tf-btn tf-btn-icon" onClick={() => setCreating((v) => !v)}><Plus size={14} weight="bold" /> 新建</button>
+        <Select className="tf-case-select" value={caseId} placeholder="Select case" options={cases.map((c) => ({ value: c.id, label: c.name }))} onChange={(v) => enterCase(v)} minWidth={150} />
+        <button className="tf-btn tf-btn-icon" onClick={() => setCreating((v) => !v)}><Plus size={14} weight="bold" /> New</button>
         {creating && (
           <div className="tf-create-pop">
-            <input className="tf-input" value={name} autoFocus onChange={(e) => setName(e.target.value)}
+            <input className="tf-input case-launcher-input" value={name} autoFocus onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") setCreating(false); }}
-              placeholder="Case 名称" style={{ width: 180 }} />
-            <button className="tf-btn tf-btn-accent" disabled={!name.trim()} onClick={submit}>创建</button>
-            <button className="tf-btn" onClick={() => { setCreating(false); setName(""); }}>取消</button>
+              placeholder="Case name" />
+            <button className="tf-btn tf-btn-accent" disabled={!name.trim()} onClick={submit}>Create</button>
+            <button className="tf-btn" onClick={() => { setCreating(false); setName(""); }}>Cancel</button>
           </div>
         )}
       </div>
     );
   }
 
-  // hero 变体：首屏右卡
+  // hero variant: right card on the landing screen
   return (
     <div className="tf-launcher">
       {!creating ? (
         <>
-          <div className="tf-launcher-label">开始一个任务</div>
+          <div className="tf-launcher-label">Start a session</div>
           {cases.length > 0 && (
             <>
-              <Select value={caseId} placeholder="选择已有 Case" options={cases.map((c) => ({ value: c.id, label: c.name }))} onChange={(v) => enterCase(v)} minWidth={0} />
-              <div className="tf-launcher-or"><span>或</span></div>
+              <Select value={caseId} placeholder="Choose a case" options={cases.map((c) => ({ value: c.id, label: c.name }))} onChange={(v) => enterCase(v)} minWidth={0} />
+              <div className="tf-launcher-or"><span>or</span></div>
             </>
           )}
           <button className="tf-btn tf-btn-accent tf-btn-block tf-btn-icon" onClick={() => setCreating(true)}>
-            <Plus size={15} weight="bold" /> 新建 Case
+            <Plus size={15} weight="bold" /> Create new case
           </button>
         </>
       ) : (
         <>
-          <div className="tf-launcher-label">新建 Case</div>
+          <div className="tf-launcher-label">Create new case</div>
           <input className="tf-input tf-input-block" value={name} autoFocus onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") setCreating(false); }}
-            placeholder="给这次任务取个名字" />
-          <div className="tf-launcher-hint">无需预先指定测试范围 —— 进入后在对话里告诉 Agent 要测的目标，它会识别 host 并提议纳入授权范围，由你批准。</div>
-          <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
-            <button className="tf-btn tf-btn-accent" style={{ flex: 1 }} disabled={!name.trim()} onClick={submit}>创建并进入</button>
-            <button className="tf-btn" onClick={() => { setCreating(false); setName(""); }}>取消</button>
+            placeholder="Name this session" />
+          <div className="tf-launcher-hint">No need to set scope up front. After entering, tell the Agent what target to test in the chat. It will identify the host and propose adding it to the authorized scope for your approval.</div>
+          <div className="case-launcher-actions">
+            <button className="tf-btn tf-btn-accent" disabled={!name.trim()} onClick={submit}>Create and enter</button>
+            <button className="tf-btn" onClick={() => { setCreating(false); setName(""); }}>Cancel</button>
           </div>
         </>
       )}

@@ -524,6 +524,10 @@ button { cursor: pointer; }
 .edge-label { padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; color: #475467; background: rgba(255,255,255,0.92); box-shadow: 0 2px 8px rgba(22,24,29,0.08); font-size: 9px; font-weight: 780; pointer-events: none; }
 @keyframes node-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
 
+.case-launcher-input { width: 180px; }
+.case-launcher-actions { display: flex; gap: var(--space-2); margin-top: 2px; }
+.case-launcher-actions .tf-btn { flex: 1; }
+
 /* 首屏：左文右行动（浅色） */
 .hero-shell { display: flex; align-items: center; justify-content: center; padding: 32px; background:
   radial-gradient(1100px 560px at 20% 28%, rgba(37,99,235,0.06), transparent 60%),
