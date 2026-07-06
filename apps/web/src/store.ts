@@ -49,6 +49,7 @@ interface State {
   addAction: (a: ActionCard) => void;
   addDecision: (d: Decision) => void;
   addAgentEvent: (e: AgentUiEvent) => void;
+  clearTraffic: () => void;
   setPendingApproval: (p: { approvalId: string; tool: string; input: string }) => void;
   clearPendingApproval: () => void;
   setBrowser: (controller: "llm" | "human" | null, url?: string) => void;
@@ -127,6 +128,7 @@ export const useStore = create<State>((set, get) => ({
   addAction: (a) => set((s) => ({ actions: [...s.actions, a] })),
   addDecision: (d) => set((s) => ({ decisions: [...s.decisions, d] })),
   addAgentEvent: (e) => set((s) => ({ agentEvents: [...s.agentEvents, e] })),
+  clearTraffic: () => set({ traffic: [] }),
   setPendingApproval: (p) => set({ pendingApproval: p }),
   clearPendingApproval: () => set({ pendingApproval: null }),
   setBrowser: (controller, url) => set((s) => ({ browserController: controller, browserUrl: url ?? s.browserUrl })),
