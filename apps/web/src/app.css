@@ -513,12 +513,6 @@ button { cursor: pointer; }
 .tf-select-opt.is-sel { color: var(--accent); }
 .tf-select-empty { padding: 9px; color: var(--text-tertiary); font-size: 12.5px; text-align: center; }
 
-/* 我们特有：统计徽章 + 控制权 pill */
-.tf-stat { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); }
-.tf-stat b { color: #182230; font-family: var(--mono); font-weight: 600; }
-.tf-stat.is-alert, .tf-stat.is-alert b { color: var(--amber); }
-.tf-stat.is-crit, .tf-stat.is-crit b { color: var(--red); }
-
 /* key-value 明细行 + 代码块（流量/Fact/Task 详情通用） */
 .kv { display: flex; gap: 8px; padding: 3px 0; font-size: 12px; color: #1d2939; word-break: break-all; }
 .kv > span:first-child { flex-shrink: 0; min-width: 64px; color: var(--text-secondary); }
