@@ -37,6 +37,7 @@ export function buildAgentConversationItems({
   let lastVisible: { kind: AgentUiEvent["kind"]; text: string } | null = null;
 
   events.forEach((event, index) => {
+    if (isNoisyAgentEvent(event)) return;
     const display = formatAgentEvent(event);
     if (!display) return;
     if (lastVisible?.kind === display.kind && lastVisible.text === display.text) return;
@@ -49,6 +50,21 @@ export function buildAgentConversationItems({
   if (pendingScope) items.push({ type: "scope", key: `scope-${pendingScope.host}` });
   if (agentBusy) items.push({ type: "busy", key: "agent-busy" });
   return items;
+}
+
+export function shouldStickToBottomAfterUpdate(el: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">): boolean {
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+  return distanceFromBottom <= 80;
+}
+
+function isNoisyAgentEvent(event: AgentUiEvent): boolean {
+  const text = event.text.trim();
+  if (!text) return true;
+  if (event.kind === "started") return true;
+  if (event.kind === "done") return text === "done" || text === "handled";
+  if (event.kind === "tool_call") return /^list_traffic\s*\(\s*\{\s*\}\s*\)$/i.test(text);
+  if (event.kind === "tool_result") return /^list_traffic\s*→\s*\(暂无流量\)$/i.test(text);
+  return false;
 }
 
 function formatAgentEvent(event: AgentUiEvent): { kind: AgentUiEvent["kind"]; label: string; text: string } | null {
@@ -76,12 +92,13 @@ export function AgentPanel() {
   const [goal, setGoal] = useState("");
   const [busy, setBusy] = useState<"approved" | "rejected" | null>(null);
   const messagesRef = useRef<HTMLElement | null>(null);
+  const shouldAutoScrollRef = useRef(true);
   const conversationItems = buildAgentConversationItems({ events: agentEvents, pendingApproval, pendingScope, agentBusy });
   const latestAgentText = agentEvents.at(-1)?.text;
 
   useEffect(() => {
     const el = messagesRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && shouldAutoScrollRef.current) el.scrollTop = el.scrollHeight;
   }, [conversationItems.length, latestAgentText]);
 
   if (!caseId) return null;
@@ -124,6 +141,7 @@ export function AgentPanel() {
     if (!goal.trim()) return;
     const g = goal.trim();
     setGoal("");
+    shouldAutoScrollRef.current = true;
     try {
       if (activeRun) {
         addAgentEvent({ kind: "user", text: `[steering] ${g}` });
@@ -163,7 +181,13 @@ export function AgentPanel() {
           <div className="session-state"><Sparkle size={14} /> autonomous</div>
         </div>
       </div>
-      <section className="messages" ref={messagesRef}>
+      <section
+        className="messages"
+        ref={messagesRef}
+        onScroll={(event) => {
+          shouldAutoScrollRef.current = shouldStickToBottomAfterUpdate(event.currentTarget);
+        }}
+      >
         {conversationItems.length === 0 && (
           <div className="tf-guide">
             <div className="tf-guide-icon"><Sparkle size={22} weight="duotone" /></div>

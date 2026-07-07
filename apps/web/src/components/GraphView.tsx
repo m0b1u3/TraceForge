@@ -130,11 +130,22 @@ function EventEdge(props: EdgeProps) {
 }
 const edgeTypes = { event: EventEdge };
 
-function buildTimelineGraph(timeline: TimelineEntry[], goal?: string | null) {
+function buildTimelineGraph(
+  timeline: TimelineEntry[],
+  goal: string | null | undefined,
+  facts: Fact[],
+  tasks: Task[],
+  actions: ActionCard[],
+) {
   if (timeline.length === 0) return { nodes: [] as Node<FlowNodeData>[], edges: [] as Edge[], focusNodeId: undefined as string | undefined };
 
   const nodes: Node<FlowNodeData>[] = [];
   const edges: Edge[] = [];
+  const taskById = new Map(tasks.map((t) => [t.id, t]));
+  const actionById = new Map(actions.map((a) => [a.id, a]));
+  const latestNodeByRef = new Map<string, string>();
+  const latestNodeByKind = new Map<string, string>();
+  let latestContextNode: string | undefined;
 
   if (goal) {
     nodes.push({
@@ -153,9 +164,36 @@ function buildTimelineGraph(timeline: TimelineEntry[], goal?: string | null) {
     });
   }
 
+  const addEdge = (source: string | undefined, target: string, label: string, color: string, active = false) => {
+    if (!source || source === target) return false;
+    const id = `${source}->${target}:${label}`;
+    if (edges.some((e) => e.id === id)) return false;
+    edges.push({
+      id,
+      source,
+      target,
+      type: "event",
+      label,
+      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "#64748b" },
+      style: { stroke: color },
+      data: { active },
+    });
+    return true;
+  };
+
+  const addFactEdges = (factIds: string[], target: string, label: string, active: boolean) => {
+    let added = false;
+    for (const factId of factIds) {
+      const source = latestNodeByRef.get(factId);
+      added = addEdge(source, target, label, KIND_META.fact.color, active) || added;
+    }
+    return added;
+  };
+
   for (let i = 0; i < timeline.length; i++) {
     const entry = timeline[i];
     const kind = kindOf(entry);
+    const active = i === timeline.length - 1;
     nodes.push({
       id: entry.id,
       type: "bw",
@@ -170,19 +208,45 @@ function buildTimelineGraph(timeline: TimelineEntry[], goal?: string | null) {
         meta: formatTime(entry.createdAt),
       },
     });
-    const source = i === 0 ? (goal ? "__goal__" : undefined) : timeline[i - 1].id;
-    if (source) {
-      edges.push({
-        id: `${source}->${entry.id}`,
-        source,
-        target: entry.id,
-        type: "event",
-        label: i === 0 ? "start" : "next",
-        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "#64748b" },
-        style: { stroke: KIND_META[kind]?.color ?? "#94a3b8" },
-        data: { active: i === timeline.length - 1 },
-      });
+
+    const color = KIND_META[kind]?.color ?? "#94a3b8";
+    let connected = false;
+    if (entry.refId) {
+      connected = addEdge(latestNodeByRef.get(entry.refId), entry.id, "update", color, active) || connected;
     }
+
+    if (kind === "task" && entry.refId) {
+      const task = taskById.get(entry.refId);
+      connected = addFactEdges(task?.relatedFacts ?? [], entry.id, "evidence", active) || connected;
+    }
+
+    if (kind === "action" && entry.refId) {
+      const action = actionById.get(entry.refId);
+      connected = addFactEdges(action?.evidenceRefs ?? [], entry.id, "evidence", active) || connected;
+      for (const taskId of action?.taskRefs ?? []) {
+        connected = addEdge(latestNodeByRef.get(taskId), entry.id, "task", KIND_META.task.color, active) || connected;
+      }
+    }
+
+    if (kind === "solver") {
+      connected = addEdge(latestContextNode ?? (goal ? "__goal__" : undefined), entry.id, latestContextNode ? "refresh" : "start", color, active) || connected;
+    } else if (!connected) {
+      connected = addEdge(latestContextNode, entry.id, "uses", color, active) || connected;
+    }
+
+    if (!connected) {
+      connected = addEdge(latestNodeByKind.get(kind), entry.id, "next", color, active) || connected;
+    }
+
+    if (!connected && goal) {
+      addEdge("__goal__", entry.id, "related", color, active);
+    }
+
+    if (entry.refId) {
+      latestNodeByRef.set(entry.refId, entry.id);
+    }
+    if (kind === "solver") latestContextNode = entry.id;
+    latestNodeByKind.set(kind, entry.id);
   }
 
   return { nodes, edges, focusNodeId: timeline[timeline.length - 1]?.id };
@@ -194,7 +258,7 @@ async function elkLayout(nodes: Node<FlowNodeData>[], edges: Edge[]): Promise<No
       id: "root",
       layoutOptions: {
         "elk.algorithm": "layered",
-        "elk.direction": "DOWN",
+        "elk.direction": "RIGHT",
         "elk.spacing.nodeNode": "90",
         "elk.layered.spacing.nodeNodeBetweenLayers": "130",
         "elk.edgeRouting": "ORTHOGONAL",
@@ -209,22 +273,22 @@ async function elkLayout(nodes: Node<FlowNodeData>[], edges: Edge[]): Promise<No
     const res = await elk.layout(g);
     return nodes.map((n) => {
       const p = res.children?.find((c) => c.id === n.id);
-      return { ...n, position: { x: p?.x ?? 0, y: p?.y ?? 0 }, sourcePosition: Position.Bottom, targetPosition: Position.Top };
+      return { ...n, position: { x: p?.x ?? 0, y: p?.y ?? 0 }, sourcePosition: Position.Right, targetPosition: Position.Left };
     });
   } catch {
-    return nodes.map((n, i) => ({ ...n, position: { x: (i % 4) * 260, y: Math.floor(i / 4) * 150 }, sourcePosition: Position.Bottom, targetPosition: Position.Top }));
+    return nodes.map((n, i) => ({ ...n, position: { x: Math.floor(i / 4) * 300, y: (i % 4) * 150 }, sourcePosition: Position.Right, targetPosition: Position.Left }));
   }
 }
 
-function FitOnChange({ focusNodeId, nodes, version }: { focusNodeId?: string; nodes: Node<FlowNodeData>[]; version: number }) {
+function FitOnChange({ focusNodeId, nodes, version, focusLatest }: { focusNodeId?: string; nodes: Node<FlowNodeData>[]; version: number; focusLatest: boolean }) {
   const { fitView, setCenter } = useReactFlow();
   useEffect(() => {
     const frame = requestAnimationFrame(() =>
       requestAnimationFrame(() => {
-        if (nodes.length > 3 && focusNodeId) {
+        if ((focusLatest || nodes.length > 30) && nodes.length > 3 && focusNodeId) {
           const focus = nodes.find((n) => n.id === focusNodeId);
           if (focus) {
-            void setCenter(focus.position.x + (focus.width ?? 240) / 2, focus.position.y + (focus.height ?? 104) / 2, { zoom: 0.55, duration: 180 });
+            void setCenter(focus.position.x + (focus.width ?? 240) / 2, focus.position.y + (focus.height ?? 104) / 2, { zoom: focusLatest ? 0.55 : 0.42, duration: 180 });
             return;
           }
         }
@@ -232,11 +296,11 @@ function FitOnChange({ focusNodeId, nodes, version }: { focusNodeId?: string; no
       }),
     );
     return () => cancelAnimationFrame(frame);
-  }, [fitView, focusNodeId, nodes, setCenter, version]);
+  }, [fitView, focusLatest, focusNodeId, nodes, setCenter, version]);
   return null;
 }
 
-function FlowCanvas({ nodes, edges, focusNodeId, onNodeClick }: { nodes: Node<FlowNodeData>[]; edges: Edge[]; focusNodeId?: string; onNodeClick?: NodeMouseHandler }) {
+function FlowCanvas({ nodes, edges, focusNodeId, focusLatest, onNodeClick }: { nodes: Node<FlowNodeData>[]; edges: Edge[]; focusNodeId?: string; focusLatest: boolean; onNodeClick?: NodeMouseHandler }) {
   const [layouted, setLayouted] = useState<Node<FlowNodeData>[]>(nodes);
   const [version, setVersion] = useState(0);
 
@@ -262,7 +326,7 @@ function FlowCanvas({ nodes, edges, focusNodeId, onNodeClick }: { nodes: Node<Fl
       nodesConnectable={false}
       zoomOnScroll={false}
       panOnScroll
-      minZoom={0.12}
+      minZoom={0.36}
       maxZoom={1.25}
       onNodeClick={onNodeClick}
       defaultEdgeOptions={{
@@ -271,7 +335,7 @@ function FlowCanvas({ nodes, edges, focusNodeId, onNodeClick }: { nodes: Node<Fl
       }}
       proOptions={{ hideAttribution: true }}
     >
-      <FitOnChange focusNodeId={focusNodeId} nodes={layouted} version={version} />
+      <FitOnChange focusLatest={focusLatest} focusNodeId={focusNodeId} nodes={layouted} version={version} />
       <Background color="rgba(148,163,184,0.18)" gap={22} />
       <Controls position="bottom-right" showInteractive={false} />
     </ReactFlow>
@@ -324,7 +388,7 @@ function GraphInner({ interactive }: { interactive: boolean }) {
   const [selected, setSelected] = useState<TimelineEntry | null>(null);
 
   const visible = useMemo(() => timeline.slice(0, cursor), [timeline, cursor]);
-  const graph = useMemo(() => buildTimelineGraph(visible, activeRun?.goal), [visible, activeRun?.goal]);
+  const graph = useMemo(() => buildTimelineGraph(visible, activeRun?.goal, facts, tasks, actions), [visible, activeRun?.goal, facts, tasks, actions]);
 
   useEffect(() => {
     if (!playing) return;
@@ -359,7 +423,7 @@ function GraphInner({ interactive }: { interactive: boolean }) {
     <div className="graph-wrapper">
       <div className="graph-canvas" onClick={() => setSelected(null)}>
         <ReactFlowProvider>
-          <FlowCanvas nodes={graph.nodes} edges={graph.edges} focusNodeId={graph.focusNodeId} onNodeClick={onNodeClick} />
+          <FlowCanvas nodes={graph.nodes} edges={graph.edges} focusLatest={interactive} focusNodeId={graph.focusNodeId} onNodeClick={onNodeClick} />
         </ReactFlowProvider>
       </div>
       <div className="graph-footer">

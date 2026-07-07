@@ -4,14 +4,26 @@ import type { TrafficEntry } from "@traceforge/shared";
 import { useStore } from "../store.js";
 import { BrowserControls } from "./BrowserPanel.js";
 
+export function formatTrafficTime(createdAt: string, locale = globalThis.navigator?.language ?? "en-US", timeZone?: string): string {
+  return new Date(createdAt).toLocaleTimeString(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone,
+  });
+}
+
 function TrafficRow({ t }: { t: TrafficEntry }) {
   const [open, setOpen] = useState(false);
   const headers = Object.entries(t.requestHeaders ?? {});
+  const requestTime = formatTrafficTime(t.createdAt);
   return (
     <article className={`request-row st-${String(t.responseStatus).charAt(0)} ${open ? "is-open" : ""}`} title={t.url}>
       <div className="request-row-head" onClick={() => setOpen((v) => !v)}>
         <span className={`method ${t.method.toLowerCase()}`}>{t.method}</span>
         <strong>{t.responseStatus ?? "—"}</strong>
+        <time className="request-row-time" dateTime={t.createdAt}>{requestTime}</time>
       </div>
       <p className="request-row-url" onClick={() => setOpen((v) => !v)}>{t.url}</p>
       {open && (
@@ -48,7 +60,7 @@ export function TrafficPanel() {
         </div>
         <div className="panel-header-actions">
           <BrowserControls />
-          <span className="tf-pill">{traffic.length} req</span>
+          <span className="tf-pill traffic-count-pill">{traffic.length} req</span>
           <button className="tf-btn tf-btn-ghost" onClick={clearTraffic}>Clear</button>
         </div>
       </header>

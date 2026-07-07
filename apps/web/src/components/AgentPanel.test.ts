@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildAgentConversationItems, scopeApprovalContinuationEventText, scopeApprovalContinuationGoal } from "./AgentPanel.js";
+import {
+  buildAgentConversationItems,
+  shouldStickToBottomAfterUpdate,
+  scopeApprovalContinuationEventText,
+  scopeApprovalContinuationGoal,
+} from "./AgentPanel.js";
 
 describe("scopeApprovalContinuationGoal", () => {
   it("asks the agent to continue after scope approval", () => {
@@ -72,5 +77,33 @@ describe("buildAgentConversationItems", () => {
     expect(items[0]?.label).toBe("Tool");
     expect(items[0]?.text?.length).toBeLessThan(220);
     expect(items[0]?.text?.endsWith("...")).toBe(true);
+  });
+
+  it("hides noisy terminal and empty tool events from the chat stream", () => {
+    const items = buildAgentConversationItems({
+      events: [
+        { kind: "started", text: "Started: test target" },
+        { kind: "tool_call", text: "list_traffic({})" },
+        { kind: "tool_result", text: "list_traffic → (暂无流量)" },
+        { kind: "done", text: "done" },
+        { kind: "text", text: "I found the login page." },
+      ],
+      pendingApproval: null,
+      pendingScope: null,
+      agentBusy: false,
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ type: "event", label: "Agent", text: "I found the login page." });
+  });
+});
+
+describe("shouldStickToBottomAfterUpdate", () => {
+  it("keeps following when the user is already near the bottom", () => {
+    expect(shouldStickToBottomAfterUpdate({ scrollTop: 860, clientHeight: 120, scrollHeight: 1000 })).toBe(true);
+  });
+
+  it("does not force-scroll when the user has pulled the conversation upward", () => {
+    expect(shouldStickToBottomAfterUpdate({ scrollTop: 200, clientHeight: 120, scrollHeight: 1000 })).toBe(false);
   });
 });
