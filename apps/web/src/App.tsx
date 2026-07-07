@@ -6,6 +6,7 @@ import { TrafficPanel } from "./components/TrafficPanel.js";
 import { AgentPanel } from "./components/AgentPanel.js";
 import { KnowledgePanel } from "./components/KnowledgePanel.js";
 import { GraphModal } from "./components/GraphModal.js";
+import { SettingsModal } from "./components/SettingsModal.js";
 
 function Toast() {
   const toast = useStore((s) => s.toast);
@@ -47,6 +48,7 @@ export function App() {
         <KnowledgePanel />
       </section>
       <GraphModal />
+      <SettingsModal />
       <Toast />
     </div>
   );

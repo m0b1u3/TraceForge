@@ -3,7 +3,7 @@ import { useStore } from "../store.js";
 import { CaseLauncher } from "./CaseLauncher.js";
 
 export function TopBar() {
-  const { caseId, browserController, browserUrl } = useStore();
+  const { caseId, browserController, browserUrl, setSettingsModalOpen } = useStore();
   const controlLabel = browserController === "human" ? "human" : browserController === "llm" ? "llm" : "idle";
   const controlPillClass = browserController === "human" ? "tf-pill-amber" : browserController === "llm" ? "tf-pill-accent" : "";
 
@@ -22,6 +22,7 @@ export function TopBar() {
             {browserUrl && <span className="topbar-url">· {browserUrl}</span>}
           </span>
         )}
+        <button type="button" className="tf-btn tf-btn-ghost" onClick={() => setSettingsModalOpen(true)}>Settings</button>
       </div>
     </header>
   );
