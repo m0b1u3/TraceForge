@@ -5,6 +5,8 @@ cases/
 .venv/
 *.sqlite
 *.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
 .DS_Store
 config/llm.json
 config/mcp.json
@@ -12,10 +14,10 @@ config/mcp.json
 flow/dist/
 flow/node_modules/
 flow/*.tsbuildinfo
-*.sqlite-shm
-*.sqlite-wal
 flow/package-lock.json
 flow/vite.config.d.ts
 flow/vite.config.js
 flow/tsconfig.node.json
 .superpowers/sdd/
+data/
+workspace/
