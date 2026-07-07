@@ -1,6 +1,24 @@
 import type { Case, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
+export interface LlmConfig {
+  provider: "anthropic" | "openai";
+  model: string;
+  baseUrl?: string;
+  apiKeyEnv: string;
+  apiKeyMasked: string;
+  jsonMode?: "json_schema" | "json_object";
+}
+
+export interface LlmConfigInput {
+  provider: "anthropic" | "openai";
+  model: string;
+  baseUrl?: string;
+  apiKey?: string;
+  jsonMode?: "json_schema" | "json_object";
+  apiKeyEnv?: string;
+}
+
 async function ensureOk(r: Response, action: string): Promise<Response> {
   if (r.ok) return r;
   let reason = `${r.status}`;
@@ -154,4 +172,20 @@ export async function approveScope(caseId: string, host: string): Promise<void> 
   await ensureOk(await fetch(`/api/cases/${caseId}/scope/approve`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ host }),
   }), "Approve scope");
+}
+
+export async function getLlmConfig(): Promise<LlmConfig> {
+  const r = await fetch("/api/config/llm");
+  await ensureOk(r, "Load LLM config");
+  return r.json();
+}
+
+export async function updateLlmConfig(input: LlmConfigInput): Promise<LlmConfig> {
+  const r = await fetch("/api/config/llm", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  await ensureOk(r, "Save LLM config");
+  return r.json();
 }
