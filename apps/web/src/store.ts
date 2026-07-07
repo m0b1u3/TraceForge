@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents } from "./api.js";
+import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig } from "./api.js";
+import type { LlmConfig, LlmConfigInput } from "./api.js";
 
 export interface AgentUiEvent {
   kind: "user" | "text" | "tool_call" | "tool_result" | "done" | "error" | "started";
@@ -32,6 +33,12 @@ interface State {
   graphModalOpen: boolean;
   mcpTools: McpToolHandle[];
   warnings: ObserverWarning[];
+  llmConfig: LlmConfig | null;
+  settingsModalOpen: boolean;
+  setLlmConfig: (cfg: LlmConfig | null) => void;
+  setSettingsModalOpen: (open: boolean) => void;
+  loadLlmConfig: () => Promise<void>;
+  saveLlmConfig: (input: LlmConfigInput) => Promise<void>;
   addWarning: (w: ObserverWarning) => void;
   upsertWarning: (w: ObserverWarning) => void;
   pendingScope: { host: string; reason: string } | null;
@@ -83,6 +90,28 @@ export const useStore = create<State>((set, get) => ({
   graphModalOpen: false,
   mcpTools: [],
   warnings: [],
+  llmConfig: null,
+  settingsModalOpen: false,
+  setLlmConfig: (cfg) => set({ llmConfig: cfg }),
+  setSettingsModalOpen: (open) => set({ settingsModalOpen: open }),
+  loadLlmConfig: async () => {
+    try {
+      const cfg = await getLlmConfig();
+      set({ llmConfig: cfg });
+    } catch (err) {
+      get().showToast(`Failed to load settings: ${(err as Error).message}`);
+    }
+  },
+  saveLlmConfig: async (input) => {
+    try {
+      const cfg = await updateLlmConfig(input);
+      set({ llmConfig: cfg });
+      get().showToast("Settings saved");
+    } catch (err) {
+      get().showToast(`Failed to save settings: ${(err as Error).message}`);
+      throw err;
+    }
+  },
   addWarning: (w) => set((s) => ({ warnings: [...s.warnings, w] })),
   upsertWarning: (w) =>
     set((s) => {
