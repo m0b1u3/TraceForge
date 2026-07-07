@@ -1,9 +1,11 @@
 {
   "_comment_anthropic": { "provider": "anthropic", "model": "claude-opus-4-8", "apiKeyEnv": "ANTHROPIC_API_KEY" },
-  "_comment_deepseek": { "provider": "openai", "model": "deepseek-chat", "baseUrl": "https://api.deepseek.com", "apiKeyEnv": "DEEPSEEK_API_KEY", "jsonMode": "json_object" },
+  "_comment_deepseek": { "provider": "openai", "model": "deepseek-chat", "baseUrl": "https://api.deepseek.com", "apiKeyEnv": "DEEPSEEK_API_KEY", "jsonMode": "json_object", "contextWindowTokens": 128000, "maxOutputTokens": 8192 },
   "provider": "openai",
   "model": "deepseek-chat",
   "baseUrl": "https://api.deepseek.com",
   "jsonMode": "json_object",
-  "apiKeyEnv": "DEEPSEEK_API_KEY"
+  "apiKeyEnv": "DEEPSEEK_API_KEY",
+  "contextWindowTokens": 128000,
+  "maxOutputTokens": 8192
 }

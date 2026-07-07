@@ -30,7 +30,7 @@ import { AgentRunRegistry } from "./agent-runs.js";
 import { SessionStateStore } from "./stores/session-state-store.js";
 import { HypothesisStore } from "./stores/hypothesis-store.js";
 import { ContextSummaryStore } from "./stores/context-summary-store.js";
-import { buildContext, compressFar } from "@traceforge/reasoning-core";
+import { buildContext, compressFar, deriveContextBudget, estimateTokens, shouldCompressFarHistory } from "@traceforge/reasoning-core";
 import { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool, makeSearchFactsTool, makeGetFactDetailTool, makeSearchTrafficTool, makeRecallConversationTool } from "@traceforge/extension";
 import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
 
@@ -242,7 +242,7 @@ export function registerRoutes(
     const task = taskStore.create(cur.caseId, {
       title: cur.title,
       status: "open",
-      reason: `${cur.description}\n\nObserver 建议：${cur.suggestedAction}`,
+      reason: `${cur.description}\n\nObserver suggestion: ${cur.suggestedAction}`,
       blockedBy: [],
       triggerWhen: [],
       relatedFacts: cur.relatedFacts,
@@ -354,6 +354,11 @@ export function registerRoutes(
       .filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done")
       .slice(-20)
       .map((e) => ({ role: e.kind === "user" ? ("user" as const) : ("assistant" as const), text: e.text }));
+    const llmConfig = loadLlmConfig() ?? undefined;
+    const contextBudget = deriveContextBudget({
+      contextWindowTokens: llmConfig?.contextWindowTokens,
+      maxOutputTokens: llmConfig?.maxOutputTokens,
+    });
     const built = buildContext({
       goal,
       state: sessionStore.get(id),
@@ -366,10 +371,10 @@ export function registerRoutes(
       doneTaskSummaries: taskStore.listByCase(id).filter((t) => t.status === "done").map((t) => `${t.title}：${t.reason || "完成"}`),
       farSummary: contextSummaryStore.latest(id)?.content,
       scopeHosts: c.scopeRules.flatMap((r) => r.allowHosts),
-    }, { maxTokens: 60000, focusReserve: 3000 });
+    }, { maxTokens: contextBudget.maxTokens, focusReserve: contextBudget.focusReserve });
 
     agentEventStore.append(id, "user", goal); // 存用户这句目标，刷新/切 Case 后历史可见完整双边对话
-    agentEventStore.append(id, "started", `开始：${goal}`);
+    agentEventStore.append(id, "started", `Started: ${goal}`);
     await new AgentRuntime(llm, registry, gate).run(system, built.messages, (e) => {
       if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
       else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined); trajectory.push(`[result] ${e.name} → ${e.content}`); }
@@ -414,25 +419,24 @@ export function registerRoutes(
       if (completed) bus.emit({ type: "agent_run_completed", run: completed, content: trajectory.at(-1) ?? "" });
     }
 
-    timelineStore.append(id, "context_built", `注入 ${built.injectedFactIds.length} facts, ~${built.estimatedTokens} tokens, 降级:${built.degraded.join(",") || "无"}`);
+    timelineStore.append(id, "context_built", `Injected ${built.injectedFactIds.length} facts, ~${built.estimatedTokens} tokens, degraded:${built.degraded.join(",") || "none"}`);
 
-    // 增量远期摘要：run 结束后压缩远期对话，失败不影响已完成的 run
-    const FAR_THRESHOLD = 30;   // 超过此数量才压缩
-    const RECENT_WINDOW = 20;   // 保留最近 N 条不压缩（近期）
+    // 增量远期摘要：run 结束后按当前模型上下文预算压缩远期对话，失败不影响已完成的 run
     try {
       const allEvents = agentEventStore.listByCase(id);
-      if (allEvents.length > FAR_THRESHOLD) {
+      if (allEvents.length > contextBudget.recentWindow) {
         // 已摘要到第几条（用事件总数做游标，避免依赖 schema seq 字段）
         const alreadyCovered = contextSummaryStore.latest(id)?.coversUpToEventSeq ?? 0;
-        // 远期窗口：[alreadyCovered, allEvents.length - RECENT_WINDOW)
-        const farEndIdx = allEvents.length - RECENT_WINDOW;
+        // 远期窗口：[alreadyCovered, allEvents.length - recentWindow)
+        const farEndIdx = allEvents.length - contextBudget.recentWindow;
         if (farEndIdx > alreadyCovered) {
           const farEvents = allEvents.slice(alreadyCovered, farEndIdx);
           const convoText = farEvents
             .filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done")
             .map((e) => `${e.kind === "user" ? "User" : "Agent"}: ${e.text}`)
             .join("\n");
-          if (convoText.trim()) {
+          const farHistoryTokens = estimateTokens(convoText);
+          if (convoText.trim() && shouldCompressFarHistory({ farHistoryTokens, budget: contextBudget })) {
             const doneTaskLines = taskStore.listByCase(id)
               .filter((t) => t.status === "done")
               .map((t) => `${t.title}：${t.reason || "完成"}`);

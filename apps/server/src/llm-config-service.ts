@@ -9,6 +9,8 @@ export interface LlmConfigDto {
   apiKey?: string;
   jsonMode?: "json_schema" | "json_object";
   apiKeyEnv?: string;
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
 }
 
 export interface LlmConfigView extends LlmConfig {
@@ -17,6 +19,14 @@ export interface LlmConfigView extends LlmConfig {
 
 function defaultApiKeyEnv(provider: "anthropic" | "openai"): string {
   return provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+}
+
+function validateApiKeyEnv(key: string): void {
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) throw new Error("invalid apiKeyEnv: use A-Z, 0-9, and underscores only");
+}
+
+function validateApiKeyValue(value: string): void {
+  if (/[\r\n]/.test(value)) throw new Error("invalid apiKey: line breaks are not allowed");
 }
 
 function maskKey(key: string): string {
@@ -50,16 +60,33 @@ export class LlmConfigService {
     return { ...parsed.data, apiKeyMasked: maskKey(key ?? "") };
   }
 
+  initializeFromConfig(): LlmConfigView {
+    const raw = readFileSync(this.configPath, "utf8");
+    const parsed = LlmConfigSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) throw new Error(`invalid LLM config: ${parsed.error.message}`);
+    validateApiKeyEnv(parsed.data.apiKeyEnv);
+    this.currentProvider = createProvider(parsed.data);
+    const key = this.readEnvValue(parsed.data.apiKeyEnv);
+    return { ...parsed.data, apiKeyMasked: maskKey(key ?? "") };
+  }
+
   reload(dto: LlmConfigDto): LlmConfigView {
     const existing = this.readConfig();
-    const apiKeyEnv = dto.apiKeyEnv || existing?.apiKeyEnv || defaultApiKeyEnv(dto.provider);
+    const sameProvider = existing?.provider === dto.provider;
+    const apiKeyEnv = dto.apiKeyEnv || (sameProvider ? existing?.apiKeyEnv : undefined) || defaultApiKeyEnv(dto.provider);
+    validateApiKeyEnv(apiKeyEnv);
+    if (dto.apiKey) validateApiKeyValue(dto.apiKey);
     const config: LlmConfig = {
       provider: dto.provider,
       model: dto.model,
       baseUrl: dto.baseUrl,
       apiKeyEnv,
       jsonMode: dto.jsonMode,
+      contextWindowTokens: dto.contextWindowTokens ?? existing?.contextWindowTokens,
+      maxOutputTokens: dto.maxOutputTokens ?? existing?.maxOutputTokens,
     };
+    const parsed = LlmConfigSchema.safeParse(config);
+    if (!parsed.success) throw new Error(`invalid LLM config: ${parsed.error.message}`);
     writeFileSync(this.configPath, JSON.stringify(config, null, 2));
     if (dto.apiKey) {
       this.setEnvValue(apiKeyEnv, dto.apiKey);

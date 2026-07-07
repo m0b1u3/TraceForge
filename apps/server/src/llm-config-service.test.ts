@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,11 @@ function makeConfig(tmp: string, cfg: object) {
 describe("LlmConfigService", () => {
   let tmp: string;
   beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), "llmcfg-")); });
+  afterEach(() => {
+    delete process.env.TEST_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+  });
 
   it("loads config and masks the key", () => {
     makeConfig(tmp, { provider: "openai", model: "m", apiKeyEnv: "K", jsonMode: "json_object" });
@@ -70,6 +75,55 @@ describe("LlmConfigService", () => {
     svc.reload({ provider: "anthropic", model: "m", apiKey: "sk-x" });
     const json = JSON.parse(readFileSync(join(tmp, "llm.json"), "utf8"));
     expect(json.apiKeyEnv).toBe("ANTHROPIC_API_KEY");
+  });
+
+  it("uses the provider default apiKeyEnv when provider changes", () => {
+    makeConfig(tmp, { provider: "openai", model: "m", apiKeyEnv: "OPENAI_API_KEY" });
+    makeEnv(tmp, "ANTHROPIC_API_KEY", "sk-ant");
+    process.env.ANTHROPIC_API_KEY = "sk-ant";
+    const svc = new LlmConfigService(join(tmp, "llm.json"), join(tmp, ".env"));
+    svc.reload({ provider: "anthropic", model: "claude" });
+    const json = JSON.parse(readFileSync(join(tmp, "llm.json"), "utf8"));
+    expect(json.apiKeyEnv).toBe("ANTHROPIC_API_KEY");
+  });
+
+  it("keeps existing context window settings when they are omitted during reload", () => {
+    makeConfig(tmp, { provider: "openai", model: "m", apiKeyEnv: "OPENAI_API_KEY", contextWindowTokens: 128000, maxOutputTokens: 8192 });
+    makeEnv(tmp, "OPENAI_API_KEY", "sk-openai");
+    process.env.OPENAI_API_KEY = "sk-openai";
+    const svc = new LlmConfigService(join(tmp, "llm.json"), join(tmp, ".env"));
+    svc.reload({ provider: "openai", model: "m2" });
+    const json = JSON.parse(readFileSync(join(tmp, "llm.json"), "utf8"));
+    expect(json.contextWindowTokens).toBe(128000);
+    expect(json.maxOutputTokens).toBe(8192);
+  });
+
+  it("initializes the runtime provider from existing config", () => {
+    makeConfig(tmp, { provider: "openai", model: "m", apiKeyEnv: "OPENAI_API_KEY" });
+    makeEnv(tmp, "OPENAI_API_KEY", "sk-openai");
+    process.env.OPENAI_API_KEY = "sk-openai";
+    const svc = new LlmConfigService(join(tmp, "llm.json"), join(tmp, ".env"));
+    const cfg = svc.initializeFromConfig();
+    expect(cfg.provider).toBe("openai");
+    expect(cfg.apiKeyMasked).toContain("•");
+  });
+
+  it("rejects invalid apiKeyEnv names", () => {
+    makeConfig(tmp, { provider: "openai", model: "m", apiKeyEnv: "OPENAI_API_KEY" });
+    const svc = new LlmConfigService(join(tmp, "llm.json"), join(tmp, ".env"));
+    expect(() => svc.reload({ provider: "openai", model: "m", apiKeyEnv: "BAD-NAME", apiKey: "sk-test" })).toThrow(/invalid apiKeyEnv/);
+  });
+
+  it("rejects invalid config values before writing files", () => {
+    makeConfig(tmp, { provider: "openai", model: "m", apiKeyEnv: "OPENAI_API_KEY" });
+    const svc = new LlmConfigService(join(tmp, "llm.json"), join(tmp, ".env"));
+    expect(() => svc.reload({ provider: "invalid" as "openai", model: "m" })).toThrow(/invalid LLM config/);
+  });
+
+  it("rejects api keys containing line breaks", () => {
+    makeConfig(tmp, { provider: "openai", model: "m", apiKeyEnv: "OPENAI_API_KEY" });
+    const svc = new LlmConfigService(join(tmp, "llm.json"), join(tmp, ".env"));
+    expect(() => svc.reload({ provider: "openai", model: "m", apiKey: "sk-test\nEXTRA=x" })).toThrow(/invalid apiKey/);
   });
 
   it("sets process.env during reload when apiKey is provided", () => {

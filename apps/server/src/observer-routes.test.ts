@@ -107,7 +107,7 @@ describe("observer integration", () => {
       priority: "medium",
     });
     expect(body.task.reason).toContain("还有点没测");
-    expect(body.task.reason).toContain("Observer 建议：继续测 X");
+    expect(body.task.reason).toContain("Observer suggestion: 继续测 X");
     expect(events).toContainEqual({ type: "task_created", task: body.task });
     expect(events).toContainEqual({ type: "observer_warning_updated", warning: body.warning });
     expect(events.some((event) => event.type === "timeline_appended" && event.entry.refId === body.task.id)).toBe(true);

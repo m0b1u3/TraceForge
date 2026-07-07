@@ -37,6 +37,11 @@ export async function buildServer(
   await mcp.connectAll(configs);
 
   const llmService = new LlmConfigService(llmConfigPath, envPath);
+  try {
+    llmService.initializeFromConfig();
+  } catch (err) {
+    app.log.warn({ err }, "LLM provider not initialized from config; save settings before running Agent");
+  }
   const provider = llmService.getProvider();
 
   registerRoutes(app, db, bus, provider, mcp, llmService);

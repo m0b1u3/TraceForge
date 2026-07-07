@@ -8,7 +8,7 @@ beforeEach(() => { db = createDb(":memory:"); });
 describe("AgentEventStore", () => {
   it("appends an event with a generated id and lists by case in order", () => {
     const store = new AgentEventStore(db);
-    const a = store.append("case_1", "started", "开始：找接口");
+    const a = store.append("case_1", "started", "Started: 找接口");
     const b = store.append("case_1", "tool_call", "record_fact(...)", "record_fact");
     expect(a.id).toMatch(/^ae_/);
     expect(a.tool).toBeNull();
