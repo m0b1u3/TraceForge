@@ -32,6 +32,7 @@ import { HypothesisStore } from "./stores/hypothesis-store.js";
 import { ContextSummaryStore } from "./stores/context-summary-store.js";
 import { buildContext, compressFar } from "@traceforge/reasoning-core";
 import { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool, makeSearchFactsTool, makeGetFactDetailTool, makeSearchTrafficTool, makeRecallConversationTool } from "@traceforge/extension";
+import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
 
 export function registerRoutes(
   app: FastifyInstance,
@@ -39,6 +40,7 @@ export function registerRoutes(
   bus: EventBus,
   provider?: LlmProvider,
   mcp?: McpManager,
+  llmService?: LlmConfigService,
 ): void {
   const cases = new CaseStore(db);
   const traffic = new TrafficStore(db);
@@ -49,6 +51,23 @@ export function registerRoutes(
   // model/baseUrl/provider 全部来自 config/llm.json；无配置或无 key 直接失败，禁止静默空跑。
   const llm: LlmProvider = provider ?? createProviderFromConfig(loadLlmConfig());
   const queryExpander = new LlmQueryExpander(llm);
+
+  if (llmService) {
+    app.get("/api/config/llm", async () => llmService.load());
+
+    app.post("/api/config/llm", async (req, reply) => {
+      const body = req.body as LlmConfigDto;
+      if (!body.provider || !body.model) {
+        return reply.code(400).send({ error: "provider and model are required" });
+      }
+      try {
+        return llmService.reload(body);
+      } catch (err) {
+        return reply.code(500).send({ error: (err as Error).message });
+      }
+    });
+  }
+
   const actionStore = new ActionCardStore(db);
   const decisionStore = new DecisionStore(db);
   const observerStore = new ObserverWarningStore(db);

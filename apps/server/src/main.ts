@@ -7,13 +7,21 @@ import { createDb } from "./db/client.js";
 import { EventBus } from "./event-bus.js";
 import { registerRoutes } from "./routes.js";
 import { McpManager, loadMcpConfig } from "@traceforge/extension";
+import { LlmConfigService } from "./llm-config-service.js";
 
 // 运行时数据固定放在项目根目录 data/ 下，避免受 process.cwd() 影响（tsx watch 从 apps/server 启动）
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const DEFAULT_DB_PATH = resolve(PROJECT_ROOT, "data/traceforge.sqlite");
 const DEFAULT_MCP_CONFIG_PATH = resolve(PROJECT_ROOT, "config/mcp.json");
+const DEFAULT_LLM_CONFIG_PATH = resolve(PROJECT_ROOT, "config/llm.json");
+const DEFAULT_ENV_PATH = resolve(PROJECT_ROOT, ".env");
 
-export async function buildServer(dbPath = DEFAULT_DB_PATH, mcpConfigPath = DEFAULT_MCP_CONFIG_PATH) {
+export async function buildServer(
+  dbPath = DEFAULT_DB_PATH,
+  mcpConfigPath = DEFAULT_MCP_CONFIG_PATH,
+  llmConfigPath = DEFAULT_LLM_CONFIG_PATH,
+  envPath = DEFAULT_ENV_PATH,
+) {
   const app = Fastify({ logger: true });
   await app.register(cors, { origin: true });
   await app.register(websocket);
@@ -28,7 +36,10 @@ export async function buildServer(dbPath = DEFAULT_DB_PATH, mcpConfigPath = DEFA
   }
   await mcp.connectAll(configs);
 
-  registerRoutes(app, db, bus, undefined, mcp);
+  const llmService = new LlmConfigService(llmConfigPath, envPath);
+  const provider = llmService.getProvider();
+
+  registerRoutes(app, db, bus, provider, mcp, llmService);
 
   app.get("/ws", { websocket: true }, (socket) => {
     const off = bus.subscribe((e) => socket.send(JSON.stringify(e)));
