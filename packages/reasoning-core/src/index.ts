@@ -3,6 +3,7 @@
 export * from "./token-estimate.js";
 export * from "./relevance.js";
 export * from "./context-builder.js";
+export * from "./context-budget.js";
 export * from "./compressor.js";
 export * from "./keyword-search.js";
 export * from "./expanded-keyword-search.js";

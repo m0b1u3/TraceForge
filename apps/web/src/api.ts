@@ -8,6 +8,8 @@ export interface LlmConfig {
   apiKeyEnv: string;
   apiKeyMasked: string;
   jsonMode?: "json_schema" | "json_object";
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
 }
 
 export interface LlmConfigInput {
@@ -17,6 +19,8 @@ export interface LlmConfigInput {
   apiKey?: string;
   jsonMode?: "json_schema" | "json_object";
   apiKeyEnv?: string;
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
 }
 
 async function ensureOk(r: Response, action: string): Promise<Response> {

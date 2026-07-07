@@ -30,6 +30,18 @@ describe("LlmConfigSchema", () => {
     expect(c.jsonMode).toBe("json_object");
   });
 
+  it("accepts context window and output token limits", () => {
+    const c = LlmConfigSchema.parse({
+      provider: "openai",
+      model: "deepseek-chat",
+      apiKeyEnv: "DEEPSEEK_API_KEY",
+      contextWindowTokens: 128000,
+      maxOutputTokens: 8192,
+    });
+    expect(c.contextWindowTokens).toBe(128000);
+    expect(c.maxOutputTokens).toBe(8192);
+  });
+
   it("rejects an unknown provider", () => {
     expect(() => LlmConfigSchema.parse({ provider: "grok", model: "m", apiKeyEnv: "K" })).toThrow();
   });

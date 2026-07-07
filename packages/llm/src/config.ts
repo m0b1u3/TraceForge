@@ -8,6 +8,8 @@ export const LlmConfigSchema = z.object({
   baseUrl: z.string().optional(),
   apiKeyEnv: z.string(),
   jsonMode: z.enum(["json_schema", "json_object"]).optional(),
+  contextWindowTokens: z.number().int().positive().optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
 });
 export type LlmConfig = z.infer<typeof LlmConfigSchema>;
 

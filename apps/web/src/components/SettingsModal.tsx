@@ -35,6 +35,8 @@ export function SettingsModal({
   const [baseUrl, setBaseUrl] = useState("");
   const [jsonMode, setJsonMode] = useState("");
   const [apiKeyEnv, setApiKeyEnv] = useState("");
+  const [contextWindowTokens, setContextWindowTokens] = useState("");
+  const [maxOutputTokens, setMaxOutputTokens] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -51,6 +53,8 @@ export function SettingsModal({
     setBaseUrl(llmConfig.baseUrl ?? "");
     setJsonMode(llmConfig.jsonMode ?? "");
     setApiKeyEnv(llmConfig.apiKeyEnv ?? "");
+    setContextWindowTokens(llmConfig.contextWindowTokens ? String(llmConfig.contextWindowTokens) : "");
+    setMaxOutputTokens(llmConfig.maxOutputTokens ? String(llmConfig.maxOutputTokens) : "");
   }, [llmConfig]);
 
   if (!settingsModalOpen_) return null;
@@ -66,6 +70,8 @@ export function SettingsModal({
         apiKey: apiKey || undefined,
         jsonMode: jsonMode ? (jsonMode as LlmConfigInput["jsonMode"]) : undefined,
         apiKeyEnv: apiKeyEnv || undefined,
+        contextWindowTokens: contextWindowTokens ? Number(contextWindowTokens) : undefined,
+        maxOutputTokens: maxOutputTokens ? Number(maxOutputTokens) : undefined,
       });
       setSettingsModalOpen(false);
       setApiKey("");
@@ -125,6 +131,14 @@ export function SettingsModal({
                 <label>
                   <span>Environment Variable Name</span>
                   <input className="tf-input tf-input-block" value={apiKeyEnv} onChange={(e) => setApiKeyEnv(e.target.value)} placeholder="AUTO if left empty" />
+                </label>
+                <label>
+                  <span>Context Window Tokens</span>
+                  <input className="tf-input tf-input-block" inputMode="numeric" value={contextWindowTokens} onChange={(e) => setContextWindowTokens(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 128000" />
+                </label>
+                <label>
+                  <span>Max Output Tokens</span>
+                  <input className="tf-input tf-input-block" inputMode="numeric" value={maxOutputTokens} onChange={(e) => setMaxOutputTokens(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 8192" />
                 </label>
               </div>
             )}
