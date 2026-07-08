@@ -80,7 +80,7 @@ export class Observer {
           relatedTasks: Array.isArray(x.relatedTasks) ? (x.relatedTasks as unknown[]).filter((r): r is string => typeof r === "string") : [],
           suggestedAction: typeof x.suggestedAction === "string" ? x.suggestedAction : "",
           suggestedGoal: typeof x.suggestedGoal === "string" ? x.suggestedGoal : "",
-          evidence: typeof x.evidence === "string" ? x.evidence : "",
+          evidence: typeof x.evidence === "string" ? x.evidence : undefined,
           createdAt: now,
         });
       });
