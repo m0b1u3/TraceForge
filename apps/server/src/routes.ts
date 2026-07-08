@@ -24,6 +24,7 @@ import {
   makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools,
   makeReplayTrafficTool, makeExtractApiEndpointsTool,
   McpManager, mcpToolToDescriptor, Observer, LlmQueryExpander,
+  makeReevaluateFactsTool,
   type AgentRunBudget,
 } from "@traceforge/extension";
 import { BrowserSession } from "./browser-session.js";
@@ -389,6 +390,15 @@ export function registerRoutes(
     registry.register(makeGetFactDetailTool(id, factStore));
     registry.register(makeSearchTrafficTool(id, traffic));
     registry.register(makeRecallConversationTool(id, agentEventStore, contextSummaryStore, { expander: queryExpander }));
+    registry.register(makeReevaluateFactsTool(id, factStore, async (_cid, goal, focus, facts) => {
+      const factsText = facts.map((f) => `${f.id} [${f.type}] ${f.title}: ${JSON.stringify(f.value)}`).join("\n") || "(无)";
+      const res = await llm.extractJson({
+        system: `你是 TraceForge 的辅助分析器。给定当前目标和已有 Facts，指出哪些 Facts 可以被利用、如何利用，并给出下一步具体建议。只返回建议，不要执行任何操作。`,
+        user: `目标：${goal}\n聚焦：${focus ?? "(无)"}\n\n已有 Facts：\n${factsText}`,
+        schema: { type: "object", properties: { suggestion: { type: "string" } }, required: ["suggestion"] },
+      });
+      return (res as { suggestion?: string }).suggestion ?? "No suggestion.";
+    }));
 
     // 若该 case 有共享浏览器会话，把浏览器工具纳入 agent 工具集
     const browserSession = browserSessions.get(id);

@@ -18,6 +18,7 @@ export { loadMcpConfig, McpServerConfigSchema, McpConfigSchema, type McpServerCo
 export { mcpToolToDescriptor, type McpToolHandle, type McpCaller } from "./mcp-tools.js";
 export { McpManager, type McpClient, type McpClientFactory } from "./mcp-manager.js";
 export { Observer, type ReviewInput } from "./observer.js";
+export { makeReevaluateFactsTool, type ReevaluateFactsInput, type FactStoreLike } from "./tools/reevaluate-facts.js";
 export {
   makeListTrafficTool, makeGetTrafficTool, type TrafficReader,
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
