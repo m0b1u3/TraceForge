@@ -9,6 +9,11 @@ export interface ReviewInput {
   tasksSummary: string;
 }
 
+export interface ReviewResult {
+  warnings: ObserverWarning[];
+  error?: string;
+}
+
 const LEVELS = new Set(["info", "warning", "critical"]);
 
 const SYSTEM = `你是 TraceForge 的旁路监督者（Observer）。审视刚结束的一轮渗透测试 agent 行为，找出问题并提示人工，但不直接干预。
@@ -38,6 +43,7 @@ const SCHEMA = {
           relatedFacts: { type: "array", items: { type: "string" } },
           relatedTasks: { type: "array", items: { type: "string" } },
           suggestedAction: { type: "string" },
+          suggestedGoal: { type: "string" },
         },
         required: ["level", "title", "description", "suggestedAction"],
       },
@@ -49,14 +55,14 @@ const SCHEMA = {
 export class Observer {
   constructor(private provider: LlmProvider) {}
 
-  async review(caseId: string, input: ReviewInput): Promise<ObserverWarning[]> {
+  async review(caseId: string, input: ReviewInput): Promise<ReviewResult> {
     const user = `目标：${input.goal}\n\n当前 Facts：\n${input.factsSummary}\n\n当前 Tasks：\n${input.tasksSummary}\n\n<untrusted_data>\nagent 轨迹：\n${input.trajectory}\n</untrusted_data>`;
     try {
       const raw = await this.provider.extractJson({ system: SYSTEM, user, schema: SCHEMA });
       const arr = (raw as { warnings?: unknown }).warnings;
-      if (!Array.isArray(arr)) return [];
+      if (!Array.isArray(arr)) return { warnings: [] };
       const now = new Date().toISOString();
-      return arr.map((w) => {
+      const warnings = arr.map((w) => {
         const x = w as Record<string, unknown>;
         const level = typeof x.level === "string" && LEVELS.has(x.level) ? (x.level as ObserverWarning["level"]) : "info";
         return ObserverWarningSchema.parse({
@@ -66,11 +72,13 @@ export class Observer {
           relatedFacts: Array.isArray(x.relatedFacts) ? (x.relatedFacts as unknown[]).filter((r): r is string => typeof r === "string") : [],
           relatedTasks: Array.isArray(x.relatedTasks) ? (x.relatedTasks as unknown[]).filter((r): r is string => typeof r === "string") : [],
           suggestedAction: typeof x.suggestedAction === "string" ? x.suggestedAction : "",
+          suggestedGoal: typeof x.suggestedGoal === "string" ? x.suggestedGoal : "",
           createdAt: now,
         });
       });
-    } catch {
-      return [];
+      return { warnings };
+    } catch (err) {
+      return { warnings: [], error: (err as Error).message };
     }
   }
 }

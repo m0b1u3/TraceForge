@@ -41,4 +41,5 @@ export type RuntimeEvent =
   | { type: "browser_navigated"; caseId: string; url: string }
   | { type: "observer_warning"; warning: ObserverWarning }
   | { type: "observer_warning_updated"; warning: ObserverWarning }
+  | { type: "observer_review_failed"; caseId: string; runId: string | null; error: string }
   | { type: "scope_updated"; caseId: string; allowHosts: string[] };

@@ -493,16 +493,20 @@ export function registerRoutes(
     try {
       const factsSummary = factStore.listByCase(id).map((f) => `${f.id} [${f.type}] ${f.title}`).join("\n") || "(无)";
       const tasksSummary = taskStore.listByCase(id).map((t) => `${t.id} [${t.status}] ${t.title}`).join("\n") || "(无)";
-      const warnings = await new Observer(llm).review(id, { goal, trajectory: trajectory.join("\n"), factsSummary, tasksSummary });
-      for (const w of warnings) {
-        const warning = observerStore.create({
-          ...w,
-          status: "open",
-          relatedRunId: runId,
-          suggestedGoal: w.suggestedGoal || `[Observer correction]\n${w.suggestedAction}`,
-          resolvedAt: null,
-        });
-        bus.emit({ type: "observer_warning", warning });
+      const result = await new Observer(llm).review(id, { goal, trajectory: trajectory.join("\n"), factsSummary, tasksSummary });
+      if (result.error) {
+        bus.emit({ type: "observer_review_failed", caseId: id, runId, error: result.error });
+      } else {
+        for (const w of result.warnings) {
+          const warning = observerStore.create({
+            ...w,
+            status: "open",
+            relatedRunId: runId,
+            suggestedGoal: w.suggestedGoal || `[Observer correction]\n${w.suggestedAction}`,
+            resolvedAt: null,
+          });
+          bus.emit({ type: "observer_warning", warning });
+        }
       }
     } catch (e) {
       console.error("[observer]", (e as Error).message);
