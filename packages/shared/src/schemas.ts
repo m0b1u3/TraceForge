@@ -162,6 +162,7 @@ export const ObserverWarningSchema = z.object({
   status: z.enum(["open", "accepted", "dismissed", "converted_to_task"]).default("open"),
   relatedRunId: z.string().nullable().default(null),
   suggestedGoal: z.string().default(""),
+  evidence: z.string().default(""),
   resolvedAt: z.string().nullable().default(null),
   createdAt: z.string(),
 });

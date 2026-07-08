@@ -65,10 +65,11 @@ describe("Observer.review", () => {
     expect(out.error).toBeUndefined();
   });
 
-  it("returns empty warnings when warnings is empty", async () => {
-    const obs = new Observer(provider({ warnings: [] }));
+  it("preserves an evidence field from the LLM", async () => {
+    const obs = new Observer(provider({ warnings: [
+      { level: "warning", title: "偏离目标", description: "d", suggestedAction: "s", evidence: "agent moved to /register after fact_login_blocked" },
+    ] }));
     const out = await obs.review("c", input);
-    expect(out.warnings).toEqual([]);
-    expect(out.error).toBeUndefined();
+    expect(out.warnings[0].evidence).toBe("agent moved to /register after fact_login_blocked");
   });
 });
