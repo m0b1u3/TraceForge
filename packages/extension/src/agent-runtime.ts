@@ -9,6 +9,7 @@ export interface AgentEvent {
     "stream_start" | "stream_delta" | "stream_end" | "interrupted" | "retrying" |
     "budget_warning" | "budget_exhausted" | "usage";
   name?: string;
+  input?: string;
   messageId?: string;
   attempt?: number;
   maxAttempts?: number;
@@ -31,6 +32,7 @@ export interface ToolExecutionReport {
   input: unknown;
   content: string;
   ok: boolean;
+  rejected?: boolean;
 }
 
 export interface AgentRunOptions {
@@ -295,7 +297,7 @@ export class AgentRuntime {
 
     if (failureMemory.has(call.name, call.input)) {
       const content = `[tool_blocked] ${call.name}: 该调用已在本运行中失败过，使用相同输入不会再次执行。请换用其他方法，或当本地环境无法解决时使用 download_tool 下载现成工具。`;
-      onEvent({ type: "tool_blocked", name: call.name, content });
+      onEvent({ type: "tool_blocked", name: call.name, input: JSON.stringify(call.input), content });
       const result = { content, ok: false };
       if (options.onToolExecuted) {
         await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
@@ -311,7 +313,7 @@ export class AgentRuntime {
       onEvent({ type: "tool_rejected", name: call.name, content });
       const result = { content, ok: false };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, rejected: true });
       }
       return result;
     }

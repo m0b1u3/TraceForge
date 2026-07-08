@@ -540,7 +540,7 @@ export function registerRoutes(
           caseId: id,
           runId,
           tool: e.name ?? "",
-          input: e.content ?? "",
+          input: e.input ?? e.content ?? "",
           reason: "identical call already failed in this run",
         });
       }
@@ -597,6 +597,7 @@ export function registerRoutes(
       }
     }, { signal: running.abortController.signal, runId, budget, getSteeringMessages: () => runs.consumeSteering(runId), onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory), failureMemory, onToolExecuted: (report) => {
       if (report.ok) return;
+      if (report.rejected) return;
       if (report.content.startsWith("[tool_blocked]")) return;
       const fact = factStore.create(id, {
         type: "failed_attempt",

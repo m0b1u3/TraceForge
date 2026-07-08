@@ -5,6 +5,7 @@ import { EventBus } from "./event-bus.js";
 import { registerRoutes } from "./routes.js";
 import { realLlmProviderForTest } from "./real-llm-test-provider.js";
 import type { RuntimeEvent } from "@traceforge/shared";
+import { McpManager, type McpClient, type McpServerConfig } from "@traceforge/extension";
 
 let app: FastifyInstance;
 let caseId: string;
@@ -25,7 +26,24 @@ beforeEach(async () => {
   const bus = new EventBus();
   events = [];
   bus.subscribe((e) => events.push(e));
-  registerRoutes(app, db, bus, realLlmProviderForTest());
+
+  const mockClient: McpClient = {
+    listTools: async () => ({
+      tools: [
+        {
+          name: "exec_command",
+          description: "execute command",
+          inputSchema: { type: "object", properties: { command: { type: "string" } } },
+        },
+      ],
+    }),
+    callTool: async () => ({ content: [{ type: "text", text: "command failed" }], isError: true }),
+    close: async () => {},
+  };
+  const mcp = new McpManager(async () => mockClient);
+  await mcp.connectAll([{ name: "poc", command: "echo", args: [], trustLevel: "normal" } as McpServerConfig]);
+
+  registerRoutes(app, db, bus, realLlmProviderForTest(), mcp);
   await app.ready();
   caseId = (await app.inject({ method: "POST", url: "/api/cases", payload: { name: "d", allowHosts: ["t.com"] } })).json().id;
   events.length = 0;
