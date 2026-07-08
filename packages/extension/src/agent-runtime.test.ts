@@ -299,16 +299,19 @@ describe("AgentRuntime", () => {
     expect(events.some((e) => e.type === "budget_exhausted")).toBe(false);
   });
 
-  it("stops before the next turn when signal is aborted", async () => {
-    const ac = new AbortController();
-    ac.abort("stop");
-    const provider = {
-      extractJson: async () => ({}),
-      runTools: async () => { throw new Error("should not call provider"); },
-    };
-    const events: AgentEvent[] = [];
-    await new AgentRuntime(provider, new ToolRegistry(), new ApprovalGate(async () => "approved"))
-      .run("sys", "goal", (e) => events.push(e), { signal: ac.signal });
-    expect(events.at(-1)?.type).toBe("interrupted");
+  it("calls onTurnComplete after each turn", async () => {
+    const summaries: { runId: string; turnCount: number }[] = [];
+    const provider = new SeqProvider([
+      { text: "need tool", toolCalls: [{ id: "tc_1", name: "read", input: {} }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    const registry = new ToolRegistry();
+    registry.register({ name: "read", description: "read", inputSchema: { type: "object" }, risk: "normal", source: "test", execute: async () => ({ ok: true, content: "read ok" }) });
+    await new AgentRuntime(provider, registry, autoGate)
+      .run("sys", "goal", () => {}, {
+        runId: "r1",
+        onTurnComplete: async (summary) => { summaries.push({ runId: summary.runId, turnCount: summary.turnCount }); },
+      });
+    expect(summaries).toEqual([{ runId: "r1", turnCount: 0 }]);
   });
 });

@@ -24,6 +24,13 @@ export interface AgentRunOptions {
   runId?: string;
   getSteeringMessages?: () => string[];
   budget?: Partial<AgentRunBudget>;
+  onTurnComplete?: (summary: TurnSummary) => Promise<void>;
+}
+
+export interface TurnSummary {
+  runId: string;
+  turnCount: number;
+  trajectory: string;
 }
 
 export const DEFAULT_RUN_BUDGET: AgentRunBudget = {
@@ -154,6 +161,11 @@ export class AgentRuntime {
       const steering = options.getSteeringMessages?.() ?? [];
       for (const text of steering) {
         messages.push({ role: "user", content: `[Human steering]\n用户运行中补充指令：${text}` });
+      }
+
+      if (options.onTurnComplete && options.runId) {
+        const trajectory = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
+        await options.onTurnComplete({ runId: options.runId, turnCount, trajectory });
       }
     }
     onEvent({ type: "budget_exhausted", content: `run budget exhausted after ${budget.maxTurns} turns` });

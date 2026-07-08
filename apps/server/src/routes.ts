@@ -337,6 +337,27 @@ export function registerRoutes(
       if (!running) return;
       const goal = running.run.goal;
 
+      const runObserverReview = async (reviewRunId: string, reviewTrajectory: string) => {
+        const factsSummary = factStore.listByCase(id).map((f) => `${f.id} [${f.type}] ${f.title}`).join("\n") || "(无)";
+        const tasksSummary = taskStore.listByCase(id).map((t) => `${t.id} [${t.status}] ${t.title}`).join("\n") || "(无)";
+        const result = await new Observer(llm).review(id, { goal, trajectory: reviewTrajectory, factsSummary, tasksSummary });
+        if (result.error) {
+          bus.emit({ type: "observer_review_failed", caseId: id, runId: reviewRunId, error: result.error });
+          return;
+        }
+        for (const w of result.warnings) {
+          if (observerStore.existsOpenDuplicate(id, w.title, w.description)) continue;
+          const warning = observerStore.create({
+            ...w,
+            status: "open",
+            relatedRunId: reviewRunId,
+            suggestedGoal: w.suggestedGoal || `[Observer correction]\n${w.suggestedAction}`,
+            resolvedAt: null,
+          });
+          bus.emit({ type: "observer_warning", warning });
+        }
+      };
+
     const registry = new ToolRegistry();
     registry.register(makeListTrafficTool(id, traffic));
     registry.register(makeGetTrafficTool(id, traffic));
@@ -459,7 +480,7 @@ export function registerRoutes(
         const interrupted = runs.markInterrupted(runId, running.run.interruptReason ?? e.content);
         if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });
       }
-    }, { signal: running.abortController.signal, runId, budget, getSteeringMessages: () => runs.consumeSteering(runId) });
+    }, { signal: running.abortController.signal, runId, budget, getSteeringMessages: () => runs.consumeSteering(runId), onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory) });
 
     const afterRun = runs.get(runId)?.run;
     if (afterRun && afterRun.status === "running") {
@@ -499,24 +520,7 @@ export function registerRoutes(
 
     // 旁路监督：run 结束后触发 Observer，失败不影响已完成的 run
     try {
-      const factsSummary = factStore.listByCase(id).map((f) => `${f.id} [${f.type}] ${f.title}`).join("\n") || "(无)";
-      const tasksSummary = taskStore.listByCase(id).map((t) => `${t.id} [${t.status}] ${t.title}`).join("\n") || "(无)";
-      const result = await new Observer(llm).review(id, { goal, trajectory: trajectory.join("\n"), factsSummary, tasksSummary });
-      if (result.error) {
-        bus.emit({ type: "observer_review_failed", caseId: id, runId, error: result.error });
-      } else {
-        for (const w of result.warnings) {
-          if (observerStore.existsOpenDuplicate(id, w.title, w.description)) continue;
-          const warning = observerStore.create({
-            ...w,
-            status: "open",
-            relatedRunId: runId,
-            suggestedGoal: w.suggestedGoal || `[Observer correction]\n${w.suggestedAction}`,
-            resolvedAt: null,
-          });
-          bus.emit({ type: "observer_warning", warning });
-        }
-      }
+      await runObserverReview(runId, trajectory.join("\n"));
     } catch (e) {
       console.error("[observer]", (e as Error).message);
     }
