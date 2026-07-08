@@ -1,20 +1,33 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    chmod: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 import { makeDownloadTool, type DownloadFetcher } from "./download-tool.js";
 
 describe("makeDownloadTool", () => {
   let root: string;
   let originalFetch: typeof fetch;
+  let originalPlatformDescriptor: PropertyDescriptor;
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "tf-download-"));
     originalFetch = globalThis.fetch;
+    originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
   });
 
   afterEach(async () => {
     globalThis.fetch = originalFetch;
+    Object.defineProperty(process, "platform", originalPlatformDescriptor);
+    vi.mocked(chmod).mockClear();
     await rm(root, { recursive: true, force: true });
   });
 
@@ -35,7 +48,7 @@ describe("makeDownloadTool", () => {
 
   it("rejects path traversal filenames", async () => {
     const tool = makeDownloadTool({ caseId: "c", workspaceRoot: root });
-    const res = await tool.execute({ url: "https://example.com/x", filename: "../escape.sh" });
+    const res = await tool.execute({ url: "https://example.com/x", filename: ".." });
     expect(res.ok).toBe(false);
     expect(res.content).toMatch(/invalid filename|escapes/);
   });
@@ -46,5 +59,15 @@ describe("makeDownloadTool", () => {
     const res = await tool.execute({ url: "https://example.com/x", filename: "x.sh" });
     expect(res.ok).toBe(false);
     expect(res.content).toContain("404");
+  });
+
+  it("sets executable permission when requested on non-Windows platforms", async () => {
+    Object.defineProperty(process, "platform", { ...originalPlatformDescriptor, value: "linux" });
+    const fetcher: DownloadFetcher = async () => ({ ok: true, status: 200, arrayBuffer: async () => new TextEncoder().encode("script").buffer });
+    const tool = makeDownloadTool({ caseId: "c", workspaceRoot: root, fetcher });
+    const res = await tool.execute({ url: "https://example.com/x", filename: "x.sh", executable: true });
+    expect(res.ok).toBe(true);
+    expect(chmod).toHaveBeenCalledTimes(1);
+    expect(chmod).toHaveBeenCalledWith(resolve(root, "data/cases/c/downloads/x.sh"), 0o755);
   });
 });

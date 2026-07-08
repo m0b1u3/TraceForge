@@ -22,7 +22,7 @@ export interface DownloadToolDeps {
 async function defaultFetch(url: string): Promise<DownloadFetcherResponse> {
   const dispatcher = proxyDispatcher();
   const res = dispatcher
-    ? await fetch(url, { dispatcher: dispatcher as never } as never)
+    ? await fetch(url, { dispatcher: dispatcher as never })
     : await fetch(url);
   return {
     ok: res.ok,
@@ -60,8 +60,8 @@ export function makeDownloadTool(deps: DownloadToolDeps): ToolDescriptor {
         return { ok: false, content: "only http/https urls are allowed" };
       }
       if (!filename) return { ok: false, content: "missing filename" };
-      const safe = normalize(filename);
-      if (!safe || safe === "." || /[\\/]/.test(safe) || safe.split(/[\\/]/).some((part) => part === "..")) {
+      const safe = normalize(filename).replace(/^(\.\.(\/|\\|$))+/, "");
+      if (!safe || safe === "." || safe === ".." || safe.includes("..") || /[\\/]/.test(safe)) {
         return { ok: false, content: "invalid filename" };
       }
       const targetPath = resolve(downloadDir, safe);
