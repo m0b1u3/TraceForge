@@ -30,5 +30,6 @@ export {
 } from "./case-tools.js";
 export { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool } from "./cognitive-tools.js";
 export type { SessionStateWriter, HypothesisWriter, FactReader } from "./cognitive-tools.js";
+export { makeDownloadTool, type DownloadFetcher, type DownloadToolDeps } from "./download-tool.js";
 export * from "./memory-tools.js";
 export * from "./query-expander.js";
