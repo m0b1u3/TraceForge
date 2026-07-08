@@ -21,6 +21,8 @@ export interface DownloadToolDeps {
 
 async function defaultFetch(url: string): Promise<DownloadFetcherResponse> {
   const dispatcher = proxyDispatcher();
+  // undici fetch accepts a `dispatcher` option, but the ambient RequestInit type
+  // from lib.dom/lib.dom.iterable does not include it, so we cast to avoid TS2769.
   const res = dispatcher ? await fetch(url, { dispatcher } as never) : await fetch(url);
   return {
     ok: res.ok,

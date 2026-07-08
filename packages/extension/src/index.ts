@@ -12,6 +12,7 @@ export {
   type AgentEvent,
   type AgentRunBudget,
   type AgentRunOptions,
+  type ToolExecutionReport,
 } from "./agent-runtime.js";
 export { makeHttpReplayTool, makeProposeScopeExpansionTool, makeReplayTrafficTool } from "./builtin-tools.js";
 export { makeBrowserTools, type BrowserController } from "./browser-tools.js";

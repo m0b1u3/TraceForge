@@ -587,6 +587,7 @@ export function registerRoutes(
       }
     }, { signal: running.abortController.signal, runId, budget, getSteeringMessages: () => runs.consumeSteering(runId), onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory), failureMemory, onToolExecuted: (report) => {
       if (report.ok) return;
+      if (report.content.startsWith("[tool_blocked]")) return;
       const fact = factStore.create(id, {
         type: "failed_attempt",
         title: `Failed attempt: ${report.name}`,
