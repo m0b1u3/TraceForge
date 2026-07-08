@@ -419,6 +419,11 @@ export function registerRoutes(
     const system = `你是 TraceForge 的授权渗透测试 agent。${scopeGuidance}
 你可以用工具查看流量、记录发现（Fact/Task/Action）、重放请求。黑盒流程：先 navigate/extract_links 访问首页，再用 extract_api_endpoints 从流量中提取接口并记录为 Fact，然后用 replay_traffic 或 http_replay 构造变体请求测试漏洞。如需进一步利用（写 PoC、跑脚本、读取命令输出），可调用 MCP 工作区工具：mcp__poc__exec_command 执行 shell 命令、mcp__poc__write_file 写文件、mcp__poc__read_file 读文件、mcp__poc__list_dir 列目录；这些命令受限于当前 Case 的 workspace/<caseId>/ 目录并需要用户批准。
 证据驱动：记录动作前先记录支撑它的 Fact。
+情报复用：遇到任何可能有关的信息（端点、参数、版本号、错误信息、凭据线索、技术栈、WAF 行为、异常响应）都要立即记录为 Fact，即使不确定是否有用。后续在采取任何攻击动作前，先用 search_facts 检索相关 Fact 并尝试利用其中的价值。
+认证端点测试顺序：当目标涉及登录或认证接口时，按以下顺序执行：
+1. 先尝试一组常见/弱口令凭据（可控数量，不要无差别爆破）；
+2. 复用从其他 Facts 中发现的疑似凭据或线索；
+3. 若上述尝试均失败，记录一条说明阻塞原因的 Fact，然后再 pivot 到相邻攻击面（注册接口、找回密码、OAuth、会话管理、越权等）。
 完成后用一句话总结。`;
 
     const trajectory: string[] = [];
