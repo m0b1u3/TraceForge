@@ -498,6 +498,7 @@ export function registerRoutes(
         bus.emit({ type: "observer_review_failed", caseId: id, runId, error: result.error });
       } else {
         for (const w of result.warnings) {
+          if (observerStore.existsOpenDuplicate(id, w.title, w.description)) continue;
           const warning = observerStore.create({
             ...w,
             status: "open",

@@ -70,6 +70,13 @@ describe("observer integration", () => {
     expect(res.json()).toEqual([]);
   });
 
+  it("does not create duplicate open warnings for the same case", async () => {
+    createOpenWarning();
+    const store = new ObserverWarningStore(db);
+    expect(store.existsOpenDuplicate(caseId, "过早结束", "还有点没测")).toBe(true);
+    expect(store.existsOpenDuplicate(caseId, "过早结束", "不同描述")).toBe(false);
+  });
+
   it("accepts an open warning and emits an update event", async () => {
     const warning = createOpenWarning();
 
