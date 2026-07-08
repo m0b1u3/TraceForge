@@ -52,9 +52,9 @@ describe("observer integration", () => {
     createOpenWarning();
     const res = await app.inject({ url: `/api/cases/${caseId}/warnings` });
     expect(res.statusCode).toBe(200);
-    const warnings = res.json();
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toMatchObject({
+    const body = res.json();
+    expect(body.warnings).toHaveLength(1);
+    expect(body.warnings[0]).toMatchObject({
       level: "warning",
       title: "过早结束",
       caseId,
@@ -62,12 +62,44 @@ describe("observer integration", () => {
       suggestedGoal: "[Observer correction]\n继续测 X",
       resolvedAt: null,
     });
-    expect(warnings[0].relatedRunId).toBe("run_test");
+    expect(body.warnings[0].relatedRunId).toBe("run_test");
+    expect(body.total).toBe(1);
   });
 
   it("GET /warnings is empty before any run", async () => {
     const res = await app.inject({ url: `/api/cases/${caseId}/warnings` });
-    expect(res.json()).toEqual([]);
+    const body = res.json();
+    expect(body.warnings).toEqual([]);
+    expect(body.total).toBe(0);
+  });
+
+  it("supports pagination and status filter", async () => {
+    createOpenWarning();
+    const store = new ObserverWarningStore(db);
+    const dismissed = store.updateStatus("warn_test", "dismissed");
+    expect(dismissed).toBeTruthy();
+    const another: Parameters<typeof store.create>[0] = {
+      id: "warn_other",
+      caseId,
+      level: "critical",
+      title: "偏离目标",
+      description: "一直在测无关接口",
+      relatedFacts: [],
+      relatedTasks: [],
+      suggestedAction: "回到登录流程",
+      status: "open",
+      relatedRunId: "run_other",
+      suggestedGoal: "",
+      resolvedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    store.create(another);
+
+    const res = await app.inject({ url: `/api/cases/${caseId}/warnings?status=open&limit=1&offset=0` });
+    const body = res.json();
+    expect(body.warnings).toHaveLength(1);
+    expect(body.total).toBe(1);
+    expect(body.warnings[0].status).toBe("open");
   });
 
   it("does not create duplicate open warnings for the same case", async () => {

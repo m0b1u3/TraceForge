@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { observerWarnings } from "../db/schema.js";
 import { type ObserverWarning, ObserverWarningSchema } from "@traceforge/shared";
@@ -29,8 +29,21 @@ export class ObserverWarningStore {
     return parsed;
   }
 
-  listByCase(caseId: string): ObserverWarning[] {
-    return this.db.select().from(observerWarnings).where(eq(observerWarnings.caseId, caseId)).all().map(rowToWarning);
+  listByCase(
+    caseId: string,
+    options: { status?: ObserverWarning["status"]; limit?: number; offset?: number } = {},
+  ): { warnings: ObserverWarning[]; total: number } {
+    const where = and(eq(observerWarnings.caseId, caseId), options.status ? eq(observerWarnings.status, options.status) : undefined);
+    const warnings = this.db
+      .select()
+      .from(observerWarnings)
+      .where(where)
+      .limit(options.limit ?? Number.MAX_SAFE_INTEGER)
+      .offset(options.offset ?? 0)
+      .all()
+      .map(rowToWarning);
+    const totalRow = this.db.select({ count: sql<number>`count(*)` }).from(observerWarnings).where(where).get();
+    return { warnings, total: totalRow?.count ?? 0 };
   }
 
   existsOpenDuplicate(caseId: string, title: string, description: string): boolean {

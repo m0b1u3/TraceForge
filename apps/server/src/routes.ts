@@ -259,7 +259,15 @@ export function registerRoutes(
 
   app.get("/api/cases/:id/warnings", async (req) => {
     const { id } = req.params as { id: string };
-    return observerStore.listByCase(id);
+    const { status, limit, offset } = req.query as { status?: string; limit?: string; offset?: string };
+    const validStatus = ["open", "accepted", "dismissed", "converted_to_task"].includes(status ?? "")
+      ? (status as ObserverWarning["status"])
+      : undefined;
+    return observerStore.listByCase(id, {
+      status: validStatus,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
   });
 
   app.post("/api/observer/warnings/:warningId/accept", async (req, reply) => {
