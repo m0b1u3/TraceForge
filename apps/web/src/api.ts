@@ -142,6 +142,10 @@ export async function getActiveAgentRun(caseId: string): Promise<AgentRun | null
   return (await fetch(`/api/cases/${caseId}/agent/runs/active`)).json();
 }
 
+export async function getLatestAgentRun(caseId: string): Promise<AgentRun | null> {
+  return (await fetch(`/api/cases/${caseId}/agent/runs/latest`)).json();
+}
+
 export async function resolveApproval(approvalId: string, decision: "approved" | "rejected"): Promise<void> {
   await ensureOk(await fetch(`/api/agent/approvals/${approvalId}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision }),
@@ -157,7 +161,8 @@ export async function listMcpTools(): Promise<McpToolHandle[]> {
 }
 
 export async function listWarnings(caseId: string): Promise<ObserverWarning[]> {
-  return (await fetch(`/api/cases/${caseId}/warnings`)).json();
+  const body = await (await fetch(`/api/cases/${caseId}/warnings`)).json();
+  return Array.isArray(body) ? body : body.warnings ?? [];
 }
 
 export async function acceptObserverWarning(warningId: string): Promise<ObserverWarning> {

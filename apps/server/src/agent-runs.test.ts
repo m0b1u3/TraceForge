@@ -62,4 +62,15 @@ describe("AgentRunRegistry", () => {
     expect(second.run.status).toBe("running");
     expect(second.run.id).not.toBe(first.run.id);
   });
+
+  it("keeps the latest run available after it is no longer active", () => {
+    const reg = new AgentRunRegistry();
+    const { run } = reg.start("case_1", "goal");
+    reg.addUsage(run.id, { promptTokens: 10, completionTokens: 2, totalTokens: 12 });
+
+    const completed = reg.complete(run.id, "done");
+
+    expect(reg.getActiveByCase("case_1")).toBeUndefined();
+    expect(reg.getLatestByCase("case_1")?.run).toEqual(completed);
+  });
 });

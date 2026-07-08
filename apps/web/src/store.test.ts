@@ -164,4 +164,113 @@ describe("store token usage", () => {
     });
     expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 0, completionTokens: 0, totalTokens: 0 });
   });
+
+  it("syncs final token usage from completed run events", () => {
+    useStore.getState().handleRuntimeEvent({
+      type: "agent_run_completed",
+      content: "done",
+      run: {
+        id: "run_1",
+        caseId: "case_1",
+        goal: "test",
+        status: "completed",
+        createdAt: "now",
+        startedAt: "now",
+        finishedAt: "later",
+        interruptReason: null,
+        completionReason: "done",
+        error: null,
+        promptTokens: 36_194,
+        completionTokens: 1_413,
+        totalTokens: 37_607,
+      },
+    });
+
+    expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 36_194, completionTokens: 1_413, totalTokens: 37_607 });
+  });
+});
+
+describe("store case hydration", () => {
+  beforeEach(() => {
+    resetStore();
+    calls.length = 0;
+    responses.length = 0;
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([input, init]);
+      const response = responses.shift();
+      if (!response) throw new Error(`missing scripted fetch response for ${String(input)}`);
+      return response;
+    };
+  });
+
+  it("restores the active run and token usage when entering a case", async () => {
+    const activeRun = {
+      id: "run_1",
+      caseId: "case_1",
+      goal: "继续测试",
+      status: "running" as const,
+      createdAt: "now",
+      startedAt: "now",
+      finishedAt: null,
+      interruptReason: null,
+      completionReason: null,
+      error: null,
+      promptTokens: 36_194,
+      completionTokens: 1_413,
+      totalTokens: 37_607,
+    };
+    responses.push(
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify({ warnings: [], total: 0 }), { status: 200 }),
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify(activeRun), { status: 200 }),
+    );
+
+    await useStore.getState().enterCase("case_1");
+
+    expect(calls.map(([input]) => input)).toContain("/api/cases/case_1/agent/runs/active");
+    expect(useStore.getState().activeRun).toEqual(activeRun);
+    expect(useStore.getState().agentBusy).toBe(true);
+    expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 36_194, completionTokens: 1_413, totalTokens: 37_607 });
+  });
+
+  it("restores token usage from the latest run when no run is active", async () => {
+    const latestRun = {
+      id: "run_1",
+      caseId: "case_1",
+      goal: "完成测试",
+      status: "completed" as const,
+      createdAt: "now",
+      startedAt: "now",
+      finishedAt: "later",
+      interruptReason: null,
+      completionReason: "done",
+      error: null,
+      promptTokens: 36_194,
+      completionTokens: 1_413,
+      totalTokens: 37_607,
+    };
+    responses.push(
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify({ warnings: [], total: 0 }), { status: 200 }),
+      new Response(JSON.stringify([]), { status: 200 }),
+      new Response(JSON.stringify(null), { status: 200 }),
+      new Response(JSON.stringify(latestRun), { status: 200 }),
+    );
+
+    await useStore.getState().enterCase("case_1");
+
+    expect(calls.map(([input]) => input)).toContain("/api/cases/case_1/agent/runs/latest");
+    expect(useStore.getState().activeRun).toBeNull();
+    expect(useStore.getState().agentBusy).toBe(false);
+    expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 36_194, completionTokens: 1_413, totalTokens: 37_607 });
+  });
 });

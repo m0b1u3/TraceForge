@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { acceptObserverWarning, convertObserverWarningToTask, createFact, createTask, dismissObserverWarning } from "./api.js";
+import { acceptObserverWarning, convertObserverWarningToTask, createFact, createTask, dismissObserverWarning, listWarnings } from "./api.js";
 
 const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
 const responses: Response[] = [];
@@ -45,6 +45,18 @@ describe("observer warning API helpers", () => {
     expect(calls).toContainEqual(["/api/observer/warnings/warn_1/convert-task", { method: "POST" }]);
     expect(result.task.id).toBe("task_1");
     expect(result.warning.status).toBe("converted_to_task");
+  });
+
+  it("unwraps paginated warning list responses", async () => {
+    responses.push(new Response(JSON.stringify({
+      warnings: [{ id: "warn_1", title: "目标偏离" }],
+      total: 1,
+    }), { status: 200 }));
+
+    const warnings = await listWarnings("case_1");
+
+    expect(calls).toContainEqual(["/api/cases/case_1/warnings", undefined]);
+    expect(warnings).toEqual([{ id: "warn_1", title: "目标偏离" }]);
   });
 
   it("throws backend errors for createFact", async () => {

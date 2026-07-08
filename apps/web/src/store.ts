@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, deleteCase as deleteCaseApi } from "./api.js";
+import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 
 export interface AgentUiEvent {
@@ -13,6 +13,18 @@ export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+}
+
+function isRunBusy(run: AgentRun | null): boolean {
+  return run ? ["queued", "running", "interrupting"].includes(run.status) : false;
+}
+
+function runTokenUsage(run: AgentRun): TokenUsage {
+  return {
+    promptTokens: run.promptTokens,
+    completionTokens: run.completionTokens,
+    totalTokens: run.totalTokens,
+  };
 }
 
 interface State {
@@ -92,7 +104,7 @@ export const useStore = create<State>((set, get) => ({
   streamingMessages: {},
   tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   setAgentBusy: (b) => set({ agentBusy: b }),
-  setActiveRun: (run) => set({ activeRun: run, agentBusy: run ? ["queued", "running", "interrupting"].includes(run.status) : false }),
+  setActiveRun: (run) => set({ activeRun: run, agentBusy: isRunBusy(run) }),
   setTokenUsage: (usage) => set({ tokenUsage: usage }),
   toast: null,
   showToast: (msg) => { set({ toast: msg }); setTimeout(() => { if (get().toast === msg) set({ toast: null }); }, 4000); },
@@ -146,11 +158,23 @@ export const useStore = create<State>((set, get) => ({
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
   enterCase: async (id) => {
     get().setCase(id);
-    const [traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents] = await Promise.all([
-      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id), listAgentEvents(id),
+    const [traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents, activeRun] = await Promise.all([
+      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id), listAgentEvents(id), getActiveAgentRun(id),
     ]);
+    const latestRun = activeRun ?? await getLatestAgentRun(id);
     if (get().caseId !== id) return;
-    set({ traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents: agentEvents.map((e) => ({ kind: e.kind, text: e.text })) });
+    set({
+      traffic,
+      facts,
+      tasks,
+      timeline,
+      mcpTools,
+      warnings,
+      agentEvents: agentEvents.map((e) => ({ kind: e.kind, text: e.text })),
+      activeRun,
+      agentBusy: isRunBusy(activeRun),
+      tokenUsage: latestRun ? runTokenUsage(latestRun) : { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    });
   },
   deleteCase: async (id) => {
     await deleteCaseApi(id);
@@ -272,10 +296,12 @@ export const useStore = create<State>((set, get) => ({
       if (get().agentEvents.at(-1)?.text !== text) get().addAgentEvent({ kind: "user", text });
     }
     else if (event.type === "agent_run_completed" && event.run.caseId === cid) {
+      get().setTokenUsage(runTokenUsage(event.run));
       get().setActiveRun(null);
       get().setAgentBusy(false);
     }
     else if (event.type === "agent_run_interrupted" && event.run.caseId === cid) {
+      get().setTokenUsage(runTokenUsage(event.run));
       get().setActiveRun(null);
       get().setAgentBusy(false);
       get().addAgentEvent({ kind: "done", text: "Agent stopped" });
@@ -288,11 +314,13 @@ export const useStore = create<State>((set, get) => ({
       get().showToast(text);
     }
     else if (event.type === "agent_run_needs_continuation" && event.run.caseId === cid) {
+      get().setTokenUsage(runTokenUsage(event.run));
       get().setActiveRun(null);
       get().setAgentBusy(false);
       get().addAgentEvent({ kind: "done", text: "Agent reached the run budget. Continue to proceed." });
     }
     else if (event.type === "agent_run_failed" && event.run.caseId === cid) {
+      get().setTokenUsage(runTokenUsage(event.run));
       get().setActiveRun(null);
       get().setAgentBusy(false);
       get().addAgentEvent({ kind: "error", text: event.error });

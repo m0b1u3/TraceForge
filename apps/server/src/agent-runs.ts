@@ -18,6 +18,7 @@ function terminal(status: AgentRun["status"]): boolean {
 export class AgentRunRegistry {
   private runs = new Map<string, ActiveAgentRun>();
   private activeByCase = new Map<string, string>();
+  private latestByCase = new Map<string, string>();
 
   start(caseId: string, goal: string): ActiveAgentRun {
     const existing = this.getActiveByCase(caseId);
@@ -44,6 +45,7 @@ export class AgentRunRegistry {
     };
     this.runs.set(active.run.id, active);
     this.activeByCase.set(caseId, active.run.id);
+    this.latestByCase.set(caseId, active.run.id);
     return active;
   }
 
@@ -53,6 +55,11 @@ export class AgentRunRegistry {
 
   getActiveByCase(caseId: string): ActiveAgentRun | undefined {
     const id = this.activeByCase.get(caseId);
+    return id ? this.runs.get(id) : undefined;
+  }
+
+  getLatestByCase(caseId: string): ActiveAgentRun | undefined {
+    const id = this.latestByCase.get(caseId);
     return id ? this.runs.get(id) : undefined;
   }
 

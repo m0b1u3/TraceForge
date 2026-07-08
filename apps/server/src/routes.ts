@@ -663,6 +663,11 @@ export function registerRoutes(
     return runs.getActiveByCase(id)?.run ?? null;
   });
 
+  app.get("/api/cases/:id/agent/runs/latest", async (req) => {
+    const { id } = req.params as { id: string };
+    return runs.getLatestByCase(id)?.run ?? null;
+  });
+
   app.post("/api/agent/approvals/:approvalId", async (req, reply) => {
     const { approvalId } = req.params as { approvalId: string };
     const { decision } = req.body as { decision: "approved" | "rejected" };

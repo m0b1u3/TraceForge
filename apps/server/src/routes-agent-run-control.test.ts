@@ -82,6 +82,17 @@ describe("agent run control routes", () => {
     expect(events.some((e) => e.type === "agent_run_completed" && e.run.id === run.id)).toBe(false);
   });
 
+  it("returns the latest run after it has completed", async () => {
+    await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "go" } });
+    await waitFor(() => events.some((e) => e.type === "agent_run_completed"));
+
+    const latest = await app.inject({ method: "GET", url: `/api/cases/${caseId}/agent/runs/latest` });
+
+    expect(latest.statusCode).toBe(200);
+    expect(latest.json().status).toBe("completed");
+    expect(latest.json().caseId).toBe(caseId);
+  });
+
   it("emits retrying events from provider retry callbacks", async () => {
     const retryingProvider: LlmProvider = {
       extractJson: async () => ({ warnings: [] }),
