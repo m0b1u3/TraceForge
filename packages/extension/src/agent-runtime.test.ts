@@ -5,6 +5,7 @@ import { ApprovalGate } from "./approval-gate.js";
 import type { ToolDescriptor } from "./tool.js";
 import type { AgentEvent, TurnSummary } from "./agent-runtime.js";
 import type { LlmProvider, RunTurn, RunToolsArgs } from "./provider.js";
+import { FailureMemory } from "./failure-memory.js";
 
 class SeqProvider implements LlmProvider {
   private i = 0;
@@ -378,5 +379,43 @@ describe("AgentRuntime", () => {
     expect(usageEvents[0].cumulativeTotalTokens).toBe(6);
     expect(usageEvents[1].totalTokens).toBe(10);
     expect(usageEvents[1].cumulativeTotalTokens).toBe(16);
+  });
+});
+
+describe("AgentRuntime failure memory", () => {
+  it("skips a second identical failing tool call within a run", async () => {
+    let calls = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "failing", description: "failing", inputSchema: { type: "object" },
+      risk: "normal", source: "test",
+      execute: async () => { calls += 1; return { ok: false, content: "boom" }; },
+    });
+    const provider = new SeqProvider([
+      { text: "call", toolCalls: [{ id: "c1", name: "failing", input: { x: 1 } }], done: false },
+      { text: "retry", toolCalls: [{ id: "c2", name: "failing", input: { x: 1 } }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    const events: string[] = [];
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "go", (e) => events.push(`${e.type}:${e.content}`), { failureMemory: new FailureMemory() });
+    expect(calls).toBe(1);
+    expect(events.some((s) => s.includes("tool_blocked"))).toBe(true);
+  });
+
+  it("does not block a call that succeeded", async () => {
+    let calls = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "ok", description: "ok", inputSchema: { type: "object" },
+      risk: "normal", source: "test",
+      execute: async () => { calls += 1; return { ok: true, content: "ok" }; },
+    });
+    const provider = new SeqProvider([
+      { text: "call", toolCalls: [{ id: "c1", name: "ok", input: {} }], done: false },
+      { text: "call", toolCalls: [{ id: "c2", name: "ok", input: {} }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "go", () => {}, { failureMemory: new FailureMemory() });
+    expect(calls).toBe(2);
   });
 });

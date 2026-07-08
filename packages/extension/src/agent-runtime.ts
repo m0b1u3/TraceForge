@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { LlmProvider, TurnMessage, ToolCall, UsageSnapshot } from "./provider.js";
 import type { ToolRegistry } from "./registry.js";
 import type { ApprovalGate } from "./approval-gate.js";
+import { FailureMemory } from "./failure-memory.js";
 
 export interface AgentEvent {
-  type: "tool_call" | "tool_result" | "tool_rejected" | "text" | "done" |
+  type: "tool_call" | "tool_result" | "tool_rejected" | "tool_blocked" | "text" | "done" |
     "stream_start" | "stream_delta" | "stream_end" | "interrupted" | "retrying" |
     "budget_warning" | "budget_exhausted" | "usage";
   name?: string;
@@ -31,6 +32,7 @@ export interface AgentRunOptions {
   getSteeringMessages?: () => string[];
   budget?: Partial<AgentRunBudget>;
   onTurnComplete?: (summary: TurnSummary) => Promise<{ action: "continue" | "pause"; reason?: string }>;
+  failureMemory?: FailureMemory;
 }
 
 export interface TurnSummary {
@@ -91,6 +93,7 @@ export class AgentRuntime {
       ? [{ role: "user", content: initial }]
       : initial.map((m) => ({ role: m.role, content: m.content }));
     const budget = normalizeRunBudget(options.budget);
+    const failureMemory = options.failureMemory ?? new FailureMemory();
     let warned = false;
     let turnCount = 0;
     let cumulativePromptTokens = 0;
@@ -190,13 +193,13 @@ export class AgentRuntime {
           return;
         }
         const results = batch.parallel
-          ? await Promise.all(batch.calls.map((call) => this.runOneTool(call, onEvent, { deferResultEvent: true })))
-          : [await this.runOneTool(batch.calls[0], onEvent, { deferResultEvent: true })];
+          ? await Promise.all(batch.calls.map((call) => this.runOneTool(call, onEvent, failureMemory, { deferResultEvent: true })))
+          : [await this.runOneTool(batch.calls[0], onEvent, failureMemory, { deferResultEvent: true })];
         for (let i = 0; i < batch.calls.length; i++) {
           const call = batch.calls[i];
           const result = results[i];
-          onEvent({ type: "tool_result", name: call.name, content: result });
-          messages.push({ role: "tool", content: result, toolCallId: call.id });
+          onEvent({ type: "tool_result", name: call.name, content: result.content });
+          messages.push({ role: "tool", content: result.content, toolCallId: call.id });
         }
         if (this.interrupted(options)) {
           this.emitInterrupted(onEvent);
@@ -267,30 +270,41 @@ export class AgentRuntime {
   private async runOneTool(
     call: ToolCall,
     onEvent: (e: AgentEvent) => void,
+    failureMemory: FailureMemory,
     opts: { deferResultEvent?: boolean } = {},
-  ): Promise<string> {
+  ): Promise<{ content: string; ok: boolean }> {
     const tool = this.registry.get(call.name);
     if (!tool) {
       const msg = `unknown tool: ${call.name}`;
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: msg });
-      return msg;
+      return { content: msg, ok: false };
     }
+
+    if (failureMemory.has(call.name, call.input)) {
+      const content = `[tool_blocked] ${call.name}: 该调用已在本运行中失败过，使用相同输入不会再次执行。请换用其他方法，或当本地环境无法解决时使用 download_tool 下载现成工具。`;
+      if (!opts.deferResultEvent) onEvent({ type: "tool_blocked", name: call.name, content });
+      return { content, ok: false };
+    }
+
     onEvent({ type: "tool_call", name: call.name, content: JSON.stringify(call.input) });
 
     const decision = await this.gate.check(tool, call.input);
     if (decision === "rejected") {
-      onEvent({ type: "tool_rejected", name: call.name, content: "human rejected" });
-      return "用户拒绝执行此动作。";
+      const content = "用户拒绝执行此动作。";
+      onEvent({ type: "tool_rejected", name: call.name, content });
+      return { content, ok: false };
     }
 
     try {
       const res = await tool.execute(call.input);
+      if (!res.ok) failureMemory.add(call.name, call.input);
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: res.content });
-      return res.content;
+      return { content: res.content, ok: res.ok };
     } catch (error) {
+      failureMemory.add(call.name, call.input);
       const content = `[tool_error] ${call.name}: ${(error as Error).message}`;
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content });
-      return content;
+      return { content, ok: false };
     }
   }
 }
