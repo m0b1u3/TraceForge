@@ -85,6 +85,9 @@ describe("agent run RuntimeEvent typing", () => {
         interruptReason: null,
         completionReason: "run budget exhausted after 2 turns",
         error: null,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
       },
     };
     expect(event.reason).toContain("budget");

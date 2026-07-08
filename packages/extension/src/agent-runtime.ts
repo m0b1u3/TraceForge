@@ -1,16 +1,22 @@
 import { randomUUID } from "node:crypto";
-import type { LlmProvider, TurnMessage, ToolCall } from "./provider.js";
+import type { LlmProvider, TurnMessage, ToolCall, UsageSnapshot } from "./provider.js";
 import type { ToolRegistry } from "./registry.js";
 import type { ApprovalGate } from "./approval-gate.js";
 
 export interface AgentEvent {
   type: "tool_call" | "tool_result" | "tool_rejected" | "text" | "done" |
     "stream_start" | "stream_delta" | "stream_end" | "interrupted" | "retrying" |
-    "budget_warning" | "budget_exhausted";
+    "budget_warning" | "budget_exhausted" | "usage";
   name?: string;
   messageId?: string;
   attempt?: number;
   maxAttempts?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  cumulativePromptTokens?: number;
+  cumulativeCompletionTokens?: number;
+  cumulativeTotalTokens?: number;
   content: string;
 }
 
@@ -34,24 +40,29 @@ export interface TurnSummary {
 }
 
 export const DEFAULT_RUN_BUDGET: AgentRunBudget = {
-  maxTurns: 25,
-  warningTurnsRemaining: 3,
+  maxTurns: Infinity,
+  warningTurnsRemaining: 0,
 };
 
 export function normalizeRunBudget(input?: Partial<AgentRunBudget>): AgentRunBudget {
+  const rawMaxTurns = input?.maxTurns !== undefined ? input.maxTurns : DEFAULT_RUN_BUDGET.maxTurns;
   const maxTurns =
-    Number.isFinite(input?.maxTurns) && input?.maxTurns !== undefined && input.maxTurns > 0
-      ? Math.floor(input.maxTurns)
-      : DEFAULT_RUN_BUDGET.maxTurns;
+    typeof rawMaxTurns === "number" && Number.isFinite(rawMaxTurns) && rawMaxTurns > 0
+      ? Math.floor(rawMaxTurns)
+      : Infinity;
 
   const rawWarningTurnsRemaining =
-    Number.isFinite(input?.warningTurnsRemaining) && input?.warningTurnsRemaining !== undefined
-      ? Math.floor(input.warningTurnsRemaining)
+    input?.warningTurnsRemaining !== undefined
+      ? input.warningTurnsRemaining
       : DEFAULT_RUN_BUDGET.warningTurnsRemaining;
+  const warningTurnsRemaining =
+    typeof rawWarningTurnsRemaining === "number" && Number.isFinite(rawWarningTurnsRemaining) && rawWarningTurnsRemaining >= 0
+      ? Math.floor(rawWarningTurnsRemaining)
+      : 0;
 
   return {
     maxTurns,
-    warningTurnsRemaining: Math.max(0, rawWarningTurnsRemaining),
+    warningTurnsRemaining,
   };
 }
 
@@ -81,15 +92,25 @@ export class AgentRuntime {
       : initial.map((m) => ({ role: m.role, content: m.content }));
     const budget = normalizeRunBudget(options.budget);
     let warned = false;
+    let turnCount = 0;
+    let cumulativePromptTokens = 0;
+    let cumulativeCompletionTokens = 0;
+    let cumulativeTotalTokens = 0;
+    const budgetFinite = Number.isFinite(budget.maxTurns);
 
-    for (let turnCount = 0; turnCount < budget.maxTurns; turnCount++) {
+    while (true) {
       if (this.interrupted(options)) {
         this.emitInterrupted(onEvent);
         return;
       }
 
-      const turnsRemaining = budget.maxTurns - turnCount;
-      if (!warned && turnsRemaining <= budget.warningTurnsRemaining) {
+      if (budgetFinite && turnCount >= budget.maxTurns) {
+        onEvent({ type: "budget_exhausted", content: `run budget exhausted after ${budget.maxTurns} turns` });
+        return;
+      }
+
+      const turnsRemaining = budgetFinite ? budget.maxTurns - turnCount : Infinity;
+      if (budgetFinite && !warned && turnsRemaining <= budget.warningTurnsRemaining) {
         warned = true;
         onEvent({
           type: "budget_warning",
@@ -100,6 +121,14 @@ export class AgentRuntime {
 
       const messageId = `msg_${randomUUID()}`;
       let streamed = "";
+      let turnPromptTokens = 0;
+      let turnCompletionTokens = 0;
+      let turnTotalTokens = 0;
+      const onUsage = (u: UsageSnapshot) => {
+        turnPromptTokens += u.promptTokens;
+        turnCompletionTokens += u.completionTokens;
+        turnTotalTokens += u.totalTokens;
+      };
       onEvent({ type: "stream_start", messageId, content: "" });
       const turn = this.provider.streamTools
         ? await this.provider.streamTools(
@@ -111,6 +140,7 @@ export class AgentRuntime {
               streamed += delta;
               onEvent({ type: "stream_delta", messageId, content: delta });
             },
+            onUsage,
           },
         )
         : await this.provider.runTools({
@@ -118,12 +148,28 @@ export class AgentRuntime {
           messages,
           tools: this.registry.toLlmTools(),
           onRetry: (event) => this.emitRetrying(event, onEvent),
+          onUsage,
         });
       if (!this.provider.streamTools && turn.text) {
         streamed += turn.text;
         onEvent({ type: "stream_delta", messageId, content: turn.text });
       }
       onEvent({ type: "stream_end", messageId, content: streamed || turn.text });
+
+      cumulativePromptTokens += turnPromptTokens;
+      cumulativeCompletionTokens += turnCompletionTokens;
+      cumulativeTotalTokens += turnTotalTokens;
+      onEvent({
+        type: "usage",
+        content: `Token usage: +${turnPromptTokens} prompt / +${turnCompletionTokens} completion / +${turnTotalTokens} total (cumulative ${cumulativeTotalTokens})`,
+        promptTokens: turnPromptTokens,
+        completionTokens: turnCompletionTokens,
+        totalTokens: turnTotalTokens,
+        cumulativePromptTokens,
+        cumulativeCompletionTokens,
+        cumulativeTotalTokens,
+      });
+
       if (this.interrupted(options)) {
         this.emitInterrupted(onEvent);
         return;
@@ -171,8 +217,9 @@ export class AgentRuntime {
           return;
         }
       }
+
+      turnCount += 1;
     }
-    onEvent({ type: "budget_exhausted", content: `run budget exhausted after ${budget.maxTurns} turns` });
   }
 
   private interrupted(options?: AgentRunOptions): boolean {

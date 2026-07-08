@@ -8,9 +8,14 @@ import type { LlmProvider, RunTurn, RunToolsArgs } from "./provider.js";
 
 class SeqProvider implements LlmProvider {
   private i = 0;
-  constructor(private turns: RunTurn[]) {}
+  constructor(private turns: RunTurn[], private usagePerTurn: number[] = []) {}
   async extractJson() { return {}; }
-  async runTools(_a: RunToolsArgs): Promise<RunTurn> { return this.turns[this.i++] ?? { text: "", toolCalls: [], done: true }; }
+  async runTools(a: RunToolsArgs): Promise<RunTurn> {
+    const turn = this.turns[this.i++] ?? { text: "", toolCalls: [], done: true };
+    const usage = this.usagePerTurn[this.i - 1] ?? 0;
+    if (usage > 0) a.onUsage?.({ promptTokens: usage, completionTokens: usage, totalTokens: usage * 2 });
+    return turn;
+  }
 }
 
 function replayTool(executed: string[]): ToolDescriptor {
@@ -95,8 +100,9 @@ describe("AgentRuntime", () => {
     const events: AgentEvent[] = [];
     await new AgentRuntime(provider, new ToolRegistry(), new ApprovalGate(async () => "approved"))
       .run("sys", "goal", (e) => events.push(e));
-    expect(events.map((e) => e.type)).toEqual(["stream_start", "stream_delta", "stream_end", "text", "done"]);
+    expect(events.map((e) => e.type)).toEqual(["stream_start", "stream_delta", "stream_end", "usage", "text", "done"]);
     expect(events.find((e) => e.type === "stream_delta")?.content).toBe("hello");
+    expect(events.find((e) => e.type === "usage")?.cumulativeTotalTokens).toBe(0);
   });
 
   it("emits retrying events from provider retry callbacks", async () => {
@@ -335,5 +341,42 @@ describe("AgentRuntime", () => {
     expect(summaries).toHaveLength(1);
     expect(events.some((e) => e.type === "interrupted")).toBe(true);
     expect(events.some((e) => e.type === "done")).toBe(false);
+  });
+
+  it("runs until the model completes when no budget is set", async () => {
+    const registry = new ToolRegistry();
+    registry.register({ name: "read", description: "read", inputSchema: { type: "object" }, risk: "normal", source: "test", execute: async () => ({ ok: true, content: "read ok" }) });
+    const turns: RunTurn[] = Array.from({ length: 30 }, (_, i) => ({
+      text: `turn ${i}`,
+      toolCalls: [{ id: `tc_${i}`, name: "read", input: {} }],
+      done: false,
+    }));
+    turns.push({ text: "all done", toolCalls: [], done: true });
+    const provider = new SeqProvider(turns);
+    const events: AgentEvent[] = [];
+
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "goal", (e) => events.push(e));
+
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    expect(events.some((e) => e.type === "budget_exhausted")).toBe(false);
+  });
+
+  it("emits cumulative usage events when the provider reports usage", async () => {
+    const registry = new ToolRegistry();
+    registry.register({ name: "read", description: "read", inputSchema: { type: "object" }, risk: "normal", source: "test", execute: async () => ({ ok: true, content: "read ok" }) });
+    const provider = new SeqProvider([
+      { text: "need tool", toolCalls: [{ id: "tc_1", name: "read", input: {} }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ], [3, 5]);
+    const events: AgentEvent[] = [];
+
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "goal", (e) => events.push(e));
+
+    const usageEvents = events.filter((e) => e.type === "usage");
+    expect(usageEvents).toHaveLength(2);
+    expect(usageEvents[0].totalTokens).toBe(6);
+    expect(usageEvents[0].cumulativeTotalTokens).toBe(6);
+    expect(usageEvents[1].totalTokens).toBe(10);
+    expect(usageEvents[1].cumulativeTotalTokens).toBe(16);
   });
 });

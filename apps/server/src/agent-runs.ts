@@ -35,6 +35,9 @@ export class AgentRunRegistry {
         interruptReason: null,
         completionReason: null,
         error: null,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
       },
       abortController: new AbortController(),
       steeringQueue: [],
@@ -65,6 +68,21 @@ export class AgentRunRegistry {
     if (!active) return [];
     const queued = active.steeringQueue.splice(0);
     return queued;
+  }
+
+  addUsage(
+    runId: string,
+    usage: { promptTokens: number; completionTokens: number; totalTokens: number },
+  ): AgentRun | undefined {
+    const active = this.runs.get(runId);
+    if (!active) return undefined;
+    active.run = {
+      ...active.run,
+      promptTokens: active.run.promptTokens + usage.promptTokens,
+      completionTokens: active.run.completionTokens + usage.completionTokens,
+      totalTokens: active.run.totalTokens + usage.totalTokens,
+    };
+    return active.run;
   }
 
   interrupt(runId: string, reason = "user interrupted"): AgentRun | undefined {

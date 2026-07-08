@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { proxyFetch } from "@traceforge/shared";
-import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall } from "./provider.js";
+import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall, UsageSnapshot } from "./provider.js";
 import { withRetry } from "./retry.js";
 
 export interface AnthropicOptions {
@@ -30,6 +30,7 @@ export class AnthropicProvider implements LlmProvider {
     const res = await withRetry("anthropic.extractJson", () => this.client.messages.create(params));
     const text = res.content.find((b) => b.type === "text");
     if (!text || text.type !== "text") throw new Error("no text block in response");
+    emitUsage(args.onUsage, res.usage);
     return JSON.parse(text.text);
   }
 
@@ -80,8 +81,23 @@ export class AnthropicProvider implements LlmProvider {
       if (block.type === "text") text += block.text;
       else if (block.type === "tool_use") toolCalls.push({ id: block.id, name: block.name, input: block.input });
     }
+    emitUsage(args.onUsage, res.usage);
     return { text, toolCalls, done: res.stop_reason !== "tool_use" };
   }
+}
+
+function emitUsage(
+  onUsage: ((usage: UsageSnapshot) => void) | undefined,
+  usage: { input_tokens?: number; output_tokens?: number } | undefined,
+): void {
+  if (!onUsage || !usage) return;
+  const inputTokens = usage.input_tokens ?? 0;
+  const outputTokens = usage.output_tokens ?? 0;
+  onUsage({
+    promptTokens: inputTokens,
+    completionTokens: outputTokens,
+    totalTokens: inputTokens + outputTokens,
+  });
 }
 
 function mapRetry(onRetry: RunToolsArgs["onRetry"]) {

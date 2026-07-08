@@ -550,6 +550,24 @@ export function registerRoutes(
           reason: e.content,
         });
       }
+      else if (e.type === "usage") {
+        const run = runs.addUsage(runId, {
+          promptTokens: e.promptTokens ?? 0,
+          completionTokens: e.completionTokens ?? 0,
+          totalTokens: e.totalTokens ?? 0,
+        });
+        bus.emit({
+          type: "agent_usage",
+          caseId: id,
+          runId,
+          promptTokens: e.promptTokens ?? 0,
+          completionTokens: e.completionTokens ?? 0,
+          totalTokens: e.totalTokens ?? 0,
+          cumulativePromptTokens: run?.promptTokens ?? e.cumulativePromptTokens ?? 0,
+          cumulativeCompletionTokens: run?.completionTokens ?? e.cumulativeCompletionTokens ?? 0,
+          cumulativeTotalTokens: run?.totalTokens ?? e.cumulativeTotalTokens ?? 0,
+        });
+      }
       else if (e.type === "interrupted") {
         const interrupted = runs.markInterrupted(runId, running.run.interruptReason ?? e.content);
         if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });

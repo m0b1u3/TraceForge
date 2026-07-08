@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { proxyFetch } from "@traceforge/shared";
-import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall, StreamToolsHandlers } from "./provider.js";
+import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall, StreamToolsHandlers, UsageSnapshot } from "./provider.js";
 import { withRetry } from "./retry.js";
 
 export interface OpenAIOptions {
@@ -20,6 +20,7 @@ type OpenAIStreamChunk = {
     };
     finish_reason?: string | null;
   }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 };
 
 export function assembleOpenAIStreamChoice(chunks: OpenAIStreamChunk[]): RunTurn {
@@ -84,6 +85,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     }
     const content = res.choices[0]?.message?.content;
     if (!content) throw new Error("no content in response");
+    emitUsage(args.onUsage, res.usage);
     return JSON.parse(content);
   }
 
@@ -103,6 +105,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     });
     const content = res.choices[0]?.message?.content;
     if (!content) throw new Error("no content in response");
+    emitUsage(args.onUsage, res.usage);
     return JSON.parse(content);
   }
 
@@ -119,6 +122,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
       const fn = (tc as { function: { name: string; arguments: string } }).function;
       return { id: tc.id, name: fn.name, input: JSON.parse(fn.arguments || "{}") };
     });
+    emitUsage(args.onUsage, res.usage);
     return { text: choice.message.content ?? "", toolCalls, done: choice.finish_reason !== "tool_calls" };
   }
 
@@ -126,18 +130,24 @@ export class OpenAICompatibleProvider implements LlmProvider {
     const msgs = this.toOpenAIMessages(args);
     return withRetry("openai.streamTools", async () => {
       const chunks: OpenAIStreamChunk[] = [];
+      let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
       const stream = await this.client.chat.completions.create({
         model: this.opts.model,
         messages: msgs as never,
         tools: args.tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
         stream: true,
+        stream_options: { include_usage: true },
       }, handlers.signal ? { signal: handlers.signal } : undefined);
       for await (const chunk of stream) {
         chunks.push(chunk as OpenAIStreamChunk);
-        const delta = chunk.choices[0]?.delta?.content ?? "";
+        const c = chunk as OpenAIStreamChunk;
+        if (c.usage) usage = c.usage;
+        const delta = c.choices?.[0]?.delta?.content ?? "";
         if (delta) handlers.onTextDelta?.(delta);
       }
-      return assembleOpenAIStreamChoice(chunks);
+      const turn = assembleOpenAIStreamChoice(chunks);
+      emitUsage(handlers.onUsage, usage);
+      return turn;
     }, { signal: handlers.signal, onRetry: mapRetry(handlers.onRetry) });
   }
 
@@ -206,4 +216,16 @@ function retryableEmptyContentError(): Error & { status: number } {
   const error = new Error("empty content in JSON response") as Error & { status: number };
   error.status = 503;
   return error;
+}
+
+function emitUsage(
+  onUsage: ((usage: UsageSnapshot) => void) | undefined,
+  usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined,
+): void {
+  if (!onUsage || !usage) return;
+  onUsage({
+    promptTokens: usage.prompt_tokens ?? 0,
+    completionTokens: usage.completion_tokens ?? 0,
+    totalTokens: usage.total_tokens ?? 0,
+  });
 }

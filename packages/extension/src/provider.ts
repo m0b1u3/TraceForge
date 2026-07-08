@@ -1,9 +1,16 @@
 import type { NativeToolDef } from "./tool.js";
 
+export interface UsageSnapshot {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export interface ExtractJsonArgs {
   system: string;
   user: string;
   schema: Record<string, unknown>;
+  onUsage?: (usage: UsageSnapshot) => void;
 }
 
 export interface ToolCall {
@@ -30,12 +37,14 @@ export interface RunToolsArgs {
   messages: TurnMessage[];
   tools: NativeToolDef[];
   onRetry?: (event: { attempt: number; maxAttempts: number; reason: string }) => void;
+  onUsage?: (usage: UsageSnapshot) => void;
 }
 
 export interface StreamToolsHandlers {
   onTextDelta?: (delta: string) => void;
   signal?: AbortSignal;
   onRetry?: (event: { attempt: number; maxAttempts: number; reason: string }) => void;
+  onUsage?: (usage: UsageSnapshot) => void;
 }
 
 export interface LlmProvider {

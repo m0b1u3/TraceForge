@@ -9,6 +9,12 @@ export interface AgentUiEvent {
   text: string;
 }
 
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 interface State {
   caseId: string | null;
   traffic: TrafficEntry[];
@@ -21,8 +27,10 @@ interface State {
   agentBusy: boolean;
   activeRun: AgentRun | null;
   streamingMessages: Record<string, number>;
+  tokenUsage: TokenUsage;
   setAgentBusy: (b: boolean) => void;
   setActiveRun: (run: AgentRun | null) => void;
+  setTokenUsage: (usage: TokenUsage) => void;
   toast: string | null;
   showToast: (msg: string) => void;
   pendingApproval: { approvalId: string; tool: string; input: string } | null;
@@ -82,8 +90,10 @@ export const useStore = create<State>((set, get) => ({
   agentBusy: false,
   activeRun: null,
   streamingMessages: {},
+  tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   setAgentBusy: (b) => set({ agentBusy: b }),
   setActiveRun: (run) => set({ activeRun: run, agentBusy: run ? ["queued", "running", "interrupting"].includes(run.status) : false }),
+  setTokenUsage: (usage) => set({ tokenUsage: usage }),
   toast: null,
   showToast: (msg) => { set({ toast: msg }); setTimeout(() => { if (get().toast === msg) set({ toast: null }); }, 4000); },
   pendingApproval: null,
@@ -130,7 +140,7 @@ export const useStore = create<State>((set, get) => ({
   clearPendingConfirmation: () => set({ pendingConfirmation: null }),
   pendingScope: null,
   setPendingScope: (p) => set({ pendingScope: p }),
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, streamingMessages: {}, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null, pendingConfirmation: null }),
+  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, streamingMessages: {}, tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null, pendingConfirmation: null }),
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
@@ -230,6 +240,7 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "decision_recorded" && event.decision.caseId === cid) get().addDecision(event.decision);
     else if (event.type === "agent_run_started" && event.run.caseId === cid) {
       get().setActiveRun(event.run);
+      get().setTokenUsage({ promptTokens: 0, completionTokens: 0, totalTokens: 0 });
       get().addAgentEvent({ kind: "started", text: `Started: ${event.run.goal}` });
     }
     else if (event.type === "agent_stream_start" && event.caseId === cid) {
@@ -285,6 +296,13 @@ export const useStore = create<State>((set, get) => ({
       get().setActiveRun(null);
       get().setAgentBusy(false);
       get().addAgentEvent({ kind: "error", text: event.error });
+    }
+    else if (event.type === "agent_usage" && event.caseId === cid) {
+      get().setTokenUsage({
+        promptTokens: event.cumulativePromptTokens,
+        completionTokens: event.cumulativeCompletionTokens,
+        totalTokens: event.cumulativeTotalTokens,
+      });
     }
     else if (event.type === "agent_started" && event.caseId === cid) {
       get().setAgentBusy(true);

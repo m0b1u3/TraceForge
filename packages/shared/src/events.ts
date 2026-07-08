@@ -32,6 +32,7 @@ export type RuntimeEvent =
   | { type: "agent_run_needs_continuation"; run: AgentRun; reason: string }
   | { type: "agent_run_completed"; run: AgentRun; content: string }
   | { type: "agent_run_failed"; run: AgentRun; error: string }
+  | { type: "agent_usage"; caseId: string; runId: string; promptTokens: number; completionTokens: number; totalTokens: number; cumulativePromptTokens: number; cumulativeCompletionTokens: number; cumulativeTotalTokens: number }
   | { type: "approval_requested"; caseId: string; approvalId: string; tool: string; input: string }
   | { type: "approval_resolved"; caseId: string; approvalId: string; decision: "approved" | "rejected" }
   | { type: "action_recorded"; action: ActionCard }

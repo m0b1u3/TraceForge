@@ -236,5 +236,8 @@ export const AgentRunSchema = z.object({
   interruptReason: z.string().nullable().default(null),
   completionReason: z.string().nullable().default(null),
   error: z.string().nullable().default(null),
+  promptTokens: z.number().default(0),
+  completionTokens: z.number().default(0),
+  totalTokens: z.number().default(0),
 });
 export type AgentRun = z.infer<typeof AgentRunSchema>;

@@ -25,6 +25,7 @@ function resetStore() {
     pendingScope: null,
     browserController: null,
     browserUrl: "",
+    tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   });
 }
 
@@ -88,5 +89,79 @@ describe("store observer confirmation", () => {
 
     expect(useStore.getState().caseId).toBeNull();
     expect(useStore.getState().traffic).toEqual([]);
+  });
+});
+
+describe("store token usage", () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  it("resets token usage when a run starts", () => {
+    useStore.setState({
+      tokenUsage: { promptTokens: 99, completionTokens: 99, totalTokens: 99 },
+    });
+    useStore.getState().handleRuntimeEvent({
+      type: "agent_run_started",
+      run: {
+        id: "run_1",
+        caseId: "case_1",
+        goal: "test",
+        status: "running",
+        createdAt: "now",
+        startedAt: "now",
+        finishedAt: null,
+        interruptReason: null,
+        completionReason: null,
+        error: null,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      },
+    });
+    expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+  });
+
+  it("updates cumulative token usage on agent_usage events", () => {
+    useStore.getState().handleRuntimeEvent({
+      type: "agent_usage",
+      caseId: "case_1",
+      runId: "run_1",
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+      cumulativePromptTokens: 10,
+      cumulativeCompletionTokens: 5,
+      cumulativeTotalTokens: 15,
+    });
+    expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 10, completionTokens: 5, totalTokens: 15 });
+
+    useStore.getState().handleRuntimeEvent({
+      type: "agent_usage",
+      caseId: "case_1",
+      runId: "run_1",
+      promptTokens: 3,
+      completionTokens: 2,
+      totalTokens: 5,
+      cumulativePromptTokens: 13,
+      cumulativeCompletionTokens: 7,
+      cumulativeTotalTokens: 20,
+    });
+    expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 13, completionTokens: 7, totalTokens: 20 });
+  });
+
+  it("ignores agent_usage events for other cases", () => {
+    useStore.getState().handleRuntimeEvent({
+      type: "agent_usage",
+      caseId: "case_2",
+      runId: "run_1",
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+      cumulativePromptTokens: 10,
+      cumulativeCompletionTokens: 5,
+      cumulativeTotalTokens: 15,
+    });
+    expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 0, completionTokens: 0, totalTokens: 0 });
   });
 });

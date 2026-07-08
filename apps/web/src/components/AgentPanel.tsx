@@ -92,7 +92,7 @@ export function AgentPanel() {
   const {
     caseId, agentEvents, agentBusy, setAgentBusy, showToast, pendingApproval,
     pendingScope, setPendingScope, clearPendingApproval, resetAgent, addAgentEvent,
-    activeRun, setActiveRun,
+    activeRun, setActiveRun, tokenUsage,
   } = useStore();
   const [goal, setGoal] = useState("");
   const [busy, setBusy] = useState<"approved" | "rejected" | null>(null);
@@ -187,6 +187,9 @@ export function AgentPanel() {
           {agentEvents.length > 0 && (
             <button className="tf-btn tf-btn-ghost" onClick={resetAgent} title="Clear conversation">Clear</button>
           )}
+          <div className="session-state token-stats" title="Cumulative LLM token usage for this run">
+            Tokens {tokenUsage.totalTokens.toLocaleString()} ({tokenUsage.promptTokens.toLocaleString()} in / {tokenUsage.completionTokens.toLocaleString()} out)
+          </div>
           <div className="session-state"><Sparkle size={14} /> autonomous</div>
         </div>
       </div>
