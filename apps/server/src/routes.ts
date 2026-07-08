@@ -543,8 +543,6 @@ export function registerRoutes(
           input: e.content ?? "",
           reason: "identical call already failed in this run",
         });
-        agentEventStore.append(id, "tool_result", e.content ?? "", e.name ?? undefined);
-        trajectory.push(`[blocked] ${e.name} → ${e.content}`);
       }
       else if (e.type === "text") { bus.emit({ type: "agent_text", caseId: id, content: e.content }); agentEventStore.append(id, "text", e.content); trajectory.push(`[text] ${e.content}`); }
       else if (e.type === "done") { bus.emit({ type: "agent_done", caseId: id, content: e.content }); agentEventStore.append(id, "done", e.content); trajectory.push(`[done] ${e.content}`); }

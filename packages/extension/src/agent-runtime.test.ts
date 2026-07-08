@@ -383,6 +383,23 @@ describe("AgentRuntime", () => {
 });
 
 describe("AgentRuntime failure memory", () => {
+  it("emits tool_blocked when retrying an identical failed call", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "failing", description: "failing", inputSchema: { type: "object" },
+      risk: "normal", source: "test",
+      execute: async () => ({ ok: false, content: "err" }),
+    });
+    const provider = new SeqProvider([
+      { text: "call", toolCalls: [{ id: "c1", name: "failing", input: { x: 1 } }], done: false },
+      { text: "retry", toolCalls: [{ id: "c2", name: "failing", input: { x: 1 } }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    const events: AgentEvent[] = [];
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "go", (e) => events.push(e), { failureMemory: new FailureMemory() });
+    expect(events.some((e) => e.type === "tool_blocked")).toBe(true);
+  });
+
   it("skips a second identical failing tool call within a run", async () => {
     let calls = 0;
     const registry = new ToolRegistry();
