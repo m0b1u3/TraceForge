@@ -48,7 +48,7 @@ describe("makeDownloadTool", () => {
 
   it("rejects path traversal filenames", async () => {
     const tool = makeDownloadTool({ caseId: "c", workspaceRoot: root });
-    const res = await tool.execute({ url: "https://example.com/x", filename: ".." });
+    const res = await tool.execute({ url: "https://example.com/x", filename: "../escape.sh" });
     expect(res.ok).toBe(false);
     expect(res.content).toMatch(/invalid filename|escapes/);
   });

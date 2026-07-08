@@ -21,9 +21,7 @@ export interface DownloadToolDeps {
 
 async function defaultFetch(url: string): Promise<DownloadFetcherResponse> {
   const dispatcher = proxyDispatcher();
-  const res = dispatcher
-    ? await fetch(url, { dispatcher: dispatcher as never })
-    : await fetch(url);
+  const res = dispatcher ? await fetch(url, { dispatcher }) : await fetch(url);
   return {
     ok: res.ok,
     status: res.status,
@@ -60,11 +58,18 @@ export function makeDownloadTool(deps: DownloadToolDeps): ToolDescriptor {
         return { ok: false, content: "only http/https urls are allowed" };
       }
       if (!filename) return { ok: false, content: "missing filename" };
-      const safe = normalize(filename).replace(/^(\.\.(\/|\\|$))+/, "");
-      if (!safe || safe === "." || safe === ".." || safe.includes("..") || /[\\/]/.test(safe)) {
+      const normalized = normalize(filename);
+      if (
+        !normalized ||
+        normalized === "." ||
+        normalized === ".." ||
+        normalized.includes("..") ||
+        normalized.startsWith(".") ||
+        /[\\/]/.test(normalized)
+      ) {
         return { ok: false, content: "invalid filename" };
       }
-      const targetPath = resolve(downloadDir, safe);
+      const targetPath = resolve(downloadDir, normalized);
       if (!targetPath.startsWith(downloadDir + sep)) {
         return { ok: false, content: "filename escapes downloads directory" };
       }
@@ -79,7 +84,7 @@ export function makeDownloadTool(deps: DownloadToolDeps): ToolDescriptor {
         if (executable && process.platform !== "win32") {
           await chmod(targetPath, 0o755);
         }
-        return { ok: true, content: `downloaded ${buf.length} bytes to downloads/${safe}` };
+        return { ok: true, content: `downloaded ${buf.length} bytes to downloads/${normalized}` };
       } catch (e) {
         return { ok: false, content: `download error: ${(e as Error).message}` };
       }
