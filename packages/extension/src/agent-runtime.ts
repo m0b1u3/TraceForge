@@ -26,6 +26,13 @@ export interface AgentRunBudget {
   warningTurnsRemaining: number;
 }
 
+export interface ToolExecutionReport {
+  name: string;
+  input: unknown;
+  content: string;
+  ok: boolean;
+}
+
 export interface AgentRunOptions {
   signal?: AbortSignal;
   runId?: string;
@@ -33,6 +40,7 @@ export interface AgentRunOptions {
   budget?: Partial<AgentRunBudget>;
   onTurnComplete?: (summary: TurnSummary) => Promise<{ action: "continue" | "pause"; reason?: string }>;
   failureMemory?: FailureMemory;
+  onToolExecuted?: (report: ToolExecutionReport) => void | Promise<void>;
 }
 
 export interface TurnSummary {
@@ -193,8 +201,8 @@ export class AgentRuntime {
           return;
         }
         const results = batch.parallel
-          ? await Promise.all(batch.calls.map((call) => this.runOneTool(call, onEvent, failureMemory, { deferResultEvent: true })))
-          : [await this.runOneTool(batch.calls[0], onEvent, failureMemory, { deferResultEvent: true })];
+          ? await Promise.all(batch.calls.map((call) => this.runOneTool(call, onEvent, failureMemory, options, { deferResultEvent: true })))
+          : [await this.runOneTool(batch.calls[0], onEvent, failureMemory, options, { deferResultEvent: true })];
         for (let i = 0; i < batch.calls.length; i++) {
           const call = batch.calls[i];
           const result = results[i];
@@ -271,19 +279,28 @@ export class AgentRuntime {
     call: ToolCall,
     onEvent: (e: AgentEvent) => void,
     failureMemory: FailureMemory,
+    options: AgentRunOptions,
     opts: { deferResultEvent?: boolean } = {},
   ): Promise<{ content: string; ok: boolean }> {
     const tool = this.registry.get(call.name);
     if (!tool) {
       const msg = `unknown tool: ${call.name}`;
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: msg });
-      return { content: msg, ok: false };
+      const result = { content: msg, ok: false };
+      if (options.onToolExecuted) {
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
+      }
+      return result;
     }
 
     if (failureMemory.has(call.name, call.input)) {
       const content = `[tool_blocked] ${call.name}: 该调用已在本运行中失败过，使用相同输入不会再次执行。请换用其他方法，或当本地环境无法解决时使用 download_tool 下载现成工具。`;
       if (!opts.deferResultEvent) onEvent({ type: "tool_blocked", name: call.name, content });
-      return { content, ok: false };
+      const result = { content, ok: false };
+      if (options.onToolExecuted) {
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
+      }
+      return result;
     }
 
     onEvent({ type: "tool_call", name: call.name, content: JSON.stringify(call.input) });
@@ -292,19 +309,31 @@ export class AgentRuntime {
     if (decision === "rejected") {
       const content = "用户拒绝执行此动作。";
       onEvent({ type: "tool_rejected", name: call.name, content });
-      return { content, ok: false };
+      const result = { content, ok: false };
+      if (options.onToolExecuted) {
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
+      }
+      return result;
     }
 
     try {
       const res = await tool.execute(call.input);
       if (!res.ok) failureMemory.add(call.name, call.input);
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: res.content });
-      return { content: res.content, ok: res.ok };
+      const result = { content: res.content, ok: res.ok };
+      if (options.onToolExecuted) {
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
+      }
+      return result;
     } catch (error) {
       failureMemory.add(call.name, call.input);
       const content = `[tool_error] ${call.name}: ${(error as Error).message}`;
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content });
-      return { content, ok: false };
+      const result = { content, ok: false };
+      if (options.onToolExecuted) {
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
+      }
+      return result;
     }
   }
 }

@@ -24,7 +24,7 @@ import {
   makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools,
   makeReplayTrafficTool, makeExtractApiEndpointsTool,
   McpManager, mcpToolToDescriptor, Observer, LlmQueryExpander,
-  makeReevaluateFactsTool,
+  makeReevaluateFactsTool, FailureMemory, makeDownloadTool,
   type AgentRunBudget,
 } from "@traceforge/extension";
 import { BrowserSession } from "./browser-session.js";
@@ -452,6 +452,7 @@ export function registerRoutes(
       });
       return (res as { suggestion?: string }).suggestion ?? "No suggestion.";
     }));
+    registry.register(makeDownloadTool({ caseId: id, workspaceRoot: projectRoot }));
 
     // 若该 case 有共享浏览器会话，把浏览器工具纳入 agent 工具集
     const browserSession = browserSessions.get(id);
@@ -487,7 +488,19 @@ export function registerRoutes(
 1. 先尝试一组常见/弱口令凭据（可控数量，不要无差别爆破）；
 2. 复用从其他 Facts 中发现的疑似凭据或线索；
 3. 若上述尝试均失败，记录一条说明阻塞原因的 Fact，然后再 pivot 到相邻攻击面（注册接口、找回密码、OAuth、会话管理、越权等）。
-完成后用一句话总结。`;
+完成后用一句话总结。
+失败记忆与在线工具回退：
+- 禁止用完全相同的输入重复调用任何已经执行失败的工具（尤其是 mcp__poc__exec_command 和脚本类调用）。如果一次调用返回错误、非零退出码或失败结果，立即用 record_fact 记录一条 type=failed_attempt 的 Fact，然后换用其他方法。
+- 如果当前环境无法解决问题，调用 download_tool(url, filename, executable=true) 从网络下载现成工具，保存到 workspace/<caseId>/downloads/，然后通过 mcp__poc__exec_command 执行（仍需用户批准）。
+- 重试相同失败输入会被 runtime 自动拒绝，不要一直重复尝试，不要浪费轮次。`;
+
+    const failedAttempts = factStore.listByCase(id)
+      .filter((f) => f.type === "failed_attempt")
+      .map((f) => {
+        const v = f.value as { tool?: string; input?: unknown } | undefined;
+        return { tool: v?.tool ?? f.title, input: v?.input ?? {} };
+      });
+    const failureMemory = new FailureMemory(failedAttempts);
 
     const trajectory: string[] = [];
 
@@ -572,7 +585,20 @@ export function registerRoutes(
         const interrupted = runs.markInterrupted(runId, running.run.interruptReason ?? e.content);
         if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });
       }
-    }, { signal: running.abortController.signal, runId, budget, getSteeringMessages: () => runs.consumeSteering(runId), onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory) });
+    }, { signal: running.abortController.signal, runId, budget, getSteeringMessages: () => runs.consumeSteering(runId), onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory), failureMemory, onToolExecuted: (report) => {
+      if (report.ok) return;
+      const fact = factStore.create(id, {
+        type: "failed_attempt",
+        title: `Failed attempt: ${report.name}`,
+        value: { tool: report.name, input: report.input, reason: report.content },
+        source: { type: "agent", ref: runId },
+        confidence: 1,
+        tags: ["failure-memory"],
+      });
+      const entry = timelineStore.append(id, "fact_created", `Failed attempt: ${report.name}`, fact.id);
+      bus.emit({ type: "fact_created", fact });
+      bus.emit({ type: "timeline_appended", entry });
+    } });
 
     const afterRun = runs.get(runId)?.run;
     if (afterRun && afterRun.status === "running") {

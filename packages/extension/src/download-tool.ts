@@ -21,7 +21,7 @@ export interface DownloadToolDeps {
 
 async function defaultFetch(url: string): Promise<DownloadFetcherResponse> {
   const dispatcher = proxyDispatcher();
-  const res = dispatcher ? await fetch(url, { dispatcher }) : await fetch(url);
+  const res = dispatcher ? await fetch(url, { dispatcher } as never) : await fetch(url);
   return {
     ok: res.ok,
     status: res.status,

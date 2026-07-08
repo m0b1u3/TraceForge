@@ -43,4 +43,14 @@ describe("agent methodology prompt", () => {
     expect(system).toContain("search_facts");
     expect(system).toContain("不要无差别爆破");
   });
+
+  it("includes failure-memory and download_tool instructions", async () => {
+    await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "test fallback" } });
+    await new Promise((r) => setTimeout(r, 100));
+    const system = capturedSystems[0];
+    expect(system).toContain("已经执行失败");
+    expect(system).toContain("download_tool");
+    expect(system).toContain("failed_attempt");
+    expect(system).toContain("不要一直重复尝试");
+  });
 });
