@@ -14,6 +14,26 @@ function Toast() {
   return <div className="tf-toast">{toast}</div>;
 }
 
+function ObserverConfirmation() {
+  const pendingConfirmation = useStore((s) => s.pendingConfirmation);
+  const clearPendingConfirmation = useStore((s) => s.clearPendingConfirmation);
+  const setActiveTab = useStore((s) => s.setActiveTab);
+  if (!pendingConfirmation) return null;
+  const { warning } = pendingConfirmation;
+  return (
+    <div className="observer-confirmation">
+      <div className="observer-confirmation-body">
+        <strong>Observer intervention required</strong>
+        <p>{warning.title}: {warning.description}</p>
+      </div>
+      <div className="observer-confirmation-actions">
+        <button className="primary" onClick={() => { setActiveTab("observer"); clearPendingConfirmation(); }}>View in Observer</button>
+        <button onClick={() => clearPendingConfirmation()}>Dismiss</button>
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const { caseId, connectWs } = useStore();
   useEffect(() => { connectWs(); }, [connectWs]);
@@ -42,6 +62,7 @@ export function App() {
   return (
     <div className="app-shell">
       <TopBar />
+      <ObserverConfirmation />
       <section className="workspace">
         <TrafficPanel />
         <AgentPanel />

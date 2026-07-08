@@ -3,7 +3,7 @@ import { AgentRuntime } from "./agent-runtime.js";
 import { ToolRegistry } from "./registry.js";
 import { ApprovalGate } from "./approval-gate.js";
 import type { ToolDescriptor } from "./tool.js";
-import type { AgentEvent } from "./agent-runtime.js";
+import type { AgentEvent, TurnSummary } from "./agent-runtime.js";
 import type { LlmProvider, RunTurn, RunToolsArgs } from "./provider.js";
 
 class SeqProvider implements LlmProvider {
@@ -310,8 +310,30 @@ describe("AgentRuntime", () => {
     await new AgentRuntime(provider, registry, autoGate)
       .run("sys", "goal", () => {}, {
         runId: "r1",
-        onTurnComplete: async (summary) => { summaries.push({ runId: summary.runId, turnCount: summary.turnCount }); },
+        onTurnComplete: async (summary) => { summaries.push({ runId: summary.runId, turnCount: summary.turnCount }); return { action: "continue" }; },
       });
     expect(summaries).toEqual([{ runId: "r1", turnCount: 0 }]);
+  });
+
+  it("pauses the run when onTurnComplete returns pause", async () => {
+    const summaries: TurnSummary[] = [];
+    const provider = new SeqProvider([
+      { text: "need tool", toolCalls: [{ id: "tc_1", name: "read", input: {} }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    const registry = new ToolRegistry();
+    registry.register({ name: "read", description: "read", inputSchema: { type: "object" }, risk: "normal", source: "test", execute: async () => ({ ok: true, content: "read ok" }) });
+    const events: AgentEvent[] = [];
+    await new AgentRuntime(provider, registry, autoGate)
+      .run("sys", "goal", (e) => events.push(e), {
+        runId: "r1",
+        onTurnComplete: async (summary) => {
+          summaries.push(summary);
+          return { action: "pause", reason: "critical warning" };
+        },
+      });
+    expect(summaries).toHaveLength(1);
+    expect(events.some((e) => e.type === "interrupted")).toBe(true);
+    expect(events.some((e) => e.type === "done")).toBe(false);
   });
 });

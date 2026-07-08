@@ -41,6 +41,9 @@ interface State {
   saveLlmConfig: (input: LlmConfigInput) => Promise<void>;
   addWarning: (w: ObserverWarning) => void;
   upsertWarning: (w: ObserverWarning) => void;
+  pendingConfirmation: { runId: string; warning: ObserverWarning } | null;
+  setPendingConfirmation: (p: { runId: string; warning: ObserverWarning }) => void;
+  clearPendingConfirmation: () => void;
   pendingScope: { host: string; reason: string } | null;
   setPendingScope: (p: { host: string; reason: string } | null) => void;
   setCase: (id: string) => void;
@@ -122,6 +125,9 @@ export const useStore = create<State>((set, get) => ({
       copy[i] = w;
       return { warnings: copy };
     }),
+  pendingConfirmation: null,
+  setPendingConfirmation: (p) => set({ pendingConfirmation: p }),
+  clearPendingConfirmation: () => set({ pendingConfirmation: null }),
   pendingScope: null,
   setPendingScope: (p) => set({ pendingScope: p }),
   setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, streamingMessages: {}, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null }),
@@ -261,6 +267,13 @@ export const useStore = create<State>((set, get) => ({
       get().setActiveRun(null);
       get().setAgentBusy(false);
       get().addAgentEvent({ kind: "done", text: "Agent stopped" });
+    }
+    else if (event.type === "agent_run_needs_confirmation" && event.caseId === cid) {
+      get().setPendingConfirmation({ runId: event.runId, warning: event.warning });
+      get().setActiveTab("observer");
+      const text = `[Observer] Critical: ${event.warning.title}`;
+      get().addAgentEvent({ kind: "text", text });
+      get().showToast(text);
     }
     else if (event.type === "agent_run_needs_continuation" && event.run.caseId === cid) {
       get().setActiveRun(null);

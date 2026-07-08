@@ -24,7 +24,7 @@ export interface AgentRunOptions {
   runId?: string;
   getSteeringMessages?: () => string[];
   budget?: Partial<AgentRunBudget>;
-  onTurnComplete?: (summary: TurnSummary) => Promise<void>;
+  onTurnComplete?: (summary: TurnSummary) => Promise<{ action: "continue" | "pause"; reason?: string }>;
 }
 
 export interface TurnSummary {
@@ -165,7 +165,11 @@ export class AgentRuntime {
 
       if (options.onTurnComplete && options.runId) {
         const trajectory = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
-        await options.onTurnComplete({ runId: options.runId, turnCount, trajectory });
+        const decision = await options.onTurnComplete({ runId: options.runId, turnCount, trajectory });
+        if (decision?.action === "pause") {
+          onEvent({ type: "interrupted", content: decision.reason ?? "paused by observer" });
+          return;
+        }
       }
     }
     onEvent({ type: "budget_exhausted", content: `run budget exhausted after ${budget.maxTurns} turns` });

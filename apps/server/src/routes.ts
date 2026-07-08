@@ -11,7 +11,7 @@ import { FactStore } from "./stores/fact-store.js";
 import { TaskStore } from "./stores/task-store.js";
 import { TimelineStore } from "./stores/timeline-store.js";
 import { EventBus } from "./event-bus.js";
-import type { Task } from "@traceforge/shared";
+import type { Task, ObserverWarning } from "@traceforge/shared";
 import type { LlmProvider } from "@traceforge/llm";
 import { loadLlmConfig, createProviderFromConfig } from "@traceforge/llm";
 import { ActionCardStore } from "./stores/action-store.js";
@@ -337,14 +337,15 @@ export function registerRoutes(
       if (!running) return;
       const goal = running.run.goal;
 
-      const runObserverReview = async (reviewRunId: string, reviewTrajectory: string) => {
+      const runObserverReview = async (reviewRunId: string, reviewTrajectory: string): Promise<{ action: "continue" | "pause"; reason?: string }> => {
         const factsSummary = factStore.listByCase(id).map((f) => `${f.id} [${f.type}] ${f.title}`).join("\n") || "(无)";
         const tasksSummary = taskStore.listByCase(id).map((t) => `${t.id} [${t.status}] ${t.title}`).join("\n") || "(无)";
         const result = await new Observer(llm).review(id, { goal, trajectory: reviewTrajectory, factsSummary, tasksSummary });
         if (result.error) {
           bus.emit({ type: "observer_review_failed", caseId: id, runId: reviewRunId, error: result.error });
-          return;
+          return { action: "continue" };
         }
+        let pauseReason: string | undefined;
         for (const w of result.warnings) {
           if (observerStore.existsOpenDuplicate(id, w.title, w.description)) continue;
           const warning = observerStore.create({
@@ -355,7 +356,12 @@ export function registerRoutes(
             resolvedAt: null,
           });
           bus.emit({ type: "observer_warning", warning });
+          if (w.level === "critical" && !pauseReason) {
+            pauseReason = `critical observer warning: ${w.title}`;
+            bus.emit({ type: "agent_run_needs_confirmation", caseId: id, runId: reviewRunId, warning });
+          }
         }
+        return pauseReason ? { action: "pause", reason: pauseReason } : { action: "continue" };
       };
 
     const registry = new ToolRegistry();
