@@ -534,6 +534,18 @@ export function registerRoutes(
     await new AgentRuntime(llm, registry, gate).run(system, built.messages, (e) => {
       if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
       else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined); trajectory.push(`[result] ${e.name} → ${e.content}`); }
+      else if (e.type === "tool_blocked") {
+        bus.emit({
+          type: "agent_tool_blocked",
+          caseId: id,
+          runId,
+          tool: e.name ?? "",
+          input: e.content ?? "",
+          reason: "identical call already failed in this run",
+        });
+        agentEventStore.append(id, "tool_result", e.content ?? "", e.name ?? undefined);
+        trajectory.push(`[blocked] ${e.name} → ${e.content}`);
+      }
       else if (e.type === "text") { bus.emit({ type: "agent_text", caseId: id, content: e.content }); agentEventStore.append(id, "text", e.content); trajectory.push(`[text] ${e.content}`); }
       else if (e.type === "done") { bus.emit({ type: "agent_done", caseId: id, content: e.content }); agentEventStore.append(id, "done", e.content); trajectory.push(`[done] ${e.content}`); }
       else if (e.type === "budget_warning") {
