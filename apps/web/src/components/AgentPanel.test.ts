@@ -4,6 +4,7 @@ import {
   shouldStickToBottomAfterUpdate,
   scopeApprovalContinuationEventText,
   scopeApprovalContinuationGoal,
+  isStopButtonDisabled,
 } from "./AgentPanel.js";
 
 describe("scopeApprovalContinuationGoal", () => {
@@ -105,5 +106,19 @@ describe("shouldStickToBottomAfterUpdate", () => {
 
   it("does not force-scroll when the user has pulled the conversation upward", () => {
     expect(shouldStickToBottomAfterUpdate({ scrollTop: 200, clientHeight: 120, scrollHeight: 1000 })).toBe(false);
+  });
+});
+
+describe("isStopButtonDisabled", () => {
+  it("returns true while the API call is in flight", () => {
+    expect(isStopButtonDisabled(true, "running")).toBe(true);
+  });
+
+  it("returns true when the run is already interrupting", () => {
+    expect(isStopButtonDisabled(false, "interrupting")).toBe(true);
+  });
+
+  it("returns false during a normal running run", () => {
+    expect(isStopButtonDisabled(false, "running")).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Sparkle, PaperPlaneTilt, ShieldWarning, Globe, CircleNotch } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import type { AgentUiEvent } from "../store.js";
+import type { AgentRun } from "@traceforge/shared";
 import { runAgent, resolveApproval, approveScope, steerAgentRun, interruptAgentRun } from "../api.js";
 
 export function scopeApprovalContinuationGoal(host: string): string {
@@ -57,6 +58,10 @@ export function shouldStickToBottomAfterUpdate(el: Pick<HTMLElement, "scrollTop"
   return distanceFromBottom <= 80;
 }
 
+export function isStopButtonDisabled(stopping: boolean, status: AgentRun["status"]): boolean {
+  return stopping || status === "interrupting";
+}
+
 function isNoisyAgentEvent(event: AgentUiEvent): boolean {
   const text = event.text.trim();
   if (!text) return true;
@@ -91,6 +96,7 @@ export function AgentPanel() {
   } = useStore();
   const [goal, setGoal] = useState("");
   const [busy, setBusy] = useState<"approved" | "rejected" | null>(null);
+  const [stopping, setStopping] = useState(false);
   const messagesRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const conversationItems = buildAgentConversationItems({ events: agentEvents, pendingApproval, pendingScope, agentBusy });
@@ -161,12 +167,15 @@ export function AgentPanel() {
   };
 
   const stopRun = async () => {
-    if (!activeRun) return;
+    if (!activeRun || stopping) return;
+    setStopping(true);
     try {
       const run = await interruptAgentRun(activeRun.id, "User stopped");
       setActiveRun(run);
     } catch (e) {
       showToast((e as Error).message);
+    } finally {
+      setStopping(false);
     }
   };
 
@@ -242,7 +251,12 @@ export function AgentPanel() {
           placeholder={activeRun ? "Add steering instruction…" : agentBusy ? "Agent is running…" : "Send a message…"}
         />
         {activeRun && (
-          <button className="tf-btn tf-btn-danger" type="button" onClick={stopRun}>
+          <button
+            className="tf-btn tf-btn-danger"
+            type="button"
+            disabled={isStopButtonDisabled(stopping, activeRun.status)}
+            onClick={stopRun}
+          >
             Stop
           </button>
         )}
