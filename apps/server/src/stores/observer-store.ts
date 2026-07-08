@@ -8,7 +8,8 @@ function rowToWarning(row: typeof observerWarnings.$inferSelect): ObserverWarnin
     id: row.id, caseId: row.caseId, level: row.level, title: row.title, description: row.description,
     relatedFacts: JSON.parse(row.relatedFactsJson), relatedTasks: JSON.parse(row.relatedTasksJson),
     suggestedAction: row.suggestedAction, status: row.status, relatedRunId: row.relatedRunId,
-    suggestedGoal: row.suggestedGoal, resolvedAt: row.resolvedAt, createdAt: row.createdAt,
+    suggestedGoal: row.suggestedGoal, evidence: row.evidence ?? undefined,
+    resolvedAt: row.resolvedAt, createdAt: row.createdAt,
   });
 }
 
@@ -24,6 +25,7 @@ export class ObserverWarningStore {
       relatedTasksJson: JSON.stringify(parsed.relatedTasks),
       suggestedAction: parsed.suggestedAction, status: parsed.status,
       relatedRunId: parsed.relatedRunId, suggestedGoal: parsed.suggestedGoal,
+      evidence: parsed.evidence ?? null,
       resolvedAt: parsed.resolvedAt, createdAt: parsed.createdAt,
     }).run();
     return parsed;

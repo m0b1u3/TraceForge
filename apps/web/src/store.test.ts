@@ -1,9 +1,19 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useStore } from "./store.js";
 
+const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
+const responses: Response[] = [];
+
 function resetStore() {
   useStore.setState({
     caseId: "case_1",
+    cases: [{ id: "case_1", name: "Case 1", status: "active", scopeRules: [], createdAt: "now" }],
+    traffic: [{ id: "traffic_1", caseId: "case_1", url: "https://t.com", method: "GET", requestHeaders: {}, requestBody: null, responseStatus: 200, responseBody: null, createdAt: "now" }],
+    facts: [],
+    tasks: [],
+    timeline: [],
+    actions: [],
+    decisions: [],
     pendingConfirmation: null,
     activeTab: "facts",
     agentEvents: [],
@@ -11,6 +21,10 @@ function resetStore() {
     agentBusy: false,
     toast: null,
     warnings: [],
+    pendingApproval: null,
+    pendingScope: null,
+    browserController: null,
+    browserUrl: "",
   });
 }
 
@@ -31,7 +45,17 @@ const warning = {
 };
 
 describe("store observer confirmation", () => {
-  beforeEach(() => resetStore());
+  beforeEach(() => {
+    resetStore();
+    calls.length = 0;
+    responses.length = 0;
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([input, init]);
+      const response = responses.shift();
+      if (!response) throw new Error("missing scripted fetch response");
+      return response;
+    };
+  });
 
   it("sets pending confirmation and switches to observer tab on agent_run_needs_confirmation", () => {
     useStore.getState().handleRuntimeEvent({ type: "agent_run_needs_confirmation", caseId: "case_1", runId: "run_1", warning });
@@ -45,5 +69,24 @@ describe("store observer confirmation", () => {
     useStore.getState().handleRuntimeEvent({ type: "agent_run_needs_confirmation", caseId: "case_2", runId: "run_1", warning });
     expect(useStore.getState().pendingConfirmation).toBeNull();
     expect(useStore.getState().activeTab).toBe("facts");
+  });
+
+  it("deletes the current case and clears case-scoped state", async () => {
+    responses.push(new Response(JSON.stringify({ deleted: true }), { status: 200 }));
+
+    await useStore.getState().deleteCase("case_1");
+
+    expect(calls).toContainEqual(["/api/cases/case_1", { method: "DELETE" }]);
+    expect(useStore.getState().caseId).toBeNull();
+    expect(useStore.getState().cases).toEqual([]);
+    expect(useStore.getState().traffic).toEqual([]);
+    expect(useStore.getState().pendingConfirmation).toBeNull();
+  });
+
+  it("clears the current case when a delete event arrives over websocket", () => {
+    useStore.getState().handleRuntimeEvent({ type: "case_deleted", caseId: "case_1" });
+
+    expect(useStore.getState().caseId).toBeNull();
+    expect(useStore.getState().traffic).toEqual([]);
   });
 });

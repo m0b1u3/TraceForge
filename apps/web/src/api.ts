@@ -69,7 +69,7 @@ export async function listTraffic(caseId: string): Promise<TrafficEntry[]> {
 
 export async function createFact(
   caseId: string,
-  input: Omit<Fact, "id" | "caseId" | "createdAt" | "confidence" | "tags"> &
+  input: Omit<Fact, "id" | "caseId" | "createdAt" | "confidence" | "tags" | "updateCount" | "updatedAt" | "validity"> &
     Partial<Pick<Fact, "confidence" | "tags">>,
 ): Promise<Fact> {
   const r = await fetch(`/api/cases/${caseId}/facts`, {
@@ -87,7 +87,8 @@ export async function listFacts(caseId: string): Promise<Fact[]> {
 
 export async function createTask(
   caseId: string,
-  input: Omit<Task, "id" | "caseId" | "createdAt" | "updatedAt">,
+  input: Omit<Task, "id" | "caseId" | "createdAt" | "updatedAt" | "updateCount"> &
+    Partial<Pick<Task, "updateCount">>,
 ): Promise<Task> {
   const r = await fetch(`/api/cases/${caseId}/tasks`, {
     method: "POST",

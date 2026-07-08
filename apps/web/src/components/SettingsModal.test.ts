@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { renderToString } from "react-dom/server";
-import { createElement } from "react";
-import { SettingsModal } from "./SettingsModal.js";
+import { createElement, type ComponentType } from "react";
+import { SettingsModal, type SettingsModalProps } from "./SettingsModal.js";
+
+const TestableSettingsModal = SettingsModal as ComponentType<SettingsModalProps>;
 
 describe("SettingsModal", () => {
   it("renders Settings modal when open", () => {
-    const html = renderToString(createElement(SettingsModal, {
+    const html = renderToString(createElement(TestableSettingsModal, {
       open: true,
       initialConfig: { provider: "openai", model: "m", apiKeyEnv: "K", apiKeyMasked: "••••••••" },
     }));
@@ -16,7 +18,7 @@ describe("SettingsModal", () => {
   });
 
   it("renders nothing when closed", () => {
-    const html = renderToString(createElement(SettingsModal, { open: false }));
+    const html = renderToString(createElement(TestableSettingsModal, { open: false }));
     expect(html).toBe("");
   });
 });

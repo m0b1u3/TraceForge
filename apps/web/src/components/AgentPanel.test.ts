@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  type AgentConversationItem,
   buildAgentConversationItems,
   shouldStickToBottomAfterUpdate,
   scopeApprovalContinuationEventText,
   scopeApprovalContinuationGoal,
   isStopButtonDisabled,
 } from "./AgentPanel.js";
+
+function eventItems(items: AgentConversationItem[]): Extract<AgentConversationItem, { type: "event" }>[] {
+  return items.filter((item): item is Extract<AgentConversationItem, { type: "event" }> => item.type === "event");
+}
 
 describe("scopeApprovalContinuationGoal", () => {
   it("asks the agent to continue after scope approval", () => {
@@ -61,7 +66,7 @@ describe("buildAgentConversationItems", () => {
     });
 
     expect(items).toHaveLength(2);
-    expect(items.map((item) => item.text)).toEqual(["Continue testing", "Checking the homepage."]);
+    expect(eventItems(items).map((item) => item.text)).toEqual(["Continue testing", "Checking the homepage."]);
   });
 
   it("shortens verbose tool results in the chat stream", () => {
@@ -74,10 +79,10 @@ describe("buildAgentConversationItems", () => {
       agentBusy: false,
     });
 
-    expect(items[0]?.type).toBe("event");
-    expect(items[0]?.label).toBe("Tool");
-    expect(items[0]?.text?.length).toBeLessThan(220);
-    expect(items[0]?.text?.endsWith("...")).toBe(true);
+    const visible = eventItems(items);
+    expect(visible[0]?.label).toBe("Tool");
+    expect(visible[0]?.text.length).toBeLessThan(220);
+    expect(visible[0]?.text.endsWith("...")).toBe(true);
   });
 
   it("hides noisy terminal and empty tool events from the chat stream", () => {
@@ -85,7 +90,7 @@ describe("buildAgentConversationItems", () => {
       events: [
         { kind: "started", text: "Started: test target" },
         { kind: "tool_call", text: "list_traffic({})" },
-        { kind: "tool_result", text: "list_traffic → (暂无流量)" },
+        { kind: "tool_result", text: "list_traffic → （暂无流量）" },
         { kind: "done", text: "done" },
         { kind: "text", text: "I found the login page." },
       ],
@@ -94,8 +99,9 @@ describe("buildAgentConversationItems", () => {
       agentBusy: false,
     });
 
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ type: "event", label: "Agent", text: "I found the login page." });
+    const visible = eventItems(items);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]).toMatchObject({ label: "Agent", text: "I found the login page." });
   });
 });
 

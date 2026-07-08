@@ -68,7 +68,7 @@ function isNoisyAgentEvent(event: AgentUiEvent): boolean {
   if (event.kind === "started") return true;
   if (event.kind === "done") return text === "done" || text === "handled";
   if (event.kind === "tool_call") return /^list_traffic\s*\(\s*\{\s*\}\s*\)$/i.test(text);
-  if (event.kind === "tool_result") return /^list_traffic\s*→\s*\(暂无流量\)$/i.test(text);
+  if (event.kind === "tool_result") return /^list_traffic\s*→\s*[（(]暂无流量[）)]$/i.test(text);
   return false;
 }
 

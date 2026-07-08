@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, deleteCase } from "./api.js";
+import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, deleteCase as deleteCaseApi } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 
 export interface AgentUiEvent {
@@ -46,7 +46,7 @@ interface State {
   clearPendingConfirmation: () => void;
   pendingScope: { host: string; reason: string } | null;
   setPendingScope: (p: { host: string; reason: string } | null) => void;
-  setCase: (id: string) => void;
+  setCase: (id: string | null) => void;
   setCases: (list: Case[]) => void;
   setActiveTab: (tab: State["activeTab"]) => void;
   setGraphModalOpen: (open: boolean) => void;
@@ -130,7 +130,7 @@ export const useStore = create<State>((set, get) => ({
   clearPendingConfirmation: () => set({ pendingConfirmation: null }),
   pendingScope: null,
   setPendingScope: (p) => set({ pendingScope: p }),
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, streamingMessages: {}, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null }),
+  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, streamingMessages: {}, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null, pendingConfirmation: null }),
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
@@ -164,6 +164,7 @@ export const useStore = create<State>((set, get) => ({
             browserUrl: "",
             pendingApproval: null,
             pendingScope: null,
+            pendingConfirmation: null,
           }
         : {}),
     }));

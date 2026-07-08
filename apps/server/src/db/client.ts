@@ -56,7 +56,7 @@ export function createDb(path: string) {
       related_facts_json TEXT NOT NULL, related_tasks_json TEXT NOT NULL,
       suggested_action TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
       related_run_id TEXT, suggested_goal TEXT NOT NULL DEFAULT '',
-      resolved_at TEXT, created_at TEXT NOT NULL
+      evidence TEXT, resolved_at TEXT, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_warnings_case ON observer_warnings(case_id);
     CREATE TABLE IF NOT EXISTS agent_events (
@@ -90,6 +90,7 @@ export function createDb(path: string) {
   if (!hasWarningColumn("status")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");
   if (!hasWarningColumn("related_run_id")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN related_run_id TEXT");
   if (!hasWarningColumn("suggested_goal")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN suggested_goal TEXT NOT NULL DEFAULT ''");
+  if (!hasWarningColumn("evidence")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN evidence TEXT");
   if (!hasWarningColumn("resolved_at")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN resolved_at TEXT");
   const trafficColumns = sqlite.prepare("PRAGMA table_info(traffic_entries)").all() as Array<{ name: string }>;
   if (!trafficColumns.some((c) => c.name === "request_body")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN request_body TEXT");

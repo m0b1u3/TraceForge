@@ -42,6 +42,7 @@ function createOpenWarning() {
     status: "open",
     relatedRunId: "run_test",
     suggestedGoal: "[Observer correction]\n继续测 X",
+    evidence: "trajectory: agent stopped before testing X",
     resolvedAt: null,
     createdAt: new Date().toISOString(),
   });
@@ -60,6 +61,7 @@ describe("observer integration", () => {
       caseId,
       status: "open",
       suggestedGoal: "[Observer correction]\n继续测 X",
+      evidence: "trajectory: agent stopped before testing X",
       resolvedAt: null,
     });
     expect(body.warnings[0].relatedRunId).toBe("run_test");

@@ -14,13 +14,15 @@ const JSON_MODES = [
   { value: "json_object", label: "JSON Object" },
 ];
 
+export interface SettingsModalProps {
+  open?: boolean;
+  initialConfig?: LlmConfig | null;
+}
+
 export function SettingsModal({
   open,
   initialConfig,
-}: {
-  open?: boolean;
-  initialConfig?: LlmConfig | null;
-} = {}) {
+}: SettingsModalProps = {}) {
   const {
     settingsModalOpen, setSettingsModalOpen, llmConfig: storeConfig, loadLlmConfig, saveLlmConfig,
   } = useStore();

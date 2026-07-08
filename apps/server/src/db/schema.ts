@@ -113,6 +113,7 @@ export const observerWarnings = sqliteTable("observer_warnings", {
   status: text("status").notNull().default("open"),
   relatedRunId: text("related_run_id"),
   suggestedGoal: text("suggested_goal").notNull().default(""),
+  evidence: text("evidence"),
   resolvedAt: text("resolved_at"),
   createdAt: text("created_at").notNull(),
 });
