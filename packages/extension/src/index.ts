@@ -25,7 +25,7 @@ export {
   makeReopenTaskTool, makeRevertDoneTaskTool, makeExtractApiEndpointsTool,
   type TaskStatusReader, type StatusWriter,
   type FactWriter, type TaskWriter, type ActionWriter, type DecisionWriter, type TimelineWriter, type Emit,
-  type EndpointExtractorDeps,
+  type EndpointExtractorDeps, type EndpointAnalyzer, type LlmEndpointCandidate, type EndpointParameter,
 } from "./case-tools.js";
 export { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool } from "./cognitive-tools.js";
 export type { SessionStateWriter, HypothesisWriter, FactReader } from "./cognitive-tools.js";

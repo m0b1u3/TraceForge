@@ -391,11 +391,57 @@ function extractPathsFromText(text: string, baseUrl: string, scopeRules: ScopeRu
   return Array.from(found);
 }
 
+const LLM_TEXT_LIMIT = 20000;
+
+function verifyLlmCandidates(
+  candidates: LlmEndpointCandidate[],
+  sourceText: string,
+  baseUrl: string,
+  scopeRules: ScopeRule[],
+  sourceId: string,
+): Array<{ url: string; method: string; parameters: EndpointParameter[]; sourceIds: string[] }> {
+  const quotedPaths = extractPathsFromText(sourceText, baseUrl, scopeRules);
+  const quotedSet = new Set(quotedPaths.map(normalizeEndpoint));
+  const verified: Array<{ url: string; method: string; parameters: EndpointParameter[]; sourceIds: string[] }> = [];
+  for (const c of candidates) {
+    const resolved = resolveUrl(baseUrl, c.url);
+    if (!resolved) continue;
+    const normalized = normalizeEndpoint(resolved);
+    if (!quotedSet.has(normalized)) {
+      const pathname = new URL(resolved).pathname;
+      if (!sourceText.includes(pathname)) continue;
+    }
+    const validParams = (c.parameters ?? []).filter((p) => c.evidence.includes(p.name));
+    const method = c.method && /^[A-Z]+$/i.test(c.method) ? c.method.toUpperCase() : "GET";
+    verified.push({ url: normalized, method, parameters: validParams, sourceIds: [sourceId] });
+  }
+  return verified;
+}
+
+export interface EndpointParameter {
+  name: string;
+  required?: boolean;
+  location?: "query" | "body" | "path";
+  note?: string;
+}
+
+export interface LlmEndpointCandidate {
+  url: string;
+  method?: string;
+  parameters?: EndpointParameter[];
+  evidence: string;
+}
+
+export interface EndpointAnalyzer {
+  (text: string, context: { sourceType: "traffic" | "js"; baseUrl?: string }): Promise<LlmEndpointCandidate[]>;
+}
+
 export interface EndpointExtractorDeps {
   traffic: TrafficReader;
   facts: FactWriter;
   timeline: TimelineWriter;
   emit: Emit;
+  analyze?: EndpointAnalyzer;
 }
 
 export function makeExtractApiEndpointsTool(
@@ -405,19 +451,20 @@ export function makeExtractApiEndpointsTool(
 ): ToolDescriptor {
   return {
     name: "extract_api_endpoints",
-    description: "从已捕获的流量（或指定 trafficId 的响应体）中提取 API 端点，去重后记录为 api_endpoint 类型 Fact，并返回端点列表供后续测试。",
+    description: "从已捕获的流量（或指定 trafficId 的响应体）中提取 API 端点，去重后记录为 api_endpoint 类型 Fact，并返回端点列表供后续测试。开启 deep 模式时会调用 LLM 做深度分析并尝试提取参数，但只保留有逐字证据的候选。",
     inputSchema: {
       type: "object",
       properties: {
         trafficId: { type: "string" },
         limit: { type: "number" },
+        deep: { type: "boolean", description: "启用 LLM 深度分析并提取参数，可能增加 token 消耗" },
       },
     },
     risk: "normal",
     source: "builtin",
     executionMode: "parallel",
     execute: async (input) => {
-      const { trafficId, limit = 50 } = input as { trafficId?: string; limit?: number };
+      const { trafficId, limit = 50, deep = false } = input as { trafficId?: string; limit?: number; deep?: boolean };
       const entries = deps.traffic.listByCase(caseId);
       const sources = trafficId
         ? entries.filter((e) => e.id === trafficId)
@@ -425,7 +472,7 @@ export function makeExtractApiEndpointsTool(
       if (sources.length === 0) return { ok: true, content: "未发现可用于提取端点的流量。" };
 
       const existingTitles = new Set(deps.facts.listByCase(caseId).map((f) => f.title));
-      const discovered = new Map<string, { method: string; status: number | null; sourceIds: string[] }>();
+      const discovered = new Map<string, { method: string; status: number | null; sourceIds: string[]; parameters: EndpointParameter[]; viaLlm: boolean; fromBody: boolean }>();
 
       for (const entry of sources.slice(0, limit)) {
         // 请求 URL 本身
@@ -435,7 +482,7 @@ export function makeExtractApiEndpointsTool(
           if (cur) {
             cur.sourceIds.push(entry.id);
           } else {
-            discovered.set(reqUrl, { method: entry.method, status: entry.responseStatus, sourceIds: [entry.id] });
+            discovered.set(reqUrl, { method: entry.method, status: entry.responseStatus, sourceIds: [entry.id], parameters: [], viaLlm: false, fromBody: false });
           }
         }
         // 响应体中的路径
@@ -446,7 +493,30 @@ export function makeExtractApiEndpointsTool(
           if (cur) {
             if (!cur.sourceIds.includes(entry.id)) cur.sourceIds.push(entry.id);
           } else {
-            discovered.set(path, { method: "GET", status: null, sourceIds: [entry.id] });
+            discovered.set(path, { method: "GET", status: null, sourceIds: [entry.id], parameters: [], viaLlm: false, fromBody: true });
+          }
+        }
+        // LLM 深度分析
+        if (deep && deps.analyze) {
+          const sourceType = isStatic(entry.url) ? "js" : "traffic";
+          const candidates = await deps.analyze(entry.responseBody.slice(0, LLM_TEXT_LIMIT), { sourceType, baseUrl: entry.url });
+          const verified = verifyLlmCandidates(candidates, entry.responseBody, entry.url, scopeRules, entry.id);
+          for (const v of verified) {
+            const cur = discovered.get(v.url);
+            if (cur) {
+              if (!cur.sourceIds.includes(entry.id)) cur.sourceIds.push(entry.id);
+              // 合并参数并去重；只要 LLM 贡献了参数，就标记为 LLM 辅助
+              const existingNames = new Set(cur.parameters.map((p) => p.name));
+              for (const p of v.parameters) {
+                if (!existingNames.has(p.name)) {
+                  cur.parameters.push(p);
+                  existingNames.add(p.name);
+                  cur.viaLlm = true;
+                }
+              }
+            } else {
+              discovered.set(v.url, { method: v.method, status: null, sourceIds: v.sourceIds, parameters: v.parameters, viaLlm: true, fromBody: true });
+            }
           }
         }
       }
@@ -455,13 +525,18 @@ export function makeExtractApiEndpointsTool(
       for (const [url, info] of discovered.entries()) {
         if (existingTitles.has(url)) continue;
         const isLogin = LOGIN_PATH_MARKERS.some((m) => url.toLowerCase().includes(m));
+        const { confidence, tags, sourceType } = info.viaLlm
+          ? { confidence: 0.6, tags: ["auto-discovery", "llm-assisted", "evidence-verified"], sourceType: "ai" as const }
+          : info.fromBody
+            ? { confidence: 0.7, tags: ["auto-discovery", "black-box", "from-body"], sourceType: "traffic" as const }
+            : { confidence: 0.8, tags: ["auto-discovery", "black-box"], sourceType: "traffic" as const };
         const fact = deps.facts.create(caseId, {
           type: isLogin ? "login_endpoint" : "api_endpoint",
           title: url,
-          value: { method: info.method, sampleStatus: info.status, sourceTrafficIds: info.sourceIds },
-          source: { type: "traffic", ref: info.sourceIds[0] ?? "case" },
-          confidence: 0.8,
-          tags: ["auto-discovery", "black-box"],
+          value: { method: info.method, sampleStatus: info.status, sourceTrafficIds: info.sourceIds, parameters: info.parameters },
+          source: { type: sourceType, ref: info.sourceIds[0] ?? "case" },
+          confidence,
+          tags,
         });
         const entry = deps.timeline.append(caseId, "fact_created", `Fact (agent): ${fact.title}`, fact.id);
         deps.emit({ type: "fact_created", fact });

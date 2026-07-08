@@ -380,6 +380,59 @@ export function registerRoutes(
       facts: factStore,
       timeline: timelineStore,
       emit: (e) => bus.emit(e),
+      analyze: async (text, context) => {
+        const res = await llm.extractJson({
+          system: `你是 API 端点提取器。给定一段原始文本（HTTP 响应体或 JS 代码），只提取其中明确出现的 API 端点和参数。禁止编造、推断或补全未在文本中出现的内容。对每个候选必须给出逐字证据片段。`,
+          user: `来源类型：${context.sourceType}\n基础 URL：${context.baseUrl ?? "无"}\n\n原始文本：\n${text.slice(0, 20000)}`,
+          schema: {
+            type: "object",
+            properties: {
+              endpoints: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    url: { type: "string" },
+                    method: { type: "string" },
+                    parameters: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          name: { type: "string" },
+                          required: { type: "boolean" },
+                          location: { type: "string" },
+                          note: { type: "string" },
+                        },
+                        required: ["name"],
+                      },
+                    },
+                    evidence: { type: "string", description: "从原始文本中逐字拷贝的片段" },
+                  },
+                  required: ["url", "evidence"],
+                },
+              },
+            },
+            required: ["endpoints"],
+          },
+        });
+        return ((res as { endpoints?: unknown }).endpoints as Array<{ url: string; method?: string; parameters?: unknown; evidence: string }> | undefined)?.map((e) => ({
+          url: typeof e.url === "string" ? e.url : "",
+          method: typeof e.method === "string" ? e.method : undefined,
+          evidence: typeof e.evidence === "string" ? e.evidence : "",
+          parameters: Array.isArray(e.parameters)
+            ? e.parameters
+              .filter((p: unknown): p is Record<string, unknown> => typeof p === "object" && p !== null)
+              .map((p) => ({
+                name: typeof p.name === "string" ? p.name : "",
+                required: typeof p.required === "boolean" ? p.required : undefined,
+                location: ["query", "body", "path"].includes(typeof p.location === "string" ? p.location : "") ? (p.location as "query" | "body" | "path") : undefined,
+                note: typeof p.note === "string" ? p.note : undefined,
+              }))
+              .filter((p) => p.name !== "")
+            : undefined,
+        })).filter((e) => e.url !== "" && e.evidence !== "") ?? [];
+      },
     }));
     registry.register(makeProposeScopeExpansionTool((host, reason) =>
       bus.emit({ type: "scope_expansion_proposed", caseId: id, host, reason })));

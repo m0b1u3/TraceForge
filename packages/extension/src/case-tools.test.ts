@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { makeListTrafficTool, makeGetTrafficTool, makeExtractApiEndpointsTool } from "./case-tools.js";
 import type { TrafficEntry, Fact, TimelineEntry } from "@traceforge/shared";
+import type { EndpointAnalyzer } from "./case-tools.js";
 
 const entries: TrafficEntry[] = [
   { id: "traf_1", caseId: "c", url: "https://t.com/a", method: "GET", requestHeaders: {}, requestBody: null, responseStatus: 200, responseBody: "hi", createdAt: "now" },
@@ -37,7 +38,7 @@ describe("makeGetTrafficTool", () => {
 });
 
 describe("makeExtractApiEndpointsTool", () => {
-  const makeDeps = (responseBody?: string, url = "https://t.com/") => {
+  const makeDeps = (responseBody?: string, url = "https://t.com/", analyze?: EndpointAnalyzer) => {
     const facts: Fact[] = [];
     const timeline: TimelineEntry[] = [];
     const traffic: TrafficEntry[] = [
@@ -68,6 +69,7 @@ describe("makeExtractApiEndpointsTool", () => {
         },
       },
       emit: vi.fn(),
+      analyze,
     };
   };
 
@@ -99,5 +101,70 @@ describe("makeExtractApiEndpointsTool", () => {
     const res = await tool.execute({});
     expect(res.ok).toBe(true);
     expect(res.content).not.toContain("evil.com");
+  });
+
+  it("invokes analyze in deep mode and records verified endpoints with parameters", async () => {
+    const body = 'const login = "/api/login"; // POST { username, password }';
+    const analyze = vi.fn<EndpointAnalyzer>(async () => [
+      {
+        url: "https://t.com/api/login",
+        method: "POST",
+        parameters: [
+          { name: "username", required: true, location: "body" },
+          { name: "password", required: true, location: "body" },
+        ],
+        evidence: 'const login = "/api/login"; // POST { username, password }',
+      },
+    ]);
+    const deps = makeDeps(body, "https://t.com/", analyze);
+    const tool = makeExtractApiEndpointsTool("c", [{ caseId: "c", allowHosts: ["t.com"], denyHosts: [] }], deps);
+    const res = await tool.execute({ deep: true });
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(res.ok).toBe(true);
+    expect(res.content).toContain("/api/login");
+    const fact = deps.facts.listByCase("c").find((f) => f.title === "https://t.com/api/login");
+    expect(fact).toBeDefined();
+    expect(fact?.source.type).toBe("ai");
+    expect(fact?.confidence).toBe(0.6);
+    expect(fact?.tags).toContain("llm-assisted");
+    const params = (fact?.value as { parameters?: { name: string }[] }).parameters ?? [];
+    expect(params.map((p) => p.name)).toEqual(["username", "password"]);
+  });
+
+  it("drops fabricated urls from analyze results", async () => {
+    const body = 'const login = "/api/login";';
+    const analyze = vi.fn<EndpointAnalyzer>(async () => [
+      {
+        url: "https://t.com/api/fabricated",
+        method: "GET",
+        evidence: "no evidence",
+      },
+    ]);
+    const deps = makeDeps(body, "https://t.com/", analyze);
+    const tool = makeExtractApiEndpointsTool("c", [{ caseId: "c", allowHosts: ["t.com"], denyHosts: [] }], deps);
+    const res = await tool.execute({ deep: true });
+    expect(res.ok).toBe(true);
+    expect(res.content).not.toContain("/api/fabricated");
+  });
+
+  it("drops parameters whose names do not appear in evidence", async () => {
+    const body = 'const login = "/api/login"; // uses username';
+    const analyze = vi.fn<EndpointAnalyzer>(async () => [
+      {
+        url: "https://t.com/api/login",
+        method: "POST",
+        parameters: [
+          { name: "username", required: true },
+          { name: "totp", required: true }, // not in evidence
+        ],
+        evidence: 'const login = "/api/login"; // uses username',
+      },
+    ]);
+    const deps = makeDeps(body, "https://t.com/", analyze);
+    const tool = makeExtractApiEndpointsTool("c", [{ caseId: "c", allowHosts: ["t.com"], denyHosts: [] }], deps);
+    await tool.execute({ deep: true });
+    const fact = deps.facts.listByCase("c").find((f) => f.title === "https://t.com/api/login");
+    const params = (fact?.value as { parameters?: { name: string }[] }).parameters ?? [];
+    expect(params.map((p) => p.name)).toEqual(["username"]);
   });
 });
