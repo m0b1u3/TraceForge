@@ -33,6 +33,7 @@ export interface ToolExecutionReport {
   content: string;
   ok: boolean;
   rejected?: boolean;
+  blocked?: boolean;
 }
 
 export interface AgentRunOptions {
@@ -300,7 +301,7 @@ export class AgentRuntime {
       onEvent({ type: "tool_blocked", name: call.name, input: JSON.stringify(call.input), content });
       const result = { content, ok: false };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, blocked: true });
       }
       return result;
     }

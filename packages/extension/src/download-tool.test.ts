@@ -70,4 +70,14 @@ describe("makeDownloadTool", () => {
     expect(chmod).toHaveBeenCalledTimes(1);
     expect(chmod).toHaveBeenCalledWith(resolve(root, "data/cases/c/downloads/x.sh"), 0o755);
   });
+
+  it("downloads a hidden filename", async () => {
+    const fetcher: DownloadFetcher = async () => ({ ok: true, status: 200, arrayBuffer: async () => new TextEncoder().encode("use nix").buffer });
+    const tool = makeDownloadTool({ caseId: "c", workspaceRoot: root, fetcher });
+    const res = await tool.execute({ url: "https://example.com/envrc", filename: ".envrc" });
+    expect(res.ok).toBe(true);
+    expect(res.content).toContain("downloads/.envrc");
+    const saved = await readFile(resolve(root, "data/cases/c/downloads/.envrc"));
+    expect(saved.toString()).toBe("use nix");
+  });
 });

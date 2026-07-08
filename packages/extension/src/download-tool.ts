@@ -66,7 +66,6 @@ export function makeDownloadTool(deps: DownloadToolDeps): ToolDescriptor {
         normalized === "." ||
         normalized === ".." ||
         normalized.includes("..") ||
-        normalized.startsWith(".") ||
         /[\\/]/.test(normalized)
       ) {
         return { ok: false, content: "invalid filename" };

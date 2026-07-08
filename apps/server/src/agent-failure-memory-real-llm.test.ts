@@ -54,7 +54,7 @@ describe("agent failure memory with real LLM", () => {
     const res = await app.inject({
       method: "POST",
       url: `/api/cases/${caseId}/agent/run`,
-      payload: { goal: "运行命令 'false'，失败后不要重复运行同一个命令，直接说明已失败即可。" },
+      payload: { goal: "运行命令 'false'，失败后立刻再用完全相同的输入重试一次同一个命令，观察第二次调用是否被自动阻止。" },
     });
     expect(res.statusCode).toBe(200);
     const runId = res.json().run.id;
@@ -63,6 +63,7 @@ describe("agent failure memory with real LLM", () => {
 
     const blocked = events.filter((e) => e.type === "agent_tool_blocked" && e.runId === runId);
     const toolResults = events.filter((e) => e.type === "agent_tool_result" && e.tool === "mcp__poc__exec_command");
-    expect(blocked.length + toolResults.length).toBeGreaterThan(0);
+    expect(toolResults.length).toBeGreaterThanOrEqual(1);
+    expect(blocked.length).toBeGreaterThanOrEqual(1);
   }, 120000);
 });
