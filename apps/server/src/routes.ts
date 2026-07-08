@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
+import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
+import { cases, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, sessionState, hypotheses, contextSummaries } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -41,6 +45,7 @@ export function registerRoutes(
   provider?: LlmProvider,
   mcp?: McpManager,
   llmService?: LlmConfigService,
+  projectRoot = process.cwd(),
 ): void {
   const cases = new CaseStore(db);
   const traffic = new TrafficStore(db);
@@ -75,6 +80,8 @@ export function registerRoutes(
   const sessionStore = new SessionStateStore(db);
   const hypothesisStore = new HypothesisStore(db);
   const contextSummaryStore = new ContextSummaryStore(db);
+  const approvals = new ApprovalRegistry();
+  const runs = new AgentRunRegistry();
 
   app.post("/api/cases", async (req) => {
     const body = req.body as { name: string; allowHosts: string[]; denyHosts?: string[] };
@@ -86,6 +93,42 @@ export function registerRoutes(
   });
 
   app.get("/api/cases", async () => cases.list());
+
+  app.delete("/api/cases/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+
+    // Stop any active agent run for this case
+    const active = runs.getActiveByCase(id);
+    if (active) runs.interrupt(active.run.id, "case deleted");
+
+    // Stop browser session if running
+    const browserSession = browserSessions.get(id);
+    if (browserSession) {
+      try { await browserSession.stop(); } catch { /* ignore */ }
+      browserSessions.delete(id);
+    }
+
+    // Delete filesystem workspace
+    try { await rm(resolve(projectRoot, "data/cases", id), { recursive: true, force: true }); } catch { /* ignore missing dirs */ }
+
+    // Cascade delete all case-associated data
+    db.delete(trafficEntries).where(eq(trafficEntries.caseId, id)).run();
+    db.delete(facts).where(eq(facts.caseId, id)).run();
+    db.delete(tasks).where(eq(tasks.caseId, id)).run();
+    db.delete(timeline).where(eq(timeline.caseId, id)).run();
+    db.delete(actionCards).where(eq(actionCards.caseId, id)).run();
+    db.delete(decisions).where(eq(decisions.caseId, id)).run();
+    db.delete(agentEvents).where(eq(agentEvents.caseId, id)).run();
+    db.delete(observerWarnings).where(eq(observerWarnings.caseId, id)).run();
+    db.delete(sessionState).where(eq(sessionState.caseId, id)).run();
+    db.delete(hypotheses).where(eq(hypotheses.caseId, id)).run();
+    db.delete(contextSummaries).where(eq(contextSummaries.caseId, id)).run();
+
+    const deleted = cases.delete(id);
+    bus.emit({ type: "case_deleted", caseId: id });
+    return { deleted };
+  });
 
   app.get("/api/cases/:id/traffic", async (req) => {
     const { id } = req.params as { id: string };
@@ -266,9 +309,6 @@ export function registerRoutes(
     bus.emit({ type: "scope_updated", caseId: id, allowHosts: updated.scopeRules[0]?.allowHosts ?? [] });
     return updated;
   });
-
-  const approvals = new ApprovalRegistry();
-  const runs = new AgentRunRegistry();
 
   app.post("/api/cases/:id/agent/run", async (req, reply) => {
     const { id } = req.params as { id: string };

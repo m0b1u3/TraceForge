@@ -2,6 +2,7 @@ import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, Acti
 
 export type RuntimeEvent =
   | { type: "case_created"; case: Case }
+  | { type: "case_deleted"; caseId: string }
   | { type: "request_captured"; entry: TrafficEntry }
   | { type: "response_captured"; entry: TrafficEntry }
   | { type: "scope_violation"; caseId: string; url: string; reason: string }

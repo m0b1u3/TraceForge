@@ -44,7 +44,7 @@ export async function buildServer(
   }
   const provider = llmService.getProvider();
 
-  registerRoutes(app, db, bus, provider, mcp, llmService);
+  registerRoutes(app, db, bus, provider, mcp, llmService, PROJECT_ROOT);
 
   app.get("/ws", { websocket: true }, (socket) => {
     const off = bus.subscribe((e) => socket.send(JSON.stringify(e)));

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig } from "./api.js";
+import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, deleteCase } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 
 export interface AgentUiEvent {
@@ -48,6 +48,7 @@ interface State {
   setActiveTab: (tab: State["activeTab"]) => void;
   setGraphModalOpen: (open: boolean) => void;
   enterCase: (id: string) => Promise<void>;
+  deleteCase: (id: string) => Promise<void>;
   addEntry: (e: TrafficEntry) => void;
   addFact: (f: Fact) => void;
   upsertFact: (f: Fact) => void;
@@ -134,6 +135,33 @@ export const useStore = create<State>((set, get) => ({
     ]);
     if (get().caseId !== id) return;
     set({ traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents: agentEvents.map((e) => ({ kind: e.kind, text: e.text })) });
+  },
+  deleteCase: async (id) => {
+    await deleteCaseApi(id);
+    const isCurrent = get().caseId === id;
+    set((s) => ({
+      cases: s.cases.filter((c) => c.id !== id),
+      ...(isCurrent
+        ? {
+            caseId: null,
+            traffic: [],
+            facts: [],
+            tasks: [],
+            timeline: [],
+            actions: [],
+            decisions: [],
+            agentEvents: [],
+            warnings: [],
+            activeRun: null,
+            agentBusy: false,
+            browserController: null,
+            browserUrl: "",
+            pendingApproval: null,
+            pendingScope: null,
+          }
+        : {}),
+    }));
+    get().showToast("Case deleted");
   },
   addEntry: (e) => set((s) => ({ traffic: [...s.traffic, e] })),
   addFact: (f) => set((s) => ({ facts: [...s.facts, f] })),
@@ -267,5 +295,9 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "observer_warning_updated" && event.warning.caseId === cid) get().upsertWarning(event.warning);
     else if (event.type === "scope_expansion_proposed" && event.caseId === cid) get().setPendingScope({ host: event.host, reason: event.reason });
     else if (event.type === "scope_updated" && event.caseId === cid) get().setPendingScope(null);
+    else if (event.type === "case_deleted" && event.caseId === cid) {
+      get().showToast("This case has been deleted");
+      get().setCase(null);
+    }
   },
 }));

@@ -48,4 +48,9 @@ export class CaseStore {
       }),
     );
   }
+
+  delete(id: string): boolean {
+    const result = this.db.delete(cases).where(eq(cases.id, id)).run();
+    return result.changes > 0;
+  }
 }

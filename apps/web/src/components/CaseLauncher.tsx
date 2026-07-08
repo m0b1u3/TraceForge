@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import { Plus } from "@phosphor-icons/react";
+import { Plus, Trash } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { listCases, createCase } from "../api.js";
 import { Select } from "./Select.js";
 
 export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" }) {
-  const { caseId, cases, setCases, enterCase, showToast } = useStore();
+  const { caseId, cases, setCases, enterCase, deleteCase, showToast } = useStore();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
 
@@ -25,11 +25,28 @@ export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" })
     }
   };
 
+  const onDelete = async () => {
+    if (!caseId) return;
+    const selected = cases.find((c) => c.id === caseId);
+    if (!selected) return;
+    if (!window.confirm(`Delete case "${selected.name}" and all its data? This cannot be undone.`)) return;
+    try {
+      await deleteCase(caseId);
+    } catch (e) {
+      showToast((e as Error).message);
+    }
+  };
+
   if (variant === "bar") {
     return (
       <div className="tf-case-bar">
         <Select className="tf-case-select" value={caseId} placeholder="Select case" options={cases.map((c) => ({ value: c.id, label: c.name }))} onChange={(v) => enterCase(v)} minWidth={150} />
         <button className="tf-btn tf-btn-icon" onClick={() => setCreating((v) => !v)}><Plus size={14} weight="bold" /> New</button>
+        {caseId && (
+          <button className="tf-btn tf-btn-icon tf-btn-danger" onClick={onDelete} title="Delete case">
+            <Trash size={14} weight="bold" />
+          </button>
+        )}
         {creating && (
           <div className="tf-create-pop">
             <input className="tf-input case-launcher-input" value={name} autoFocus onChange={(e) => setName(e.target.value)}

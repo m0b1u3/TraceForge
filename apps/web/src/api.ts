@@ -43,6 +43,12 @@ export async function createCase(name: string, allowHosts: string[]): Promise<Ca
   return r.json();
 }
 
+export async function deleteCase(caseId: string): Promise<{ deleted: boolean }> {
+  const r = await fetch(`/api/cases/${caseId}`, { method: "DELETE" });
+  await ensureOk(r, "Delete case");
+  return r.json();
+}
+
 export async function startBrowser(caseId: string): Promise<void> {
   await ensureOk(await fetch(`/api/cases/${caseId}/browser/start`, { method: "POST" }), "Start browser");
 }
