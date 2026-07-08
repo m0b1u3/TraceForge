@@ -73,3 +73,19 @@ describe("Observer.review", () => {
     expect(out.warnings[0].evidence).toBe("agent moved to /register after fact_login_blocked");
   });
 });
+
+describe("Observer prompt", () => {
+  it("warns about repeated identical failed commands", async () => {
+    let capturedSystem = "";
+    const provider = {
+      extractJson: async (args: { system: string }) => {
+        capturedSystem = args.system;
+        return { warnings: [] };
+      },
+    };
+    const observer = new Observer(provider as unknown as LlmProvider);
+    await observer.review("c", { goal: "x", trajectory: "", factsSummary: "", tasksSummary: "" });
+    expect(capturedSystem).toContain("重复调用已经失败的命令");
+    expect(capturedSystem).toContain("download_tool");
+  });
+});
