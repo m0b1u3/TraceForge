@@ -14,13 +14,11 @@ const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../.."
 const DEFAULT_DB_PATH = resolve(PROJECT_ROOT, "data/traceforge.sqlite");
 const DEFAULT_MCP_CONFIG_PATH = resolve(PROJECT_ROOT, "config/mcp.json");
 const DEFAULT_LLM_CONFIG_PATH = resolve(PROJECT_ROOT, "config/llm.json");
-const DEFAULT_ENV_PATH = resolve(PROJECT_ROOT, ".env");
 
 export async function buildServer(
   dbPath = DEFAULT_DB_PATH,
   mcpConfigPath = DEFAULT_MCP_CONFIG_PATH,
   llmConfigPath = DEFAULT_LLM_CONFIG_PATH,
-  envPath = DEFAULT_ENV_PATH,
 ) {
   const app = Fastify({ logger: true });
   await app.register(cors, { origin: true });
@@ -36,7 +34,7 @@ export async function buildServer(
   }
   await mcp.connectAll(configs);
 
-  const llmService = new LlmConfigService(llmConfigPath, envPath);
+  const llmService = new LlmConfigService(llmConfigPath);
   try {
     llmService.initializeFromConfig();
   } catch (err) {

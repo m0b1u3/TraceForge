@@ -6,7 +6,7 @@ export const LlmConfigSchema = z.object({
   provider: z.enum(["anthropic", "openai"]),
   model: z.string(),
   baseUrl: z.string().optional(),
-  apiKeyEnv: z.string(),
+  apiKey: z.string().optional(),
   jsonMode: z.enum(["json_schema", "json_object"]).optional(),
   contextWindowTokens: z.number().int().positive().optional(),
   maxOutputTokens: z.number().int().positive().optional(),

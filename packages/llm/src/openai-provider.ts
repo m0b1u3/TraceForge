@@ -16,12 +16,22 @@ type OpenAIStreamChunk = {
   choices?: Array<{
     delta?: {
       content?: string | null;
+      reasoning_content?: string | null;
       tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>;
     };
     finish_reason?: string | null;
+    message?: { content?: string | null; reasoning_content?: string | null };
   }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 };
+
+function extractText(choice: { message?: { content?: string | null; reasoning_content?: string | null } } | undefined): string | undefined {
+  const msg = choice?.message;
+  const content = msg?.content?.trim();
+  if (content) return content;
+  const reasoning = (msg as { reasoning_content?: string | null } | undefined)?.reasoning_content?.trim();
+  return reasoning || undefined;
+}
 
 export function assembleOpenAIStreamChoice(chunks: OpenAIStreamChunk[]): RunTurn {
   let text = "";
@@ -34,6 +44,7 @@ export function assembleOpenAIStreamChoice(chunks: OpenAIStreamChunk[]): RunTurn
     const delta = choice.delta;
     if (!delta) continue;
     if (delta.content) text += delta.content;
+    if (delta.reasoning_content) text += delta.reasoning_content;
     for (const tc of delta.tool_calls ?? []) {
       const cur = tools.get(tc.index) ?? { id: "", name: "", args: "" };
       if (tc.id) cur.id = tc.id;
@@ -74,7 +85,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
         ],
       }));
     } catch (error) {
-      if (!isResponseFormatUnavailable(error)) throw error;
+      if (!isResponseFormatUnavailable(error) && !isEmptyJsonResponseError(error)) throw error;
       res = await withRetry("openai.extractJson.fallback", () => this.client.chat.completions.create({
         model: this.opts.model,
         messages: [
@@ -83,27 +94,42 @@ export class OpenAICompatibleProvider implements LlmProvider {
         ],
       }));
     }
-    const content = res.choices[0]?.message?.content;
+    const content = extractText(res.choices[0]);
     if (!content) throw new Error("no content in response");
     emitUsage(args.onUsage, res.usage);
     return JSON.parse(content);
   }
 
   private async extractJsonObject(args: ExtractJsonArgs): Promise<unknown> {
-    const res = await withRetry("openai.extractJson.jsonObject", async () => {
-      const response = await this.client.chat.completions.create({
-        model: this.opts.model,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: jsonObjectSystemPrompt(args.system, args.schema) },
-          { role: "user", content: args.user },
-        ],
+    let res;
+    try {
+      res = await withRetry("openai.extractJson.jsonObject", async () => {
+        const response = await this.client.chat.completions.create({
+          model: this.opts.model,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: jsonObjectSystemPrompt(args.system, args.schema) },
+            { role: "user", content: args.user },
+          ],
+        });
+        const content = extractText(response.choices[0]);
+        if (!content) throw retryableEmptyContentError();
+        return response;
       });
-      const content = response.choices[0]?.message?.content;
-      if (!content) throw retryableEmptyContentError();
-      return response;
-    });
-    const content = res.choices[0]?.message?.content;
+    } catch (error) {
+      if (isResponseFormatUnavailable(error) || isEmptyJsonResponseError(error)) {
+        res = await withRetry("openai.extractJson.jsonObject.fallback", () => this.client.chat.completions.create({
+          model: this.opts.model,
+          messages: [
+            { role: "system", content: jsonObjectSystemPrompt(args.system, args.schema) },
+            { role: "user", content: args.user },
+          ],
+        }));
+      } else {
+        throw error;
+      }
+    }
+    const content = extractText(res.choices[0]);
     if (!content) throw new Error("no content in response");
     emitUsage(args.onUsage, res.usage);
     return JSON.parse(content);
@@ -123,7 +149,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
       return { id: tc.id, name: fn.name, input: JSON.parse(fn.arguments || "{}") };
     });
     emitUsage(args.onUsage, res.usage);
-    return { text: choice.message.content ?? "", toolCalls, done: choice.finish_reason !== "tool_calls" };
+    return { text: extractText(choice) ?? "", toolCalls, done: choice.finish_reason !== "tool_calls" };
   }
 
   async streamTools(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn> {
@@ -180,6 +206,12 @@ function isResponseFormatUnavailable(error: unknown): boolean {
   const err = error as { status?: number; message?: string; error?: { message?: string } };
   const message = `${err.message ?? ""} ${err.error?.message ?? ""}`.toLowerCase();
   return err.status === 400 && message.includes("response_format") && message.includes("unavailable");
+}
+
+function isEmptyJsonResponseError(error: unknown): boolean {
+  const err = error as { message?: string };
+  const message = String(err.message ?? "").toLowerCase();
+  return message.includes("empty content") || message.includes("no content");
 }
 
 function jsonObjectSystemPrompt(system: string, schema: Record<string, unknown>): string {

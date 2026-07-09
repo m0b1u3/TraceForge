@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 describe("LlmConfigSchema", () => {
   it("accepts an anthropic config", () => {
-    const c = LlmConfigSchema.parse({ provider: "anthropic", model: "some-model", apiKeyEnv: "ANTHROPIC_API_KEY" });
+    const c = LlmConfigSchema.parse({ provider: "anthropic", model: "some-model", apiKey: "sk-x" });
     expect(c.provider).toBe("anthropic");
     expect(c.baseUrl).toBeUndefined();
   });
@@ -14,7 +14,7 @@ describe("LlmConfigSchema", () => {
   it("accepts an openai-compatible config with baseUrl", () => {
     const c = LlmConfigSchema.parse({
       provider: "openai", model: "deepseek-chat",
-      baseUrl: "https://api.deepseek.com", apiKeyEnv: "DEEPSEEK_API_KEY",
+      baseUrl: "https://api.deepseek.com", apiKey: "sk-x",
     });
     expect(c.baseUrl).toBe("https://api.deepseek.com");
   });
@@ -24,7 +24,7 @@ describe("LlmConfigSchema", () => {
       provider: "openai",
       model: "deepseek-chat",
       baseUrl: "https://api.deepseek.com",
-      apiKeyEnv: "DEEPSEEK_API_KEY",
+      apiKey: "sk-x",
       jsonMode: "json_object",
     });
     expect(c.jsonMode).toBe("json_object");
@@ -34,7 +34,7 @@ describe("LlmConfigSchema", () => {
     const c = LlmConfigSchema.parse({
       provider: "openai",
       model: "deepseek-chat",
-      apiKeyEnv: "DEEPSEEK_API_KEY",
+      apiKey: "sk-x",
       contextWindowTokens: 128000,
       maxOutputTokens: 8192,
     });
@@ -43,7 +43,7 @@ describe("LlmConfigSchema", () => {
   });
 
   it("rejects an unknown provider", () => {
-    expect(() => LlmConfigSchema.parse({ provider: "grok", model: "m", apiKeyEnv: "K" })).toThrow();
+    expect(() => LlmConfigSchema.parse({ provider: "grok", model: "m", apiKey: "sk-x" })).toThrow();
   });
 });
 
@@ -54,7 +54,7 @@ describe("loadLlmConfig", () => {
 
   it("loads a valid config file", () => {
     const p = join(tmpdir(), `llm-${Date.now()}.json`);
-    writeFileSync(p, JSON.stringify({ provider: "openai", model: "deepseek-chat", baseUrl: "https://api.deepseek.com", apiKeyEnv: "DEEPSEEK_API_KEY" }));
+    writeFileSync(p, JSON.stringify({ provider: "openai", model: "deepseek-chat", baseUrl: "https://api.deepseek.com", apiKey: "sk-x" }));
     const c = loadLlmConfig(p);
     expect(c?.model).toBe("deepseek-chat");
     rmSync(p);
@@ -66,7 +66,7 @@ describe("loadLlmConfig", () => {
       provider: "openai",
       model: "deepseek-chat",
       baseUrl: "https://api.deepseek.com",
-      apiKeyEnv: "DEEPSEEK_API_KEY",
+      apiKey: "sk-x",
       jsonMode: "json_object",
     }));
     const c = loadLlmConfig(p);
@@ -83,7 +83,7 @@ describe("loadLlmConfig", () => {
       provider: "openai",
       model: "deepseek-chat",
       baseUrl: "https://api.deepseek.com",
-      apiKeyEnv: "DEEPSEEK_API_KEY",
+      apiKey: "sk-x",
       jsonMode: "json_object",
     }));
     const c = loadLlmConfig("config/llm.json", nested);

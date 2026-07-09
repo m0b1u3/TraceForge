@@ -5,7 +5,6 @@ export interface LlmConfig {
   provider: "anthropic" | "openai";
   model: string;
   baseUrl?: string;
-  apiKeyEnv: string;
   apiKeyMasked: string;
   jsonMode?: "json_schema" | "json_object";
   contextWindowTokens?: number;
@@ -18,7 +17,6 @@ export interface LlmConfigInput {
   baseUrl?: string;
   apiKey?: string;
   jsonMode?: "json_schema" | "json_object";
-  apiKeyEnv?: string;
   contextWindowTokens?: number;
   maxOutputTokens?: number;
 }

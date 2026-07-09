@@ -8,21 +8,12 @@ export interface LlmConfigDto {
   baseUrl?: string;
   apiKey?: string;
   jsonMode?: "json_schema" | "json_object";
-  apiKeyEnv?: string;
   contextWindowTokens?: number;
   maxOutputTokens?: number;
 }
 
 export interface LlmConfigView extends LlmConfig {
   apiKeyMasked: string;
-}
-
-function defaultApiKeyEnv(provider: "anthropic" | "openai"): string {
-  return provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
-}
-
-function validateApiKeyEnv(key: string): void {
-  if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) throw new Error("invalid apiKeyEnv: use A-Z, 0-9, and underscores only");
 }
 
 function validateApiKeyValue(value: string): void {
@@ -34,18 +25,11 @@ function maskKey(key: string): string {
   return "••••••••";
 }
 
-function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 export class LlmConfigService {
   private holder: ProviderHolder;
   private currentProvider: LlmProvider | null = null;
 
-  constructor(
-    private configPath: string,
-    private envPath: string,
-  ) {
+  constructor(private configPath: string) {
     this.holder = new ProviderHolder(() => {
       if (!this.currentProvider) throw new Error("LLM provider not initialized");
       return this.currentProvider;
@@ -53,34 +37,25 @@ export class LlmConfigService {
   }
 
   load(): LlmConfigView {
-    const raw = readFileSync(this.configPath, "utf8");
-    const parsed = LlmConfigSchema.safeParse(JSON.parse(raw));
-    if (!parsed.success) throw new Error(`invalid LLM config: ${parsed.error.message}`);
-    const key = this.readEnvValue(parsed.data.apiKeyEnv);
-    return { ...parsed.data, apiKeyMasked: maskKey(key ?? "") };
+    const config = this.parseConfig();
+    return { ...config, apiKeyMasked: maskKey(config.apiKey ?? "") };
   }
 
   initializeFromConfig(): LlmConfigView {
-    const raw = readFileSync(this.configPath, "utf8");
-    const parsed = LlmConfigSchema.safeParse(JSON.parse(raw));
-    if (!parsed.success) throw new Error(`invalid LLM config: ${parsed.error.message}`);
-    validateApiKeyEnv(parsed.data.apiKeyEnv);
-    this.currentProvider = createProvider(parsed.data);
-    const key = this.readEnvValue(parsed.data.apiKeyEnv);
-    return { ...parsed.data, apiKeyMasked: maskKey(key ?? "") };
+    const config = this.parseConfig();
+    this.currentProvider = createProvider(config);
+    return { ...config, apiKeyMasked: maskKey(config.apiKey ?? "") };
   }
 
   reload(dto: LlmConfigDto): LlmConfigView {
     const existing = this.readConfig();
-    const sameProvider = existing?.provider === dto.provider;
-    const apiKeyEnv = dto.apiKeyEnv || (sameProvider ? existing?.apiKeyEnv : undefined) || defaultApiKeyEnv(dto.provider);
-    validateApiKeyEnv(apiKeyEnv);
-    if (dto.apiKey) validateApiKeyValue(dto.apiKey);
+    const apiKey = dto.apiKey ?? existing?.apiKey;
+    if (apiKey) validateApiKeyValue(apiKey);
     const config: LlmConfig = {
       provider: dto.provider,
       model: dto.model,
       baseUrl: dto.baseUrl,
-      apiKeyEnv,
+      apiKey,
       jsonMode: dto.jsonMode,
       contextWindowTokens: dto.contextWindowTokens ?? existing?.contextWindowTokens,
       maxOutputTokens: dto.maxOutputTokens ?? existing?.maxOutputTokens,
@@ -88,50 +63,31 @@ export class LlmConfigService {
     const parsed = LlmConfigSchema.safeParse(config);
     if (!parsed.success) throw new Error(`invalid LLM config: ${parsed.error.message}`);
     writeFileSync(this.configPath, JSON.stringify(config, null, 2));
-    if (dto.apiKey) {
-      this.setEnvValue(apiKeyEnv, dto.apiKey);
-      process.env[apiKeyEnv] = dto.apiKey;
-    }
     this.currentProvider = createProvider(config);
-    const key = this.readEnvValue(apiKeyEnv);
-    return { ...config, apiKeyMasked: maskKey(key ?? "") };
+    return { ...config, apiKeyMasked: maskKey(config.apiKey ?? "") };
   }
 
   getProvider(): LlmProvider {
     return this.holder;
   }
 
+  private parseConfig(): LlmConfig {
+    let raw: string;
+    try {
+      raw = readFileSync(this.configPath, "utf8");
+    } catch {
+      throw new Error("LLM config not found");
+    }
+    const parsed = LlmConfigSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) throw new Error(`invalid LLM config: ${parsed.error.message}`);
+    return parsed.data;
+  }
+
   private readConfig(): LlmConfig | null {
     try {
-      const raw = readFileSync(this.configPath, "utf8");
-      const parsed = LlmConfigSchema.safeParse(JSON.parse(raw));
-      return parsed.success ? parsed.data : null;
+      return this.parseConfig();
     } catch {
       return null;
     }
-  }
-
-  private readEnvValue(key: string): string | undefined {
-    try {
-      const text = readFileSync(this.envPath, "utf8");
-      const match = new RegExp(`^${escapeRegExp(key)}=(.*)$`, "m").exec(text);
-      return match ? match[1].trim().replace(/^['"]|['"]$/g, "") : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private setEnvValue(key: string, value: string): void {
-    let text = "";
-    try { text = readFileSync(this.envPath, "utf8"); } catch { /* missing file is ok */ }
-    const lines = text.split(/\r?\n/);
-    const pattern = new RegExp(`^${escapeRegExp(key)}=.*$`);
-    let found = false;
-    const updated = lines.map((line) => {
-      if (pattern.test(line)) { found = true; return `${key}=${value}`; }
-      return line;
-    });
-    if (!found) updated.push(`${key}=${value}`);
-    writeFileSync(this.envPath, updated.join("\n") + (updated.length ? "\n" : ""));
   }
 }

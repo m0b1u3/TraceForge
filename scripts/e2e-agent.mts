@@ -1,5 +1,5 @@
 // 端到端：真实 LLM 用完整 case 工具集自主工作（看流量/重放/记 Fact）
-// 用法：先配置 config/llm.json + 对应 API key 环境变量，然后：
+// 用法：先配置 config/llm.json（apiKey 直接写在文件中），然后：
 //   node --import tsx scripts/e2e-agent.mts
 // 用内存 store 假实现演示 agent 闭环（生产由 server 路由用真实 store）。
 import { randomUUID } from "node:crypto";
@@ -22,7 +22,7 @@ let provider;
 try {
   provider = createProvider(config);
 } catch (e) {
-  console.error(`✗ ${(e as Error).message}（请设置 ${config.apiKeyEnv} 环境变量）`);
+  console.error(`✗ ${(e as Error).message}（请在 config/llm.json 中填写 apiKey）`);
   process.exit(1);
 }
 

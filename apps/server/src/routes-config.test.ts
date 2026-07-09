@@ -4,7 +4,13 @@ import { createDb } from "./db/client.js";
 import { EventBus } from "./event-bus.js";
 import { registerRoutes } from "./routes.js";
 import { LlmConfigService } from "./llm-config-service.js";
+import type { LlmProvider } from "@traceforge/llm";
 import { mkdtempSync, writeFileSync } from "node:fs";
+
+const mockProvider: LlmProvider = {
+  extractJson: async () => ({}),
+  runTools: async () => ({ text: "", toolCalls: [], done: true }),
+};
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,13 +19,12 @@ let tmp: string;
 
 beforeEach(async () => {
   tmp = mkdtempSync(join(tmpdir(), "rtcfg-"));
-  writeFileSync(join(tmp, "llm.json"), JSON.stringify({ provider: "openai", model: "m", apiKeyEnv: "K" }));
-  writeFileSync(join(tmp, ".env"), "K=sk-old\n");
+  writeFileSync(join(tmp, "llm.json"), JSON.stringify({ provider: "openai", model: "m", apiKey: "sk-old" }));
   app = Fastify();
   const db = createDb(":memory:");
   const bus = new EventBus();
-  const svc = new LlmConfigService(join(tmp, "llm.json"), join(tmp, ".env"));
-  registerRoutes(app, db, bus, undefined, undefined, svc);
+  const svc = new LlmConfigService(join(tmp, "llm.json"));
+  registerRoutes(app, db, bus, mockProvider, undefined, svc);
   await app.ready();
 });
 

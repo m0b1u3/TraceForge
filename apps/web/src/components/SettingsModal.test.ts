@@ -9,7 +9,7 @@ describe("SettingsModal", () => {
   it("renders Settings modal when open", () => {
     const html = renderToString(createElement(TestableSettingsModal, {
       open: true,
-      initialConfig: { provider: "openai", model: "m", apiKeyEnv: "K", apiKeyMasked: "••••••••" },
+      initialConfig: { provider: "openai", model: "m", apiKeyMasked: "••••••••" },
     }));
     expect(html).toContain("Settings");
     expect(html).toContain("Provider");
