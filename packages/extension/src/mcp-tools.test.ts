@@ -18,9 +18,9 @@ function caller(): McpCaller & { calls: unknown[] } {
 }
 
 describe("mcpToolToDescriptor", () => {
-  it("namespaces the tool name", () => {
+  it("uses the MCP tool name without a server prefix", () => {
     const d = mcpToolToDescriptor(handle, caller());
-    expect(d.name).toBe("mcp__filesystem__read_file");
+    expect(d.name).toBe("read_file");
   });
 
   it("carries description, schema, and source", () => {

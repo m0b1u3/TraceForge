@@ -190,6 +190,28 @@ describe("store token usage", () => {
   });
 });
 
+describe("store agent tool events", () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  it("shows blocked tool calls in the run console", () => {
+    useStore.getState().handleRuntimeEvent({
+      type: "agent_tool_blocked",
+      caseId: "case_1",
+      runId: "run_1",
+      tool: "exec_command",
+      input: "{\"command\":\"false\"}",
+      reason: "identical call already failed in this run",
+    });
+
+    expect(useStore.getState().agentEvents.at(-1)).toEqual({
+      kind: "tool_result",
+      text: "exec_command blocked → identical call already failed in this run\n{\"command\":\"false\"}",
+    });
+  });
+});
+
 describe("store case hydration", () => {
   beforeEach(() => {
     resetStore();

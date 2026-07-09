@@ -460,7 +460,7 @@ export function registerRoutes(
       for (const t of makeBrowserTools(browserSession, c.scopeRules)) registry.register(t);
     }
 
-    // 若配置了 MCP server，把其工具（命名空间 mcp__<server>__<tool>）纳入 agent 工具集
+    // 若配置了 MCP server，把其工具纳入 agent 工具集；工具名直接使用 MCP toolName。
     if (mcp) {
       for (const h of mcp.listTools()) registry.register(mcpToolToDescriptor(h, mcp));
     }
@@ -481,7 +481,7 @@ export function registerRoutes(
 在用户批准纳入之前，绝不要对任何 host 发包（http_replay / navigate 都会被 Scope Guard 拦截）。如果从对话里识别不出明确目标，就直接询问用户要测哪个目标，不要擅自猜测或测试任意 host。`
         : `当前授权范围：${JSON.stringify(c.scopeRules)}。如需测试范围外的 host，先用 propose_scope_expansion 提议并等用户批准。`;
     const system = `你是 TraceForge 的授权渗透测试 agent。${scopeGuidance}
-你可以用工具查看流量、记录发现（Fact/Task/Action）、重放请求。黑盒流程：先 navigate/extract_links 访问首页，再用 extract_api_endpoints 从流量中提取接口并记录为 Fact，然后用 replay_traffic 或 http_replay 构造变体请求测试漏洞。如需进一步利用（写 PoC、跑脚本、读取命令输出），可调用 MCP 工作区工具：mcp__poc__exec_command 执行 shell 命令、mcp__poc__write_file 写文件、mcp__poc__read_file 读文件、mcp__poc__list_dir 列目录；这些命令受限于当前 Case 的 workspace/<caseId>/ 目录并需要用户批准。
+你可以用工具查看流量、记录发现（Fact/Task/Action）、重放请求。黑盒流程：先 navigate/extract_links 访问首页，再用 extract_api_endpoints 从流量中提取接口并记录为 Fact，然后用 replay_traffic 或 http_replay 构造变体请求测试漏洞。如需进一步利用（写 PoC、跑脚本、读取命令输出），可调用 MCP 工作区工具：exec_command 执行 shell 命令、write_file 写文件、read_file 读文件、list_dir 列目录；这些命令受限于当前 Case 的 workspace/<caseId>/ 目录并需要用户批准。
 证据驱动：记录动作前先记录支撑它的 Fact。
 情报复用：遇到任何可能有关的信息（端点、参数、版本号、错误信息、凭据线索、技术栈、WAF 行为、异常响应）都要立即记录为 Fact，即使不确定是否有用。后续在采取任何攻击动作前，先用 search_facts 检索相关 Fact 并尝试利用其中的价值。
 认证端点测试顺序：当目标涉及登录或认证接口时，按以下顺序执行：
@@ -490,8 +490,8 @@ export function registerRoutes(
 3. 若上述尝试均失败，记录一条说明阻塞原因的 Fact，然后再 pivot 到相邻攻击面（注册接口、找回密码、OAuth、会话管理、越权等）。
 完成后用一句话总结。
 失败记忆与在线工具回退：
-- 禁止用完全相同的输入重复调用任何已经执行失败的工具（尤其是 mcp__poc__exec_command 和脚本类调用）。如果一次调用返回错误、非零退出码或失败结果，立即用 record_fact 记录一条 type=failed_attempt 的 Fact，然后换用其他方法。
-- 如果当前环境无法解决问题，调用 download_tool(url, filename, executable=true) 从网络下载现成工具，保存到 workspace/<caseId>/downloads/，然后通过 mcp__poc__exec_command 执行（仍需用户批准）。
+- 禁止用完全相同的输入重复调用任何已经执行失败的工具（尤其是 exec_command 和脚本类调用）。如果一次调用返回错误、非零退出码或失败结果，立即用 record_fact 记录一条 type=failed_attempt 的 Fact，然后换用其他方法。
+- 如果当前环境无法解决问题，调用 download_tool(url, filename, executable=true) 从网络下载现成工具，保存到 workspace/<caseId>/downloads/，然后通过 exec_command 执行（仍需用户批准）。
 - 重试相同失败输入会被 runtime 自动拒绝，不要一直重复尝试，不要浪费轮次。`;
 
     const failedAttempts = factStore.listByCase(id)
@@ -599,6 +599,8 @@ export function registerRoutes(
       if (report.ok) return;
       if (report.rejected) return;
       if (report.blocked) return;
+      if (report.transient) return;
+      if (report.failureClass && report.failureClass !== "permanent") return;
       const fact = factStore.create(id, {
         type: "failed_attempt",
         title: `Failed attempt: ${report.name}`,

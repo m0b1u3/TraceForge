@@ -35,7 +35,7 @@ export function makeDownloadTool(deps: DownloadToolDeps): ToolDescriptor {
   const downloadDir = resolve(deps.workspaceRoot, "data/cases", deps.caseId, "downloads");
   return {
     name: "download_tool",
-    description: "从网络下载一个现成工具或脚本到本 Case 的 workspace/downloads 目录。仅当本地环境无法解决问题时使用。保存后可通过 mcp__poc__exec_command 执行（仍需用户批准）。输入：url（http/https 直链）、filename（保存文件名，如 nuclei.zip）、executable（是否在非 Windows 平台设为可执行）。",
+    description: "从网络下载一个现成工具或脚本到本 Case 的 workspace/downloads 目录。仅当本地环境无法解决问题时使用。保存后可通过 exec_command 执行（仍需用户批准）。输入：url（http/https 直链）、filename（保存文件名，如 nuclei.zip）、executable（是否在非 Windows 平台设为可执行）。",
     inputSchema: {
       type: "object",
       properties: {

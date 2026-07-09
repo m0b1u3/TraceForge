@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AgentRuntime } from "./agent-runtime.js";
+import { AgentRuntime, classifyToolFailure } from "./agent-runtime.js";
 import { ToolRegistry } from "./registry.js";
 import { ApprovalGate } from "./approval-gate.js";
 import type { ToolDescriptor } from "./tool.js";
@@ -383,6 +383,15 @@ describe("AgentRuntime", () => {
 });
 
 describe("AgentRuntime failure memory", () => {
+  it("classifies tool failures by retry policy", () => {
+    expect(classifyToolFailure("HTTP 429 Too Many Requests")).toBe("transient");
+    expect(classifyToolFailure("download failed: HTTP 503")).toBe("transient");
+    expect(classifyToolFailure("out of scope: host is not allowed")).toBe("policy");
+    expect(classifyToolFailure("浏览器未启动")).toBe("environment");
+    expect(classifyToolFailure("unknown mcp server: poc")).toBe("environment");
+    expect(classifyToolFailure("sh: nuclei: command not found")).toBe("permanent");
+  });
+
   it("emits tool_blocked when retrying an identical failed call", async () => {
     const registry = new ToolRegistry();
     registry.register({
@@ -417,6 +426,58 @@ describe("AgentRuntime failure memory", () => {
     await new AgentRuntime(provider, registry, autoGate).run("sys", "go", (e) => events.push(`${e.type}:${e.content}`), { failureMemory: new FailureMemory() });
     expect(calls).toBe(1);
     expect(events.some((s) => s.includes("tool_blocked"))).toBe(true);
+  });
+
+  it("does not remember timeout results as permanent failed calls", async () => {
+    let calls = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "flaky", description: "flaky", inputSchema: { type: "object" },
+      risk: "normal", source: "test",
+      execute: async () => {
+        calls += 1;
+        return { ok: false, content: "exit=timeout(1000ms)\n--- stdout ---\n\n--- stderr ---\n" };
+      },
+    });
+    const provider = new SeqProvider([
+      { text: "call", toolCalls: [{ id: "c1", name: "flaky", input: { x: 1 } }], done: false },
+      { text: "retry", toolCalls: [{ id: "c2", name: "flaky", input: { x: 1 } }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    const events: AgentEvent[] = [];
+
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "go", (e) => events.push(e), { failureMemory: new FailureMemory() });
+
+    expect(calls).toBe(2);
+    expect(events.some((e) => e.type === "tool_blocked")).toBe(false);
+  });
+
+  it("allows the same command after a workspace-changing tool succeeds", async () => {
+    let commandCalls = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "exec_command", description: "exec", inputSchema: { type: "object" },
+      risk: "command", source: "test",
+      execute: async () => { commandCalls += 1; return { ok: false, content: "exit=1\nscript failed" }; },
+    });
+    registry.register({
+      name: "write_file", description: "write", inputSchema: { type: "object" },
+      risk: "command", source: "test",
+      execute: async () => ({ ok: true, content: "wrote exploit.py" }),
+    });
+    const commandInput = { command: "python exploit.py" };
+    const provider = new SeqProvider([
+      { text: "run script", toolCalls: [{ id: "c1", name: "exec_command", input: commandInput }], done: false },
+      { text: "fix script", toolCalls: [{ id: "c2", name: "write_file", input: { path: "exploit.py", content: "fixed" } }], done: false },
+      { text: "rerun script", toolCalls: [{ id: "c3", name: "exec_command", input: commandInput }], done: false },
+      { text: "done", toolCalls: [], done: true },
+    ]);
+    const events: AgentEvent[] = [];
+
+    await new AgentRuntime(provider, registry, autoGate).run("sys", "go", (e) => events.push(e), { failureMemory: new FailureMemory() });
+
+    expect(commandCalls).toBe(2);
+    expect(events.some((e) => e.type === "tool_blocked")).toBe(false);
   });
 
   it("does not block a call that succeeded", async () => {

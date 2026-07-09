@@ -34,6 +34,8 @@ export interface ToolExecutionReport {
   ok: boolean;
   rejected?: boolean;
   blocked?: boolean;
+  transient?: boolean;
+  failureClass?: ToolFailureClass;
 }
 
 export interface AgentRunOptions {
@@ -85,6 +87,73 @@ const RUN_BUDGET_NOTICE = `[Run budget notice]
 2. 如果任务未完成但有明确下一步，请说明下一步和为什么需要继续。
 3. 如果缺少证据、权限、输入或外部条件，请记录 blocked task 或明确说明阻塞原因。
 不要为了消耗轮次而继续调用无关工具。`;
+
+export type ToolFailureClass = "permanent" | "transient" | "policy" | "environment";
+
+export function classifyToolFailure(content: string): ToolFailureClass {
+  const text = content.toLowerCase();
+  if (
+    text.includes("out of scope")
+    || text.includes("scope guard")
+    || text.includes("approval pending")
+    || text.includes("user rejected")
+    || text.includes("human control")
+    || text.includes("handoff")
+    || text.includes("not authorized")
+  ) {
+    return "policy";
+  }
+  if (
+    text.includes("浏览器未启动")
+    || text.includes("browser not started")
+    || text.includes("no browser session")
+    || text.includes("unknown mcp server")
+    || text.includes("mcp call failed")
+    || text.includes("mcp server")
+    || text.includes("resource temporarily unavailable")
+    || text.includes("spawn eagain")
+    || text.includes("emfile")
+    || text.includes("enomem")
+    || text.includes("too many open files")
+  ) {
+    return "environment";
+  }
+  if (
+    text.includes("timeout")
+    || text.includes("timed out")
+    || text.includes("etimedout")
+    || text.includes("econnreset")
+    || text.includes("econnrefused")
+    || text.includes("enotfound")
+    || text.includes("eai_again")
+    || text.includes("network")
+    || text.includes("socket hang up")
+    || text.includes("temporary failure in name resolution")
+    || text.includes("http 408")
+    || text.includes("http 429")
+    || text.includes("http 500")
+    || text.includes("http 502")
+    || text.includes("http 503")
+    || text.includes("http 504")
+    || text.includes("too many requests")
+    || text.includes("rate limit")
+    || text.includes("service unavailable")
+    || text.includes("bad gateway")
+    || text.includes("gateway timeout")
+    || text.includes("empty reply from server")
+  ) {
+    return "transient";
+  }
+  return "permanent";
+}
+
+function changesWorkspace(toolName: string): boolean {
+  return toolName === "download_tool"
+    || toolName === "write_file"
+    || toolName === "exec_command"
+    || toolName.endsWith("__write_file")
+    || toolName.endsWith("__exec_command");
+}
 
 interface ToolCallBatch {
   parallel: boolean;
@@ -321,11 +390,14 @@ export class AgentRuntime {
 
     try {
       const res = await tool.execute(call.input);
-      if (!res.ok) failureMemory.add(call.name, call.input);
+      if (res.ok && changesWorkspace(call.name)) failureMemory.clear();
+      const failureClass = res.ok ? undefined : classifyToolFailure(res.content);
+      const transient = failureClass === "transient";
+      if (!res.ok && failureClass === "permanent") failureMemory.add(call.name, call.input);
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: res.content });
       const result = { content: res.content, ok: res.ok };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, transient, failureClass });
       }
       return result;
     } catch (error) {

@@ -14,7 +14,7 @@ export interface McpCaller {
 
 export function mcpToolToDescriptor(h: McpToolHandle, caller: McpCaller): ToolDescriptor {
   return {
-    name: `mcp__${h.serverName}__${h.toolName}`,
+    name: h.toolName,
     description: h.description,
     inputSchema: h.inputSchema,
     risk: h.trustLevel,

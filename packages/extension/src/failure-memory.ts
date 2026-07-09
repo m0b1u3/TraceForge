@@ -33,4 +33,8 @@ export class FailureMemory {
   add(tool: string, input: unknown): void {
     this.fingerprints.add(computeFailureFingerprint(tool, input));
   }
+
+  clear(): void {
+    this.fingerprints.clear();
+  }
 }
