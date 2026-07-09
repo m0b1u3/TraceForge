@@ -1,6 +1,23 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../store.js";
-import { Select } from "./Select.js";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { LlmConfigInput, LlmConfig } from "../api.js";
 
 const PROVIDERS = [
@@ -29,7 +46,12 @@ export function SettingsModal({
   initialConfig,
 }: SettingsModalProps = {}) {
   const {
-    settingsModalOpen, setSettingsModalOpen, llmConfig: storeConfig, loadLlmConfig, saveLlmConfig, testLlmConfig,
+    settingsModalOpen,
+    setSettingsModalOpen,
+    llmConfig: storeConfig,
+    loadLlmConfig,
+    saveLlmConfig,
+    testLlmConfig,
   } = useStore();
 
   const settingsModalOpen_ = open ?? settingsModalOpen;
@@ -45,7 +67,10 @@ export function SettingsModal({
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testStatus, setTestStatus] = useState<{ status: "idle" | "testing" | "ok" | "error"; message?: string }>({ status: "idle" });
+  const [testStatus, setTestStatus] = useState<{
+    status: "idle" | "testing" | "ok" | "error";
+    message?: string;
+  }>({ status: "idle" });
 
   useEffect(() => {
     if (settingsModalOpen_) {
@@ -61,8 +86,12 @@ export function SettingsModal({
     setModel(llmConfig.model);
     setBaseUrl(llmConfig.baseUrl ?? "");
     setJsonMode(llmConfig.jsonMode ?? "");
-    setContextWindowTokens(llmConfig.contextWindowTokens ? String(llmConfig.contextWindowTokens) : "");
-    setMaxOutputTokens(llmConfig.maxOutputTokens ? String(llmConfig.maxOutputTokens) : "");
+    setContextWindowTokens(
+      llmConfig.contextWindowTokens ? String(llmConfig.contextWindowTokens) : ""
+    );
+    setMaxOutputTokens(
+      llmConfig.maxOutputTokens ? String(llmConfig.maxOutputTokens) : ""
+    );
   }, [llmConfig]);
 
   useEffect(() => {
@@ -79,7 +108,9 @@ export function SettingsModal({
     baseUrl: baseUrl || undefined,
     apiKey: apiKey || undefined,
     jsonMode: jsonMode ? (jsonMode as LlmConfigInput["jsonMode"]) : undefined,
-    contextWindowTokens: contextWindowTokens ? Number(contextWindowTokens) : undefined,
+    contextWindowTokens: contextWindowTokens
+      ? Number(contextWindowTokens)
+      : undefined,
     maxOutputTokens: maxOutputTokens ? Number(maxOutputTokens) : undefined,
   });
 
@@ -102,95 +133,209 @@ export function SettingsModal({
     setTestStatus({ status: "testing" });
     try {
       const result = await testLlmConfig(buildInput());
-      setTestStatus({ status: result.ok ? "ok" : "error", message: result.message || result.error });
+      setTestStatus({
+        status: result.ok ? "ok" : "error",
+        message: result.message || result.error,
+      });
     } finally {
       setTesting(false);
     }
   };
 
-  const testStatusClass = testStatus.status === "ok" ? "test-status-ok" : testStatus.status === "error" ? "test-status-error" : "";
-
   return (
-    <div className="tf-modal-bg">
-      <div className="tf-modal settings-modal">
-        <div className="panel-header graph-modal-header">
-          <h2>Settings</h2>
-          <button type="button" className="tf-btn" onClick={() => setSettingsModalOpen(false)}>Close</button>
-        </div>
-        <form onSubmit={handleSubmit} className="settings-form">
-          <div className="settings-body">
-            <div className="settings-fields">
-              <label>
-                <span>Provider</span>
-                <Select value={provider} options={PROVIDERS} onChange={(v) => setProvider(v as LlmConfigInput["provider"])} />
+    <Dialog open={settingsModalOpen_} onOpenChange={setSettingsModalOpen}>
+      <DialogContent className="sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle>Settings</DialogTitle>
+          <DialogDescription>
+            Configure the LLM endpoint used by the agent.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="grid gap-5">
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <label htmlFor="provider" className="text-sm font-medium">
+                Provider
               </label>
-              <label>
-                <span>Model</span>
-                <input className="tf-input tf-input-block" value={model} onChange={(e) => setModel(e.target.value)} placeholder="e.g. LongCat-2.0" />
+              <Select
+                value={provider}
+                onValueChange={(v) =>
+                  setProvider(v as LlmConfigInput["provider"])
+                }
+              >
+                <SelectTrigger id="provider" className="w-full">
+                  <SelectValue placeholder="Select provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROVIDERS.map((p) => (
+                    <SelectItem key={p.value} value={p.value}>
+                      {p.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-2">
+              <label htmlFor="model" className="text-sm font-medium">
+                Model
               </label>
-              <label>
-                <span>API Key</span>
-                <div className="settings-input-row">
-                  <input
-                    className="tf-input tf-input-block"
-                    type={showApiKey ? "text" : "password"}
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={llmConfig?.apiKeyMasked ? "Configured" : "Enter API key"}
-                  />
-                  <button
-                    type="button"
-                    className="tf-btn"
-                    onClick={() => setShowApiKey((v) => !v)}
-                  >
-                    {showApiKey ? "Hide" : "Show"}
-                  </button>
-                </div>
+              <Input
+                id="model"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="e.g. LongCat-2.0"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <label htmlFor="apiKey" className="text-sm font-medium">
+                API Key
               </label>
-              <label>
-                <span>Base URL</span>
-                <div className="settings-input-row">
-                  <input className="tf-input tf-input-block" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com" />
-                  <button
-                    type="button"
-                    className="tf-btn"
-                    onClick={() => setBaseUrl(PROVIDER_DEFAULT_BASE_URLS[provider])}
-                  >
-                    Use LongCat default
-                  </button>
-                </div>
+              <div className="flex gap-2">
+                <Input
+                  id="apiKey"
+                  type={showApiKey ? "text" : "password"}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={
+                    llmConfig?.apiKeyMasked ? "Configured" : "Enter API key"
+                  }
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowApiKey((v) => !v)}
+                >
+                  {showApiKey ? "Hide" : "Show"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              <label htmlFor="baseUrl" className="text-sm font-medium">
+                Base URL
               </label>
-              <label>
-                <span>JSON Mode</span>
-                <Select value={jsonMode} options={JSON_MODES} onChange={setJsonMode} />
+              <div className="flex gap-2">
+                <Input
+                  id="baseUrl"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder="https://api.example.com"
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setBaseUrl(PROVIDER_DEFAULT_BASE_URLS[provider])
+                  }
+                >
+                  Use LongCat default
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              <label htmlFor="jsonMode" className="text-sm font-medium">
+                JSON Mode
               </label>
-              <label>
-                <span>Context Window Tokens</span>
-                <input className="tf-input tf-input-block" inputMode="numeric" value={contextWindowTokens} onChange={(e) => setContextWindowTokens(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 128000" />
+              <Select value={jsonMode} onValueChange={setJsonMode}>
+                <SelectTrigger id="jsonMode" className="w-full">
+                  <SelectValue placeholder="Select JSON mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  {JSON_MODES.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-2">
+              <label
+                htmlFor="contextWindowTokens"
+                className="text-sm font-medium"
+              >
+                Context Window Tokens
               </label>
-              <label>
-                <span>Max Output Tokens</span>
-                <input className="tf-input tf-input-block" inputMode="numeric" value={maxOutputTokens} onChange={(e) => setMaxOutputTokens(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 8192" />
+              <Input
+                id="contextWindowTokens"
+                inputMode="numeric"
+                value={contextWindowTokens}
+                onChange={(e) =>
+                  setContextWindowTokens(e.target.value.replace(/\D/g, ""))
+                }
+                placeholder="e.g. 128000"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <label htmlFor="maxOutputTokens" className="text-sm font-medium">
+                Max Output Tokens
               </label>
+              <Input
+                id="maxOutputTokens"
+                inputMode="numeric"
+                value={maxOutputTokens}
+                onChange={(e) =>
+                  setMaxOutputTokens(e.target.value.replace(/\D/g, ""))
+                }
+                placeholder="e.g. 8192"
+              />
             </div>
           </div>
 
-          <div className="settings-footer">
-            <button type="button" className="tf-btn" onClick={handleTest} disabled={testing || saving || !model.trim()}>
+          <DialogFooter className="justify-between gap-2 sm:justify-between">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleTest}
+              disabled={testing || saving || !model.trim()}
+            >
               {testing ? "Testing..." : "Test Connection"}
-            </button>
-            <div className="settings-footer-actions">
-              <button type="button" className="tf-btn" onClick={() => setSettingsModalOpen(false)} disabled={saving || testing}>Cancel</button>
-              <button type="submit" className="tf-btn tf-btn-primary" disabled={saving || testing || !model.trim()}>
+            </Button>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setSettingsModalOpen(false)}
+                disabled={saving || testing}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={saving || testing || !model.trim()}
+              >
                 {saving ? "Saving..." : "Save"}
-              </button>
+              </Button>
             </div>
-          </div>
-          {testStatus.status !== "idle" && testStatus.status !== "testing" && testStatus.message && (
-            <div className={`test-status ${testStatusClass}`}>{testStatus.message}</div>
-          )}
+          </DialogFooter>
+
+          {testStatus.status !== "idle" &&
+            testStatus.status !== "testing" &&
+            testStatus.message && (
+              <div className="flex items-start gap-2 text-sm">
+                <Badge
+                  variant={
+                    testStatus.status === "ok" ? "default" : "destructive"
+                  }
+                >
+                  {testStatus.status === "ok" ? "Connected" : "Error"}
+                </Badge>
+                <span className="text-muted-foreground">
+                  {testStatus.message}
+                </span>
+              </div>
+            )}
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

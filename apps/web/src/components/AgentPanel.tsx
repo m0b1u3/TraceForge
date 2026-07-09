@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Sparkle, PaperPlaneTilt, ShieldWarning, Globe, CircleNotch } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
+import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import type { AgentUiEvent } from "../store.js";
 import type { AgentRun } from "@traceforge/shared";
 import { runAgent, resolveApproval, approveScope, steerAgentRun, interruptAgentRun } from "../api.js";
@@ -242,26 +248,42 @@ export function AgentPanel() {
           if (item.type === "event") {
             const isReasoning = item.kind === "reasoning";
             const reasoningExpanded = isReasoning ? expandedReasoning.has(item.key) : true;
+            if (isReasoning) {
+              return (
+                <Collapsible
+                  key={item.key}
+                  open={reasoningExpanded}
+                  onOpenChange={(open) => {
+                    setExpandedReasoning((prev) => {
+                      const next = new Set(prev);
+                      if (open) next.add(item.key);
+                      else next.delete(item.key);
+                      return next;
+                    });
+                  }}
+                  className={`message ${messageClassName(item.kind)} ${reasoningExpanded ? "expanded" : "collapsed"}`}
+                >
+                  <div className="message-meta">
+                    <span>{item.label}</span>
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="xs">
+                        {reasoningExpanded ? "收起" : "展开"}
+                      </Button>
+                    </CollapsibleTrigger>
+                  </div>
+                  <CollapsibleContent>
+                    <p>{item.text}</p>
+                  </CollapsibleContent>
+                  {!reasoningExpanded && <p className="reasoning-placeholder">（已折叠）</p>}
+                </Collapsible>
+              );
+            }
             return (
-              <div className={`message ${messageClassName(item.kind)} ${isReasoning ? (reasoningExpanded ? "expanded" : "collapsed") : ""}`} key={item.key}>
+              <div className={`message ${messageClassName(item.kind)}`} key={item.key}>
                 <div className="message-meta">
                   <span>{item.label}</span>
-                  {isReasoning && (
-                    <button
-                      className="toggle-reasoning"
-                      onClick={() => setExpandedReasoning((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(item.key)) next.delete(item.key);
-                        else next.add(item.key);
-                        return next;
-                      })}
-                    >
-                      {reasoningExpanded ? "收起" : "展开"}
-                    </button>
-                  )}
                 </div>
-                {(!isReasoning || reasoningExpanded) && <p>{item.text}</p>}
-                {isReasoning && !reasoningExpanded && <p className="reasoning-placeholder">（已折叠）</p>}
+                <p>{item.text}</p>
               </div>
             );
           }
