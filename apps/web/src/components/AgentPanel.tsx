@@ -296,14 +296,14 @@ export function AgentPanel() {
                     <span>{item.label}</span>
                     <CollapsibleTrigger asChild>
                       <Button variant="ghost" size="xs">
-                        {reasoningExpanded ? "收起" : "展开"}
+                        {reasoningExpanded ? "Collapse" : "Expand"}
                       </Button>
                     </CollapsibleTrigger>
                   </div>
                   <CollapsibleContent>
                     <p>{item.text}</p>
                   </CollapsibleContent>
-                  {!reasoningExpanded && <p className="reasoning-placeholder">（已折叠）</p>}
+                  {!reasoningExpanded && <p className="reasoning-placeholder">(collapsed)</p>}
                 </Collapsible>
               );
             }
