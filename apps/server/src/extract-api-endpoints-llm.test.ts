@@ -5,7 +5,7 @@ import type { TrafficEntry, Fact, TimelineEntry } from "@traceforge/shared";
 import type { EndpointAnalyzer } from "@traceforge/extension";
 
 describe("extract_api_endpoints LLM deep analysis", () => {
-  it("extracts endpoints and parameters from JS code without fabricating", async () => {
+  it("extracts endpoints and parameters from JS code without fabricating", { retry: 2, timeout: 60000 }, async () => {
     const facts: Fact[] = [];
     const timeline: TimelineEntry[] = [];
     const traffic: TrafficEntry[] = [
@@ -61,7 +61,7 @@ describe("extract_api_endpoints LLM deep analysis", () => {
     const llm = realLlmProviderForTest();
     const analyze: EndpointAnalyzer = async (text, context) => {
       const res = await llm.extractJson({
-        system: `你是 API 端点提取器。给定一段原始文本（HTTP 响应体或 JS 代码），只提取其中明确出现的 API 端点和参数。禁止编造、推断或补全未在文本中出现的内容。对每个候选必须给出逐字证据片段。`,
+        system: `你是 API 端点提取器。给定一段原始文本（HTTP 响应体或 JS 代码），只提取其中明确出现的 API 端点和参数。禁止编造、推断或补全未在文本中出现的内容。\n要求：\n- 端点 URL 使用绝对 URL；若文本中是相对路径，用提供的基础 URL 补全。\n- 每个端点必须列出其参数，参数名必须出现在 evidence 片段中。\n- evidence 必须从原始文本中逐字拷贝，足够验证该端点和参数确实存在。`,
         user: `来源类型：${context.sourceType}\n基础 URL：${context.baseUrl ?? "无"}\n\n原始文本：\n${text.slice(0, 20000)}`,
         schema: {
           type: "object",
@@ -132,5 +132,5 @@ describe("extract_api_endpoints LLM deep analysis", () => {
     const loginParams = (loginFact?.value as { parameters?: { name: string }[] }).parameters ?? [];
     expect(loginParams.map((p) => p.name)).toContain("username");
     expect(loginParams.map((p) => p.name)).toContain("password");
-  }, 60000);
+  });
 });

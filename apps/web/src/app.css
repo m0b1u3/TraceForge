@@ -521,6 +521,12 @@ button { cursor: pointer; }
   color: var(--text-secondary);
 }
 .message.trace { border-left: 3px solid var(--amber); background: var(--panel); }
+.message.reasoning { max-width: 100%; background: transparent; border: 1px dashed var(--line); color: var(--text-secondary); font-size: 12px; }
+.message .message-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.message .message-meta span { margin-bottom: 0; }
+.toggle-reasoning { height: 22px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; }
+.toggle-reasoning:hover { background: var(--panel-soft); border-color: var(--line); }
+.reasoning-placeholder { margin: 0; color: var(--text-tertiary); font-style: italic; }
 .message span { display: block; margin-bottom: 5px; color: var(--text-secondary); font-size: 10px; font-weight: 760; letter-spacing: 0.04em; text-transform: uppercase; }
 .message p { margin: 0; color: var(--text); line-height: 1.5; word-break: break-word; }
 .composer {
@@ -785,7 +791,11 @@ button { cursor: pointer; }
 .settings-fields label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-secondary); }
 .settings-fields label > span { font-weight: 500; color: var(--text); }
 .settings-hint { font-size: 12px; color: var(--text-tertiary); }
-.settings-footer { padding: 16px 20px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px; }
+.settings-footer { padding: 16px 20px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.settings-footer-actions { display: flex; gap: 10px; }
+.test-status { padding: 8px 20px; font-size: 13px; border-top: 1px solid var(--line); }
+.test-status-ok { color: #1a7f37; background: #f0fff4; }
+.test-status-error { color: #d1242f; background: #fff0f0; }
 .settings-input-row { display: flex; gap: 8px; align-items: center; }
 .settings-input-row .tf-input { flex: 1; min-width: 0; }
 .settings-input-row .tf-btn { flex-shrink: 0; white-space: nowrap; }

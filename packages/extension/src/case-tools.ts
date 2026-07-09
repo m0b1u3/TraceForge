@@ -505,13 +505,14 @@ export function makeExtractApiEndpointsTool(
             const cur = discovered.get(v.url);
             if (cur) {
               if (!cur.sourceIds.includes(entry.id)) cur.sourceIds.push(entry.id);
-              // 合并参数并去重；只要 LLM 贡献了参数，就标记为 LLM 辅助
+              // 该端点已由 LLM 深度分析确认，标记为 LLM 辅助
+              cur.viaLlm = true;
+              // 合并参数并去重
               const existingNames = new Set(cur.parameters.map((p) => p.name));
               for (const p of v.parameters) {
                 if (!existingNames.has(p.name)) {
                   cur.parameters.push(p);
                   existingNames.add(p.name);
-                  cur.viaLlm = true;
                 }
               }
             } else {

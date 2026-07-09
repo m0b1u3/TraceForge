@@ -212,6 +212,38 @@ describe("store agent tool events", () => {
   });
 });
 
+describe("store LLM config", () => {
+  beforeEach(() => {
+    resetStore();
+    calls.length = 0;
+    responses.length = 0;
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([input, init]);
+      const response = responses.shift();
+      if (!response) throw new Error(`missing scripted fetch response for ${String(input)}`);
+      return response;
+    };
+  });
+
+  it("shows a toast when connection test succeeds", async () => {
+    responses.push(new Response(JSON.stringify({ ok: true, message: "Connection successful" }), { status: 200 }));
+
+    const result = await useStore.getState().testLlmConfig({ provider: "openai", model: "LongCat-2.0" });
+
+    expect(result.ok).toBe(true);
+    expect(useStore.getState().toast).toBe("Connection successful");
+  });
+
+  it("shows a toast when connection test fails", async () => {
+    responses.push(new Response(JSON.stringify({ ok: false, error: "apiKey is missing" }), { status: 200 }));
+
+    const result = await useStore.getState().testLlmConfig({ provider: "openai", model: "LongCat-2.0" });
+
+    expect(result.ok).toBe(false);
+    expect(useStore.getState().toast).toContain("apiKey is missing");
+  });
+});
+
 describe("store case hydration", () => {
   beforeEach(() => {
     resetStore();

@@ -28,6 +28,7 @@ export interface TurnMessage {
 
 export interface RunTurn {
   text: string;
+  reasoning?: string;
   toolCalls: ToolCall[];
   done: boolean;
 }

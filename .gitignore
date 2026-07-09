@@ -19,5 +19,7 @@ flow/vite.config.d.ts
 flow/vite.config.js
 flow/tsconfig.node.json
 .superpowers/sdd/
+.playwright-mcp/
+traceforge-*.png
 data/
 workspace/

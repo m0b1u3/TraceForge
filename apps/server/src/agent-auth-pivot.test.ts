@@ -90,7 +90,7 @@ beforeEach(async () => {
 });
 
 describe("agent auth pivot observer review", () => {
-  it("does not critical-interrupt a justified pivot after recording blocked-auth fact", async () => {
+  it("does not critical-interrupt a justified pivot after recording blocked-auth fact", { retry: 2, timeout: 60000 }, async () => {
     const res = await app.inject({
       method: "POST",
       url: `/api/cases/${caseId}/agent/run`,

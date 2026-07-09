@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { acceptObserverWarning, convertObserverWarningToTask, createFact, createTask, dismissObserverWarning, listWarnings } from "./api.js";
+import { acceptObserverWarning, convertObserverWarningToTask, createFact, createTask, dismissObserverWarning, listWarnings, testLlmConfig } from "./api.js";
 
 const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
 const responses: Response[] = [];
@@ -83,5 +83,27 @@ describe("observer warning API helpers", () => {
       priority: "medium",
       updateCount: 0,
     })).rejects.toThrow("Create task failed: invalid task");
+  });
+});
+
+describe("LLM config API helpers", () => {
+  beforeEach(() => {
+    calls.length = 0;
+    responses.length = 0;
+  });
+
+  it("calls the test connection endpoint", async () => {
+    responses.push(new Response(JSON.stringify({ ok: true, message: "Connection successful" }), { status: 200 }));
+
+    const result = await testLlmConfig({ provider: "openai", model: "LongCat-2.0", apiKey: "sk-test" });
+
+    expect(calls).toContainEqual(["/api/config/llm/test", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "openai", model: "LongCat-2.0", apiKey: "sk-test" }) }]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("throws backend errors for testLlmConfig", async () => {
+    responses.push(new Response(JSON.stringify({ error: "provider and model are required" }), { status: 400 }));
+
+    await expect(testLlmConfig({ provider: "openai", model: "" })).rejects.toThrow("Test LLM connection failed: provider and model are required");
   });
 });

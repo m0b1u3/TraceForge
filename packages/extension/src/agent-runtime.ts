@@ -5,7 +5,7 @@ import type { ApprovalGate } from "./approval-gate.js";
 import { FailureMemory } from "./failure-memory.js";
 
 export interface AgentEvent {
-  type: "tool_call" | "tool_result" | "tool_rejected" | "tool_blocked" | "text" | "done" |
+  type: "tool_call" | "tool_result" | "tool_rejected" | "tool_blocked" | "text" | "reasoning" | "done" |
     "stream_start" | "stream_delta" | "stream_end" | "interrupted" | "retrying" |
     "budget_warning" | "budget_exhausted" | "usage";
   name?: string;
@@ -257,6 +257,7 @@ export class AgentRuntime {
         this.emitInterrupted(onEvent);
         return;
       }
+      if (turn.reasoning && turn.reasoning !== turn.text) onEvent({ type: "reasoning", content: turn.reasoning });
       if (turn.text) onEvent({ type: "text", content: turn.text });
 
       if (turn.toolCalls.length === 0 || turn.done) {

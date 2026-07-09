@@ -16,6 +16,10 @@ export interface LlmConfigView extends LlmConfig {
   apiKeyMasked: string;
 }
 
+export interface LlmConfigServiceDeps {
+  createProvider?: (config: LlmConfig) => LlmProvider;
+}
+
 function validateApiKeyValue(value: string): void {
   if (/[\r\n]/.test(value)) throw new Error("invalid apiKey: line breaks are not allowed");
 }
@@ -28,8 +32,10 @@ function maskKey(key: string): string {
 export class LlmConfigService {
   private holder: ProviderHolder;
   private currentProvider: LlmProvider | null = null;
+  private createProvider: (config: LlmConfig) => LlmProvider;
 
-  constructor(private configPath: string) {
+  constructor(private configPath: string, private deps: LlmConfigServiceDeps = {}) {
+    this.createProvider = deps.createProvider ?? createProvider;
     this.holder = new ProviderHolder(() => {
       if (!this.currentProvider) throw new Error("LLM provider not initialized");
       return this.currentProvider;
@@ -43,11 +49,11 @@ export class LlmConfigService {
 
   initializeFromConfig(): LlmConfigView {
     const config = this.parseConfig();
-    this.currentProvider = createProvider(config);
+    this.currentProvider = this.createProvider(config);
     return { ...config, apiKeyMasked: maskKey(config.apiKey ?? "") };
   }
 
-  reload(dto: LlmConfigDto): LlmConfigView {
+  private buildConfig(dto: LlmConfigDto): LlmConfig {
     const existing = this.readConfig();
     const apiKey = dto.apiKey ?? existing?.apiKey;
     if (apiKey) validateApiKeyValue(apiKey);
@@ -62,9 +68,36 @@ export class LlmConfigService {
     };
     const parsed = LlmConfigSchema.safeParse(config);
     if (!parsed.success) throw new Error(`invalid LLM config: ${parsed.error.message}`);
+    return config;
+  }
+
+  reload(dto: LlmConfigDto): LlmConfigView {
+    const config = this.buildConfig(dto);
     writeFileSync(this.configPath, JSON.stringify(config, null, 2));
-    this.currentProvider = createProvider(config);
+    this.currentProvider = this.createProvider(config);
     return { ...config, apiKeyMasked: maskKey(config.apiKey ?? "") };
+  }
+
+  async test(dto: LlmConfigDto): Promise<{ ok: boolean; message?: string; error?: string }> {
+    try {
+      const config = this.buildConfig(dto);
+      const provider = this.createProvider(config);
+      const result = await provider.extractJson({
+        system: "You are a connectivity tester. Reply only with a JSON object {\"ok\": true}.",
+        user: "ping",
+        schema: {
+          type: "object",
+          properties: { ok: { type: "boolean" } },
+          required: ["ok"],
+        },
+      });
+      if ((result as { ok?: boolean }).ok === true) {
+        return { ok: true, message: "Connection successful" };
+      }
+      return { ok: false, error: "Connection failed: provider did not confirm" };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
   }
 
   getProvider(): LlmProvider {

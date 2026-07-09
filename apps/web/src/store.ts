@@ -1,11 +1,11 @@
 import { create } from "zustand";
 import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun } from "./api.js";
+import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 
 export interface AgentUiEvent {
-  kind: "user" | "text" | "tool_call" | "tool_result" | "done" | "error" | "started";
+  kind: "user" | "text" | "reasoning" | "tool_call" | "tool_result" | "done" | "error" | "started";
   text: string;
 }
 
@@ -59,6 +59,7 @@ interface State {
   setSettingsModalOpen: (open: boolean) => void;
   loadLlmConfig: () => Promise<void>;
   saveLlmConfig: (input: LlmConfigInput) => Promise<void>;
+  testLlmConfig: (input: LlmConfigInput) => Promise<{ ok: boolean; message?: string; error?: string }>;
   addWarning: (w: ObserverWarning) => void;
   upsertWarning: (w: ObserverWarning) => void;
   pendingConfirmation: { runId: string; warning: ObserverWarning } | null;
@@ -136,6 +137,21 @@ export const useStore = create<State>((set, get) => ({
     } catch (err) {
       get().showToast(`Failed to save settings: ${(err as Error).message}`);
       throw err;
+    }
+  },
+  testLlmConfig: async (input) => {
+    try {
+      const result = await testLlmConfig(input);
+      if (result.ok) {
+        get().showToast(result.message ?? "Connection successful");
+      } else {
+        get().showToast(`Connection failed: ${result.error ?? "unknown error"}`);
+      }
+      return result;
+    } catch (err) {
+      const message = `Connection test failed: ${(err as Error).message}`;
+      get().showToast(message);
+      return { ok: false, error: message };
     }
   },
   addWarning: (w) => set((s) => ({ warnings: [...s.warnings, w] })),
@@ -340,6 +356,10 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "agent_text" && event.caseId === cid) {
       const last = get().agentEvents.at(-1);
       if (!(last?.kind === "text" && last.text === event.content)) get().addAgentEvent({ kind: "text", text: event.content });
+    }
+    else if (event.type === "agent_reasoning" && event.caseId === cid) {
+      const last = get().agentEvents.at(-1);
+      if (!(last?.kind === "reasoning" && last.text === event.content)) get().addAgentEvent({ kind: "reasoning", text: event.content });
     }
     else if (event.type === "agent_tool_call" && event.caseId === cid) get().addAgentEvent({ kind: "tool_call", text: `${event.tool}(${event.input})` });
     else if (event.type === "agent_tool_result" && event.caseId === cid) get().addAgentEvent({ kind: "tool_result", text: `${event.tool} → ${event.content}` });

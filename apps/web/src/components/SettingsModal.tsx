@@ -29,13 +29,12 @@ export function SettingsModal({
   initialConfig,
 }: SettingsModalProps = {}) {
   const {
-    settingsModalOpen, setSettingsModalOpen, llmConfig: storeConfig, loadLlmConfig, saveLlmConfig,
+    settingsModalOpen, setSettingsModalOpen, llmConfig: storeConfig, loadLlmConfig, saveLlmConfig, testLlmConfig,
   } = useStore();
 
   const settingsModalOpen_ = open ?? settingsModalOpen;
   const llmConfig = initialConfig ?? storeConfig;
 
-  const [tab, setTab] = useState<"basic" | "advanced">("basic");
   const [provider, setProvider] = useState<LlmConfigInput["provider"]>("openai");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -45,12 +44,14 @@ export function SettingsModal({
   const [maxOutputTokens, setMaxOutputTokens] = useState("");
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testStatus, setTestStatus] = useState<{ status: "idle" | "testing" | "ok" | "error"; message?: string }>({ status: "idle" });
 
   useEffect(() => {
     if (settingsModalOpen_) {
       loadLlmConfig();
-      setTab("basic");
       setShowApiKey(false);
+      setTestStatus({ status: "idle" });
     }
   }, [settingsModalOpen_, loadLlmConfig]);
 
@@ -72,25 +73,42 @@ export function SettingsModal({
 
   if (!settingsModalOpen_) return null;
 
+  const buildInput = (): LlmConfigInput => ({
+    provider,
+    model,
+    baseUrl: baseUrl || undefined,
+    apiKey: apiKey || undefined,
+    jsonMode: jsonMode ? (jsonMode as LlmConfigInput["jsonMode"]) : undefined,
+    contextWindowTokens: contextWindowTokens ? Number(contextWindowTokens) : undefined,
+    maxOutputTokens: maxOutputTokens ? Number(maxOutputTokens) : undefined,
+  });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
-      await saveLlmConfig({
-        provider,
-        model,
-        baseUrl: baseUrl || undefined,
-        apiKey: apiKey || undefined,
-        jsonMode: jsonMode ? (jsonMode as LlmConfigInput["jsonMode"]) : undefined,
-        contextWindowTokens: contextWindowTokens ? Number(contextWindowTokens) : undefined,
-        maxOutputTokens: maxOutputTokens ? Number(maxOutputTokens) : undefined,
-      });
+      await saveLlmConfig(buildInput());
       setSettingsModalOpen(false);
       setApiKey("");
+      setTestStatus({ status: "idle" });
     } finally {
       setSaving(false);
     }
   };
+
+  const handleTest = async () => {
+    if (testing || !model.trim()) return;
+    setTesting(true);
+    setTestStatus({ status: "testing" });
+    try {
+      const result = await testLlmConfig(buildInput());
+      setTestStatus({ status: result.ok ? "ok" : "error", message: result.message || result.error });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const testStatusClass = testStatus.status === "ok" ? "test-status-ok" : testStatus.status === "error" ? "test-status-error" : "";
 
   return (
     <div className="tf-modal-bg">
@@ -100,81 +118,77 @@ export function SettingsModal({
           <button type="button" className="tf-btn" onClick={() => setSettingsModalOpen(false)}>Close</button>
         </div>
         <form onSubmit={handleSubmit} className="settings-form">
-          <div className="tf-tabs">
-            <button type="button" className={`tf-tab ${tab === "basic" ? "active" : ""}`} onClick={() => setTab("basic")}>Basic</button>
-            <button type="button" className={`tf-tab ${tab === "advanced" ? "active" : ""}`} onClick={() => setTab("advanced")}>Advanced</button>
-          </div>
-
           <div className="settings-body">
-            {tab === "basic" && (
-              <div className="settings-fields">
-                <label>
-                  <span>Provider</span>
-                  <Select value={provider} options={PROVIDERS} onChange={(v) => setProvider(v as LlmConfigInput["provider"])} />
-                </label>
-                <label>
-                  <span>Model</span>
-                  <input className="tf-input tf-input-block" value={model} onChange={(e) => setModel(e.target.value)} placeholder="e.g. deepseek-v4-flash" />
-                </label>
-                <label>
-                  <span>API Key</span>
-                  <div className="settings-input-row">
-                    <input
-                      className="tf-input tf-input-block"
-                      type={showApiKey ? "text" : "password"}
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder={llmConfig?.apiKeyMasked ? "Configured" : "Enter API key"}
-                    />
-                    <button
-                      type="button"
-                      className="tf-btn"
-                      onClick={() => setShowApiKey((v) => !v)}
-                    >
-                      {showApiKey ? "Hide" : "Show"}
-                    </button>
-                  </div>
-                </label>
-              </div>
-            )}
-
-            {tab === "advanced" && (
-              <div className="settings-fields">
-                <label>
-                  <span>Base URL</span>
-                  <div className="settings-input-row">
-                    <input className="tf-input tf-input-block" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com" />
-                    <button
-                      type="button"
-                      className="tf-btn"
-                      onClick={() => setBaseUrl(PROVIDER_DEFAULT_BASE_URLS[provider])}
-                    >
-                      Use LongCat default
-                    </button>
-                  </div>
-                </label>
-                <label>
-                  <span>JSON Mode</span>
-                  <Select value={jsonMode} options={JSON_MODES} onChange={setJsonMode} />
-                </label>
-                <label>
-                  <span>Context Window Tokens</span>
-                  <input className="tf-input tf-input-block" inputMode="numeric" value={contextWindowTokens} onChange={(e) => setContextWindowTokens(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 128000" />
-                </label>
-                <label>
-                  <span>Max Output Tokens</span>
-                  <input className="tf-input tf-input-block" inputMode="numeric" value={maxOutputTokens} onChange={(e) => setMaxOutputTokens(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 8192" />
-                </label>
-              </div>
-            )}
+            <div className="settings-fields">
+              <label>
+                <span>Provider</span>
+                <Select value={provider} options={PROVIDERS} onChange={(v) => setProvider(v as LlmConfigInput["provider"])} />
+              </label>
+              <label>
+                <span>Model</span>
+                <input className="tf-input tf-input-block" value={model} onChange={(e) => setModel(e.target.value)} placeholder="e.g. LongCat-2.0" />
+              </label>
+              <label>
+                <span>API Key</span>
+                <div className="settings-input-row">
+                  <input
+                    className="tf-input tf-input-block"
+                    type={showApiKey ? "text" : "password"}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={llmConfig?.apiKeyMasked ? "Configured" : "Enter API key"}
+                  />
+                  <button
+                    type="button"
+                    className="tf-btn"
+                    onClick={() => setShowApiKey((v) => !v)}
+                  >
+                    {showApiKey ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </label>
+              <label>
+                <span>Base URL</span>
+                <div className="settings-input-row">
+                  <input className="tf-input tf-input-block" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com" />
+                  <button
+                    type="button"
+                    className="tf-btn"
+                    onClick={() => setBaseUrl(PROVIDER_DEFAULT_BASE_URLS[provider])}
+                  >
+                    Use LongCat default
+                  </button>
+                </div>
+              </label>
+              <label>
+                <span>JSON Mode</span>
+                <Select value={jsonMode} options={JSON_MODES} onChange={setJsonMode} />
+              </label>
+              <label>
+                <span>Context Window Tokens</span>
+                <input className="tf-input tf-input-block" inputMode="numeric" value={contextWindowTokens} onChange={(e) => setContextWindowTokens(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 128000" />
+              </label>
+              <label>
+                <span>Max Output Tokens</span>
+                <input className="tf-input tf-input-block" inputMode="numeric" value={maxOutputTokens} onChange={(e) => setMaxOutputTokens(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 8192" />
+              </label>
+            </div>
           </div>
 
           <div className="settings-footer">
-            <button type="button" className="tf-btn" onClick={() => setSettingsModalOpen(false)} disabled={saving}>Cancel</button>
-            <button type="submit" className="tf-btn tf-btn-primary" disabled={saving || !model.trim()}>
-              {saving ? "Saving..." : "Save"}
+            <button type="button" className="tf-btn" onClick={handleTest} disabled={testing || saving || !model.trim()}>
+              {testing ? "Testing..." : "Test Connection"}
             </button>
+            <div className="settings-footer-actions">
+              <button type="button" className="tf-btn" onClick={() => setSettingsModalOpen(false)} disabled={saving || testing}>Cancel</button>
+              <button type="submit" className="tf-btn tf-btn-primary" disabled={saving || testing || !model.trim()}>
+                {saving ? "Saving..." : "Save"}
+              </button>
+            </div>
           </div>
+          {testStatus.status !== "idle" && testStatus.status !== "testing" && testStatus.message && (
+            <div className={`test-status ${testStatusClass}`}>{testStatus.message}</div>
+          )}
         </form>
       </div>
     </div>

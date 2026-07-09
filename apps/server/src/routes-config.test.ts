@@ -6,16 +6,17 @@ import { registerRoutes } from "./routes.js";
 import { LlmConfigService } from "./llm-config-service.js";
 import type { LlmProvider } from "@traceforge/llm";
 import { mkdtempSync, writeFileSync } from "node:fs";
-
-const mockProvider: LlmProvider = {
-  extractJson: async () => ({}),
-  runTools: async () => ({ text: "", toolCalls: [], done: true }),
-};
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 let app: FastifyInstance;
 let tmp: string;
+let llmService: LlmConfigService;
+
+const mockProvider: LlmProvider = {
+  extractJson: async () => ({ ok: true }),
+  runTools: async () => ({ text: "", toolCalls: [], done: true }),
+};
 
 beforeEach(async () => {
   tmp = mkdtempSync(join(tmpdir(), "rtcfg-"));
@@ -23,8 +24,8 @@ beforeEach(async () => {
   app = Fastify();
   const db = createDb(":memory:");
   const bus = new EventBus();
-  const svc = new LlmConfigService(join(tmp, "llm.json"));
-  registerRoutes(app, db, bus, mockProvider, undefined, svc);
+  llmService = new LlmConfigService(join(tmp, "llm.json"), { createProvider: () => mockProvider });
+  registerRoutes(app, db, bus, mockProvider, undefined, llmService);
   await app.ready();
 });
 
@@ -47,10 +48,32 @@ describe("config routes", () => {
     expect(res.json().provider).toBe("anthropic");
   });
 
-  it("POST /api/config/llm returns 400 when model is missing", async () => {
+  it("POST /api/config/llm/test returns connection result from provider", async () => {
+    mockProvider.extractJson = async () => ({ ok: true });
     const res = await app.inject({
       method: "POST",
-      url: "/api/config/llm",
+      url: "/api/config/llm/test",
+      payload: { provider: "openai", model: "m" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().ok).toBe(true);
+  });
+
+  it("POST /api/config/llm/test returns false when provider does not confirm", async () => {
+    mockProvider.extractJson = async () => ({ ok: false });
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/config/llm/test",
+      payload: { provider: "openai", model: "m" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().ok).toBe(false);
+  });
+
+  it("POST /api/config/llm/test returns 400 when model is missing", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/config/llm/test",
       payload: { provider: "openai" },
     });
     expect(res.statusCode).toBe(400);

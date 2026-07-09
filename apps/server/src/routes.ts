@@ -72,6 +72,14 @@ export function registerRoutes(
         return reply.code(500).send({ error: (err as Error).message });
       }
     });
+
+    app.post("/api/config/llm/test", async (req, reply) => {
+      const body = req.body as LlmConfigDto;
+      if (!body.provider || !body.model) {
+        return reply.code(400).send({ error: "provider and model are required" });
+      }
+      return llmService.test(body);
+    });
   }
 
   const actionStore = new ActionCardStore(db);
@@ -545,6 +553,11 @@ export function registerRoutes(
         });
       }
       else if (e.type === "text") { bus.emit({ type: "agent_text", caseId: id, content: e.content }); agentEventStore.append(id, "text", e.content); trajectory.push(`[text] ${e.content}`); }
+      else if (e.type === "reasoning") {
+        bus.emit({ type: "agent_reasoning", caseId: id, content: e.content });
+        agentEventStore.append(id, "reasoning", e.content);
+        trajectory.push(`[reasoning] ${e.content}`);
+      }
       else if (e.type === "done") { bus.emit({ type: "agent_done", caseId: id, content: e.content }); agentEventStore.append(id, "done", e.content); trajectory.push(`[done] ${e.content}`); }
       else if (e.type === "budget_warning") {
         const content = `运行预算提醒：${e.content}`;

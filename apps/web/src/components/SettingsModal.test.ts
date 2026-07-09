@@ -15,6 +15,8 @@ describe("SettingsModal", () => {
     expect(html).toContain("Provider");
     expect(html).toContain("Model");
     expect(html).toContain("API Key");
+    expect(html).toContain("Base URL");
+    expect(html).toContain("Test Connection");
   });
 
   it("renders nothing when closed", () => {

@@ -17,6 +17,7 @@ export type RuntimeEvent =
   | { type: "decision_recorded"; decision: Decision }
   | { type: "agent_started"; caseId: string; goal: string }
   | { type: "agent_text"; caseId: string; content: string }
+  | { type: "agent_reasoning"; caseId: string; content: string }
   | { type: "agent_tool_call"; caseId: string; tool: string; input: string }
   | { type: "agent_tool_result"; caseId: string; tool: string; content: string }
   | { type: "agent_tool_blocked"; caseId: string; runId: string; tool: string; input: string; reason: string }

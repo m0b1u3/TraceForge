@@ -33,8 +33,18 @@ function extractText(choice: { message?: { content?: string | null; reasoning_co
   return reasoning || undefined;
 }
 
+function extractReasoning(choice: { message?: { content?: string | null; reasoning_content?: string | null } } | undefined): string | undefined {
+  const msg = choice?.message;
+  const content = msg?.content?.trim();
+  const reasoning = (msg as { reasoning_content?: string | null } | undefined)?.reasoning_content?.trim();
+  if (!reasoning) return undefined;
+  if (content && reasoning === content) return undefined;
+  return reasoning;
+}
+
 export function assembleOpenAIStreamChoice(chunks: OpenAIStreamChunk[]): RunTurn {
-  let text = "";
+  let contentText = "";
+  let reasoningText = "";
   let finish: string | null | undefined;
   const tools = new Map<number, ToolAccumulator>();
   for (const chunk of chunks) {
@@ -43,8 +53,8 @@ export function assembleOpenAIStreamChoice(chunks: OpenAIStreamChunk[]): RunTurn
     if (choice.finish_reason) finish = choice.finish_reason;
     const delta = choice.delta;
     if (!delta) continue;
-    if (delta.content) text += delta.content;
-    if (delta.reasoning_content) text += delta.reasoning_content;
+    if (delta.content) contentText += delta.content;
+    if (delta.reasoning_content) reasoningText += delta.reasoning_content;
     for (const tc of delta.tool_calls ?? []) {
       const cur = tools.get(tc.index) ?? { id: "", name: "", args: "" };
       if (tc.id) cur.id = tc.id;
@@ -58,7 +68,9 @@ export function assembleOpenAIStreamChoice(chunks: OpenAIStreamChunk[]): RunTurn
     name: tc.name,
     input: JSON.parse(tc.args || "{}"),
   }));
-  return { text, toolCalls, done: finish !== "tool_calls" };
+  const text = contentText || reasoningText;
+  const reasoning = reasoningText && reasoningText !== contentText ? reasoningText : undefined;
+  return { text, reasoning, toolCalls, done: finish !== "tool_calls" };
 }
 
 export class OpenAICompatibleProvider implements LlmProvider {
@@ -149,7 +161,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
       return { id: tc.id, name: fn.name, input: JSON.parse(fn.arguments || "{}") };
     });
     emitUsage(args.onUsage, res.usage);
-    return { text: extractText(choice) ?? "", toolCalls, done: choice.finish_reason !== "tool_calls" };
+    return { text: extractText(choice) ?? "", reasoning: extractReasoning(choice), toolCalls, done: choice.finish_reason !== "tool_calls" };
   }
 
   async streamTools(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn> {

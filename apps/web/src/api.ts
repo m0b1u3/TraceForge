@@ -203,3 +203,13 @@ export async function updateLlmConfig(input: LlmConfigInput): Promise<LlmConfig>
   await ensureOk(r, "Save LLM config");
   return r.json();
 }
+
+export async function testLlmConfig(input: LlmConfigInput): Promise<{ ok: boolean; message?: string; error?: string }> {
+  const r = await fetch("/api/config/llm/test", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  await ensureOk(r, "Test LLM connection");
+  return r.json();
+}

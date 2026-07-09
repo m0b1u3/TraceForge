@@ -80,6 +80,7 @@ function formatAgentEvent(event: AgentUiEvent): { kind: AgentUiEvent["kind"]; la
   if (event.kind === "tool_call") return { kind: event.kind, label: "Tool", text: compactToolText(text) };
   if (event.kind === "tool_result") return { kind: event.kind, label: "Tool", text: compactToolText(text) };
   if (event.kind === "done") return { kind: event.kind, label: "Done", text };
+  if (event.kind === "reasoning") return { kind: event.kind, label: "Reasoning", text };
   return { kind: event.kind, label: "Agent", text };
 }
 
@@ -97,6 +98,7 @@ export function AgentPanel() {
   const [goal, setGoal] = useState("");
   const [busy, setBusy] = useState<"approved" | "rejected" | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [expandedReasoning, setExpandedReasoning] = useState<Set<string>>(new Set());
   const messagesRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const conversationItems = buildAgentConversationItems({ events: agentEvents, pendingApproval, pendingScope, agentBusy });
@@ -238,9 +240,28 @@ export function AgentPanel() {
             return <div className="tf-agent-busy" key={item.key}><CircleNotch size={14} className="tf-spin" /> Agent is running…</div>;
           }
           if (item.type === "event") {
+            const isReasoning = item.kind === "reasoning";
+            const reasoningExpanded = isReasoning ? expandedReasoning.has(item.key) : true;
             return (
-              <div className={`message ${messageClassName(item.kind)}`} key={item.key}>
-                <span>{item.label}</span><p>{item.text}</p>
+              <div className={`message ${messageClassName(item.kind)} ${isReasoning ? (reasoningExpanded ? "expanded" : "collapsed") : ""}`} key={item.key}>
+                <div className="message-meta">
+                  <span>{item.label}</span>
+                  {isReasoning && (
+                    <button
+                      className="toggle-reasoning"
+                      onClick={() => setExpandedReasoning((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(item.key)) next.delete(item.key);
+                        else next.add(item.key);
+                        return next;
+                      })}
+                    >
+                      {reasoningExpanded ? "收起" : "展开"}
+                    </button>
+                  )}
+                </div>
+                {(!isReasoning || reasoningExpanded) && <p>{item.text}</p>}
+                {isReasoning && !reasoningExpanded && <p className="reasoning-placeholder">（已折叠）</p>}
               </div>
             );
           }
@@ -274,6 +295,7 @@ export function AgentPanel() {
 function messageClassName(kind: AgentUiEvent["kind"]): string {
   if (kind === "user") return "operator";
   if (kind === "error") return "trace";
+  if (kind === "reasoning") return "reasoning";
   if (kind === "tool_call" || kind === "tool_result") return "tool";
   return "agent";
 }
