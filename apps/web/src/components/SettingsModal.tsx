@@ -26,7 +26,7 @@ const PROVIDERS = [
 ];
 
 const JSON_MODES = [
-  { value: "", label: "Default" },
+  { value: "default", label: "Default" },
   { value: "json_schema", label: "JSON Schema" },
   { value: "json_object", label: "JSON Object" },
 ];
@@ -61,7 +61,7 @@ export function SettingsModal({
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [jsonMode, setJsonMode] = useState("");
+  const [jsonMode, setJsonMode] = useState("default");
   const [contextWindowTokens, setContextWindowTokens] = useState("");
   const [maxOutputTokens, setMaxOutputTokens] = useState("");
   const [saving, setSaving] = useState(false);
@@ -85,7 +85,7 @@ export function SettingsModal({
     setProvider(llmConfig.provider);
     setModel(llmConfig.model);
     setBaseUrl(llmConfig.baseUrl ?? "");
-    setJsonMode(llmConfig.jsonMode ?? "");
+    setJsonMode(llmConfig.jsonMode ?? "default");
     setContextWindowTokens(
       llmConfig.contextWindowTokens ? String(llmConfig.contextWindowTokens) : ""
     );
@@ -107,7 +107,7 @@ export function SettingsModal({
     model,
     baseUrl: baseUrl || undefined,
     apiKey: apiKey || undefined,
-    jsonMode: jsonMode ? (jsonMode as LlmConfigInput["jsonMode"]) : undefined,
+    jsonMode: jsonMode === "default" ? undefined : (jsonMode as LlmConfigInput["jsonMode"]),
     contextWindowTokens: contextWindowTokens
       ? Number(contextWindowTokens)
       : undefined,
