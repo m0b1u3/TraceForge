@@ -14,6 +14,11 @@ const JSON_MODES = [
   { value: "json_object", label: "JSON Object" },
 ];
 
+const PROVIDER_DEFAULT_BASE_URLS: Record<LlmConfigInput["provider"], string> = {
+  openai: "https://api.longcat.chat/openai",
+  anthropic: "https://api.longcat.chat/anthropic",
+};
+
 export interface SettingsModalProps {
   open?: boolean;
   initialConfig?: LlmConfig | null;
@@ -40,11 +45,13 @@ export function SettingsModal({
   const [contextWindowTokens, setContextWindowTokens] = useState("");
   const [maxOutputTokens, setMaxOutputTokens] = useState("");
   const [saving, setSaving] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
     if (settingsModalOpen_) {
       loadLlmConfig();
       setTab("basic");
+      setShowApiKey(false);
     }
   }, [settingsModalOpen_, loadLlmConfig]);
 
@@ -58,6 +65,12 @@ export function SettingsModal({
     setContextWindowTokens(llmConfig.contextWindowTokens ? String(llmConfig.contextWindowTokens) : "");
     setMaxOutputTokens(llmConfig.maxOutputTokens ? String(llmConfig.maxOutputTokens) : "");
   }, [llmConfig]);
+
+  useEffect(() => {
+    if (!baseUrl) {
+      setBaseUrl(PROVIDER_DEFAULT_BASE_URLS[provider]);
+    }
+  }, [provider]);
 
   if (!settingsModalOpen_) return null;
 
@@ -83,8 +96,8 @@ export function SettingsModal({
   };
 
   return (
-    <div className="tf-modal-bg" onClick={() => setSettingsModalOpen(false)}>
-      <div className="tf-modal settings-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="tf-modal-bg">
+      <div className="tf-modal settings-modal">
         <div className="panel-header graph-modal-header">
           <h2>Settings</h2>
           <button type="button" className="tf-btn" onClick={() => setSettingsModalOpen(false)}>Close</button>
@@ -108,13 +121,22 @@ export function SettingsModal({
                 </label>
                 <label>
                   <span>API Key</span>
-                  <input
-                    className="tf-input tf-input-block"
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={llmConfig?.apiKeyMasked ? "Configured" : "Enter API key"}
-                  />
+                  <div className="settings-input-row">
+                    <input
+                      className="tf-input tf-input-block"
+                      type={showApiKey ? "text" : "password"}
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      placeholder={llmConfig?.apiKeyMasked ? "Configured" : "Enter API key"}
+                    />
+                    <button
+                      type="button"
+                      className="tf-btn"
+                      onClick={() => setShowApiKey((v) => !v)}
+                    >
+                      {showApiKey ? "Hide" : "Show"}
+                    </button>
+                  </div>
                   {llmConfig?.apiKeyEnv && <small className="settings-hint">Stored in environment variable: {llmConfig.apiKeyEnv}</small>}
                 </label>
               </div>
@@ -124,7 +146,16 @@ export function SettingsModal({
               <div className="settings-fields">
                 <label>
                   <span>Base URL</span>
-                  <input className="tf-input tf-input-block" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com" />
+                  <div className="settings-input-row">
+                    <input className="tf-input tf-input-block" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com" />
+                    <button
+                      type="button"
+                      className="tf-btn"
+                      onClick={() => setBaseUrl(PROVIDER_DEFAULT_BASE_URLS[provider])}
+                    >
+                      Use LongCat default
+                    </button>
+                  </div>
                 </label>
                 <label>
                   <span>JSON Mode</span>
@@ -147,6 +178,7 @@ export function SettingsModal({
           </div>
 
           <div className="settings-footer">
+            <button type="button" className="tf-btn" onClick={() => setSettingsModalOpen(false)} disabled={saving}>Cancel</button>
             <button type="submit" className="tf-btn tf-btn-primary" disabled={saving || !model.trim()}>
               {saving ? "Saving..." : "Save"}
             </button>
