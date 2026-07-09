@@ -7,6 +7,12 @@ import { AgentPanel } from "./components/AgentPanel.js";
 import { KnowledgePanel } from "./components/KnowledgePanel.js";
 import { GraphModal } from "./components/GraphModal.js";
 import { SettingsModal } from "./components/SettingsModal.js";
+import { Button } from "@/components/ui/button";
+import {
+  Alert,
+  AlertTitle,
+  AlertDescription,
+} from "@/components/ui/alert";
 
 function Toast() {
   const toast = useStore((s) => s.toast);
@@ -21,16 +27,29 @@ function ObserverConfirmation() {
   if (!pendingConfirmation) return null;
   const { warning } = pendingConfirmation;
   return (
-    <div className="observer-confirmation">
-      <div className="observer-confirmation-body">
-        <strong>Observer intervention required</strong>
-        <p>{warning.title}: {warning.description}</p>
-      </div>
-      <div className="observer-confirmation-actions">
-        <button className="primary" onClick={() => { setActiveTab("observer"); clearPendingConfirmation(); }}>View in Observer</button>
-        <button onClick={() => clearPendingConfirmation()}>Dismiss</button>
-      </div>
-    </div>
+    <Alert variant="warning" className="mx-4 mt-3">
+      <AlertTitle>Observer intervention required</AlertTitle>
+      <AlertDescription className="w-full">
+        <span>{warning.title}: {warning.description}</span>
+        <div className="mt-3 flex gap-2">
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => { setActiveTab("observer"); clearPendingConfirmation(); }}
+          >
+            View in Observer
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => clearPendingConfirmation()}
+          >
+            Dismiss
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
   );
 }
 

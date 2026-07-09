@@ -5,22 +5,46 @@ import { TimelineTab } from "./knowledge/TimelineTab.js";
 import { McpTab } from "./knowledge/McpTab.js";
 import { GraphTab } from "./knowledge/GraphTab.js";
 import { ObserverTab } from "./knowledge/ObserverTab.js";
+import { Button } from "@/components/ui/button";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from "@/components/ui/tabs";
 
 const TABS = [
-  { key: "facts", label: "Facts" }, { key: "tasks", label: "Tasks" },
-  { key: "timeline", label: "Timeline" }, { key: "mcp", label: "MCP" },
+  { key: "facts", label: "Facts" },
+  { key: "tasks", label: "Tasks" },
+  { key: "timeline", label: "Timeline" },
+  { key: "mcp", label: "MCP" },
   { key: "graph", label: "Graph" },
   { key: "observer", label: "Observer" },
 ] as const;
 
-const TAB_TITLE: Record<string, string> = {
-  facts: "Facts", tasks: "Tasks", timeline: "Timeline", mcp: "MCP", graph: "Graph", observer: "Observer",
+type TabKey = (typeof TABS)[number]["key"];
+
+const TAB_TITLE: Record<TabKey, string> = {
+  facts: "Facts",
+  tasks: "Tasks",
+  timeline: "Timeline",
+  mcp: "MCP",
+  graph: "Graph",
+  observer: "Observer",
 };
+
+function TabPanel({ tab }: { tab: TabKey }) {
+  if (tab === "facts") return <FactsTab />;
+  if (tab === "tasks") return <TasksTab />;
+  if (tab === "timeline") return <TimelineTab />;
+  if (tab === "mcp") return <McpTab />;
+  if (tab === "graph") return <GraphTab />;
+  return <ObserverTab />;
+}
 
 export function KnowledgePanel() {
   const { activeTab, setActiveTab, setGraphModalOpen } = useStore();
   const isGraph = activeTab === "graph";
-  const toggleExpand = () => setGraphModalOpen(true);
   return (
     <aside className="panel">
       <div className="panel-header">
@@ -30,23 +54,41 @@ export function KnowledgePanel() {
         </div>
         {isGraph && (
           <div className="panel-header-actions">
-            <button className="tf-btn tf-btn-ghost" onClick={toggleExpand}>Expand</button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setGraphModalOpen(true)}
+            >
+              Expand
+            </Button>
           </div>
         )}
       </div>
-      <div className="tf-tabs">
-        {TABS.map((t) => (
-          <button key={t.key} className={`tf-tab ${activeTab === t.key ? "active" : ""}`} onClick={() => setActiveTab(t.key)}>{t.label}</button>
-        ))}
-      </div>
-      <div className="panel-body">
-        {activeTab === "facts" && <FactsTab />}
-        {activeTab === "tasks" && <TasksTab />}
-        {activeTab === "timeline" && <TimelineTab />}
-        {activeTab === "mcp" && <McpTab />}
-        {isGraph && <GraphTab />}
-        {activeTab === "observer" && <ObserverTab />}
-      </div>
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => setActiveTab(v as TabKey)}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <TabsList className="m-3 mb-0 w-auto justify-start">
+          {TABS.map((t) => (
+            <TabsTrigger key={t.key} value={t.key}>
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <div className="panel-body">
+          {TABS.map((t) => (
+            <TabsContent
+              key={t.key}
+              value={t.key}
+              className="min-h-0 flex-1 data-[state=inactive]:hidden"
+            >
+              <TabPanel tab={t.key} />
+            </TabsContent>
+          ))}
+        </div>
+      </Tabs>
     </aside>
   );
 }
