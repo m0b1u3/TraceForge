@@ -41,7 +41,6 @@ export function SettingsModal({
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [jsonMode, setJsonMode] = useState("");
-  const [apiKeyEnv, setApiKeyEnv] = useState("");
   const [contextWindowTokens, setContextWindowTokens] = useState("");
   const [maxOutputTokens, setMaxOutputTokens] = useState("");
   const [saving, setSaving] = useState(false);
@@ -61,7 +60,6 @@ export function SettingsModal({
     setModel(llmConfig.model);
     setBaseUrl(llmConfig.baseUrl ?? "");
     setJsonMode(llmConfig.jsonMode ?? "");
-    setApiKeyEnv(llmConfig.apiKeyEnv ?? "");
     setContextWindowTokens(llmConfig.contextWindowTokens ? String(llmConfig.contextWindowTokens) : "");
     setMaxOutputTokens(llmConfig.maxOutputTokens ? String(llmConfig.maxOutputTokens) : "");
   }, [llmConfig]);
@@ -84,7 +82,6 @@ export function SettingsModal({
         baseUrl: baseUrl || undefined,
         apiKey: apiKey || undefined,
         jsonMode: jsonMode ? (jsonMode as LlmConfigInput["jsonMode"]) : undefined,
-        apiKeyEnv: apiKeyEnv || undefined,
         contextWindowTokens: contextWindowTokens ? Number(contextWindowTokens) : undefined,
         maxOutputTokens: maxOutputTokens ? Number(maxOutputTokens) : undefined,
       });
@@ -137,7 +134,6 @@ export function SettingsModal({
                       {showApiKey ? "Hide" : "Show"}
                     </button>
                   </div>
-                  {llmConfig?.apiKeyEnv && <small className="settings-hint">Stored in environment variable: {llmConfig.apiKeyEnv}</small>}
                 </label>
               </div>
             )}
@@ -160,10 +156,6 @@ export function SettingsModal({
                 <label>
                   <span>JSON Mode</span>
                   <Select value={jsonMode} options={JSON_MODES} onChange={setJsonMode} />
-                </label>
-                <label>
-                  <span>Environment Variable Name</span>
-                  <input className="tf-input tf-input-block" value={apiKeyEnv} onChange={(e) => setApiKeyEnv(e.target.value)} placeholder="AUTO if left empty" />
                 </label>
                 <label>
                   <span>Context Window Tokens</span>
