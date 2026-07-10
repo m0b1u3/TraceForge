@@ -85,11 +85,12 @@ describe("Operations Canvas theme contract", () => {
     expect(app).toMatch(/\.tf-prio\s*\{[^}]*border-radius:\s*var\(--radius-sm\)/);
   });
 
-  it("maps every non-pill Tailwind radius utility used by workbench primitives to at least 6px", () => {
+  it("maps every non-pill Tailwind radius utility used by workbench primitives within 6px to 8px", () => {
     expect(primitiveRadiusClasses).toEqual(["lg", "md", "sm", "xs"]);
 
     for (const radiusClass of primitiveRadiusClasses) {
       expect(tailwindRadiusTokens[radiusClass], `rounded-${radiusClass}`).toBeGreaterThanOrEqual(6);
+      expect(tailwindRadiusTokens[radiusClass], `rounded-${radiusClass}`).toBeLessThanOrEqual(8);
     }
   });
 });
