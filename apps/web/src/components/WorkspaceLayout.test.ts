@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { readFileSync } from "node:fs";
 import { WorkspaceLayout, getWorkspaceMode } from "./WorkspaceLayout.js";
 
 // @ts-expect-error enable React act in jsdom tests
@@ -49,6 +50,19 @@ describe("getWorkspaceMode", () => {
     [375, "single"],
   ] as const)("maps %ipx to %s", (width, expected) => {
     expect(getWorkspaceMode(width)).toBe(expected);
+  });
+});
+
+describe("desktop workspace layout", () => {
+  it("fits its minimum tracks at the 1100px columns boundary while body overflow is hidden", () => {
+    const css = readFileSync("apps/web/src/app.css", "utf8");
+    const minimumViewportWidth = 1100;
+    const horizontalPadding = 16 * 2;
+    const columnGaps = 16 * 2;
+    const minimumTrackWidth = 220 + 320 + 300;
+
+    expect(css).toContain("grid-template-columns: minmax(220px, 300px) minmax(320px, 1fr) minmax(300px, 40vw);");
+    expect(minimumTrackWidth + columnGaps + horizontalPadding).toBeLessThanOrEqual(minimumViewportWidth);
   });
 });
 
