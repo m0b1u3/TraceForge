@@ -16,7 +16,7 @@ export function TopBar() {
           <ShieldCheck size={16} />
         </span>
         <div className="flex flex-col">
-          <strong className="text-sm font-bold tracking-tight text-foreground">TraceForge</strong>
+          <strong className="text-sm font-bold text-foreground">TraceForge</strong>
           <small className="text-xs text-muted-foreground">red-team workbench</small>
         </div>
       </div>
@@ -38,7 +38,7 @@ export function TopBar() {
             <ShieldCheck size={13} weight="fill" />
             {controlLabel}
             {browserUrl && (
-              <span className="text-muted-foreground">· {browserUrl}</span>
+              <span className="browser-url text-muted-foreground">· {browserUrl}</span>
             )}
           </Badge>
         )}

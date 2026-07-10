@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 const globals = readFileSync(new URL("../styles/globals.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../app.css", import.meta.url), "utf8");
+const topBar = readFileSync(new URL("./TopBar.tsx", import.meta.url), "utf8");
+const alert = readFileSync(new URL("./ui/alert.tsx", import.meta.url), "utf8");
 
 const appRoot = app.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? "";
 const trackingValues = [...app.matchAll(/letter-spacing\s*:\s*([^;}]+)/g)].map((match) => match[1].trim());
@@ -34,6 +36,8 @@ describe("Operations Canvas theme contract", () => {
     expect(trackingValues).not.toHaveLength(0);
     expect(trackingValues).toEqual(expect.arrayContaining(["0"]));
     expect(trackingValues.every((value) => value === "0")).toBe(true);
+    expect(topBar).not.toContain("tracking-tight");
+    expect(alert).not.toContain("tracking-tight");
   });
 
   it("uses 16px text for controls and user-readable workbench body content on narrow screens", () => {
@@ -42,6 +46,9 @@ describe("Operations Canvas theme contract", () => {
     );
     expect(narrowScreenStyles).toMatch(
       /\.request-row-url,\s*\.request-row p,\s*\.message,\s*\.message\.tool,\s*\.message\.reasoning,\s*\.tf-row,\s*\.kv,\s*\.tf-row-detail pre,\s*\.request-detail pre,\s*\.tf-guide-title,\s*\.tf-guide-hint,\s*\.tf-empty,\s*\.tf-select-empty\s*\{[^}]*font-size:\s*16px/,
+    );
+    expect(narrowScreenStyles).toMatch(
+      /\.browser-url,\s*\.flow-card-head strong,\s*\.flow-card p,\s*\.tf-gdetail-title,\s*\.tf-gdetail-kv span:last-child,\s*\.tf-gdetail-link\s*\{[^}]*font-size:\s*16px/,
     );
   });
 

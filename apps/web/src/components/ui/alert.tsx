@@ -45,7 +45,7 @@ function AlertTitle({
   return (
     <h5
       data-slot="alert-title"
-      className={cn("col-start-2 line-clamp-1 font-semibold tracking-tight", className)}
+      className={cn("col-start-2 line-clamp-1 font-semibold", className)}
       {...props}
     />
   );
