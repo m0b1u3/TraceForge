@@ -92,7 +92,7 @@ describe("Operations Canvas theme contract", () => {
 
 - [ ] **Step 2: Run the test and verify the current dark theme fails**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src/components/theme-contract.test.ts`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src/components/theme-contract.test.ts`
 
 Expected: FAIL because `globals.css` contains `color-scheme: dark` and the new semantic tokens do not exist.
 
@@ -137,7 +137,7 @@ Add `--success`, `--warning`, `--border-subtle`, the z-index scale, focus-visibl
 
 - [ ] **Step 4: Run the theme contract and web build**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src/components/theme-contract.test.ts`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src/components/theme-contract.test.ts`
 
 Expected: PASS, 2 tests.
 
@@ -193,7 +193,7 @@ describe("getWorkspaceMode", () => {
 
 - [ ] **Step 2: Run the test and verify the module is missing**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src/components/WorkspaceLayout.test.ts`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src/components/WorkspaceLayout.test.ts`
 
 Expected: FAIL because `WorkspaceLayout.tsx` does not exist.
 
@@ -280,7 +280,7 @@ Wire it into `App.tsx`, give the global Toast `role="status"` and `aria-live="po
 
 - [ ] **Step 4: Run focused tests and build**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src/components/WorkspaceLayout.test.ts src/components/TopBar.test.ts`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src/components/WorkspaceLayout.test.ts apps/web/src/components/TopBar.test.ts`
 
 Expected: PASS.
 
@@ -329,7 +329,7 @@ describe("trafficStatusTone", () => {
 
 - [ ] **Step 2: Run the test and verify the missing helper fails**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src/components/TrafficPanel.test.ts`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src/components/TrafficPanel.test.ts`
 
 Expected: FAIL because `trafficStatusTone` is not exported.
 
@@ -352,7 +352,7 @@ Replace clickable `<div>` headers with a full-width `<button>` using `aria-expan
 
 - [ ] **Step 4: Run Traffic tests and build**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src/components/TrafficPanel.test.ts`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src/components/TrafficPanel.test.ts`
 
 Expected: PASS.
 
@@ -398,7 +398,7 @@ Retain the current duplicate suppression, noise filtering, tool compaction, Scop
 
 - [ ] **Step 2: Run the test and verify the new module is missing**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src/components/AgentPanel.test.ts`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src/components/AgentPanel.test.ts`
 
 Expected: FAIL because `agent/agent-conversation.ts` does not exist.
 
@@ -422,7 +422,7 @@ Render Reasoning through the existing Radix Collapsible; render all other events
 
 - [ ] **Step 4: Run Agent tests and TypeScript**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src/components/AgentPanel.test.ts`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src/components/AgentPanel.test.ts`
 
 Expected: PASS with the existing conversation behavior intact.
 
@@ -474,7 +474,7 @@ describe("appendInterventionOutcome", () => {
 
 - [ ] **Step 2: Run the test and verify the lifecycle helper is missing**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src/components/AgentPanel.test.ts`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src/components/AgentPanel.test.ts`
 
 Expected: FAIL because `appendInterventionOutcome` is not defined.
 
@@ -504,7 +504,7 @@ Move the Run/Token/Clear/Stop UI to `AgentRunHeader`. Stop must show `Stopping..
 
 - [ ] **Step 4: Run Agent tests and build**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src/components/AgentPanel.test.ts`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src/components/AgentPanel.test.ts`
 
 Expected: PASS.
 
@@ -573,7 +573,7 @@ describe("KnowledgePanel failure isolation", () => {
 
 - [ ] **Step 2: Run focused tests and verify missing contracts fail**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src/components/TopBar.test.ts src/components/SettingsModal.test.ts src/components/KnowledgePanel.test.ts`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src/components/TopBar.test.ts apps/web/src/components/SettingsModal.test.ts apps/web/src/components/KnowledgePanel.test.ts`
 
 Expected: FAIL on the new accessible result and error-boundary requirements.
 
@@ -607,7 +607,7 @@ Use dense underline Tabs in Knowledge, preserve all six destinations, and isolat
 
 - [ ] **Step 4: Run all web tests and build**
 
-Run: `pnpm --filter @traceforge/web exec vitest run src`
+Run: `.\node_modules\.bin\vitest.CMD run apps/web/src`
 
 Expected: all web tests PASS.
 
@@ -643,7 +643,7 @@ git commit -m "refactor(web): align knowledge and modal surfaces"
 Run:
 
 ```powershell
-pnpm --filter @traceforge/web exec vitest run src
+.\node_modules\.bin\vitest.CMD run apps/web/src
 pnpm --filter @traceforge/web exec tsc --noEmit -p tsconfig.json
 pnpm --filter @traceforge/server exec tsc --noEmit -p tsconfig.json
 pnpm --filter @traceforge/web build
