@@ -6,6 +6,9 @@ const app = readFileSync(new URL("../app.css", import.meta.url), "utf8");
 
 const appRoot = app.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? "";
 const trackingValues = [...app.matchAll(/letter-spacing\s*:\s*([^;}]+)/g)].map((match) => match[1].trim());
+const narrowScreenStyles = app.match(
+  /@media\s*\(max-width:\s*767px\)\s*\{([\s\S]*?)\}\s*@media\s*\(max-width:\s*560px\)/,
+)?.[1] ?? "";
 
 describe("Operations Canvas theme contract", () => {
   it("uses one light semantic theme", () => {
@@ -33,9 +36,12 @@ describe("Operations Canvas theme contract", () => {
     expect(trackingValues.every((value) => value === "0")).toBe(true);
   });
 
-  it("uses 16px text for form controls on narrow screens", () => {
-    expect(app).toMatch(
-      /@media\s*\(max-width:\s*767px\)\s*\{[\s\S]*?input,\s*textarea,\s*select,\s*\.tf-select-trigger\s*\{[^}]*font-size:\s*16px/,
+  it("uses 16px text for controls and user-readable workbench body content on narrow screens", () => {
+    expect(narrowScreenStyles).toMatch(
+      /input,\s*textarea,\s*select,\s*\.tf-select-trigger\s*\{[^}]*font-size:\s*16px/,
+    );
+    expect(narrowScreenStyles).toMatch(
+      /\.request-row-url,\s*\.request-row p,\s*\.message,\s*\.message\.tool,\s*\.message\.reasoning,\s*\.tf-row,\s*\.kv,\s*\.tf-row-detail pre,\s*\.request-detail pre,\s*\.tf-guide-title,\s*\.tf-guide-hint,\s*\.tf-empty,\s*\.tf-select-empty\s*\{[^}]*font-size:\s*16px/,
     );
   });
 
@@ -49,5 +55,7 @@ describe("Operations Canvas theme contract", () => {
     expect(app).toMatch(/\.tf-launcher\s*\{[\s\S]*?border-radius:\s*var\(--radius\)/);
     expect(app).toMatch(/\.tf-modal\s*\{[\s\S]*?border-radius:\s*var\(--radius\)/);
     expect(app).toMatch(/\.tf-case-bar \.tf-create-pop\s*\{[\s\S]*?border-radius:\s*var\(--radius\)/);
+    expect(app).toMatch(/\.tf-tag\s*\{[^}]*border-radius:\s*var\(--radius-sm\)/);
+    expect(app).toMatch(/\.tf-prio\s*\{[^}]*border-radius:\s*var\(--radius-sm\)/);
   });
 });

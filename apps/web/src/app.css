@@ -275,7 +275,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   display: inline-block;
   max-width: 100%;
   padding: 1px 6px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--accent-soft);
   color: var(--accent);
   font-family: var(--mono);
@@ -307,7 +307,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .tf-prio {
   flex-shrink: 0;
   padding: 1px 6px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   font-size: 10px;
   font-weight: var(--font-semibold);
 }
@@ -709,6 +709,23 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   textarea,
   select,
   .tf-select-trigger {
+    font-size: 16px;
+  }
+
+  /* User-readable workbench body content; compact metadata stays intentionally small. */
+  .request-row-url,
+  .request-row p,
+  .message,
+  .message.tool,
+  .message.reasoning,
+  .tf-row,
+  .kv,
+  .tf-row-detail pre,
+  .request-detail pre,
+  .tf-guide-title,
+  .tf-guide-hint,
+  .tf-empty,
+  .tf-select-empty {
     font-size: 16px;
   }
 }
