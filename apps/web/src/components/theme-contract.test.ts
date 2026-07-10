@@ -4,18 +4,50 @@ import { describe, expect, it } from "vitest";
 const globals = readFileSync(new URL("../styles/globals.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../app.css", import.meta.url), "utf8");
 
+const appRoot = app.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+const trackingValues = [...app.matchAll(/letter-spacing\s*:\s*([^;}]+)/g)].map((match) => match[1].trim());
+
 describe("Operations Canvas theme contract", () => {
   it("uses one light semantic theme", () => {
     expect(globals).not.toContain("color-scheme: dark");
-    expect(globals).toContain("--color-background: #f2f4f5");
-    expect(globals).toContain("--color-primary: #245b84");
-    expect(app).toContain("--success: #16705c");
-    expect(app).toContain("--warning: #97550d");
-    expect(app).toContain("--z-modal: 50");
+    expect(globals).toMatch(/--color-background:\s*#f2f4f5/);
+    expect(globals).toMatch(/--color-foreground:\s*#17232d/);
+    expect(globals).toMatch(/--color-card:\s*#ffffff/);
+    expect(globals).toMatch(/--color-muted:\s*#f7f8f9/);
+    expect(globals).toMatch(/--color-primary:\s*#245b84/);
+    expect(globals).toMatch(/--color-destructive:\s*#b4232d/);
+    expect(globals).toMatch(/--color-border:\s*#d8dfe4/);
+    expect(globals).toMatch(/--color-ring:\s*#4e89b5/);
+    expect(appRoot).toMatch(/--success:\s*#16705c/);
+    expect(appRoot).toMatch(/--warning:\s*#97550d/);
+    expect(appRoot).toMatch(/--border-subtle:\s*#e9edf0/);
+    expect(appRoot).toMatch(/--z-header:\s*20/);
+    expect(appRoot).toMatch(/--z-drawer:\s*40/);
+    expect(appRoot).toMatch(/--z-modal:\s*50/);
   });
 
-  it("respects reduced motion and stable tracking", () => {
+  it("keeps typography tracking at zero", () => {
     expect(app).toContain("@media (prefers-reduced-motion: reduce)");
-    expect(app).toContain("letter-spacing: 0");
+    expect(trackingValues).not.toHaveLength(0);
+    expect(trackingValues).toEqual(expect.arrayContaining(["0"]));
+    expect(trackingValues.every((value) => value === "0")).toBe(true);
+  });
+
+  it("uses 16px text for form controls on narrow screens", () => {
+    expect(app).toMatch(
+      /@media\s*\(max-width:\s*767px\)\s*\{[\s\S]*?input,\s*textarea,\s*select,\s*\.tf-select-trigger\s*\{[^}]*font-size:\s*16px/,
+    );
+  });
+
+  it("keeps workbench panels, modals, and launchers on the shared radius scale", () => {
+    expect(globals).toMatch(/--radius:\s*0\.4375rem/);
+    expect(appRoot).not.toMatch(/--radius\s*:/);
+    expect(appRoot).toMatch(/--radius-sm:\s*6px/);
+    expect(appRoot).toMatch(/--radius-lg:\s*8px/);
+    expect(appRoot).toMatch(/--radius-xl:\s*8px/);
+    expect(app).toMatch(/\.panel\s*\{[\s\S]*?border-radius:\s*var\(--radius-lg\)/);
+    expect(app).toMatch(/\.tf-launcher\s*\{[\s\S]*?border-radius:\s*var\(--radius\)/);
+    expect(app).toMatch(/\.tf-modal\s*\{[\s\S]*?border-radius:\s*var\(--radius\)/);
+    expect(app).toMatch(/\.tf-case-bar \.tf-create-pop\s*\{[\s\S]*?border-radius:\s*var\(--radius\)/);
   });
 });
