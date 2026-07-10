@@ -21,6 +21,10 @@
   --color-input: #bdc8d0;
   --color-ring: #4e89b5;
   --radius: 0.4375rem;
+  --radius-xs: 0.375rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.4375rem;
+  --radius-lg: 0.5rem;
 }
 
 @layer base {

@@ -5,12 +5,31 @@ const globals = readFileSync(new URL("../styles/globals.css", import.meta.url), 
 const app = readFileSync(new URL("../app.css", import.meta.url), "utf8");
 const topBar = readFileSync(new URL("./TopBar.tsx", import.meta.url), "utf8");
 const alert = readFileSync(new URL("./ui/alert.tsx", import.meta.url), "utf8");
+const workbenchPrimitives = {
+  Button: readFileSync(new URL("./ui/button.tsx", import.meta.url), "utf8"),
+  Input: readFileSync(new URL("./ui/input.tsx", import.meta.url), "utf8"),
+  Select: readFileSync(new URL("./ui/select.tsx", import.meta.url), "utf8"),
+  Dialog: readFileSync(new URL("./ui/dialog.tsx", import.meta.url), "utf8"),
+};
 
 const appRoot = app.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? "";
 const trackingValues = [...app.matchAll(/letter-spacing\s*:\s*([^;}]+)/g)].map((match) => match[1].trim());
 const narrowScreenStyles = app.match(
   /@media\s*\(max-width:\s*767px\)\s*\{([\s\S]*?)\}\s*@media\s*\(max-width:\s*560px\)/,
 )?.[1] ?? "";
+const tailwindRadiusTokens = Object.fromEntries(
+  [...globals.matchAll(/--radius-(xs|sm|md|lg):\s*(\d+(?:\.\d+)?)rem/g)].map((match) => [
+    match[1],
+    Number(match[2]) * 16,
+  ]),
+);
+const primitiveRadiusClasses = [
+  ...new Set(
+    Object.values(workbenchPrimitives).flatMap((source) =>
+      [...source.matchAll(/\brounded-(xs|sm|md|lg)\b/g)].map((match) => match[1]),
+    ),
+  ),
+].sort();
 
 describe("Operations Canvas theme contract", () => {
   it("uses one light semantic theme", () => {
@@ -64,5 +83,13 @@ describe("Operations Canvas theme contract", () => {
     expect(app).toMatch(/\.tf-case-bar \.tf-create-pop\s*\{[\s\S]*?border-radius:\s*var\(--radius\)/);
     expect(app).toMatch(/\.tf-tag\s*\{[^}]*border-radius:\s*var\(--radius-sm\)/);
     expect(app).toMatch(/\.tf-prio\s*\{[^}]*border-radius:\s*var\(--radius-sm\)/);
+  });
+
+  it("maps every non-pill Tailwind radius utility used by workbench primitives to at least 6px", () => {
+    expect(primitiveRadiusClasses).toEqual(["lg", "md", "sm", "xs"]);
+
+    for (const radiusClass of primitiveRadiusClasses) {
+      expect(tailwindRadiusTokens[radiusClass], `rounded-${radiusClass}`).toBeGreaterThanOrEqual(6);
+    }
   });
 });
