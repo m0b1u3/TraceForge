@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
 import { createElement } from "react";
-import { TopBar } from "./TopBar.js";
+import { TopBar, formatTopBarTokenTotal, getTopBarRunStatus } from "./TopBar.js";
 
 // Minimal smoke test for TopBar — no React Testing Library in this project,
 // so we use react-dom/server renderToString to assert on the static output.
@@ -20,5 +20,11 @@ describe("TopBar", () => {
     // the brand is present.
     const html = renderToString(createElement(TopBar));
     expect(html).toContain("TraceForge");
+  });
+
+  it("formats persisted run status and token totals", () => {
+    expect(getTopBarRunStatus({ status: "running" }, false)).toBe("running");
+    expect(getTopBarRunStatus(null, true)).toBe("running");
+    expect(formatTopBarTokenTotal(1234)).toBe("Tokens 1,234");
   });
 });

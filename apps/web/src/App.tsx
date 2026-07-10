@@ -5,6 +5,7 @@ import { CaseLauncher } from "./components/CaseLauncher.js";
 import { TrafficPanel } from "./components/TrafficPanel.js";
 import { AgentPanel } from "./components/AgentPanel.js";
 import { KnowledgePanel } from "./components/KnowledgePanel.js";
+import { WorkspaceLayout } from "./components/WorkspaceLayout.js";
 import { GraphModal } from "./components/GraphModal.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,7 @@ import {
 function Toast() {
   const toast = useStore((s) => s.toast);
   if (!toast) return null;
-  return <div className="tf-toast">{toast}</div>;
+  return <div className="tf-toast" role="status" aria-live="polite">{toast}</div>;
 }
 
 function ObserverConfirmation() {
@@ -81,12 +82,14 @@ export function App() {
   return (
     <div className="app-shell">
       <TopBar />
-      <ObserverConfirmation />
-      <section className="workspace">
-        <TrafficPanel />
-        <AgentPanel />
-        <KnowledgePanel />
-      </section>
+      <main className="workspace-page">
+        <ObserverConfirmation />
+        <WorkspaceLayout
+          traffic={<TrafficPanel />}
+          agent={<AgentPanel />}
+          knowledge={<KnowledgePanel />}
+        />
+      </main>
       <GraphModal />
       <SettingsModal />
       <Toast />
