@@ -491,6 +491,28 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .chat-panel { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .session-state { gap: 6px; height: 26px; padding: 0 9px; border: 1px solid #bbf7d0; border-radius: 999px; color: #067647; background: #f0fdf4; font-size: 11px; font-weight: 680; }
 .messages { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; padding: 14px; }
+.agent-event {
+  width: min(100%, 760px);
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  color: var(--text);
+}
+.agent-event.is-agent { background: var(--panel-soft); }
+.agent-event.is-operator { width: fit-content; max-width: 86%; margin-left: auto; border-color: #c8dce9; background: var(--accent-soft); }
+.agent-event.is-tool { border-style: dashed; background: #fbfcfd; }
+.agent-event.is-reasoning { border-style: dashed; color: var(--text-secondary); background: transparent; }
+.agent-event.is-error { border-color: #f4b7bd; background: var(--red-soft); }
+.agent-event.is-complete { border-color: #b8ded2; background: var(--green-soft); }
+.agent-event-header { display: flex; align-items: center; gap: var(--space-2); min-height: 22px; }
+.agent-event-header > button { margin-left: auto; }
+.agent-event-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-tertiary); }
+.agent-event.is-error .agent-event-icon { color: var(--red); }
+.agent-event.is-complete .agent-event-icon { color: var(--green); }
+.agent-event-label { color: var(--text-secondary); font-size: 10px; font-weight: var(--font-semibold); text-transform: uppercase; }
+.agent-event-content { margin: 6px 0 0; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.agent-event.is-tool .agent-event-content { font-family: var(--mono); font-size: 12px; }
 .message {
   max-width: 86%;
   padding: 10px 12px;
@@ -850,6 +872,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .message,
   .message.tool,
   .message.reasoning,
+  .agent-event-content,
   .tf-row,
   .kv,
   .tf-row-detail pre,

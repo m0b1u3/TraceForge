@@ -3,18 +3,16 @@ import { Sparkle, PaperPlaneTilt, ShieldWarning, Globe, CircleNotch } from "@pho
 import { useStore } from "../store.js";
 import { Button } from "@/components/ui/button";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
   Alert,
   AlertTitle,
   AlertDescription,
 } from "@/components/ui/alert";
-import type { AgentUiEvent } from "../store.js";
 import type { AgentRun } from "@traceforge/shared";
 import { runAgent, resolveApproval, approveScope, steerAgentRun, interruptAgentRun } from "../api.js";
+import { AgentEventRow } from "./agent/AgentEventRow.js";
+import { buildAgentConversationItems } from "./agent/agent-conversation.js";
+
+export { buildAgentConversationItems, type AgentConversationItem } from "./agent/agent-conversation.js";
 
 export function scopeApprovalContinuationGoal(host: string): string {
   return `Approved ${host}. Continue testing this target. Start the shared browser and visit the homepage, record real observations, and do not fabricate conclusions.`;
@@ -25,79 +23,21 @@ export function scopeApprovalContinuationEventText(host: string, isSteering: boo
   return isSteering ? `[steering] ${goal}` : goal;
 }
 
-type PendingApproval = { approvalId: string; tool: string; input: string };
-type PendingScope = { host: string; reason: string };
-
-export type AgentConversationItem =
-  | { type: "event"; key: string; kind: AgentUiEvent["kind"]; label: string; text: string }
-  | { type: "approval"; key: string }
-  | { type: "scope"; key: string }
-  | { type: "busy"; key: string };
-
-export function buildAgentConversationItems({
-  events,
-  pendingApproval,
-  pendingScope,
-  agentBusy,
-}: {
-  events: AgentUiEvent[];
-  pendingApproval: PendingApproval | null;
-  pendingScope: PendingScope | null;
-  agentBusy: boolean;
-}): AgentConversationItem[] {
-  const items: AgentConversationItem[] = [];
-  let lastVisible: { kind: AgentUiEvent["kind"]; text: string } | null = null;
-
-  events.forEach((event, index) => {
-    if (isNoisyAgentEvent(event)) return;
-    const display = formatAgentEvent(event);
-    if (!display) return;
-    if (lastVisible?.kind === display.kind && lastVisible.text === display.text) return;
-    if (display.kind === "done" && lastVisible?.kind === "text" && lastVisible.text === display.text) return;
-    items.push({ type: "event", key: `event-${index}`, ...display });
-    lastVisible = { kind: display.kind, text: display.text };
-  });
-
-  if (pendingApproval) items.push({ type: "approval", key: `approval-${pendingApproval.approvalId}` });
-  if (pendingScope) items.push({ type: "scope", key: `scope-${pendingScope.host}` });
-  if (agentBusy) items.push({ type: "busy", key: "agent-busy" });
-  return items;
-}
-
 export function shouldStickToBottomAfterUpdate(el: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">): boolean {
   const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
   return distanceFromBottom <= 80;
 }
 
 export function isStopButtonDisabled(stopping: boolean, status: AgentRun["status"]): boolean {
-  return stopping || status === "interrupting";
+  return stopping || (status !== "queued" && status !== "running");
 }
 
-function isNoisyAgentEvent(event: AgentUiEvent): boolean {
-  const text = event.text.trim();
-  if (!text) return true;
-  if (event.kind === "started") return true;
-  if (event.kind === "done") return text === "done" || text === "handled";
-  if (event.kind === "tool_call") return /^list_traffic\s*\(\s*\{\s*\}\s*\)$/i.test(text);
-  if (event.kind === "tool_result") return /^list_traffic\s*→\s*[（(]暂无流量[）)]$/i.test(text);
-  return false;
+export function canClearAgentConversation(agentBusy: boolean, hasActiveRun: boolean): boolean {
+  return !agentBusy && !hasActiveRun;
 }
 
-function formatAgentEvent(event: AgentUiEvent): { kind: AgentUiEvent["kind"]; label: string; text: string } | null {
-  const text = event.text.trim();
-  if (!text || event.kind === "started") return null;
-  if (event.kind === "user") return { kind: event.kind, label: "You", text };
-  if (event.kind === "error") return { kind: event.kind, label: "Error", text };
-  if (event.kind === "tool_call") return { kind: event.kind, label: "Tool", text: compactToolText(text) };
-  if (event.kind === "tool_result") return { kind: event.kind, label: "Tool", text: compactToolText(text) };
-  if (event.kind === "done") return { kind: event.kind, label: "Done", text };
-  if (event.kind === "reasoning") return { kind: event.kind, label: "Reasoning", text };
-  return { kind: event.kind, label: "Agent", text };
-}
-
-function compactToolText(text: string): string {
-  const singleLine = text.replace(/\s+/g, " ").trim();
-  return singleLine.length > 180 ? `${singleLine.slice(0, 177)}...` : singleLine;
+export function canSubmitAgentInstruction(goal: string, agentBusy: boolean, hasActiveRun: boolean): boolean {
+  return goal.trim().length > 0 && (!agentBusy || hasActiveRun);
 }
 
 export function AgentPanel() {
@@ -109,7 +49,6 @@ export function AgentPanel() {
   const [goal, setGoal] = useState("");
   const [busy, setBusy] = useState<"approved" | "rejected" | null>(null);
   const [stopping, setStopping] = useState(false);
-  const [expandedReasoning, setExpandedReasoning] = useState<Set<string>>(new Set());
   const messagesRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const conversationItems = buildAgentConversationItems({ events: agentEvents, pendingApproval, pendingScope, agentBusy });
@@ -157,7 +96,7 @@ export function AgentPanel() {
 
   // Accumulate conversation/events; do not clear on each send so history can be scrolled; concurrent runs are blocked
   const send = async () => {
-    if (!goal.trim()) return;
+    if (!canSubmitAgentInstruction(goal, agentBusy, Boolean(activeRun))) return;
     const g = goal.trim();
     setGoal("");
     shouldAutoScrollRef.current = true;
@@ -198,7 +137,14 @@ export function AgentPanel() {
         <div><span className="section-kicker">Agent</span><h2>Run Console</h2></div>
         <div className="panel-header-actions">
           {agentEvents.length > 0 && (
-            <button className="tf-btn tf-btn-ghost" onClick={resetAgent} title="Clear conversation">Clear</button>
+            <button
+              className="tf-btn tf-btn-ghost"
+              disabled={!canClearAgentConversation(agentBusy, Boolean(activeRun))}
+              onClick={resetAgent}
+              title={activeRun || agentBusy ? "Stop or finish the active run before clearing" : "Clear conversation"}
+            >
+              Clear
+            </button>
           )}
           <div className="session-state token-stats" title="Cumulative LLM token usage for this run">
             Tokens {tokenUsage.totalTokens.toLocaleString()} ({tokenUsage.promptTokens.toLocaleString()} in / {tokenUsage.completionTokens.toLocaleString()} out)
@@ -208,6 +154,9 @@ export function AgentPanel() {
       </div>
       <section
         className="messages"
+        role="log"
+        aria-live="polite"
+        aria-label="Agent conversation"
         ref={messagesRef}
         onScroll={(event) => {
           shouldAutoScrollRef.current = shouldStickToBottomAfterUpdate(event.currentTarget);
@@ -272,49 +221,10 @@ export function AgentPanel() {
             );
           }
           if (item.type === "busy") {
-            return <div className="tf-agent-busy" key={item.key}><CircleNotch size={14} className="tf-spin" /> Agent is running…</div>;
+            return <div className="tf-agent-busy" role="status" key={item.key}><CircleNotch size={14} className="tf-spin" /> Agent is running…</div>;
           }
           if (item.type === "event") {
-            const isReasoning = item.kind === "reasoning";
-            const reasoningExpanded = isReasoning ? expandedReasoning.has(item.key) : true;
-            if (isReasoning) {
-              return (
-                <Collapsible
-                  key={item.key}
-                  open={reasoningExpanded}
-                  onOpenChange={(open) => {
-                    setExpandedReasoning((prev) => {
-                      const next = new Set(prev);
-                      if (open) next.add(item.key);
-                      else next.delete(item.key);
-                      return next;
-                    });
-                  }}
-                  className={`message ${messageClassName(item.kind)} ${reasoningExpanded ? "expanded" : "collapsed"}`}
-                >
-                  <div className="message-meta">
-                    <span>{item.label}</span>
-                    <CollapsibleTrigger asChild>
-                      <Button variant="ghost" size="xs">
-                        {reasoningExpanded ? "Collapse" : "Expand"}
-                      </Button>
-                    </CollapsibleTrigger>
-                  </div>
-                  <CollapsibleContent>
-                    <p>{item.text}</p>
-                  </CollapsibleContent>
-                  {!reasoningExpanded && <p className="reasoning-placeholder">(collapsed)</p>}
-                </Collapsible>
-              );
-            }
-            return (
-              <div className={`message ${messageClassName(item.kind)}`} key={item.key}>
-                <div className="message-meta">
-                  <span>{item.label}</span>
-                </div>
-                <p>{item.text}</p>
-              </div>
-            );
+            return <AgentEventRow item={item} key={item.key} />;
           }
           return null;
         })}
@@ -323,6 +233,7 @@ export function AgentPanel() {
         <textarea
           rows={1} value={goal} onChange={(e) => setGoal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          disabled={agentBusy && !activeRun}
           placeholder={activeRun ? "Add steering instruction…" : agentBusy ? "Agent is running…" : "Send a message…"}
         />
         {activeRun && (
@@ -335,18 +246,17 @@ export function AgentPanel() {
             Stop
           </button>
         )}
-        <button className="tf-btn tf-btn-primary" disabled={!goal.trim()} onClick={send}>
+        <button
+          className="tf-btn tf-btn-primary"
+          type="button"
+          aria-label={activeRun ? "Send steering instruction" : "Start agent run"}
+          title={activeRun ? "Send steering instruction" : "Start agent run"}
+          disabled={!canSubmitAgentInstruction(goal, agentBusy, Boolean(activeRun))}
+          onClick={send}
+        >
           {agentBusy ? <CircleNotch size={15} className="tf-spin" /> : <PaperPlaneTilt size={15} weight="fill" />}
         </button>
       </div>
     </main>
   );
-}
-
-function messageClassName(kind: AgentUiEvent["kind"]): string {
-  if (kind === "user") return "operator";
-  if (kind === "error") return "trace";
-  if (kind === "reasoning") return "reasoning";
-  if (kind === "tool_call" || kind === "tool_result") return "tool";
-  return "agent";
 }

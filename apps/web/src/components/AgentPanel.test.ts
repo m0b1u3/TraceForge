@@ -6,6 +6,8 @@ import {
   scopeApprovalContinuationEventText,
   scopeApprovalContinuationGoal,
   isStopButtonDisabled,
+  canClearAgentConversation,
+  canSubmitAgentInstruction,
 } from "./AgentPanel.js";
 
 function eventItems(items: AgentConversationItem[]): Extract<AgentConversationItem, { type: "event" }>[] {
@@ -70,9 +72,10 @@ describe("buildAgentConversationItems", () => {
   });
 
   it("shortens verbose tool results in the chat stream", () => {
+    const fullText = `browser_observe → ${"page content".repeat(80)}`;
     const items = buildAgentConversationItems({
       events: [
-        { kind: "tool_result", text: `browser_observe → ${"page content".repeat(80)}` },
+        { kind: "tool_result", text: fullText },
       ],
       pendingApproval: null,
       pendingScope: null,
@@ -80,9 +83,10 @@ describe("buildAgentConversationItems", () => {
     });
 
     const visible = eventItems(items);
-    expect(visible[0]?.label).toBe("Tool");
-    expect(visible[0]?.text.length).toBeLessThan(220);
-    expect(visible[0]?.text.endsWith("...")).toBe(true);
+    expect(visible[0]?.label).toBe("Tool result");
+    expect(visible[0]?.summary.length).toBeLessThan(220);
+    expect(visible[0]?.summary.endsWith("...")).toBe(true);
+    expect(visible[0]?.text).toBe(fullText);
   });
 
   it("hides noisy terminal and empty tool events from the chat stream", () => {
@@ -126,5 +130,24 @@ describe("isStopButtonDisabled", () => {
 
   it("returns false during a normal running run", () => {
     expect(isStopButtonDisabled(false, "running")).toBe(false);
+  });
+
+  it("returns true after a run has reached a terminal state", () => {
+    expect(isStopButtonDisabled(false, "completed")).toBe(true);
+    expect(isStopButtonDisabled(false, "failed")).toBe(true);
+  });
+});
+
+describe("agent conversation controls", () => {
+  it("does not clear local run state while an agent run is active", () => {
+    expect(canClearAgentConversation(false, true)).toBe(false);
+    expect(canClearAgentConversation(true, false)).toBe(false);
+    expect(canClearAgentConversation(false, false)).toBe(true);
+  });
+
+  it("blocks duplicate starts while allowing steering for an active run", () => {
+    expect(canSubmitAgentInstruction("test target", true, false)).toBe(false);
+    expect(canSubmitAgentInstruction("steer now", true, true)).toBe(true);
+    expect(canSubmitAgentInstruction("   ", false, false)).toBe(false);
   });
 });

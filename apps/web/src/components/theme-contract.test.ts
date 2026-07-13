@@ -64,7 +64,7 @@ describe("Operations Canvas theme contract", () => {
       /input,\s*textarea,\s*select,\s*\.tf-select-trigger\s*\{[^}]*font-size:\s*16px/,
     );
     expect(narrowScreenStyles).toMatch(
-      /\.request-row-url,\s*\.request-row p,\s*\.message,\s*\.message\.tool,\s*\.message\.reasoning,\s*\.tf-row,\s*\.kv,\s*\.tf-row-detail pre,\s*\.request-detail pre,\s*\.tf-guide-title,\s*\.tf-guide-hint,\s*\.tf-empty,\s*\.tf-select-empty\s*\{[^}]*font-size:\s*16px/,
+      /\.request-row-url,\s*\.request-row p,\s*\.message,\s*\.message\.tool,\s*\.message\.reasoning,\s*\.agent-event-content,\s*\.tf-row,\s*\.kv,\s*\.tf-row-detail pre,\s*\.request-detail pre,\s*\.tf-guide-title,\s*\.tf-guide-hint,\s*\.tf-empty,\s*\.tf-select-empty\s*\{[^}]*font-size:\s*16px/,
     );
     expect(narrowScreenStyles).toMatch(
       /\.browser-url,\s*\.flow-card-head strong,\s*\.flow-card p,\s*\.tf-gdetail-title,\s*\.tf-gdetail-kv span:last-child,\s*\.tf-gdetail-link\s*\{[^}]*font-size:\s*16px/,
