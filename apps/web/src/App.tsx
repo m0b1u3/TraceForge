@@ -56,7 +56,7 @@ function ObserverConfirmation() {
 
 export function App() {
   const { caseId, connectWs } = useStore();
-  useEffect(() => { connectWs(); }, [connectWs]);
+  useEffect(() => connectWs(), [connectWs]);
 
   if (!caseId) {
     return (

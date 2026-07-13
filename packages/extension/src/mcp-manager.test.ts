@@ -1,86 +1,57 @@
-import { describe, it, expect } from "vitest";
-import { McpManager, type McpClient, type McpClientFactory } from "./mcp-manager.js";
-import type { McpServerConfig } from "./mcp-config.js";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { McpManager } from "./mcp-manager.js";
+import { mcpToolToDescriptor } from "./mcp-tools.js";
 
-function fakeClient(tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>): McpClient {
-  return {
-    listTools: async () => ({ tools }),
-    callTool: async (args) => ({ content: [{ type: "text", text: `called ${args.name}` }] }),
-    close: async () => {},
-  };
-}
+describe("McpManager real stdio integration", () => {
+  let manager: McpManager;
+  let workspace: string;
 
-const cfg = (over: Partial<McpServerConfig> = {}): McpServerConfig => ({
-  name: "fs", command: "x", args: [], trustLevel: "command", ...over,
-});
-
-describe("McpManager", () => {
-  it("connects and caches tools as handles with trustLevel from config", async () => {
-    const factory: McpClientFactory = async () => fakeClient([
-      { name: "read_file", description: "rf", inputSchema: { type: "object" } },
-    ]);
-    const m = new McpManager(factory);
-    await m.connectAll([cfg()]);
-    const handles = m.listTools();
-    expect(handles).toHaveLength(1);
-    expect(handles[0]).toMatchObject({ serverName: "fs", toolName: "read_file", description: "rf", trustLevel: "command" });
+  beforeEach(async () => {
+    workspace = await mkdtemp(join(tmpdir(), "tf-mcp-"));
+    await mkdir(join(workspace, "case_1"));
+    manager = new McpManager();
+    await manager.connectAll([{
+      name: "poc",
+      command: process.execPath,
+      args: [resolve("packages/mcp-poc-server/dist/main.js")],
+      env: { TRACEFORGE_WORKSPACE: workspace },
+      trustLevel: "command",
+    }]);
   });
 
-  it("isolates a server whose connection fails (others still load)", async () => {
-    const originalError = console.error;
-    const errors: unknown[][] = [];
-    console.error = (...args: unknown[]) => { errors.push(args); };
-    const factory: McpClientFactory = async (c) => {
-      if (c.name === "bad") throw new Error("spawn failed");
-      return fakeClient([{ name: "ok_tool" }]);
-    };
-    try {
-      const m = new McpManager(factory);
-      await m.connectAll([cfg({ name: "bad" }), cfg({ name: "good" })]);
-      expect(m.listTools().map((h) => h.serverName)).toEqual(["good"]);
-      expect(errors.length).toBeGreaterThan(0);
-    } finally {
-      console.error = originalError;
-    }
+  afterEach(async () => {
+    await manager.closeAll();
+    await rm(workspace, { recursive: true, force: true });
   });
 
-  it("callTool forwards to the right client and returns text content", async () => {
-    const factory: McpClientFactory = async () => fakeClient([{ name: "read_file" }]);
-    const m = new McpManager(factory);
-    await m.connectAll([cfg()]);
-    const res = await m.callTool("fs", "read_file", { path: "/x" });
-    expect(res).toEqual({ ok: true, content: "called read_file" });
+  it("discovers tools and calls the real MCP child process", async () => {
+    const handles = manager.listTools();
+    expect(handles.map((handle) => handle.toolName).sort()).toEqual(["exec_command", "list_dir", "read_file", "write_file"]);
+    expect(handles.every((handle) => handle.serverName === "poc" && handle.trustLevel === "command")).toBe(true);
+
+    const result = await manager.callTool("poc", "list_dir", { caseId: "case_1", path: "" });
+    expect(result).toEqual({ ok: true, content: "(empty)" });
   });
 
-  it("callTool returns ok:false for an unknown server", async () => {
-    const m = new McpManager(async () => fakeClient([]));
-    const res = await m.callTool("nope", "t", {});
-    expect(res.ok).toBe(false);
+  it("returns ok:false for an unknown server", async () => {
+    const result = await manager.callTool("missing", "list_dir", { caseId: "case_1" });
+    expect(result.ok).toBe(false);
   });
 
-  it("callTool returns ok:false when the client throws", async () => {
-    const factory: McpClientFactory = async () => ({
-      listTools: async () => ({ tools: [{ name: "boom" }] }),
-      callTool: async () => { throw new Error("remote crash"); },
-      close: async () => {},
+  it("wraps and executes a discovered MCP tool without changing its public name", async () => {
+    const handle = manager.listTools().find((candidate) => candidate.toolName === "list_dir");
+    expect(handle).toBeDefined();
+
+    const descriptor = mcpToolToDescriptor(handle!, manager);
+    expect(descriptor.name).toBe("list_dir");
+    expect(descriptor.source).toBe("mcp:poc");
+    expect(descriptor.risk).toBe("command");
+    await expect(descriptor.execute({ caseId: "case_1", path: "" })).resolves.toEqual({
+      ok: true,
+      content: "(empty)",
     });
-    const m = new McpManager(factory);
-    await m.connectAll([cfg()]);
-    const res = await m.callTool("fs", "boom", {});
-    expect(res.ok).toBe(false);
-    expect(res.content).toMatch(/remote crash/);
-  });
-
-  it("closeAll closes every client", async () => {
-    const closed: string[] = [];
-    const factory: McpClientFactory = async (c) => ({
-      listTools: async () => ({ tools: [{ name: "t" }] }),
-      callTool: async () => ({ content: [] }),
-      close: async () => { closed.push(c.name); },
-    });
-    const m = new McpManager(factory);
-    await m.connectAll([cfg({ name: "a" }), cfg({ name: "b" })]);
-    await m.closeAll();
-    expect(closed.sort()).toEqual(["a", "b"]);
   });
 });

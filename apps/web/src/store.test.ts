@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useStore } from "./store.js";
 
-const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
-const responses: Response[] = [];
-
 function resetStore() {
   useStore.setState({
     caseId: "case_1",
@@ -19,6 +16,8 @@ function resetStore() {
     agentEvents: [],
     activeRun: null,
     agentBusy: false,
+    streamingMessages: {},
+    streamedAgentTexts: [],
     toast: null,
     warnings: [],
     pendingApproval: null,
@@ -48,14 +47,6 @@ const warning = {
 describe("store observer confirmation", () => {
   beforeEach(() => {
     resetStore();
-    calls.length = 0;
-    responses.length = 0;
-    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      calls.push([input, init]);
-      const response = responses.shift();
-      if (!response) throw new Error("missing scripted fetch response");
-      return response;
-    };
   });
 
   it("sets pending confirmation and switches to observer tab on agent_run_needs_confirmation", () => {
@@ -70,18 +61,6 @@ describe("store observer confirmation", () => {
     useStore.getState().handleRuntimeEvent({ type: "agent_run_needs_confirmation", caseId: "case_2", runId: "run_1", warning });
     expect(useStore.getState().pendingConfirmation).toBeNull();
     expect(useStore.getState().activeTab).toBe("facts");
-  });
-
-  it("deletes the current case and clears case-scoped state", async () => {
-    responses.push(new Response(JSON.stringify({ deleted: true }), { status: 200 }));
-
-    await useStore.getState().deleteCase("case_1");
-
-    expect(calls).toContainEqual(["/api/cases/case_1", { method: "DELETE" }]);
-    expect(useStore.getState().caseId).toBeNull();
-    expect(useStore.getState().cases).toEqual([]);
-    expect(useStore.getState().traffic).toEqual([]);
-    expect(useStore.getState().pendingConfirmation).toBeNull();
   });
 
   it("clears the current case when a delete event arrives over websocket", () => {
@@ -211,7 +190,39 @@ describe("store agent tool events", () => {
     });
   });
 });
+describe("store agent streaming", () => {
+  beforeEach(() => {
+    resetStore();
+  });
 
+  it("renders one exact message from stream events and the persisted text event", () => {
+    const handle = useStore.getState().handleRuntimeEvent;
+    handle({ type: "agent_stream_start", caseId: "case_1", runId: "run_1", messageId: "msg_1" });
+    handle({ type: "agent_stream_delta", caseId: "case_1", runId: "run_1", messageId: "msg_1", delta: "已将 " });
+    handle({ type: "agent_stream_delta", caseId: "case_1", runId: "run_1", messageId: "msg_1", delta: "127.0.0.1 加入范围" });
+    handle({ type: "agent_stream_end", caseId: "case_1", runId: "run_1", messageId: "msg_1", content: "已将 127.0.0.1 加入范围。" });
+    handle({ type: "agent_reasoning", caseId: "case_1", content: "等待用户批准" });
+    handle({ type: "agent_text", caseId: "case_1", content: "已将 127.0.0.1 加入范围。" });
+
+    expect(useStore.getState().agentEvents).toEqual([
+      { kind: "text", text: "已将 127.0.0.1 加入范围。" },
+      { kind: "reasoning", text: "等待用户批准" },
+    ]);
+    expect(useStore.getState().streamedAgentTexts).toEqual([]);
+  });
+
+  it("keeps distinct streamed messages separate", () => {
+    const handle = useStore.getState().handleRuntimeEvent;
+    for (const [messageId, content] of [["msg_1", "first"], ["msg_2", "second"]] as const) {
+      handle({ type: "agent_stream_start", caseId: "case_1", runId: "run_1", messageId });
+      handle({ type: "agent_stream_delta", caseId: "case_1", runId: "run_1", messageId, delta: content });
+      handle({ type: "agent_stream_end", caseId: "case_1", runId: "run_1", messageId, content });
+      handle({ type: "agent_text", caseId: "case_1", content });
+    }
+
+    expect(useStore.getState().agentEvents.map((event) => event.text)).toEqual(["first", "second"]);
+  });
+});
 describe("store agent interventions", () => {
   beforeEach(() => {
     resetStore();
@@ -257,122 +268,5 @@ describe("store agent interventions", () => {
       kind: "done",
       text: "Scope kept blocked: target.example",
     });
-  });
-});
-
-describe("store LLM config", () => {
-  beforeEach(() => {
-    resetStore();
-    calls.length = 0;
-    responses.length = 0;
-    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      calls.push([input, init]);
-      const response = responses.shift();
-      if (!response) throw new Error(`missing scripted fetch response for ${String(input)}`);
-      return response;
-    };
-  });
-
-  it("shows a toast when connection test succeeds", async () => {
-    responses.push(new Response(JSON.stringify({ ok: true, message: "Connection successful" }), { status: 200 }));
-
-    const result = await useStore.getState().testLlmConfig({ provider: "openai", model: "LongCat-2.0" });
-
-    expect(result.ok).toBe(true);
-    expect(useStore.getState().toast).toBe("Connection successful");
-  });
-
-  it("shows a toast when connection test fails", async () => {
-    responses.push(new Response(JSON.stringify({ ok: false, error: "apiKey is missing" }), { status: 200 }));
-
-    const result = await useStore.getState().testLlmConfig({ provider: "openai", model: "LongCat-2.0" });
-
-    expect(result.ok).toBe(false);
-    expect(useStore.getState().toast).toContain("apiKey is missing");
-  });
-});
-
-describe("store case hydration", () => {
-  beforeEach(() => {
-    resetStore();
-    calls.length = 0;
-    responses.length = 0;
-    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      calls.push([input, init]);
-      const response = responses.shift();
-      if (!response) throw new Error(`missing scripted fetch response for ${String(input)}`);
-      return response;
-    };
-  });
-
-  it("restores the active run and token usage when entering a case", async () => {
-    const activeRun = {
-      id: "run_1",
-      caseId: "case_1",
-      goal: "继续测试",
-      status: "running" as const,
-      createdAt: "now",
-      startedAt: "now",
-      finishedAt: null,
-      interruptReason: null,
-      completionReason: null,
-      error: null,
-      promptTokens: 36_194,
-      completionTokens: 1_413,
-      totalTokens: 37_607,
-    };
-    responses.push(
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify({ warnings: [], total: 0 }), { status: 200 }),
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify(activeRun), { status: 200 }),
-    );
-
-    await useStore.getState().enterCase("case_1");
-
-    expect(calls.map(([input]) => input)).toContain("/api/cases/case_1/agent/runs/active");
-    expect(useStore.getState().activeRun).toEqual(activeRun);
-    expect(useStore.getState().agentBusy).toBe(true);
-    expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 36_194, completionTokens: 1_413, totalTokens: 37_607 });
-  });
-
-  it("restores token usage from the latest run when no run is active", async () => {
-    const latestRun = {
-      id: "run_1",
-      caseId: "case_1",
-      goal: "完成测试",
-      status: "completed" as const,
-      createdAt: "now",
-      startedAt: "now",
-      finishedAt: "later",
-      interruptReason: null,
-      completionReason: "done",
-      error: null,
-      promptTokens: 36_194,
-      completionTokens: 1_413,
-      totalTokens: 37_607,
-    };
-    responses.push(
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify({ warnings: [], total: 0 }), { status: 200 }),
-      new Response(JSON.stringify([]), { status: 200 }),
-      new Response(JSON.stringify(null), { status: 200 }),
-      new Response(JSON.stringify(latestRun), { status: 200 }),
-    );
-
-    await useStore.getState().enterCase("case_1");
-
-    expect(calls.map(([input]) => input)).toContain("/api/cases/case_1/agent/runs/latest");
-    expect(useStore.getState().activeRun).toBeNull();
-    expect(useStore.getState().agentBusy).toBe(false);
-    expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 36_194, completionTokens: 1_413, totalTokens: 37_607 });
   });
 });

@@ -38,6 +38,7 @@ import { ContextSummaryStore } from "./stores/context-summary-store.js";
 import { buildContext, compressFar, deriveContextBudget, estimateTokens, shouldCompressFarHistory } from "@traceforge/reasoning-core";
 import { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool, makeSearchFactsTool, makeGetFactDetailTool, makeSearchTrafficTool, makeRecallConversationTool } from "@traceforge/extension";
 import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
+import { PendingInterventionRegistry } from "./pending-interventions.js";
 
 export function registerRoutes(
   app: FastifyInstance,
@@ -90,6 +91,7 @@ export function registerRoutes(
   const hypothesisStore = new HypothesisStore(db);
   const contextSummaryStore = new ContextSummaryStore(db);
   const approvals = new ApprovalRegistry();
+  const pendingInterventions = new PendingInterventionRegistry();
   const runs = new AgentRunRegistry();
 
   app.post("/api/cases", async (req) => {
@@ -106,6 +108,7 @@ export function registerRoutes(
   app.delete("/api/cases/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    pendingInterventions.clearCase(id);
 
     // Stop any active agent run for this case
     const active = runs.getActiveByCase(id);
@@ -323,6 +326,7 @@ export function registerRoutes(
     if (!host) return reply.code(400).send({ error: "host required" });
     const updated = cases.addAllowHost(id, host);
     if (!updated) return reply.code(404).send({ error: "case not found" });
+    pendingInterventions.clearScope(id, host);
     agentEventStore.append(id, "done", `Scope approved: ${host}`);
     bus.emit({ type: "scope_updated", caseId: id, allowHosts: updated.scopeRules[0]?.allowHosts ?? [] });
     return updated;
@@ -333,9 +337,16 @@ export function registerRoutes(
     const { host } = (req.body ?? {}) as { host?: string };
     if (!host) return reply.code(400).send({ error: "host required" });
     if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    pendingInterventions.clearScope(id, host);
     agentEventStore.append(id, "done", `Scope kept blocked: ${host}`);
     bus.emit({ type: "scope_expansion_rejected", caseId: id, host });
     return { rejected: true };
+  });
+
+  app.get("/api/cases/:id/interventions/pending", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    return pendingInterventions.get(id);
   });
 
   app.post("/api/cases/:id/agent/run", async (req, reply) => {
@@ -453,8 +464,10 @@ export function registerRoutes(
         })).filter((e) => e.url !== "" && e.evidence !== "") ?? [];
       },
     }));
-    registry.register(makeProposeScopeExpansionTool((host, reason) =>
-      bus.emit({ type: "scope_expansion_proposed", caseId: id, host, reason })));
+    registry.register(makeProposeScopeExpansionTool((host, reason) => {
+      pendingInterventions.setScope(id, { host, reason });
+      bus.emit({ type: "scope_expansion_proposed", caseId: id, host, reason });
+    }));
     registry.register(makeUpdateSessionStateTool(id, sessionStore));
     registry.register(makeRecordHypothesisTool(id, hypothesisStore, factStore));
     registry.register(makeResolveHypothesisTool(id, hypothesisStore, factStore));
@@ -486,8 +499,11 @@ export function registerRoutes(
 
     const gate = new ApprovalGate(async (tool, input) => {
       const approvalId = `appr_${randomUUID()}`;
-      bus.emit({ type: "approval_requested", caseId: id, approvalId, tool: tool.name, input: JSON.stringify(input) });
-      const decision = await approvals.request(approvalId);
+      const serializedInput = JSON.stringify(input);
+      pendingInterventions.setApproval(id, { approvalId, tool: tool.name, input: serializedInput });
+      bus.emit({ type: "approval_requested", caseId: id, approvalId, tool: tool.name, input: serializedInput });
+      const decision = await approvals.request(approvalId, running.abortController.signal);
+      pendingInterventions.clearApproval(id, approvalId);
       agentEventStore.append(id, "done", `Approval ${decision}: ${tool.name}`);
       bus.emit({ type: "approval_resolved", caseId: id, approvalId, tool: tool.name, decision });
       return decision;
@@ -720,6 +736,8 @@ export function registerRoutes(
     const { reason } = (req.body ?? {}) as { reason?: string };
     const run = runs.interrupt(runId, reason);
     if (!run) return reply.code(404).send({ error: "run not found" });
+    const pendingApproval = pendingInterventions.get(run.caseId).approval;
+    if (pendingApproval) pendingInterventions.clearApproval(run.caseId, pendingApproval.approvalId);
     return { run };
   });
 

@@ -66,8 +66,8 @@ describe("BrowserSession traffic capture", () => {
       await session.navigate(`http://${allowedHost}/login`);
 
       const entries = traffic.listByCase("c");
-      expect(entries.some((entry) => entry.url === `http://${allowedHost}/login`)).toBe(true);
-      expect(events.some((event) => event.type === "response_captured")).toBe(true);
+      expect(entries.filter((entry) => entry.url === `http://${allowedHost}/login`)).toHaveLength(1);
+      expect(events.filter((event) => event.type === "response_captured")).toHaveLength(1);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

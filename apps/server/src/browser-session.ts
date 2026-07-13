@@ -17,6 +17,7 @@ export class BrowserSession {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  private attachedPages = new WeakSet<Page>();
   private _controller: Controller = "llm";
 
   // scopeRules 用 getter 实时取：对话中批准纳入的新 host 立即对正在运行的浏览器生效，
@@ -44,6 +45,8 @@ export class BrowserSession {
   }
 
   private attachPage(page: Page): void {
+    if (this.attachedPages.has(page)) return;
+    this.attachedPages.add(page);
     this.page = page;
     page.on("response", (res) => this.captureResponse(res));
     page.on("framenavigated", (frame) => {

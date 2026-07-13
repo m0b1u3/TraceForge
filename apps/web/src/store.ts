@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun } from "./api.js";
+import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 
 export interface AgentUiEvent {
@@ -27,6 +27,8 @@ function runTokenUsage(run: AgentRun): TokenUsage {
   };
 }
 
+let disconnectActiveWebSocket: (() => void) | null = null;
+
 interface State {
   caseId: string | null;
   traffic: TrafficEntry[];
@@ -39,6 +41,7 @@ interface State {
   agentBusy: boolean;
   activeRun: AgentRun | null;
   streamingMessages: Record<string, number>;
+  streamedAgentTexts: string[];
   tokenUsage: TokenUsage;
   setAgentBusy: (b: boolean) => void;
   setActiveRun: (run: AgentRun | null) => void;
@@ -88,7 +91,7 @@ interface State {
   setBrowser: (controller: "llm" | "human" | null, url?: string) => void;
   resetBrowser: () => void;
   resetAgent: () => void;
-  connectWs: () => void;
+  connectWs: () => () => void;
   handleRuntimeEvent: (event: RuntimeEvent) => void;
 }
 
@@ -104,6 +107,7 @@ export const useStore = create<State>((set, get) => ({
   agentBusy: false,
   activeRun: null,
   streamingMessages: {},
+  streamedAgentTexts: [],
   tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   setAgentBusy: (b) => set({ agentBusy: b }),
   setActiveRun: (run) => set({ activeRun: run, agentBusy: isRunBusy(run) }),
@@ -172,14 +176,14 @@ export const useStore = create<State>((set, get) => ({
   clearPendingScope: (host) => set((s) => (
     !host || s.pendingScope?.host === host ? { pendingScope: null } : {}
   )),
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, streamingMessages: {}, tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null, pendingConfirmation: null }),
+  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null, pendingConfirmation: null }),
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
   enterCase: async (id) => {
     get().setCase(id);
-    const [traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents, activeRun] = await Promise.all([
-      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id), listAgentEvents(id), getActiveAgentRun(id),
+    const [traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents, activeRun, pendingInterventions] = await Promise.all([
+      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id), listAgentEvents(id), getActiveAgentRun(id), getPendingInterventions(id),
     ]);
     const latestRun = activeRun ?? await getLatestAgentRun(id);
     if (get().caseId !== id) return;
@@ -194,6 +198,8 @@ export const useStore = create<State>((set, get) => ({
       activeRun,
       agentBusy: isRunBusy(activeRun),
       tokenUsage: latestRun ? runTokenUsage(latestRun) : { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      pendingApproval: pendingInterventions.approval,
+      pendingScope: pendingInterventions.scope,
     });
   },
   deleteCase: async (id) => {
@@ -253,17 +259,35 @@ export const useStore = create<State>((set, get) => ({
   )),
   setBrowser: (controller, url) => set((s) => ({ browserController: controller, browserUrl: url ?? s.browserUrl })),
   resetBrowser: () => set({ browserController: null, browserUrl: "" }),
-  resetAgent: () => set({ agentEvents: [], pendingApproval: null, activeRun: null, streamingMessages: {}, agentBusy: false }),
+  resetAgent: () => set({ agentEvents: [], pendingApproval: null, activeRun: null, streamingMessages: {}, streamedAgentTexts: [], agentBusy: false }),
   connectWs: () => {
-    // Auto-reconnect after backend restarts or network drops so live updates do not silently stall.
+    disconnectActiveWebSocket?.();
+
+    let disposed = false;
     let retry = 0;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const disconnect = () => {
+      disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+      const current = socket;
+      socket = null;
+      if (current && current.readyState < WebSocket.CLOSING) current.close();
+      if (disconnectActiveWebSocket === disconnect) disconnectActiveWebSocket = null;
+    };
+
     const open = () => {
+      if (disposed) return;
       const ws = new WebSocket(`ws://${location.host}/ws`);
+      socket = ws;
       ws.onopen = () => { retry = 0; };
       ws.onclose = () => {
+        if (disposed || socket !== ws) return;
         const delay = Math.min(1000 * 2 ** retry, 10000);
         retry += 1;
-        setTimeout(open, delay);
+        reconnectTimer = setTimeout(open, delay);
       };
       ws.onerror = () => ws.close();
       ws.onmessage = onMessage;
@@ -272,7 +296,9 @@ export const useStore = create<State>((set, get) => ({
       const event = JSON.parse(msg.data) as RuntimeEvent;
       get().handleRuntimeEvent(event);
     };
+    disconnectActiveWebSocket = disconnect;
     open();
+    return disconnect;
   },
   handleRuntimeEvent: (event) => {
     const cid = get().caseId;
@@ -290,6 +316,7 @@ export const useStore = create<State>((set, get) => ({
       get().addAgentEvent({ kind: "started", text: `Started: ${event.run.goal}` });
     }
     else if (event.type === "agent_stream_start" && event.caseId === cid) {
+      if (get().streamingMessages[event.messageId] !== undefined) return;
       set((s) => ({ streamingMessages: { ...s.streamingMessages, [event.messageId]: s.agentEvents.length } }));
       get().addAgentEvent({ kind: "text", text: "" });
     }
@@ -306,8 +333,16 @@ export const useStore = create<State>((set, get) => ({
     }
     else if (event.type === "agent_stream_end" && event.caseId === cid) {
       set((s) => {
+        const index = s.streamingMessages[event.messageId];
+        if (index === undefined) return {};
         const { [event.messageId]: _done, ...rest } = s.streamingMessages;
-        return { streamingMessages: rest };
+        const events = s.agentEvents.slice();
+        if (events[index]) events[index] = { ...events[index], text: event.content };
+        return {
+          agentEvents: events,
+          streamingMessages: rest,
+          streamedAgentTexts: event.content ? [...s.streamedAgentTexts, event.content] : s.streamedAgentTexts,
+        };
       });
     }
     else if (event.type === "agent_retrying" && event.caseId === cid) {
@@ -360,6 +395,11 @@ export const useStore = create<State>((set, get) => ({
       if (get().agentEvents.at(-1)?.text !== text) get().addAgentEvent({ kind: "started", text });
     }
     else if (event.type === "agent_text" && event.caseId === cid) {
+      const streamedIndex = get().streamedAgentTexts.indexOf(event.content);
+      if (streamedIndex !== -1) {
+        set((s) => ({ streamedAgentTexts: s.streamedAgentTexts.filter((_, index) => index !== streamedIndex) }));
+        return;
+      }
       const last = get().agentEvents.at(-1);
       if (!(last?.kind === "text" && last.text === event.content)) get().addAgentEvent({ kind: "text", text: event.content });
     }

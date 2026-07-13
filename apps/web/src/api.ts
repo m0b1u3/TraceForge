@@ -144,6 +144,15 @@ export async function getLatestAgentRun(caseId: string): Promise<AgentRun | null
   return (await fetch(`/api/cases/${caseId}/agent/runs/latest`)).json();
 }
 
+export interface PendingInterventions {
+  approval: { approvalId: string; tool: string; input: string } | null;
+  scope: { host: string; reason: string } | null;
+}
+
+export async function getPendingInterventions(caseId: string): Promise<PendingInterventions> {
+  return (await fetch(`/api/cases/${caseId}/interventions/pending`)).json();
+}
+
 export async function resolveApproval(approvalId: string, decision: "approved" | "rejected"): Promise<void> {
   await ensureOk(await fetch(`/api/agent/approvals/${approvalId}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision }),

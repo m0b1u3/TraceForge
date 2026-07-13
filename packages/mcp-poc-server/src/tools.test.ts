@@ -40,6 +40,7 @@ describe("exec_command", () => {
 
   it("reports a non-zero exit code", async () => {
     const res = await execCommand(root, { caseId: "c1", command: 'node -e "process.exit(3)"' });
+    expect(res.ok).toBe(false);
     expect(res.text).toContain("exit=3");
   });
 });

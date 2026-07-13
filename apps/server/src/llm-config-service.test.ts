@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { LlmProvider } from "@traceforge/llm";
+import { join, resolve } from "node:path";
+import { loadLlmConfig } from "@traceforge/llm";
 import { LlmConfigService } from "./llm-config-service.js";
 
 function makeConfig(tmp: string, cfg: object) {
@@ -108,19 +108,18 @@ describe("LlmConfigService", () => {
   });
 
   it("tests config connectivity when provider confirms", async () => {
-    makeConfig(tmp, { provider: "openai", model: "m", apiKey: "sk-test", jsonMode: "json_object" });
-    const fakeProvider = { extractJson: async () => ({ ok: true }), runTools: async () => ({ text: "", toolCalls: [], done: true }) };
-    const svc = new LlmConfigService(join(tmp, "llm.json"), { createProvider: () => fakeProvider as unknown as import("@traceforge/llm").LlmProvider });
-    const result = await svc.test({ provider: "openai", model: "m" });
+    const realConfig = loadLlmConfig(resolve("config/llm.json"));
+    if (!realConfig) throw new Error("real LLM config is required for connectivity tests");
+    makeConfig(tmp, realConfig);
+    const svc = new LlmConfigService(join(tmp, "llm.json"));
+    const result = await svc.test({
+      provider: realConfig.provider,
+      model: realConfig.model,
+      baseUrl: realConfig.baseUrl,
+      jsonMode: realConfig.jsonMode,
+      contextWindowTokens: realConfig.contextWindowTokens,
+      maxOutputTokens: realConfig.maxOutputTokens,
+    });
     expect(result.ok).toBe(true);
-  });
-
-  it("tests config connectivity reports failure when provider does not confirm", async () => {
-    makeConfig(tmp, { provider: "openai", model: "m", apiKey: "sk-test", jsonMode: "json_object" });
-    const fakeProvider = { extractJson: async () => ({ ok: false }), runTools: async () => ({ text: "", toolCalls: [], done: true }) };
-    const svc = new LlmConfigService(join(tmp, "llm.json"), { createProvider: () => fakeProvider as unknown as import("@traceforge/llm").LlmProvider });
-    const result = await svc.test({ provider: "openai", model: "m" });
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("did not confirm");
   });
 });

@@ -29,7 +29,7 @@ export async function execCommand(
       clearTimeout(timer);
       const head = killed ? `exit=timeout(${timeout}ms)` : `exit=${code}`;
       resolveP({
-        ok: !killed,
+        ok: !killed && code === 0,
         text: `${head}\n--- stdout ---\n${truncateOutput(out, MAX_OUT)}\n--- stderr ---\n${truncateOutput(err, MAX_OUT)}`,
       });
     });
