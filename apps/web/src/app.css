@@ -730,6 +730,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .mcp-tool-head strong { min-width: 0; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; }
 .mcp-tool-row p { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .knowledge-graph { width: 100%; height: 100%; min-height: 320px; }
+.settings-dialog { max-height: min(88vh, 760px); overflow-y: auto; }
+.settings-section { display: grid; gap: var(--space-4); padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel-soft); }
+.settings-section-heading { display: grid; gap: 2px; }
+.settings-section-heading strong { font-size: 13px; }
+.settings-section-heading span { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.settings-feedback { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); font-size: 12px; line-height: 1.5; }
+.settings-feedback svg { flex: 0 0 auto; margin-top: 1px; }
+.settings-feedback.is-success { border-color: #b8ded2; color: var(--green); background: var(--green-soft); }
+.settings-feedback.is-error { border-color: #f4b7bd; color: var(--red); background: var(--red-soft); }
 
 .timeline-item {
   position: relative;

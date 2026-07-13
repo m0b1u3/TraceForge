@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useId } from "react";
+import { CaretDown, Check } from "@phosphor-icons/react";
 
 export interface SelectOption {
   value: string;
@@ -6,7 +7,7 @@ export interface SelectOption {
 }
 
 export function Select({
-  value, options, placeholder, onChange, minWidth = 160, className,
+  value, options, placeholder, onChange, minWidth = 160, className, disabled = false,
 }: {
   value: string | null;
   options: SelectOption[];
@@ -14,9 +15,11 @@ export function Select({
   onChange: (value: string) => void;
   minWidth?: number;
   className?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const listboxId = useId();
   const selected = options.find((o) => o.value === value);
 
   useEffect(() => {
@@ -30,12 +33,20 @@ export function Select({
 
   return (
     <div className={`tf-select ${className ?? ""}`} ref={ref} style={{ minWidth }}>
-      <button type="button" className={`tf-select-trigger ${open ? "is-open" : ""}`} onClick={() => setOpen((v) => !v)}>
+      <button
+        type="button"
+        className={`tf-select-trigger ${open ? "is-open" : ""}`}
+        aria-controls={listboxId}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+      >
         <span className={selected ? "" : "tf-select-ph"} title={selected?.label}>{selected ? selected.label : placeholder ?? "Select…"}</span>
-        <svg className="tf-select-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        <CaretDown className="tf-select-caret" size={12} aria-hidden="true" />
       </button>
       {open && (
-        <div className="tf-select-menu" role="listbox">
+        <div className="tf-select-menu" id={listboxId} role="listbox">
           {options.length === 0 && <div className="tf-select-empty">No options</div>}
           {options.map((o) => (
             <button
@@ -44,9 +55,7 @@ export function Select({
               onClick={() => { onChange(o.value); setOpen(false); }}
             >
               <span title={o.label}>{o.label}</span>
-              {o.value === value && (
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-              )}
+              {o.value === value && <Check size={13} weight="bold" aria-hidden="true" />}
             </button>
           ))}
         </div>

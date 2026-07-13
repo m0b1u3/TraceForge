@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CheckCircle, Eye, EyeSlash, WarningCircle } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,10 +32,35 @@ const JSON_MODES = [
   { value: "json_object", label: "JSON Object" },
 ];
 
-const PROVIDER_DEFAULT_BASE_URLS: Record<LlmConfigInput["provider"], string> = {
-  openai: "https://api.longcat.chat/openai",
-  anthropic: "https://api.longcat.chat/anthropic",
-};
+export interface LlmSettingsFields {
+  provider: LlmConfigInput["provider"];
+  model: string;
+  apiKey: string;
+  baseUrl: string;
+  jsonMode: string;
+  contextWindowTokens: string;
+  maxOutputTokens: string;
+}
+
+export function buildLlmConfigInput(fields: LlmSettingsFields): LlmConfigInput {
+  return {
+    provider: fields.provider,
+    model: fields.model.trim(),
+    baseUrl: fields.baseUrl.trim() || undefined,
+    apiKey: fields.apiKey || undefined,
+    jsonMode: fields.jsonMode === "default" ? undefined : (fields.jsonMode as LlmConfigInput["jsonMode"]),
+    contextWindowTokens: fields.contextWindowTokens ? Number(fields.contextWindowTokens) : undefined,
+    maxOutputTokens: fields.maxOutputTokens ? Number(fields.maxOutputTokens) : undefined,
+  };
+}
+
+export function validateLlmSettings(input: LlmConfigInput): string | null {
+  if (!input.model.trim()) return "Model is required.";
+  if (input.contextWindowTokens && input.maxOutputTokens && input.maxOutputTokens >= input.contextWindowTokens) {
+    return "Max output tokens must be smaller than the context window.";
+  }
+  return null;
+}
 
 export interface SettingsModalProps {
   open?: boolean;
@@ -67,6 +93,7 @@ export function SettingsModal({
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<{
     status: "idle" | "testing" | "ok" | "error";
     message?: string;
@@ -74,11 +101,12 @@ export function SettingsModal({
 
   useEffect(() => {
     if (settingsModalOpen_) {
-      loadLlmConfig();
+      if (!initialConfig) void loadLlmConfig();
       setShowApiKey(false);
       setTestStatus({ status: "idle" });
+      setFormError(null);
     }
-  }, [settingsModalOpen_, loadLlmConfig]);
+  }, [settingsModalOpen_, initialConfig, loadLlmConfig]);
 
   useEffect(() => {
     if (!llmConfig) return;
@@ -94,45 +122,44 @@ export function SettingsModal({
     );
   }, [llmConfig]);
 
-  useEffect(() => {
-    if (!baseUrl) {
-      setBaseUrl(PROVIDER_DEFAULT_BASE_URLS[provider]);
-    }
-  }, [provider]);
-
   if (!settingsModalOpen_) return null;
 
-  const buildInput = (): LlmConfigInput => ({
-    provider,
-    model,
-    baseUrl: baseUrl || undefined,
-    apiKey: apiKey || undefined,
-    jsonMode: jsonMode === "default" ? undefined : (jsonMode as LlmConfigInput["jsonMode"]),
-    contextWindowTokens: contextWindowTokens
-      ? Number(contextWindowTokens)
-      : undefined,
-    maxOutputTokens: maxOutputTokens ? Number(maxOutputTokens) : undefined,
-  });
+  const buildInput = () => buildLlmConfigInput({ provider, model, apiKey, baseUrl, jsonMode, contextWindowTokens, maxOutputTokens });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const input = buildInput();
+    const validationError = validateLlmSettings(input);
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
     setSaving(true);
+    setFormError(null);
     try {
-      await saveLlmConfig(buildInput());
+      await saveLlmConfig(input);
       setSettingsModalOpen(false);
       setApiKey("");
       setTestStatus({ status: "idle" });
+    } catch (error) {
+      setFormError((error as Error).message);
     } finally {
       setSaving(false);
     }
   };
 
   const handleTest = async () => {
-    if (testing || !model.trim()) return;
+    const input = buildInput();
+    const validationError = validateLlmSettings(input);
+    if (testing || validationError) {
+      if (validationError) setFormError(validationError);
+      return;
+    }
     setTesting(true);
+    setFormError(null);
     setTestStatus({ status: "testing" });
     try {
-      const result = await testLlmConfig(buildInput());
+      const result = await testLlmConfig(input);
       setTestStatus({
         status: result.ok ? "ok" : "error",
         message: result.message || result.error,
@@ -144,7 +171,7 @@ export function SettingsModal({
 
   return (
     <Dialog open={settingsModalOpen_} onOpenChange={setSettingsModalOpen}>
-      <DialogContent className="sm:max-w-[520px]">
+      <DialogContent className="settings-dialog sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
@@ -152,7 +179,8 @@ export function SettingsModal({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-5">
-          <div className="grid gap-4">
+          <div className="settings-section">
+            <div className="settings-section-heading"><strong>Connection</strong><span>Endpoint and credentials used for every real Agent request.</span></div>
             <div className="grid gap-2">
               <label htmlFor="provider" className="text-sm font-medium">
                 Provider
@@ -208,8 +236,10 @@ export function SettingsModal({
                   variant="outline"
                   size="sm"
                   onClick={() => setShowApiKey((v) => !v)}
+                  aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                  title={showApiKey ? "Hide API key" : "Show API key"}
                 >
-                  {showApiKey ? "Hide" : "Show"}
+                  {showApiKey ? <EyeSlash size={15} /> : <Eye size={15} />}
                 </Button>
               </div>
             </div>
@@ -218,27 +248,17 @@ export function SettingsModal({
               <label htmlFor="baseUrl" className="text-sm font-medium">
                 Base URL
               </label>
-              <div className="flex gap-2">
-                <Input
-                  id="baseUrl"
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://api.example.com"
-                  className="flex-1"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    setBaseUrl(PROVIDER_DEFAULT_BASE_URLS[provider])
-                  }
-                >
-                  Use LongCat default
-                </Button>
-              </div>
+              <Input
+                id="baseUrl"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://api.example.com/v1"
+              />
             </div>
+          </div>
 
+          <div className="settings-section">
+            <div className="settings-section-heading"><strong>Context budget</strong><span>Optional limits used by context compression and model output.</span></div>
             <div className="grid gap-2">
               <label htmlFor="jsonMode" className="text-sm font-medium">
                 JSON Mode
@@ -291,6 +311,8 @@ export function SettingsModal({
             </div>
           </div>
 
+          {formError && <div className="settings-feedback is-error" role="alert"><WarningCircle size={16} weight="fill" />{formError}</div>}
+
           <DialogFooter className="justify-between gap-2 sm:justify-between">
             <Button
               type="button"
@@ -321,7 +343,8 @@ export function SettingsModal({
           {testStatus.status !== "idle" &&
             testStatus.status !== "testing" &&
             testStatus.message && (
-              <div className="flex items-start gap-2 text-sm">
+              <div className={`settings-feedback ${testStatus.status === "ok" ? "is-success" : "is-error"}`} role={testStatus.status === "ok" ? "status" : "alert"}>
+                {testStatus.status === "ok" ? <CheckCircle size={16} weight="fill" /> : <WarningCircle size={16} weight="fill" />}
                 <Badge
                   variant={
                     testStatus.status === "ok" ? "default" : "destructive"
@@ -329,9 +352,7 @@ export function SettingsModal({
                 >
                   {testStatus.status === "ok" ? "Connected" : "Error"}
                 </Badge>
-                <span className="text-muted-foreground">
-                  {testStatus.message}
-                </span>
+                <span>{testStatus.message}</span>
               </div>
             )}
         </form>
