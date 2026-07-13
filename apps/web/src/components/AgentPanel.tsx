@@ -199,7 +199,7 @@ export function AgentPanel() {
             </button>
           )}
           <div className="session-state token-stats" title="Cumulative LLM token usage for this run">
-            Tokens {tokenUsage.totalTokens.toLocaleString()} ({tokenUsage.promptTokens.toLocaleString()} in / {tokenUsage.completionTokens.toLocaleString()} out)
+            Tokens {tokenUsage.totalTokens.toLocaleString()}
           </div>
           <div className="session-state"><Sparkle size={14} /> autonomous</div>
         </div>

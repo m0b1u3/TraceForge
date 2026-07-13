@@ -61,6 +61,9 @@ describe("Operations Canvas theme contract", () => {
 
   it("uses 16px text for controls and user-readable workbench body content on narrow screens", () => {
     expect(narrowScreenStyles).toMatch(
+      /\.workspace-shell\[data-mode="single"\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/,
+    );
+    expect(narrowScreenStyles).toMatch(
       /input,\s*textarea,\s*select,\s*\.tf-select-trigger\s*\{[^}]*font-size:\s*16px/,
     );
     expect(narrowScreenStyles).toMatch(

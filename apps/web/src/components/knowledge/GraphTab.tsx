@@ -3,6 +3,6 @@ import { GraphView } from "../GraphView.js";
 
 export function GraphTab() {
   return (
-    <GraphView interactive={false} />
+    <div className="knowledge-graph"><GraphView interactive={false} /></div>
   );
 }

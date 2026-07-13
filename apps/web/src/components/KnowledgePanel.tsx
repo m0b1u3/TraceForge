@@ -5,6 +5,7 @@ import { TimelineTab } from "./knowledge/TimelineTab.js";
 import { McpTab } from "./knowledge/McpTab.js";
 import { GraphTab } from "./knowledge/GraphTab.js";
 import { ObserverTab } from "./knowledge/ObserverTab.js";
+import { ArrowsOut } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
   Tabs,
@@ -43,10 +44,17 @@ function TabPanel({ tab }: { tab: TabKey }) {
 }
 
 export function KnowledgePanel() {
-  const { activeTab, setActiveTab, setGraphModalOpen } = useStore();
+  const { activeTab, setActiveTab, setGraphModalOpen, facts, tasks, timeline, mcpTools, warnings } = useStore();
   const isGraph = activeTab === "graph";
+  const counts: Partial<Record<TabKey, number>> = {
+    facts: facts.length,
+    tasks: tasks.length,
+    timeline: timeline.length,
+    mcp: mcpTools.length,
+    observer: warnings.filter((warning) => warning.status === "open").length,
+  };
   return (
-    <aside className="panel">
+    <aside className="panel knowledge-panel">
       <div className="panel-header">
         <div>
           <span className="section-kicker">Knowledge</span>
@@ -60,7 +68,7 @@ export function KnowledgePanel() {
               size="sm"
               onClick={() => setGraphModalOpen(true)}
             >
-              Expand
+              <ArrowsOut size={14} /> Expand
             </Button>
           </div>
         )}
@@ -68,12 +76,13 @@ export function KnowledgePanel() {
       <Tabs
         value={activeTab}
         onValueChange={(v) => setActiveTab(v as TabKey)}
-        className="flex min-h-0 flex-1 flex-col"
+        className="knowledge-tabs"
       >
-        <TabsList className="m-3 mb-0 w-auto justify-start">
+        <TabsList className="knowledge-tab-list" aria-label="Knowledge views">
           {TABS.map((t) => (
             <TabsTrigger key={t.key} value={t.key}>
               {t.label}
+              {counts[t.key] !== undefined && <span className="knowledge-tab-count">{counts[t.key]}</span>}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -82,7 +91,7 @@ export function KnowledgePanel() {
             <TabsContent
               key={t.key}
               value={t.key}
-              className="min-h-0 flex-1 data-[state=inactive]:hidden"
+              className={`knowledge-tab-content ${t.key === "graph" ? "is-graph" : ""}`}
             >
               <TabPanel tab={t.key} />
             </TabsContent>
