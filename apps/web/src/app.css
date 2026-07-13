@@ -513,6 +513,25 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-event-label { color: var(--text-secondary); font-size: 10px; font-weight: var(--font-semibold); text-transform: uppercase; }
 .agent-event-content { margin: 6px 0 0; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
 .agent-event.is-tool .agent-event-content { font-family: var(--mono); font-size: 12px; }
+.agent-intervention { width: min(calc(100% - 28px), 760px); margin: 4px 14px 0; }
+.agent-intervention-body { display: grid; width: 100%; gap: var(--space-2); }
+.agent-intervention-code {
+  display: block;
+  max-height: 150px;
+  overflow: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.agent-intervention-host { padding: 2px 5px; border-radius: var(--radius-sm); background: var(--panel-soft); font-family: var(--mono); font-size: 12px; }
+.agent-intervention-reason { color: var(--text-secondary); }
+.agent-intervention-error { color: var(--red); font-weight: var(--font-medium); }
+.agent-intervention-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1); }
 .message {
   max-width: 86%;
   padding: 10px 12px;

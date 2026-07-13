@@ -1,16 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkle, PaperPlaneTilt, ShieldWarning, Globe, CircleNotch } from "@phosphor-icons/react";
+import { Sparkle, PaperPlaneTilt, CircleNotch } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
-import { Button } from "@/components/ui/button";
-import {
-  Alert,
-  AlertTitle,
-  AlertDescription,
-} from "@/components/ui/alert";
 import type { AgentRun } from "@traceforge/shared";
-import { runAgent, resolveApproval, approveScope, steerAgentRun, interruptAgentRun } from "../api.js";
+import { runAgent, resolveApproval, approveScope, rejectScope, steerAgentRun, interruptAgentRun } from "../api.js";
 import { AgentEventRow } from "./agent/AgentEventRow.js";
 import { buildAgentConversationItems } from "./agent/agent-conversation.js";
+import {
+  ApprovalInterventionCard,
+  ScopeInterventionCard,
+  type InterventionAction,
+} from "./agent/AgentInterventionCard.js";
 
 export { buildAgentConversationItems, type AgentConversationItem } from "./agent/agent-conversation.js";
 
@@ -43,16 +42,22 @@ export function canSubmitAgentInstruction(goal: string, agentBusy: boolean, hasA
 export function AgentPanel() {
   const {
     caseId, agentEvents, agentBusy, setAgentBusy, showToast, pendingApproval,
-    pendingScope, setPendingScope, clearPendingApproval, resetAgent, addAgentEvent,
+    pendingScope, clearPendingScope, clearPendingApproval, resetAgent, addAgentEvent,
     activeRun, setActiveRun, tokenUsage,
   } = useStore();
   const [goal, setGoal] = useState("");
-  const [busy, setBusy] = useState<"approved" | "rejected" | null>(null);
+  const [interventionAction, setInterventionAction] = useState<InterventionAction>(null);
+  const [interventionError, setInterventionError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const messagesRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const conversationItems = buildAgentConversationItems({ events: agentEvents, pendingApproval, pendingScope, agentBusy });
   const latestAgentText = agentEvents.at(-1)?.text;
+
+  useEffect(() => {
+    setInterventionAction(null);
+    setInterventionError(null);
+  }, [pendingApproval?.approvalId, pendingScope?.host]);
 
   useEffect(() => {
     const el = messagesRef.current;
@@ -63,20 +68,44 @@ export function AgentPanel() {
 
   const decide = async (decision: "approved" | "rejected") => {
     if (!pendingApproval) return;
-    setBusy(decision);
-    try { await resolveApproval(pendingApproval.approvalId, decision); }
-    catch (e) { showToast((e as Error).message); }
-    clearPendingApproval();
-    setBusy(null);
+    const approval = pendingApproval;
+    setInterventionAction(decision === "approved" ? "approval-approved" : "approval-rejected");
+    setInterventionError(null);
+    try {
+      await resolveApproval(approval.approvalId, decision);
+      const text = `Approval ${decision}: ${approval.tool}`;
+      if (useStore.getState().agentEvents.at(-1)?.text !== text) addAgentEvent({ kind: "done", text });
+      clearPendingApproval(approval.approvalId);
+    } catch (e) {
+      const message = (e as Error).message;
+      setInterventionError(message);
+      showToast(message);
+    } finally {
+      setInterventionAction(null);
+    }
   };
 
   const approveScopeNow = async () => {
     if (!pendingScope) return;
-    const host = pendingScope.host;
+    const scope = pendingScope;
+    const host = scope.host;
     const continuation = scopeApprovalContinuationGoal(host);
-    setPendingScope(null); // optimistically clear the card
+    setInterventionAction("scope-approved");
+    setInterventionError(null);
     try {
       await approveScope(caseId, host);
+      const text = `Scope approved: ${host}`;
+      if (useStore.getState().agentEvents.at(-1)?.text !== text) addAgentEvent({ kind: "done", text });
+      clearPendingScope(host);
+    } catch (e) {
+      const message = (e as Error).message;
+      setInterventionError(message);
+      showToast(message);
+      setInterventionAction(null);
+      return;
+    }
+
+    try {
       if (activeRun) {
         addAgentEvent({ kind: "user", text: scopeApprovalContinuationEventText(host, true) });
         const run = await steerAgentRun(activeRun.id, continuation);
@@ -89,8 +118,31 @@ export function AgentPanel() {
       setActiveRun(run);
     }
     catch (e) {
-      showToast((e as Error).message);
+      const message = (e as Error).message;
+      addAgentEvent({ kind: "error", text: `Scope was approved, but the Agent could not continue: ${message}` });
+      showToast(message);
       if (!activeRun) setAgentBusy(false);
+    } finally {
+      setInterventionAction(null);
+    }
+  };
+
+  const rejectScopeNow = async () => {
+    if (!pendingScope) return;
+    const scope = pendingScope;
+    setInterventionAction("scope-rejected");
+    setInterventionError(null);
+    try {
+      await rejectScope(caseId, scope.host);
+      const text = `Scope kept blocked: ${scope.host}`;
+      if (useStore.getState().agentEvents.at(-1)?.text !== text) addAgentEvent({ kind: "done", text });
+      clearPendingScope(scope.host);
+    } catch (e) {
+      const message = (e as Error).message;
+      setInterventionError(message);
+      showToast(message);
+    } finally {
+      setInterventionAction(null);
     }
   };
 
@@ -172,52 +224,28 @@ export function AgentPanel() {
         {conversationItems.map((item) => {
           if (item.type === "approval" && pendingApproval) {
             return (
-              <Alert key={item.key} variant="warning" className="mx-4 mt-3">
-                <ShieldWarning size={15} weight="fill" />
-                <AlertTitle>Confirm action</AlertTitle>
-                <AlertDescription className="w-full">
-                  <span>The agent wants to run a high-risk tool.</span>
-                  <code className="mt-2 block rounded-md border bg-muted px-2 py-1.5 font-mono text-xs break-all">
-                    {pendingApproval.tool}({pendingApproval.input})
-                  </code>
-                  <div className="mt-3 flex gap-2">
-                    <Button
-                      size="sm"
-                      disabled={busy !== null}
-                      onClick={() => decide("approved")}
-                    >
-                      {busy === "approved" ? "Approving..." : "Approve"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={busy !== null}
-                      onClick={() => decide("rejected")}
-                    >
-                      Reject
-                    </Button>
-                  </div>
-                </AlertDescription>
-              </Alert>
+              <ApprovalInterventionCard
+                key={item.key}
+                tool={pendingApproval.tool}
+                input={pendingApproval.input}
+                action={interventionAction}
+                error={interventionError}
+                onApprove={() => decide("approved")}
+                onReject={() => decide("rejected")}
+              />
             );
           }
           if (item.type === "scope" && pendingScope) {
             return (
-              <Alert key={item.key} variant="info" className="mx-4 mt-3">
-                <Globe size={15} weight="fill" />
-                <AlertTitle>Scope expansion</AlertTitle>
-                <AlertDescription className="w-full">
-                  <span>
-                    Approve adding <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{pendingScope.host}</code> to the authorized scope.
-                  </span>
-                  <span className="text-muted-foreground">{pendingScope.reason}</span>
-                  <div className="mt-3 flex gap-2">
-                    <Button size="sm" onClick={approveScopeNow}>Approve</Button>
-                    <Button type="button" variant="outline" size="sm" onClick={() => setPendingScope(null)}>Ignore</Button>
-                  </div>
-                </AlertDescription>
-              </Alert>
+              <ScopeInterventionCard
+                key={item.key}
+                host={pendingScope.host}
+                reason={pendingScope.reason}
+                action={interventionAction}
+                error={interventionError}
+                onApprove={approveScopeNow}
+                onReject={rejectScopeNow}
+              />
             );
           }
           if (item.type === "busy") {

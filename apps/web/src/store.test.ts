@@ -212,6 +212,54 @@ describe("store agent tool events", () => {
   });
 });
 
+describe("store agent interventions", () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  it("does not let an old approval response clear a newer request", () => {
+    useStore.setState({ pendingApproval: { approvalId: "approval_new", tool: "write_file", input: "{}" } });
+
+    useStore.getState().handleRuntimeEvent({
+      type: "approval_resolved",
+      caseId: "case_1",
+      approvalId: "approval_old",
+      tool: "exec_command",
+      decision: "approved",
+    });
+
+    expect(useStore.getState().pendingApproval?.approvalId).toBe("approval_new");
+  });
+
+  it("keeps a scope proposal pending when an unrelated scope update arrives", () => {
+    useStore.setState({ pendingScope: { host: "target.example", reason: "requested target" } });
+
+    useStore.getState().handleRuntimeEvent({
+      type: "scope_updated",
+      caseId: "case_1",
+      allowHosts: ["cdn.example"],
+    });
+
+    expect(useStore.getState().pendingScope?.host).toBe("target.example");
+  });
+
+  it("records a rejected scope outcome and clears only the matching proposal", () => {
+    useStore.setState({ pendingScope: { host: "target.example", reason: "requested target" } });
+
+    useStore.getState().handleRuntimeEvent({
+      type: "scope_expansion_rejected",
+      caseId: "case_1",
+      host: "target.example",
+    });
+
+    expect(useStore.getState().pendingScope).toBeNull();
+    expect(useStore.getState().agentEvents.at(-1)).toEqual({
+      kind: "done",
+      text: "Scope kept blocked: target.example",
+    });
+  });
+});
+
 describe("store LLM config", () => {
   beforeEach(() => {
     resetStore();

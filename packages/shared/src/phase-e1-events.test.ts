@@ -12,7 +12,7 @@ describe("agent runtime events", () => {
       { type: "agent_done", caseId: "c", content: "finished" },
       { type: "agent_error", caseId: "c", content: "network error" },
       { type: "approval_requested", caseId: "c", approvalId: "a1", tool: "sqlmap", input: "{}" },
-      { type: "approval_resolved", caseId: "c", approvalId: "a1", decision: "approved" },
+      { type: "approval_resolved", caseId: "c", approvalId: "a1", tool: "exec_command", decision: "approved" },
       { type: "scope_expansion_proposed", caseId: "c", host: "cdn.t.com", reason: "same cert" },
     ];
     expect(events).toHaveLength(9);

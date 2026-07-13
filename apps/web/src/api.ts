@@ -188,6 +188,12 @@ export async function approveScope(caseId: string, host: string): Promise<void> 
   }), "Approve scope");
 }
 
+export async function rejectScope(caseId: string, host: string): Promise<void> {
+  await ensureOk(await fetch(`/api/cases/${caseId}/scope/reject`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ host }),
+  }), "Keep scope blocked");
+}
+
 export async function getLlmConfig(): Promise<LlmConfig> {
   const r = await fetch("/api/config/llm");
   await ensureOk(r, "Load LLM config");

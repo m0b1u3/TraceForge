@@ -67,6 +67,7 @@ interface State {
   clearPendingConfirmation: () => void;
   pendingScope: { host: string; reason: string } | null;
   setPendingScope: (p: { host: string; reason: string } | null) => void;
+  clearPendingScope: (host?: string) => void;
   setCase: (id: string | null) => void;
   setCases: (list: Case[]) => void;
   setActiveTab: (tab: State["activeTab"]) => void;
@@ -83,7 +84,7 @@ interface State {
   addAgentEvent: (e: AgentUiEvent) => void;
   clearTraffic: () => void;
   setPendingApproval: (p: { approvalId: string; tool: string; input: string }) => void;
-  clearPendingApproval: () => void;
+  clearPendingApproval: (approvalId?: string) => void;
   setBrowser: (controller: "llm" | "human" | null, url?: string) => void;
   resetBrowser: () => void;
   resetAgent: () => void;
@@ -168,6 +169,9 @@ export const useStore = create<State>((set, get) => ({
   clearPendingConfirmation: () => set({ pendingConfirmation: null }),
   pendingScope: null,
   setPendingScope: (p) => set({ pendingScope: p }),
+  clearPendingScope: (host) => set((s) => (
+    !host || s.pendingScope?.host === host ? { pendingScope: null } : {}
+  )),
   setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, streamingMessages: {}, tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null, pendingConfirmation: null }),
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
@@ -244,7 +248,9 @@ export const useStore = create<State>((set, get) => ({
   addAgentEvent: (e) => set((s) => ({ agentEvents: [...s.agentEvents, e] })),
   clearTraffic: () => set({ traffic: [] }),
   setPendingApproval: (p) => set({ pendingApproval: p }),
-  clearPendingApproval: () => set({ pendingApproval: null }),
+  clearPendingApproval: (approvalId) => set((s) => (
+    !approvalId || s.pendingApproval?.approvalId === approvalId ? { pendingApproval: null } : {}
+  )),
   setBrowser: (controller, url) => set((s) => ({ browserController: controller, browserUrl: url ?? s.browserUrl })),
   resetBrowser: () => set({ browserController: null, browserUrl: "" }),
   resetAgent: () => set({ agentEvents: [], pendingApproval: null, activeRun: null, streamingMessages: {}, agentBusy: false }),
@@ -367,7 +373,11 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "agent_done" && event.caseId === cid) { get().setAgentBusy(false); get().addAgentEvent({ kind: "done", text: event.content }); }
     else if (event.type === "agent_error" && event.caseId === cid) { get().setAgentBusy(false); get().addAgentEvent({ kind: "error", text: event.content }); }
     else if (event.type === "approval_requested" && event.caseId === cid) get().setPendingApproval({ approvalId: event.approvalId, tool: event.tool, input: event.input });
-    else if (event.type === "approval_resolved" && event.caseId === cid) get().clearPendingApproval();
+    else if (event.type === "approval_resolved" && event.caseId === cid) {
+      const text = `Approval ${event.decision}: ${event.tool}`;
+      if (get().agentEvents.at(-1)?.text !== text) get().addAgentEvent({ kind: "done", text });
+      get().clearPendingApproval(event.approvalId);
+    }
     else if (event.type === "browser_started" && event.caseId === cid) get().setBrowser("llm");
     else if (event.type === "browser_stopped" && event.caseId === cid) get().resetBrowser();
     else if (event.type === "browser_control_changed" && event.caseId === cid) get().setBrowser(event.controller);
@@ -375,7 +385,19 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "observer_warning" && event.warning.caseId === cid) get().addWarning(event.warning);
     else if (event.type === "observer_warning_updated" && event.warning.caseId === cid) get().upsertWarning(event.warning);
     else if (event.type === "scope_expansion_proposed" && event.caseId === cid) get().setPendingScope({ host: event.host, reason: event.reason });
-    else if (event.type === "scope_updated" && event.caseId === cid) get().setPendingScope(null);
+    else if (event.type === "scope_expansion_rejected" && event.caseId === cid) {
+      const text = `Scope kept blocked: ${event.host}`;
+      if (get().agentEvents.at(-1)?.text !== text) get().addAgentEvent({ kind: "done", text });
+      get().clearPendingScope(event.host);
+    }
+    else if (event.type === "scope_updated" && event.caseId === cid) {
+      const pending = get().pendingScope;
+      if (pending && event.allowHosts.includes(pending.host)) {
+        const text = `Scope approved: ${pending.host}`;
+        if (get().agentEvents.at(-1)?.text !== text) get().addAgentEvent({ kind: "done", text });
+        get().clearPendingScope(pending.host);
+      }
+    }
     else if (event.type === "case_deleted" && event.caseId === cid) {
       get().showToast("This case has been deleted");
       get().setCase(null);

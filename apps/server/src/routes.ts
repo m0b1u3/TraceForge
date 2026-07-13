@@ -323,8 +323,19 @@ export function registerRoutes(
     if (!host) return reply.code(400).send({ error: "host required" });
     const updated = cases.addAllowHost(id, host);
     if (!updated) return reply.code(404).send({ error: "case not found" });
+    agentEventStore.append(id, "done", `Scope approved: ${host}`);
     bus.emit({ type: "scope_updated", caseId: id, allowHosts: updated.scopeRules[0]?.allowHosts ?? [] });
     return updated;
+  });
+
+  app.post("/api/cases/:id/scope/reject", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { host } = (req.body ?? {}) as { host?: string };
+    if (!host) return reply.code(400).send({ error: "host required" });
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    agentEventStore.append(id, "done", `Scope kept blocked: ${host}`);
+    bus.emit({ type: "scope_expansion_rejected", caseId: id, host });
+    return { rejected: true };
   });
 
   app.post("/api/cases/:id/agent/run", async (req, reply) => {
@@ -477,7 +488,8 @@ export function registerRoutes(
       const approvalId = `appr_${randomUUID()}`;
       bus.emit({ type: "approval_requested", caseId: id, approvalId, tool: tool.name, input: JSON.stringify(input) });
       const decision = await approvals.request(approvalId);
-      bus.emit({ type: "approval_resolved", caseId: id, approvalId, decision });
+      agentEventStore.append(id, "done", `Approval ${decision}: ${tool.name}`);
+      bus.emit({ type: "approval_resolved", caseId: id, approvalId, tool: tool.name, decision });
       return decision;
     });
 
