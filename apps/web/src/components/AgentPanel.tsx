@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkle, PaperPlaneTilt, CircleNotch } from "@phosphor-icons/react";
+import { ChartBar, Sparkle, PaperPlaneTilt, CircleNotch } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import type { AgentRun } from "@traceforge/shared";
 import { runAgent, resolveApproval, approveScope, rejectScope, steerAgentRun, interruptAgentRun } from "../api.js";
@@ -11,6 +11,7 @@ import {
   ScopeInterventionCard,
   type InterventionAction,
 } from "./agent/AgentInterventionCard.js";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog.js";
 
 export { buildAgentConversationItems, type AgentConversationItem } from "./agent/agent-conversation.js";
 
@@ -48,13 +49,14 @@ export function AgentPanel() {
   const {
     caseId, agentEvents, agentBusy, setAgentBusy, showToast, pendingApproval,
     pendingScope, clearPendingScope, clearPendingApproval, resetAgent, addAgentEvent,
-    activeRun, setActiveRun, continuationRun, setContinuationRun, tokenUsage,
+    activeRun, setActiveRun, continuationRun, setContinuationRun, tokenUsage, tokenUsageHistory,
   } = useStore();
   const [goal, setGoal] = useState("");
   const [interventionAction, setInterventionAction] = useState<InterventionAction>(null);
   const [interventionError, setInterventionError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [continuing, setContinuing] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
   const messagesRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const conversationItems = buildAgentConversationItems({ events: agentEvents, pendingApproval, pendingScope, agentBusy });
@@ -228,9 +230,16 @@ export function AgentPanel() {
               Clear
             </button>
           )}
-          <div className="session-state token-stats" title="Cumulative LLM token usage for this run">
+          <button
+            type="button"
+            className="session-state token-stats"
+            title="View persisted per-turn LLM token usage"
+            aria-label="View token usage"
+            onClick={() => setUsageOpen(true)}
+          >
+            <ChartBar size={14} />
             Tokens {tokenUsage.totalTokens.toLocaleString()}
-          </div>
+          </button>
           <div className="session-state"><Sparkle size={14} /> autonomous</div>
         </div>
       </div>
@@ -322,6 +331,42 @@ export function AgentPanel() {
           {agentBusy ? <CircleNotch size={15} className="tf-spin" /> : <PaperPlaneTilt size={15} weight="fill" />}
         </button>
       </div>
+      <Dialog open={usageOpen} onOpenChange={setUsageOpen}>
+        <DialogContent className="usage-dialog">
+          <DialogHeader>
+            <DialogTitle>Run token usage</DialogTitle>
+            <DialogDescription>
+              Provider-reported token counts persisted for each LLM turn in the latest run.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="usage-summary" aria-label="Cumulative token usage">
+            <span><strong>{tokenUsage.promptTokens.toLocaleString()}</strong> input</span>
+            <span><strong>{tokenUsage.completionTokens.toLocaleString()}</strong> output</span>
+            <span><strong>{tokenUsage.totalTokens.toLocaleString()}</strong> total</span>
+          </div>
+          {tokenUsageHistory.length > 0 ? (
+            <div className="usage-table-wrap">
+              <table className="usage-table">
+                <thead>
+                  <tr><th>Turn</th><th>Input</th><th>Output</th><th>Total</th></tr>
+                </thead>
+                <tbody>
+                  {tokenUsageHistory.map((entry) => (
+                    <tr key={entry.id}>
+                      <td>{entry.turn}</td>
+                      <td>{entry.promptTokens.toLocaleString()}</td>
+                      <td>{entry.completionTokens.toLocaleString()}</td>
+                      <td>{entry.totalTokens.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="usage-empty">No provider usage has been recorded for this run.</p>
+          )}
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

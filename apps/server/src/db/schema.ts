@@ -147,3 +147,30 @@ export const contextSummaries = sqliteTable("context_summaries", {
   content: text("content").notNull(),
   createdAt: text("created_at").notNull(),
 });
+
+export const agentRuns = sqliteTable("agent_runs", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  goal: text("goal").notNull(),
+  status: text("status").notNull(),
+  createdAt: text("created_at").notNull(),
+  startedAt: text("started_at"),
+  finishedAt: text("finished_at"),
+  interruptReason: text("interrupt_reason"),
+  completionReason: text("completion_reason"),
+  error: text("error"),
+  promptTokens: integer("prompt_tokens").notNull().default(0),
+  completionTokens: integer("completion_tokens").notNull().default(0),
+  totalTokens: integer("total_tokens").notNull().default(0),
+});
+
+export const agentRunUsage = sqliteTable("agent_run_usage", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  caseId: text("case_id").notNull(),
+  turn: integer("turn").notNull(),
+  promptTokens: integer("prompt_tokens").notNull(),
+  completionTokens: integer("completion_tokens").notNull(),
+  totalTokens: integer("total_tokens").notNull(),
+  createdAt: text("created_at").notNull(),
+});

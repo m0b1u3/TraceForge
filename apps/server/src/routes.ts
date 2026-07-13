@@ -39,6 +39,7 @@ import { buildContext, compressFar, deriveContextBudget, estimateTokens, shouldC
 import { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool, makeSearchFactsTool, makeGetFactDetailTool, makeSearchTrafficTool, makeRecallConversationTool } from "@traceforge/extension";
 import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
 import { PendingInterventionRegistry } from "./pending-interventions.js";
+import { AgentRunStore } from "./stores/agent-run-store.js";
 
 export function registerRoutes(
   app: FastifyInstance,
@@ -92,7 +93,7 @@ export function registerRoutes(
   const contextSummaryStore = new ContextSummaryStore(db);
   const approvals = new ApprovalRegistry();
   const pendingInterventions = new PendingInterventionRegistry();
-  const runs = new AgentRunRegistry();
+  const runs = new AgentRunRegistry(new AgentRunStore(db));
 
   app.post("/api/cases", async (req) => {
     const body = req.body as { name: string; allowHosts: string[]; denyHosts?: string[] };
@@ -113,6 +114,7 @@ export function registerRoutes(
     // Stop any active agent run for this case
     const active = runs.getActiveByCase(id);
     if (active) runs.interrupt(active.run.id, "case deleted");
+    runs.clearCase(id);
 
     // Stop browser session if running
     const browserSession = browserSessions.get(id);
@@ -615,7 +617,7 @@ export function registerRoutes(
         });
       }
       else if (e.type === "usage") {
-        const run = runs.addUsage(runId, {
+        const recorded = runs.addUsage(runId, {
           promptTokens: e.promptTokens ?? 0,
           completionTokens: e.completionTokens ?? 0,
           totalTokens: e.totalTokens ?? 0,
@@ -624,12 +626,15 @@ export function registerRoutes(
           type: "agent_usage",
           caseId: id,
           runId,
+          usageId: recorded?.usage.id ?? `usage_${randomUUID()}`,
+          turn: recorded?.usage.turn ?? 1,
+          createdAt: recorded?.usage.createdAt ?? new Date().toISOString(),
           promptTokens: e.promptTokens ?? 0,
           completionTokens: e.completionTokens ?? 0,
           totalTokens: e.totalTokens ?? 0,
-          cumulativePromptTokens: run?.promptTokens ?? e.cumulativePromptTokens ?? 0,
-          cumulativeCompletionTokens: run?.completionTokens ?? e.cumulativeCompletionTokens ?? 0,
-          cumulativeTotalTokens: run?.totalTokens ?? e.cumulativeTotalTokens ?? 0,
+          cumulativePromptTokens: recorded?.run.promptTokens ?? e.cumulativePromptTokens ?? 0,
+          cumulativeCompletionTokens: recorded?.run.completionTokens ?? e.cumulativeCompletionTokens ?? 0,
+          cumulativeTotalTokens: recorded?.run.totalTokens ?? e.cumulativeTotalTokens ?? 0,
         });
       }
       else if (e.type === "interrupted") {
@@ -749,6 +754,12 @@ export function registerRoutes(
   app.get("/api/cases/:id/agent/runs/latest", async (req) => {
     const { id } = req.params as { id: string };
     return runs.getLatestByCase(id)?.run ?? null;
+  });
+
+  app.get("/api/agent/runs/:runId/usage", async (req, reply) => {
+    const { runId } = req.params as { runId: string };
+    if (!runs.get(runId)) return reply.code(404).send({ error: "run not found" });
+    return runs.getUsage(runId);
   });
 
   app.post("/api/agent/approvals/:approvalId", async (req, reply) => {

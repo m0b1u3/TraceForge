@@ -61,6 +61,7 @@ DeepSeek 这类只支持 JSON Object 的 OpenAI 兼容端点，需要在 `config
 - LLM Query Expansion Retrieval：`search_facts` / `recall_conversation` 在关键词检索前调用 LLM 扩写相关检索词（中英术语、缩写、相邻安全表达），再复用 `keywordScore` 多词检索并显示 matched 扩展词；扩词失败自动退回原始 query。本阶段不上 embedding、不建向量表、不写死漏洞同义词表。真实 DeepSeek/OpenAI-compatible E2E 已验证 `search_facts("越权")` 能召回仅写有 `IDOR` 的 Fact，结果见 `docs/superpowers/plans/2026-07-01-llm-query-expansion-retrieval.md`。
 - Dynamic Run Budget：Agent runs use an explicit turn budget. If the model spends the budget before finishing, the run ends with `needs_continuation` instead of `completed`, and clients receive `agent_run_needs_continuation`. The optional `/api/cases/:id/agent/run` request field `budget` supports `maxTurns` and `warningTurnsRemaining`; omitted values use the runtime default.
 - Observer Warning Action Loop：Observer warning 不再只是展示，可由人工一键继续运行、转换成 Task 或忽略；转换 Task 会进入现有 Tasks 工作流，继续运行复用现有 agent/run。Observer 仍不自动干预，所有纠偏动作由人触发。OpenAI-compatible `extractJson` 在兼容端点不支持 `json_schema` response_format 时会降级为普通 JSON prompt，避免真实 Observer 因 schema 模式不可用静默失效。
+- Run 与 Token 审计持久化：Agent Run 的状态、累计 token 及每轮 Provider usage 写入 SQLite；刷新和服务重启后仍可恢复 latest Run 与逐轮 input/output/total token。进程重启时遗留的非终态 Run 会明确恢复为 interrupted。工作台点击 Tokens 可查看逐轮明细；未配置模型价格时不推测成本。
 
 ## 测试
 

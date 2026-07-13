@@ -4,7 +4,7 @@ import { createDb } from "./db/client.js";
 import { EventBus } from "./event-bus.js";
 import { registerRoutes } from "./routes.js";
 import { realLlmProviderForTest } from "./real-llm-test-provider.js";
-import type { RuntimeEvent } from "@traceforge/shared";
+import type { AgentRunUsage, RuntimeEvent } from "@traceforge/shared";
 
 let app: FastifyInstance;
 let events: RuntimeEvent[];
@@ -55,6 +55,26 @@ describe("agent run usage with real LLM", () => {
       expect(e.cumulativeTotalTokens).toBeGreaterThanOrEqual(lastCumulative);
       lastCumulative = e.cumulativeTotalTokens;
     }
+
+    const persistedResponse = await app.inject({
+      method: "GET",
+      url: `/api/agent/runs/${runId}/usage`,
+    });
+    expect(persistedResponse.statusCode).toBe(200);
+    const persisted = persistedResponse.json() as AgentRunUsage[];
+    expect(persisted).toHaveLength(usageEvents.length);
+    expect(persisted.map((entry) => entry.turn)).toEqual(
+      Array.from({ length: usageEvents.length }, (_, index) => index + 1),
+    );
+    expect(persisted.reduce((sum, entry) => sum + entry.promptTokens, 0)).toBe(
+      usageEvents.at(-1)?.cumulativePromptTokens,
+    );
+    expect(persisted.reduce((sum, entry) => sum + entry.completionTokens, 0)).toBe(
+      usageEvents.at(-1)?.cumulativeCompletionTokens,
+    );
+    expect(persisted.reduce((sum, entry) => sum + entry.totalTokens, 0)).toBe(
+      usageEvents.at(-1)?.cumulativeTotalTokens,
+    );
 
     expect(events.some((e) => e.type === "agent_done")).toBe(true);
     expect(events.some((e) => e.type === "agent_run_needs_continuation")).toBe(false);

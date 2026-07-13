@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun } from "@traceforge/shared";
+import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions } from "./api.js";
+import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 
 export interface AgentUiEvent {
@@ -44,6 +44,7 @@ interface State {
   streamingMessages: Record<string, number>;
   streamedAgentTexts: string[];
   tokenUsage: TokenUsage;
+  tokenUsageHistory: AgentRunUsage[];
   setAgentBusy: (b: boolean) => void;
   setActiveRun: (run: AgentRun | null) => void;
   setContinuationRun: (run: AgentRun | null) => void;
@@ -112,6 +113,7 @@ export const useStore = create<State>((set, get) => ({
   streamingMessages: {},
   streamedAgentTexts: [],
   tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  tokenUsageHistory: [],
   setAgentBusy: (b) => set({ agentBusy: b }),
   setActiveRun: (run) => set({ activeRun: run, agentBusy: isRunBusy(run) }),
   setContinuationRun: (run) => set({ continuationRun: run }),
@@ -180,7 +182,7 @@ export const useStore = create<State>((set, get) => ({
   clearPendingScope: (host) => set((s) => (
     !host || s.pendingScope?.host === host ? { pendingScope: null } : {}
   )),
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null, pendingConfirmation: null }),
+  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null, pendingConfirmation: null }),
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
@@ -190,6 +192,7 @@ export const useStore = create<State>((set, get) => ({
       listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id), listAgentEvents(id), getActiveAgentRun(id), getPendingInterventions(id),
     ]);
     const latestRun = activeRun ?? await getLatestAgentRun(id);
+    const tokenUsageHistory = latestRun ? await getAgentRunUsage(latestRun.id) : [];
     if (get().caseId !== id) return;
     set({
       traffic,
@@ -203,6 +206,7 @@ export const useStore = create<State>((set, get) => ({
       continuationRun: latestRun?.status === "needs_continuation" ? latestRun : null,
       agentBusy: isRunBusy(activeRun),
       tokenUsage: latestRun ? runTokenUsage(latestRun) : { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      tokenUsageHistory,
       pendingApproval: pendingInterventions.approval,
       pendingScope: pendingInterventions.scope,
     });
@@ -319,6 +323,7 @@ export const useStore = create<State>((set, get) => ({
       get().setActiveRun(event.run);
       get().setContinuationRun(null);
       get().setTokenUsage({ promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+      set({ tokenUsageHistory: [] });
       get().addAgentEvent({ kind: "started", text: `Started: ${event.run.goal}` });
     }
     else if (event.type === "agent_stream_start" && event.caseId === cid) {
@@ -398,6 +403,20 @@ export const useStore = create<State>((set, get) => ({
         completionTokens: event.cumulativeCompletionTokens,
         totalTokens: event.cumulativeTotalTokens,
       });
+      set((state) => ({
+        tokenUsageHistory: state.tokenUsageHistory.some((entry) => entry.id === event.usageId)
+          ? state.tokenUsageHistory
+          : [...state.tokenUsageHistory, {
+            id: event.usageId,
+            runId: event.runId,
+            caseId: event.caseId,
+            turn: event.turn,
+            promptTokens: event.promptTokens,
+            completionTokens: event.completionTokens,
+            totalTokens: event.totalTokens,
+            createdAt: event.createdAt,
+          }],
+      }));
     }
     else if (event.type === "agent_started" && event.caseId === cid) {
       get().setAgentBusy(true);

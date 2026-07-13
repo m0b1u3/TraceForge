@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { AgentRun } from "@traceforge/shared";
+import type { AgentRun, AgentRunUsage } from "@traceforge/shared";
+import type { AgentRunStore } from "./stores/agent-run-store.js";
 
 export interface ActiveAgentRun {
   run: AgentRun;
@@ -19,6 +20,11 @@ export class AgentRunRegistry {
   private runs = new Map<string, ActiveAgentRun>();
   private activeByCase = new Map<string, string>();
   private latestByCase = new Map<string, string>();
+  private usageByRun = new Map<string, AgentRunUsage[]>();
+
+  constructor(private store?: AgentRunStore) {
+    this.restorePersistedRuns();
+  }
 
   start(caseId: string, goal: string): ActiveAgentRun {
     const existing = this.getActiveByCase(caseId);
@@ -46,6 +52,7 @@ export class AgentRunRegistry {
     this.runs.set(active.run.id, active);
     this.activeByCase.set(caseId, active.run.id);
     this.latestByCase.set(caseId, active.run.id);
+    this.store?.save(active.run);
     return active;
   }
 
@@ -80,7 +87,7 @@ export class AgentRunRegistry {
   addUsage(
     runId: string,
     usage: { promptTokens: number; completionTokens: number; totalTokens: number },
-  ): AgentRun | undefined {
+  ): { run: AgentRun; usage: AgentRunUsage } | undefined {
     const active = this.runs.get(runId);
     if (!active) return undefined;
     active.run = {
@@ -89,7 +96,19 @@ export class AgentRunRegistry {
       completionTokens: active.run.completionTokens + usage.completionTokens,
       totalTokens: active.run.totalTokens + usage.totalTokens,
     };
-    return active.run;
+    this.store?.save(active.run);
+    const entries = this.usageByRun.get(runId) ?? [];
+    const entry = this.store?.appendUsage(active.run, usage) ?? {
+      id: `usage_${randomUUID()}`,
+      runId,
+      caseId: active.run.caseId,
+      turn: entries.length + 1,
+      ...usage,
+      createdAt: now(),
+    };
+    entries.push(entry);
+    this.usageByRun.set(runId, entries);
+    return { run: active.run, usage: entry };
   }
 
   interrupt(runId: string, reason = "user interrupted"): AgentRun | undefined {
@@ -99,6 +118,7 @@ export class AgentRunRegistry {
     active.run = { ...active.run, status: "interrupting", interruptReason: reason };
     active.abortController.abort(reason);
     active.run = active.run;
+    this.store?.save(active.run);
     return active.run;
   }
 
@@ -118,6 +138,22 @@ export class AgentRunRegistry {
     return this.finish(runId, { status: "failed", error, completionReason: error });
   }
 
+  getUsage(runId: string): AgentRunUsage[] {
+    return [...(this.usageByRun.get(runId) ?? [])];
+  }
+
+  clearCase(caseId: string): void {
+    for (const [runId, active] of this.runs) {
+      if (active.run.caseId === caseId) {
+        this.runs.delete(runId);
+        this.usageByRun.delete(runId);
+      }
+    }
+    this.activeByCase.delete(caseId);
+    this.latestByCase.delete(caseId);
+    this.store?.deleteByCase(caseId);
+  }
+
   private finish(
     runId: string,
     patch: Partial<Pick<AgentRun, "error" | "interruptReason" | "completionReason">> & Pick<AgentRun, "status">,
@@ -131,6 +167,30 @@ export class AgentRunRegistry {
       completionReason: patch.completionReason ?? active.run.completionReason,
     };
     if (terminal(active.run.status)) this.activeByCase.delete(active.run.caseId);
+    this.store?.save(active.run);
     return active.run;
+  }
+
+  private restorePersistedRuns(): void {
+    if (!this.store) return;
+    for (const persisted of this.store.listAll()) {
+      let run = persisted;
+      if (!terminal(run.status)) {
+        const reason = "server restarted before the run completed";
+        run = {
+          ...run,
+          status: "interrupted",
+          finishedAt: now(),
+          interruptReason: reason,
+          completionReason: reason,
+        };
+        this.store.save(run);
+      }
+      this.runs.set(run.id, { run, abortController: new AbortController(), steeringQueue: [] });
+      this.usageByRun.set(run.id, this.store.listUsage(run.id));
+      const previousId = this.latestByCase.get(run.caseId);
+      const previous = previousId ? this.runs.get(previousId)?.run : undefined;
+      if (!previous || previous.createdAt <= run.createdAt) this.latestByCase.set(run.caseId, run.id);
+    }
   }
 }

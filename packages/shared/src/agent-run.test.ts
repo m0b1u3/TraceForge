@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AgentRunSchema, AgentRunStatusSchema } from "./schemas.js";
+import { AgentRunSchema, AgentRunStatusSchema, AgentRunUsageSchema } from "./schemas.js";
 import type { RuntimeEvent } from "./events.js";
 
 describe("AgentRunSchema", () => {
@@ -91,5 +91,35 @@ describe("agent run RuntimeEvent typing", () => {
       },
     };
     expect(event.reason).toContain("budget");
+  });
+});
+
+describe("AgentRunUsageSchema", () => {
+  it("accepts a persisted per-turn provider usage record", () => {
+    const usage = AgentRunUsageSchema.parse({
+      id: "usage_1",
+      runId: "run_1",
+      caseId: "case_1",
+      turn: 1,
+      promptTokens: 120,
+      completionTokens: 30,
+      totalTokens: 150,
+      createdAt: "2026-07-13T00:00:00.000Z",
+    });
+
+    expect(usage.totalTokens).toBe(150);
+  });
+
+  it("rejects negative counts and non-positive turn numbers", () => {
+    expect(() => AgentRunUsageSchema.parse({
+      id: "usage_1",
+      runId: "run_1",
+      caseId: "case_1",
+      turn: 0,
+      promptTokens: -1,
+      completionTokens: 0,
+      totalTokens: 0,
+      createdAt: "now",
+    })).toThrow();
   });
 });

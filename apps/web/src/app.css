@@ -494,6 +494,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .chat-panel { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .session-state { gap: 6px; height: 26px; padding: 0 9px; border: 1px solid #bbf7d0; border-radius: 999px; color: #067647; background: #f0fdf4; font-size: 11px; font-weight: 680; }
+.token-stats { font: inherit; cursor: pointer; }
+.token-stats:hover { border-color: #86efac; background: #dcfce7; }
+.token-stats:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.usage-dialog { max-width: 560px; }
+.usage-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid #e5e7eb; }
+.usage-summary span { display: grid; gap: 2px; padding: 12px; color: #667085; font-size: 12px; }
+.usage-summary span + span { border-left: 1px solid #e5e7eb; }
+.usage-summary strong { color: #101828; font-family: var(--font-mono); font-size: 16px; }
+.usage-table-wrap { max-height: min(42vh, 360px); overflow: auto; border: 1px solid #e5e7eb; border-radius: 6px; }
+.usage-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
+.usage-table th, .usage-table td { padding: 9px 12px; border-bottom: 1px solid #eef0f3; text-align: right; }
+.usage-table th:first-child, .usage-table td:first-child { text-align: left; }
+.usage-table th { position: sticky; top: 0; color: #475467; background: #f9fafb; font-family: var(--font-sans); font-weight: 650; }
+.usage-table tbody tr:last-child td { border-bottom: 0; }
+.usage-empty { margin: 0; padding: 18px 0; color: #667085; font-size: 13px; }
 .messages { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; padding: 14px; }
 .agent-event {
   width: min(100%, 760px);

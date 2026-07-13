@@ -84,6 +84,22 @@ export function createDb(path: string) {
       covers_up_to_event_seq INTEGER NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_context_summaries_case ON context_summaries(case_id);
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, goal TEXT NOT NULL, status TEXT NOT NULL,
+      created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT,
+      interrupt_reason TEXT, completion_reason TEXT, error TEXT,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_case ON agent_runs(case_id, created_at);
+    CREATE TABLE IF NOT EXISTS agent_run_usage (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL, case_id TEXT NOT NULL, turn INTEGER NOT NULL,
+      prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+      total_tokens INTEGER NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_run_usage_turn ON agent_run_usage(run_id, turn);
+    CREATE INDEX IF NOT EXISTS idx_agent_run_usage_case ON agent_run_usage(case_id);
   `);
   const warningColumns = sqlite.prepare("PRAGMA table_info(observer_warnings)").all() as Array<{ name: string }>;
   const hasWarningColumn = (name: string) => warningColumns.some((column) => column.name === name);

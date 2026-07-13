@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun } from "@traceforge/shared";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 export interface LlmConfig {
@@ -142,6 +142,10 @@ export async function getActiveAgentRun(caseId: string): Promise<AgentRun | null
 
 export async function getLatestAgentRun(caseId: string): Promise<AgentRun | null> {
   return (await fetch(`/api/cases/${caseId}/agent/runs/latest`)).json();
+}
+
+export async function getAgentRunUsage(runId: string): Promise<AgentRunUsage[]> {
+  return (await fetch(`/api/agent/runs/${runId}/usage`)).json();
 }
 
 export interface PendingInterventions {

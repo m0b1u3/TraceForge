@@ -241,3 +241,15 @@ export const AgentRunSchema = z.object({
   totalTokens: z.number().default(0),
 });
 export type AgentRun = z.infer<typeof AgentRunSchema>;
+
+export const AgentRunUsageSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  caseId: z.string(),
+  turn: z.number().int().positive(),
+  promptTokens: z.number().int().nonnegative(),
+  completionTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  createdAt: z.string(),
+});
+export type AgentRunUsage = z.infer<typeof AgentRunUsageSchema>;

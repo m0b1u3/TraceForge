@@ -26,6 +26,7 @@ function resetStore() {
     browserController: null,
     browserUrl: "",
     tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    tokenUsageHistory: [],
   });
 }
 
@@ -107,6 +108,9 @@ describe("store token usage", () => {
       type: "agent_usage",
       caseId: "case_1",
       runId: "run_1",
+      usageId: "usage_1",
+      turn: 1,
+      createdAt: "now",
       promptTokens: 10,
       completionTokens: 5,
       totalTokens: 15,
@@ -120,6 +124,9 @@ describe("store token usage", () => {
       type: "agent_usage",
       caseId: "case_1",
       runId: "run_1",
+      usageId: "usage_2",
+      turn: 2,
+      createdAt: "later",
       promptTokens: 3,
       completionTokens: 2,
       totalTokens: 5,
@@ -128,6 +135,10 @@ describe("store token usage", () => {
       cumulativeTotalTokens: 20,
     });
     expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 13, completionTokens: 7, totalTokens: 20 });
+    expect(useStore.getState().tokenUsageHistory).toMatchObject([
+      { id: "usage_1", turn: 1, promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      { id: "usage_2", turn: 2, promptTokens: 3, completionTokens: 2, totalTokens: 5 },
+    ]);
   });
 
   it("ignores agent_usage events for other cases", () => {
@@ -135,6 +146,9 @@ describe("store token usage", () => {
       type: "agent_usage",
       caseId: "case_2",
       runId: "run_1",
+      usageId: "usage_other",
+      turn: 1,
+      createdAt: "now",
       promptTokens: 10,
       completionTokens: 5,
       totalTokens: 15,
@@ -143,6 +157,7 @@ describe("store token usage", () => {
       cumulativeTotalTokens: 15,
     });
     expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+    expect(useStore.getState().tokenUsageHistory).toEqual([]);
   });
 
   it("syncs final token usage from completed run events", () => {

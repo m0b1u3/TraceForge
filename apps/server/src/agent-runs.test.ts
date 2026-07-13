@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { AgentRunRegistry } from "./agent-runs.js";
+import { createDb } from "./db/client.js";
+import { AgentRunStore } from "./stores/agent-run-store.js";
 
 describe("AgentRunRegistry", () => {
   it("starts one active run per case and rejects a second active run", () => {
@@ -72,5 +74,59 @@ describe("AgentRunRegistry", () => {
 
     expect(reg.getActiveByCase("case_1")).toBeUndefined();
     expect(reg.getLatestByCase("case_1")?.run).toEqual(completed);
+  });
+
+  it("restores completed runs and per-turn provider usage from SQLite", () => {
+    const store = new AgentRunStore(createDb(":memory:"));
+    const firstRegistry = new AgentRunRegistry(store);
+    const { run } = firstRegistry.start("case_1", "goal");
+    firstRegistry.addUsage(run.id, { promptTokens: 100, completionTokens: 25, totalTokens: 125 });
+    firstRegistry.addUsage(run.id, { promptTokens: 140, completionTokens: 35, totalTokens: 175 });
+    firstRegistry.complete(run.id, "done");
+
+    const restoredRegistry = new AgentRunRegistry(store);
+    expect(restoredRegistry.getLatestByCase("case_1")?.run).toMatchObject({
+      id: run.id,
+      status: "completed",
+      promptTokens: 240,
+      completionTokens: 60,
+      totalTokens: 300,
+    });
+    expect(restoredRegistry.getUsage(run.id)).toMatchObject([
+      { turn: 1, promptTokens: 100, completionTokens: 25, totalTokens: 125 },
+      { turn: 2, promptTokens: 140, completionTokens: 35, totalTokens: 175 },
+    ]);
+  });
+
+  it("marks a persisted non-terminal run interrupted when runtime state is rebuilt", () => {
+    const store = new AgentRunStore(createDb(":memory:"));
+    const firstRegistry = new AgentRunRegistry(store);
+    const { run } = firstRegistry.start("case_1", "goal");
+
+    const restoredRegistry = new AgentRunRegistry(store);
+    const restored = restoredRegistry.getLatestByCase("case_1")?.run;
+
+    expect(restored).toMatchObject({
+      id: run.id,
+      status: "interrupted",
+      interruptReason: "server restarted before the run completed",
+      completionReason: "server restarted before the run completed",
+    });
+    expect(restored?.finishedAt).not.toBeNull();
+    expect(restoredRegistry.getActiveByCase("case_1")).toBeUndefined();
+  });
+
+  it("deletes persisted run history with its case", () => {
+    const store = new AgentRunStore(createDb(":memory:"));
+    const registry = new AgentRunRegistry(store);
+    const { run } = registry.start("case_1", "goal");
+    registry.addUsage(run.id, { promptTokens: 10, completionTokens: 2, totalTokens: 12 });
+    registry.complete(run.id);
+
+    registry.clearCase("case_1");
+
+    const restoredRegistry = new AgentRunRegistry(store);
+    expect(restoredRegistry.getLatestByCase("case_1")).toBeUndefined();
+    expect(restoredRegistry.getUsage(run.id)).toEqual([]);
   });
 });
