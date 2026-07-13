@@ -15,6 +15,7 @@ function resetStore() {
     activeTab: "facts",
     agentEvents: [],
     activeRun: null,
+    continuationRun: null,
     agentBusy: false,
     streamingMessages: {},
     streamedAgentTexts: [],
@@ -221,6 +222,36 @@ describe("store agent streaming", () => {
     }
 
     expect(useStore.getState().agentEvents.map((event) => event.text)).toEqual(["first", "second"]);
+  });
+
+  it("retains a budget-exhausted run as a continuation target", () => {
+    useStore.getState().handleRuntimeEvent({
+      type: "agent_run_needs_continuation",
+      reason: "run budget exhausted after 3 turns",
+      run: {
+        id: "run_1",
+        caseId: "case_1",
+        goal: "test the login flow",
+        status: "needs_continuation",
+        createdAt: "now",
+        startedAt: "now",
+        finishedAt: "later",
+        interruptReason: null,
+        completionReason: "run budget exhausted after 3 turns",
+        error: null,
+        promptTokens: 100,
+        completionTokens: 20,
+        totalTokens: 120,
+      },
+    });
+
+    expect(useStore.getState().activeRun).toBeNull();
+    expect(useStore.getState().continuationRun).toMatchObject({
+      id: "run_1",
+      goal: "test the login flow",
+      status: "needs_continuation",
+    });
+    expect(useStore.getState().agentBusy).toBe(false);
   });
 });
 describe("store agent interventions", () => {

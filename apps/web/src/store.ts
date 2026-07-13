@@ -40,11 +40,13 @@ interface State {
   agentEvents: AgentUiEvent[];
   agentBusy: boolean;
   activeRun: AgentRun | null;
+  continuationRun: AgentRun | null;
   streamingMessages: Record<string, number>;
   streamedAgentTexts: string[];
   tokenUsage: TokenUsage;
   setAgentBusy: (b: boolean) => void;
   setActiveRun: (run: AgentRun | null) => void;
+  setContinuationRun: (run: AgentRun | null) => void;
   setTokenUsage: (usage: TokenUsage) => void;
   toast: string | null;
   showToast: (msg: string) => void;
@@ -106,11 +108,13 @@ export const useStore = create<State>((set, get) => ({
   agentEvents: [],
   agentBusy: false,
   activeRun: null,
+  continuationRun: null,
   streamingMessages: {},
   streamedAgentTexts: [],
   tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   setAgentBusy: (b) => set({ agentBusy: b }),
   setActiveRun: (run) => set({ activeRun: run, agentBusy: isRunBusy(run) }),
+  setContinuationRun: (run) => set({ continuationRun: run }),
   setTokenUsage: (usage) => set({ tokenUsage: usage }),
   toast: null,
   showToast: (msg) => { set({ toast: msg }); setTimeout(() => { if (get().toast === msg) set({ toast: null }); }, 4000); },
@@ -176,7 +180,7 @@ export const useStore = create<State>((set, get) => ({
   clearPendingScope: (host) => set((s) => (
     !host || s.pendingScope?.host === host ? { pendingScope: null } : {}
   )),
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null, pendingConfirmation: null }),
+  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null, pendingConfirmation: null }),
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
@@ -196,6 +200,7 @@ export const useStore = create<State>((set, get) => ({
       warnings,
       agentEvents: agentEvents.map((e) => ({ kind: e.kind, text: e.text })),
       activeRun,
+      continuationRun: latestRun?.status === "needs_continuation" ? latestRun : null,
       agentBusy: isRunBusy(activeRun),
       tokenUsage: latestRun ? runTokenUsage(latestRun) : { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       pendingApproval: pendingInterventions.approval,
@@ -259,7 +264,7 @@ export const useStore = create<State>((set, get) => ({
   )),
   setBrowser: (controller, url) => set((s) => ({ browserController: controller, browserUrl: url ?? s.browserUrl })),
   resetBrowser: () => set({ browserController: null, browserUrl: "" }),
-  resetAgent: () => set({ agentEvents: [], pendingApproval: null, activeRun: null, streamingMessages: {}, streamedAgentTexts: [], agentBusy: false }),
+  resetAgent: () => set({ agentEvents: [], pendingApproval: null, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], agentBusy: false }),
   connectWs: () => {
     disconnectActiveWebSocket?.();
 
@@ -312,6 +317,7 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "decision_recorded" && event.decision.caseId === cid) get().addDecision(event.decision);
     else if (event.type === "agent_run_started" && event.run.caseId === cid) {
       get().setActiveRun(event.run);
+      get().setContinuationRun(null);
       get().setTokenUsage({ promptTokens: 0, completionTokens: 0, totalTokens: 0 });
       get().addAgentEvent({ kind: "started", text: `Started: ${event.run.goal}` });
     }
@@ -355,11 +361,13 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "agent_run_completed" && event.run.caseId === cid) {
       get().setTokenUsage(runTokenUsage(event.run));
       get().setActiveRun(null);
+      get().setContinuationRun(null);
       get().setAgentBusy(false);
     }
     else if (event.type === "agent_run_interrupted" && event.run.caseId === cid) {
       get().setTokenUsage(runTokenUsage(event.run));
       get().setActiveRun(null);
+      get().setContinuationRun(null);
       get().setAgentBusy(false);
       get().addAgentEvent({ kind: "done", text: "Agent stopped" });
     }
@@ -373,12 +381,14 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "agent_run_needs_continuation" && event.run.caseId === cid) {
       get().setTokenUsage(runTokenUsage(event.run));
       get().setActiveRun(null);
+      get().setContinuationRun(event.run);
       get().setAgentBusy(false);
       get().addAgentEvent({ kind: "done", text: "Agent reached the run budget. Continue to proceed." });
     }
     else if (event.type === "agent_run_failed" && event.run.caseId === cid) {
       get().setTokenUsage(runTokenUsage(event.run));
       get().setActiveRun(null);
+      get().setContinuationRun(null);
       get().setAgentBusy(false);
       get().addAgentEvent({ kind: "error", text: event.error });
     }

@@ -1,4 +1,4 @@
-import { CircleNotch, Globe, ShieldWarning } from "@phosphor-icons/react";
+import { ArrowClockwise, CircleNotch, Globe, ShieldWarning } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
@@ -81,6 +81,33 @@ export function ScopeInterventionCard({
           <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onReject}>
             {action === "scope-rejected" && <CircleNotch size={14} className="tf-spin" />}
             {action === "scope-rejected" ? "Keeping blocked..." : "Keep blocked"}
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+export function RunContinuationCard({
+  goal,
+  busy,
+  onContinue,
+}: {
+  goal: string;
+  busy: boolean;
+  onContinue: () => void;
+}) {
+  return (
+    <Alert variant="info" className="agent-intervention">
+      <ArrowClockwise size={16} weight="bold" />
+      <AlertTitle>Run budget reached</AlertTitle>
+      <AlertDescription className="agent-intervention-body">
+        <span>The current run paused before finishing its objective.</span>
+        <code className="agent-intervention-code">{goal}</code>
+        <div className="agent-intervention-actions">
+          <Button size="sm" disabled={busy} onClick={onContinue}>
+            {busy && <CircleNotch size={14} className="tf-spin" />}
+            {busy ? "Continuing..." : "Continue run"}
           </Button>
         </div>
       </AlertDescription>

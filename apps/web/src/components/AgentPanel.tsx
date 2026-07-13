@@ -7,6 +7,7 @@ import { AgentEventRow } from "./agent/AgentEventRow.js";
 import { buildAgentConversationItems } from "./agent/agent-conversation.js";
 import {
   ApprovalInterventionCard,
+  RunContinuationCard,
   ScopeInterventionCard,
   type InterventionAction,
 } from "./agent/AgentInterventionCard.js";
@@ -31,6 +32,10 @@ export function isStopButtonDisabled(stopping: boolean, status: AgentRun["status
   return stopping || (status !== "queued" && status !== "running");
 }
 
+export function runContinuationGoal(run: Pick<AgentRun, "goal">): string {
+  return `Continue the previous run toward the same objective: ${run.goal}\nResume from the existing conversation, evidence, tasks, and prior tool results. Do not restart work that is already complete.`;
+}
+
 export function canClearAgentConversation(agentBusy: boolean, hasActiveRun: boolean): boolean {
   return !agentBusy && !hasActiveRun;
 }
@@ -43,12 +48,13 @@ export function AgentPanel() {
   const {
     caseId, agentEvents, agentBusy, setAgentBusy, showToast, pendingApproval,
     pendingScope, clearPendingScope, clearPendingApproval, resetAgent, addAgentEvent,
-    activeRun, setActiveRun, tokenUsage,
+    activeRun, setActiveRun, continuationRun, setContinuationRun, tokenUsage,
   } = useStore();
   const [goal, setGoal] = useState("");
   const [interventionAction, setInterventionAction] = useState<InterventionAction>(null);
   const [interventionError, setInterventionError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [continuing, setContinuing] = useState(false);
   const messagesRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const conversationItems = buildAgentConversationItems({ events: agentEvents, pendingApproval, pendingScope, agentBusy });
@@ -116,6 +122,7 @@ export function AgentPanel() {
       setAgentBusy(true);
       const run = await runAgent(caseId, continuation);
       setActiveRun(run);
+      setContinuationRun(null);
     }
     catch (e) {
       const message = (e as Error).message;
@@ -163,6 +170,7 @@ export function AgentPanel() {
       setAgentBusy(true); // set busy immediately (before WS agent_started arrives); roll back on failure
       const run = await runAgent(caseId, g);
       setActiveRun(run);
+      setContinuationRun(null);
     }
     catch (e) {
       showToast((e as Error).message);
@@ -180,6 +188,28 @@ export function AgentPanel() {
       showToast((e as Error).message);
     } finally {
       setStopping(false);
+    }
+  };
+
+  const continueRun = async () => {
+    if (!continuationRun || activeRun || agentBusy || continuing) return;
+    const previousRun = continuationRun;
+    const continuation = runContinuationGoal(previousRun);
+    setContinuing(true);
+    setAgentBusy(true);
+    shouldAutoScrollRef.current = true;
+    addAgentEvent({ kind: "user", text: `[continue] ${previousRun.goal}` });
+    try {
+      const run = await runAgent(caseId, continuation);
+      setActiveRun(run);
+      setContinuationRun(null);
+    } catch (e) {
+      const message = (e as Error).message;
+      addAgentEvent({ kind: "error", text: `Could not continue the run: ${message}` });
+      showToast(message);
+      setAgentBusy(false);
+    } finally {
+      setContinuing(false);
     }
   };
 
@@ -256,6 +286,13 @@ export function AgentPanel() {
           }
           return null;
         })}
+        {continuationRun && !activeRun && (
+          <RunContinuationCard
+            goal={continuationRun.goal}
+            busy={continuing || agentBusy}
+            onContinue={continueRun}
+          />
+        )}
       </section>
       <div className="composer">
         <textarea

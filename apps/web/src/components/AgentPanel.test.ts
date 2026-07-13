@@ -8,6 +8,7 @@ import {
   isStopButtonDisabled,
   canClearAgentConversation,
   canSubmitAgentInstruction,
+  runContinuationGoal,
 } from "./AgentPanel.js";
 
 function eventItems(items: AgentConversationItem[]): Extract<AgentConversationItem, { type: "event" }>[] {
@@ -33,6 +34,16 @@ describe("scopeApprovalContinuationEventText", () => {
     expect(scopeApprovalContinuationEventText("10.0.13.192:8080", false)).toBe(
       "Approved 10.0.13.192:8080. Continue testing this target. Start the shared browser and visit the homepage, record real observations, and do not fabricate conclusions.",
     );
+  });
+});
+
+describe("runContinuationGoal", () => {
+  it("preserves the previous objective and resumes existing evidence", () => {
+    const goal = runContinuationGoal({ goal: "test the login flow" });
+
+    expect(goal).toContain("test the login flow");
+    expect(goal).toContain("existing conversation, evidence, tasks, and prior tool results");
+    expect(goal).toContain("Do not restart work that is already complete");
   });
 });
 

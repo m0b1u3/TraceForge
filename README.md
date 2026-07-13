@@ -65,6 +65,6 @@ DeepSeek 这类只支持 JSON Object 的 OpenAI 兼容端点，需要在 `config
 ## 测试
 
 ```bash
-pnpm test     # 309 个单元测试
+pnpm test     # 单元测试 + 真实 LLM/MCP/Chromium 集成测试
 pnpm -r build # 全量构建
 ```
