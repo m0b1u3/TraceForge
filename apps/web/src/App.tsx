@@ -9,7 +9,7 @@ import { WorkspaceLayout } from "./components/WorkspaceLayout.js";
 import { GraphModal } from "./components/GraphModal.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { Button } from "@/components/ui/button";
-import { TriangleAlert } from "lucide-react";
+import { Warning } from "@phosphor-icons/react";
 import {
   Alert,
   AlertTitle,
@@ -30,7 +30,7 @@ function ObserverConfirmation() {
   const { warning } = pendingConfirmation;
   return (
     <Alert variant="warning" className="observer-confirmation">
-      <TriangleAlert className="observer-confirmation-icon" size={18} />
+      <Warning className="observer-confirmation-icon" size={18} weight="fill" />
       <AlertTitle className="observer-confirmation-title">
         <span>Observer intervention</span>
         <strong>{warning.title}</strong>

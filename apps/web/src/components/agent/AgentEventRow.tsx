@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Bot, BrainCircuit, Check, ChevronDown, CircleCheck, Copy, SquareTerminal, TriangleAlert, User } from "lucide-react";
+import { Brain, CaretDown, Check, CheckCircle, Copy, Robot, TerminalWindow, User, Warning } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -26,7 +26,7 @@ export function AgentEventRow({ item }: { item: AgentConversationEventItem }) {
           <EventActions text={item.text} copied={copied} onCopiedChange={setCopied}>
             <CollapsibleTrigger asChild>
               <Button type="button" variant="ghost" size="icon-xs" aria-label={expanded ? "Collapse event" : "Expand event"} title={expanded ? "Collapse" : "Expand"}>
-                <ChevronDown className={`agent-event-chevron ${expanded ? "is-open" : ""}`} size={14} />
+                <CaretDown className={`agent-event-chevron ${expanded ? "is-open" : ""}`} size={14} />
               </Button>
             </CollapsibleTrigger>
           </EventActions>
@@ -94,10 +94,10 @@ function eventClassName(kind: AgentConversationEventItem["kind"]): string {
 
 function eventIcon(kind: AgentConversationEventItem["kind"]) {
   if (kind === "user") return <User size={14} />;
-  if (kind === "error") return <TriangleAlert size={17} />;
-  if (kind === "reasoning") return <BrainCircuit size={17} />;
-  if (kind === "tool_call") return <SquareTerminal size={17} />;
-  if (kind === "tool_result") return <CircleCheck size={17} />;
-  if (kind === "done") return <CircleCheck size={17} />;
-  return <Bot size={17} />;
+  if (kind === "error") return <Warning size={17} weight="fill" />;
+  if (kind === "reasoning") return <Brain size={17} weight="duotone" />;
+  if (kind === "tool_call") return <TerminalWindow size={17} weight="duotone" />;
+  if (kind === "tool_result") return <CheckCircle size={17} weight="duotone" />;
+  if (kind === "done") return <CheckCircle size={17} weight="fill" />;
+  return <Robot size={17} weight="duotone" />;
 }

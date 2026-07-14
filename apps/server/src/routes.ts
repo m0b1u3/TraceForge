@@ -160,7 +160,16 @@ export function registerRoutes(
     let session = browserSessions.get(id);
     if (!session) {
       // 传 getter：对话中批准纳入新 host 后，正在运行的浏览器立即按最新范围放行流量
-      session = new BrowserSession(id, () => cases.get(id)?.scopeRules ?? [], traffic, bus);
+      session = new BrowserSession(
+        id,
+        () => cases.get(id)?.scopeRules ?? [],
+        traffic,
+        bus,
+        { headless: false },
+        () => {
+          if (browserSessions.get(id) === session) browserSessions.delete(id);
+        },
+      );
       browserSessions.set(id, session);
     }
     try {
@@ -185,7 +194,7 @@ export function registerRoutes(
     const { id } = req.params as { id: string };
     const session = browserSessions.get(id);
     if (!session) return reply.code(404).send({ error: "no browser session" });
-    session.acquireByHuman();
+    await session.acquireByHuman();
     return { ok: true, controller: session.controller() };
   });
 
@@ -193,7 +202,7 @@ export function registerRoutes(
     const { id } = req.params as { id: string };
     const session = browserSessions.get(id);
     if (!session) return reply.code(404).send({ error: "no browser session" });
-    session.releaseToLlm();
+    await session.releaseToLlm();
     return { ok: true, controller: session.controller() };
   });
 

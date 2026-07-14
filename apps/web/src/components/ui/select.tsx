@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react"
+import { CaretDown as ChevronDownIcon, CaretUp as ChevronUpIcon, Check as CheckIcon } from "@phosphor-icons/react"
 import { Select as SelectPrimitive } from "radix-ui"
 
 import { cn } from "@/components/ui/utils"

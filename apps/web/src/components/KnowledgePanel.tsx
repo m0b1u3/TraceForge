@@ -5,7 +5,7 @@ import { TimelineTab } from "./knowledge/TimelineTab.js";
 import { McpTab } from "./knowledge/McpTab.js";
 import { GraphTab } from "./knowledge/GraphTab.js";
 import { ObserverTab } from "./knowledge/ObserverTab.js";
-import { Expand } from "lucide-react";
+import { ArrowsOut, Database } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
   Tabs,
@@ -56,7 +56,8 @@ export function KnowledgePanel() {
   return (
     <aside className="panel knowledge-panel">
       <div className="panel-header">
-        <div>
+        <div className="panel-heading">
+          <Database size={16} weight="duotone" aria-hidden="true" />
           <span className="section-kicker">Knowledge</span>
           <h2>{TAB_TITLE[activeTab]}</h2>
         </div>
@@ -68,7 +69,7 @@ export function KnowledgePanel() {
               size="sm"
               onClick={() => setGraphModalOpen(true)}
             >
-              <Expand size={14} /> Expand
+              <ArrowsOut size={14} /> Expand
             </Button>
           </div>
         )}
@@ -82,7 +83,7 @@ export function KnowledgePanel() {
           {TABS.map((t) => (
             <TabsTrigger key={t.key} value={t.key}>
               {t.label}
-              {counts[t.key] !== undefined && <span className="knowledge-tab-count">{counts[t.key]}</span>}
+              {(counts[t.key] ?? 0) > 0 && <span className="knowledge-tab-count">{counts[t.key]}</span>}
             </TabsTrigger>
           ))}
         </TabsList>

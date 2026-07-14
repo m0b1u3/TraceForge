@@ -1,5 +1,7 @@
-import { CircleDot, Database, Play, Settings, ShieldCheck } from "lucide-react";
+import { Circle, Coins, Gear, Moon, Play, Sun } from "@phosphor-icons/react";
+import { useState } from "react";
 import { useStore } from "../store.js";
+import { getStoredTheme, persistTheme, type AppTheme } from "../lib/theme.js";
 import { CaseLauncher } from "./CaseLauncher.js";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,60 +16,74 @@ export function formatTopBarTokenTotal(totalTokens: number): string {
 }
 
 export function TopBar() {
-  const { caseId, browserController, browserUrl, activeRun, agentBusy, tokenUsage, setSettingsModalOpen } = useStore();
-  const controlLabel = browserController === "human" ? "human" : browserController === "llm" ? "llm" : "idle";
+  const { caseId, activeRun, agentBusy, tokenUsage, setSettingsModalOpen } = useStore();
   const runStatus = getTopBarRunStatus(activeRun, agentBusy);
+  const focusComposer = () => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus();
+  const [theme, setTheme] = useState<AppTheme>(() => getStoredTheme());
+  const toggleTheme = () => {
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    persistTheme(nextTheme);
+    setTheme(nextTheme);
+  };
 
   return (
     <header className="topbar">
       <div className="brand topbar-brand">
-        <span>
-          <ShieldCheck size={16} />
-        </span>
         <div>
           <strong>TraceForge</strong>
           <small>red-team workbench</small>
         </div>
       </div>
-      <nav>
+      <nav className="topbar-workspace">
+        <span className="topbar-workspace-label">Engagements</span>
+        <span className="topbar-workspace-separator" aria-hidden="true">/</span>
         <CaseLauncher variant="bar" />
       </nav>
       <div className="topbar-meta">
         {caseId && (
           <div className="topbar-runtime" aria-label="Runtime status">
-            <Badge
-              variant="outline"
-              className={cn(
-                "gap-1.5",
-                browserController === "human" &&
-                  "border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20",
-                browserController === "llm" &&
-                  "border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
-              )}
-            >
-              <CircleDot size={13} />
-              {controlLabel}
-              {browserUrl && (
-                <span className="browser-url text-muted-foreground">· {browserUrl}</span>
-              )}
-            </Badge>
             <Badge variant="outline" className={cn("topbar-run-status", runStatus === "running" && "is-running")}>
-              <Play size={13} /> Run {runStatus}
+              <Circle size={7} weight="fill" /> Agent {runStatus}
             </Badge>
-            <Badge variant="outline" className="topbar-token-total" title="Persisted cumulative LLM token usage">
-              <Database size={13} />
+            <button
+              type="button"
+              className="topbar-token-total"
+              title="View token usage"
+              aria-label="View token usage"
+              onClick={() => globalThis.dispatchEvent(new CustomEvent("traceforge:open-token-usage"))}
+            >
+              <Coins size={14} aria-hidden="true" />
               {formatTopBarTokenTotal(tokenUsage.totalTokens)}
-            </Badge>
+            </button>
           </div>
+        )}
+        {caseId && (
+          <Button className="topbar-run-action" type="button" size="sm" onClick={focusComposer}>
+            <Play size={14} weight="fill" />
+            <span>{runStatus === "running" ? "Steer agent" : "Run autonomous"}</span>
+          </Button>
         )}
         <Button
           type="button"
           variant="outline"
           size="sm"
+          className="topbar-theme-toggle"
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          onClick={toggleTheme}
+        >
+          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="topbar-settings"
+          aria-label="Open settings"
+          title="Settings"
           onClick={() => setSettingsModalOpen(true)}
         >
-          <Settings size={15} />
-          <span>Settings</span>
+          <Gear size={15} />
         </Button>
       </div>
     </header>

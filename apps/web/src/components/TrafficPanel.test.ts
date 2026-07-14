@@ -86,7 +86,8 @@ describe("TrafficPanel", () => {
     act(() => clear?.click());
 
     expect(useStore.getState().traffic).toEqual([]);
-    expect(panel.textContent).toContain("No traffic yet");
+    expect(panel.textContent).toContain("Capture ready");
+    expect(panel.textContent).toContain("Requests0");
     expect(clear?.disabled).toBe(true);
   });
 

@@ -34,17 +34,18 @@ const primitiveRadiusClasses = [
 describe("Operations Canvas theme contract", () => {
   it("uses one dark semantic theme", () => {
     expect(globals).toContain("color-scheme: dark");
-    expect(globals).toMatch(/--color-background:\s*#07111a/);
-    expect(globals).toMatch(/--color-foreground:\s*#e7edf2/);
-    expect(globals).toMatch(/--color-card:\s*#0b1822/);
-    expect(globals).toMatch(/--color-muted:\s*#101f2b/);
-    expect(globals).toMatch(/--color-primary:\s*#18a66d/);
-    expect(globals).toMatch(/--color-destructive:\s*#ef4f54/);
-    expect(globals).toMatch(/--color-border:\s*#203342/);
-    expect(globals).toMatch(/--color-ring:\s*#36c98b/);
-    expect(appRoot).toMatch(/--success:\s*#32d48d/);
-    expect(appRoot).toMatch(/--warning:\s*#f2a01b/);
-    expect(appRoot).toMatch(/--border-subtle:\s*#172a38/);
+    expect(globals).toMatch(/--color-background:\s*#070d12/);
+    expect(globals).toMatch(/--color-foreground:\s*#e8eef1/);
+    expect(globals).toMatch(/--color-card:\s*#0b141b/);
+    expect(globals).toMatch(/--color-muted:\s*#101c24/);
+    expect(globals).toMatch(/--color-primary:\s*#27b47e/);
+    expect(globals).toMatch(/--color-destructive:\s*#ed5d62/);
+    expect(globals).toMatch(/--color-border:\s*#1b2a34/);
+    expect(globals).toMatch(/--color-ring:\s*#4acb98/);
+    expect(appRoot).toMatch(/--success:\s*#43cb91/);
+    expect(appRoot).toMatch(/--information:\s*#5b9ff5/);
+    expect(appRoot).toMatch(/--warning:\s*#e9a23b/);
+    expect(appRoot).toContain("--border-subtle: rgba(126, 156, 174, 0.14)");
     expect(appRoot).toMatch(/--z-header:\s*20/);
     expect(appRoot).toMatch(/--z-drawer:\s*40/);
     expect(appRoot).toMatch(/--z-modal:\s*50/);
@@ -75,11 +76,11 @@ describe("Operations Canvas theme contract", () => {
   });
 
   it("keeps workbench panels, modals, and launchers on the shared radius scale", () => {
-    expect(globals).toMatch(/--radius:\s*0\.4375rem/);
+    expect(globals).toMatch(/--radius:\s*0\.5rem/);
     expect(appRoot).not.toMatch(/--radius\s*:/);
     expect(appRoot).toMatch(/--radius-sm:\s*6px/);
-    expect(appRoot).toMatch(/--radius-lg:\s*8px/);
-    expect(appRoot).toMatch(/--radius-xl:\s*8px/);
+    expect(appRoot).toMatch(/--radius-lg:\s*10px/);
+    expect(appRoot).toMatch(/--radius-xl:\s*14px/);
     expect(app).toMatch(/\.panel\s*\{[\s\S]*?border-radius:\s*var\(--radius-lg\)/);
     expect(app).toMatch(/\.tf-launcher\s*\{[\s\S]*?border-radius:\s*var\(--radius\)/);
     expect(app).toMatch(/\.tf-modal\s*\{[\s\S]*?border-radius:\s*var\(--radius\)/);
@@ -88,12 +89,12 @@ describe("Operations Canvas theme contract", () => {
     expect(app).toMatch(/\.tf-prio\s*\{[^}]*border-radius:\s*var\(--radius-sm\)/);
   });
 
-  it("maps every non-pill Tailwind radius utility used by workbench primitives within 6px to 8px", () => {
+  it("maps every non-pill Tailwind radius utility used by workbench primitives within 6px to 12px", () => {
     expect(primitiveRadiusClasses).toEqual(["lg", "md", "sm", "xs"]);
 
     for (const radiusClass of primitiveRadiusClasses) {
       expect(tailwindRadiusTokens[radiusClass], `rounded-${radiusClass}`).toBeGreaterThanOrEqual(6);
-      expect(tailwindRadiusTokens[radiusClass], `rounded-${radiusClass}`).toBeLessThanOrEqual(8);
+      expect(tailwindRadiusTokens[radiusClass], `rounded-${radiusClass}`).toBeLessThanOrEqual(12);
     }
   });
 });

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { LoaderCircle, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { CircleNotch, DotsThree, Plus, Trash } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { listCases, createCase } from "../api.js";
 import { Select } from "./Select.js";
@@ -76,12 +76,12 @@ export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" })
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="tf-btn tf-btn-icon tf-case-more" disabled={deletingCase || creatingCase} title="Case actions" aria-label="Case actions">
-                {deletingCase ? <LoaderCircle size={14} className="tf-spin" /> : <MoreHorizontal size={16} />}
+                {deletingCase ? <CircleNotch size={14} className="tf-spin" /> : <DotsThree size={16} weight="bold" />}
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void onDelete()}>
-                <Trash2 size={14} /> Delete case
+                <Trash size={14} /> Delete case
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -91,7 +91,7 @@ export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" })
             <input className="tf-input case-launcher-input" value={name} autoFocus onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") setCreating(false); }}
               placeholder="Case name" />
-            <button className="tf-btn tf-btn-primary" disabled={!name.trim() || creatingCase} onClick={submit}>{creatingCase && <LoaderCircle size={13} className="tf-spin" />}Create</button>
+            <button className="tf-btn tf-btn-primary" disabled={!name.trim() || creatingCase} onClick={submit}>{creatingCase && <CircleNotch size={13} className="tf-spin" />}Create</button>
             <button className="tf-btn" disabled={creatingCase} onClick={() => { setCreating(false); setName(""); }}>Cancel</button>
           </div>
         )}
@@ -123,7 +123,7 @@ export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" })
             placeholder="Name this session" />
           <div className="tf-launcher-hint">No need to set scope up front. After entering, tell the Agent what target to test in the chat. It will identify the host and propose adding it to the authorized scope for your approval.</div>
           <div className="case-launcher-actions">
-            <button className="tf-btn tf-btn-primary" disabled={!name.trim() || creatingCase} onClick={submit}>{creatingCase && <LoaderCircle size={13} className="tf-spin" />}Create and enter</button>
+            <button className="tf-btn tf-btn-primary" disabled={!name.trim() || creatingCase} onClick={submit}>{creatingCase && <CircleNotch size={13} className="tf-spin" />}Create and enter</button>
             <button className="tf-btn" disabled={creatingCase} onClick={() => { setCreating(false); setName(""); }}>Cancel</button>
           </div>
         </>

@@ -53,17 +53,26 @@ export async function deleteCase(caseId: string): Promise<{ deleted: boolean }> 
   return r.json();
 }
 
-export async function startBrowser(caseId: string): Promise<void> {
-  await ensureOk(await fetch(`/api/cases/${caseId}/browser/start`, { method: "POST" }), "Start browser");
+export interface BrowserRuntimeState {
+  ok: true;
+  controller: "llm" | "human";
+  url?: string;
+}
+
+export async function startBrowser(caseId: string): Promise<BrowserRuntimeState> {
+  const response = await ensureOk(await fetch(`/api/cases/${caseId}/browser/start`, { method: "POST" }), "Start browser");
+  return response.json() as Promise<BrowserRuntimeState>;
 }
 export async function stopBrowser(caseId: string): Promise<void> {
   await ensureOk(await fetch(`/api/cases/${caseId}/browser/stop`, { method: "POST" }), "Stop browser");
 }
-export async function takeoverBrowser(caseId: string): Promise<void> {
-  await ensureOk(await fetch(`/api/cases/${caseId}/browser/takeover`, { method: "POST" }), "Take over browser");
+export async function takeoverBrowser(caseId: string): Promise<BrowserRuntimeState> {
+  const response = await ensureOk(await fetch(`/api/cases/${caseId}/browser/takeover`, { method: "POST" }), "Take over browser");
+  return response.json() as Promise<BrowserRuntimeState>;
 }
-export async function releaseBrowser(caseId: string): Promise<void> {
-  await ensureOk(await fetch(`/api/cases/${caseId}/browser/release`, { method: "POST" }), "Return browser control");
+export async function releaseBrowser(caseId: string): Promise<BrowserRuntimeState> {
+  const response = await ensureOk(await fetch(`/api/cases/${caseId}/browser/release`, { method: "POST" }), "Return browser control");
+  return response.json() as Promise<BrowserRuntimeState>;
 }
 
 export async function listTraffic(caseId: string): Promise<TrafficEntry[]> {

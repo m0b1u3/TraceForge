@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, LoaderCircle } from "lucide-react";
+import { CaretDown, CircleNotch } from "@phosphor-icons/react";
 import type { Task } from "@traceforge/shared";
 import { useStore } from "../../store.js";
 import { patchTask } from "../../api.js";
@@ -36,7 +36,7 @@ function TaskRow({ t }: { t: Task }) {
         <span className={`tf-tag tf-status-${t.status}`}>{t.status}</span>
         <span className="tf-row-title">{t.title}</span>
         <span className={`tf-prio tf-prio-${t.priority}`}>{t.priority}</span>
-        <ChevronDown className={`knowledge-caret ${open ? "is-open" : ""}`} size={14} aria-hidden="true" />
+        <CaretDown className={`knowledge-caret ${open ? "is-open" : ""}`} size={14} aria-hidden="true" />
       </button>
       {open && (
         <div className="tf-row-detail" id={detailId}>
@@ -45,7 +45,7 @@ function TaskRow({ t }: { t: Task }) {
           <div className="tf-row-actions">
             {HUMAN_ACTIONS.filter((a) => a.status !== t.status).map((a) => (
               <button key={a.status} className="tf-btn tf-btn-ghost" disabled={busy !== null} onClick={() => set(a.status)}>
-                {busy === a.status && <LoaderCircle size={13} className="tf-spin" />}{a.label}
+                {busy === a.status && <CircleNotch size={13} className="tf-spin" />}{a.label}
               </button>
             ))}
           </div>

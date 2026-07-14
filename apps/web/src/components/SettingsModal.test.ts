@@ -49,6 +49,19 @@ describe("SettingsModal", () => {
     expect(html).toBe("");
   });
 
+  it("shows the persisted API key as a safe masked value", () => {
+    const html = renderToHtml(
+      createElement(TestableSettingsModal, {
+        open: true,
+        initialConfig: { provider: "openai", model: "m", apiKeyMasked: "MASKED-KEY" },
+      })
+    );
+
+    expect(html).toContain('value="MASKED-KEY"');
+    expect(html).toContain("Stored securely. Focus the field to replace it.");
+    expect(html).toContain('aria-label="Stored API key is masked"');
+  });
+
   it("builds a manually configured endpoint without injecting provider defaults", () => {
     const input = buildLlmConfigInput({
       provider: "openai",

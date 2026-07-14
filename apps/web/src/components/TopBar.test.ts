@@ -67,17 +67,18 @@ describe("TopBar", () => {
     expect(topBar.innerHTML).toContain("red-team workbench");
   });
 
-  it("renders the control pill when caseId is present", async () => {
+  it("does not duplicate browser control state outside the Traffic panel", async () => {
     const topBar = await renderTopBar();
-    expect(topBar.innerHTML).toContain("llm");
-    expect(topBar.innerHTML).toContain("https://example.test");
+    expect(topBar.innerHTML).not.toContain("llm");
+    expect(topBar.innerHTML).not.toContain("https://example.test");
   });
 
   it("renders persisted active Run status and cumulative Token usage from the store", async () => {
     const topBar = await renderTopBar();
 
-    expect(topBar.innerHTML).toContain("Run completed");
+    expect(topBar.innerHTML).toContain("Agent completed");
     expect(topBar.innerHTML).toContain("Tokens 9,876");
+    expect(topBar.querySelectorAll('[aria-label="View token usage"]')).toHaveLength(1);
 
     act(() => {
       useStore.setState({
@@ -87,7 +88,7 @@ describe("TopBar", () => {
       });
     });
 
-    expect(topBar.innerHTML).toContain("Run idle");
+    expect(topBar.innerHTML).toContain("Agent idle");
     expect(topBar.innerHTML).toContain("Tokens 4,321");
   });
 

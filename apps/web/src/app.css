@@ -6,17 +6,25 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  --background: #07111a;
-  --foreground: #e7edf2;
-  --card: #0b1822;
-  --muted: #101f2b;
-  --primary: #18a66d;
-  --success: #32d48d;
-  --warning: #f2a01b;
-  --destructive: #ef4f54;
-  --border: #203342;
-  --border-subtle: #172a38;
-  --ring: #36c98b;
+  --background: #070d12;
+  --surface: #0b141b;
+  --surface-elevated: #101c24;
+  --surface-hover: #14232d;
+  --foreground: #e8eef1;
+  --foreground-secondary: #a6b2bb;
+  --foreground-muted: #71818e;
+  --card: var(--surface);
+  --muted: var(--surface-elevated);
+  --primary: #27b47e;
+  --primary-hover: #32c58d;
+  --success: #43cb91;
+  --information: #5b9ff5;
+  --warning: #e9a23b;
+  --destructive: #ed5d62;
+  --danger: var(--destructive);
+  --border: #1b2a34;
+  --border-subtle: rgba(126, 156, 174, 0.14);
+  --ring: #4acb98;
   --z-header: 20;
   --z-drawer: 40;
   --z-modal: 50;
@@ -30,17 +38,17 @@
   --font-bold: 700;
 
   --bg: var(--background);
-  --panel: var(--card);
-  --panel-elevated: var(--card);
-  --panel-soft: var(--muted);
+  --panel: var(--surface);
+  --panel-elevated: var(--surface-elevated);
+  --panel-soft: var(--surface-hover);
 
   --line: var(--border);
   --line-strong: #bdc8d0;
   --line-focus: var(--ring);
 
   --text: var(--foreground);
-  --text-secondary: #4f606e;
-  --text-tertiary: #7f8d98;
+  --text-secondary: var(--foreground-secondary);
+  --text-tertiary: var(--foreground-muted);
 
   --accent: var(--primary);
   --accent-soft: #edf3f6;
@@ -56,8 +64,9 @@
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.08);
 
   --radius-sm: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 8px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
   --radius-full: 999px;
 
   --space-1: 4px;
@@ -68,7 +77,7 @@
   --space-6: 24px;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: #2b3d49 transparent; }
 html, body, #root { min-width: 320px; min-height: 100%; }
 body {
   margin: 0;
@@ -88,7 +97,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   display: grid;
   grid-template-rows: 56px minmax(0, 1fr);
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
   background: var(--bg);
 }
 

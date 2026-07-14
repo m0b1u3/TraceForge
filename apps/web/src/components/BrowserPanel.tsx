@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { LoaderCircle, MonitorUp } from "lucide-react";
+import { Browser, CircleNotch } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { startBrowser, stopBrowser, takeoverBrowser, releaseBrowser } from "../api.js";
 
 export function BrowserControls() {
-  const { caseId, browserController, showToast } = useStore();
+  const { caseId, browserController, setBrowser, resetBrowser, showToast } = useStore();
   const [busy, setBusy] = useState(false);
   if (!caseId) return null;
 
@@ -16,17 +16,29 @@ export function BrowserControls() {
 
   if (browserController === null) {
     return (
-      <button className="tf-btn tf-btn-primary" disabled={busy} onClick={run(() => startBrowser(caseId))}>
-        {busy ? <LoaderCircle size={15} className="tf-spin" /> : <MonitorUp size={15} />} {busy ? "Launching…" : "Launch browser"}
+      <button className="tf-btn tf-btn-primary" disabled={busy} onClick={run(async () => {
+        const state = await startBrowser(caseId);
+        setBrowser(state.controller, state.url);
+      })}>
+        {busy ? <CircleNotch size={15} className="tf-spin" /> : <Browser size={15} weight="duotone" />} {busy ? "Launching…" : "Launch browser"}
       </button>
     );
   }
   return (
     <div className="tf-btn-group">
       {browserController === "llm"
-        ? <button className="tf-btn tf-btn-primary" disabled={busy} onClick={run(() => takeoverBrowser(caseId))}>Take over</button>
-        : <button className="tf-btn tf-btn-primary" disabled={busy} onClick={run(() => releaseBrowser(caseId))}>Return to LLM</button>}
-      <button className="tf-btn tf-btn-danger" disabled={busy} onClick={run(() => stopBrowser(caseId))}>Stop</button>
+        ? <button className="tf-btn tf-btn-primary" disabled={busy} onClick={run(async () => {
+            const state = await takeoverBrowser(caseId);
+            setBrowser(state.controller, state.url);
+          })}>Take over</button>
+        : <button className="tf-btn tf-btn-primary" disabled={busy} onClick={run(async () => {
+            const state = await releaseBrowser(caseId);
+            setBrowser(state.controller, state.url);
+          })}>Return to LLM</button>}
+      <button className="tf-btn tf-btn-danger" disabled={busy} onClick={run(async () => {
+        await stopBrowser(caseId);
+        resetBrowser();
+      })}>Stop</button>
     </div>
   );
 }

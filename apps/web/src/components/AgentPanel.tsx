@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChartNoAxesColumnIncreasing, LoaderCircle, Send, Sparkles, Square } from "lucide-react";
+import { Broom, CircleNotch, PaperPlaneTilt, Sparkle, Stop, TerminalWindow } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import type { AgentRun } from "@traceforge/shared";
 import { runAgent, resolveApproval, approveScope, rejectScope, steerAgentRun, interruptAgentRun } from "../api.js";
@@ -85,6 +85,12 @@ export function AgentPanel() {
     const el = messagesRef.current;
     if (el && shouldAutoScrollRef.current) el.scrollTop = el.scrollHeight;
   }, [conversationItems.length, latestAgentText]);
+
+  useEffect(() => {
+    const openUsage = () => setUsageOpen(true);
+    globalThis.addEventListener("traceforge:open-token-usage", openUsage);
+    return () => globalThis.removeEventListener("traceforge:open-token-usage", openUsage);
+  }, []);
 
   if (!caseId) return null;
 
@@ -231,9 +237,10 @@ export function AgentPanel() {
 
   return (
     <main className="panel chat-panel">
-      <div className="panel-header">
-        <div><span className="section-kicker">Agent</span><h2>Run Console</h2></div>
+      <div className="panel-header agent-console-header">
+        <div className="agent-console-title"><span className="section-kicker"><TerminalWindow size={14} aria-hidden="true" />Run console</span><h2>Autonomous security review</h2></div>
         <div className="panel-header-actions">
+          <span className={`console-status ${agentBusy ? "is-running" : ""}`}><span />{agentBusy ? "Running" : "Idle"}</span>
           {agentEvents.length > 0 && (
             <button
               className="tf-btn tf-btn-ghost"
@@ -241,20 +248,9 @@ export function AgentPanel() {
               onClick={resetAgent}
               title={activeRun || agentBusy ? "Stop or finish the active run before clearing" : "Clear conversation"}
             >
-              Clear
+              <Broom size={13} />Clear
             </button>
           )}
-          <button
-            type="button"
-            className="session-state token-stats"
-            title="View persisted per-turn LLM token usage"
-            aria-label="View token usage"
-            onClick={() => setUsageOpen(true)}
-          >
-            <ChartNoAxesColumnIncreasing size={14} />
-            Tokens {tokenUsage.totalTokens.toLocaleString()}
-          </button>
-          <div className="session-state"><Sparkles size={14} /> autonomous</div>
         </div>
       </div>
       <section
@@ -269,7 +265,7 @@ export function AgentPanel() {
       >
         {conversationItems.length === 0 && (
           <div className="tf-guide">
-            <div className="tf-guide-icon"><Sparkles size={22} /></div>
+            <div className="tf-guide-icon"><Sparkle size={22} weight="duotone" /></div>
             <div className="tf-guide-title">Agent is idle</div>
             <div className="tf-guide-hint">Give it a target, e.g. "test example.com/login for IDOR."</div>
           </div>
@@ -302,7 +298,7 @@ export function AgentPanel() {
             );
           }
           if (item.type === "busy") {
-            return <div className="tf-agent-busy" role="status" key={item.key}><LoaderCircle size={14} className="tf-spin" /> Agent is running…</div>;
+            return <div className="tf-agent-busy" role="status" key={item.key}><CircleNotch size={14} className="tf-spin" /> Agent is running…</div>;
           }
           if (item.type === "event") {
             return <AgentEventRow item={item} key={item.key} />;
@@ -322,7 +318,7 @@ export function AgentPanel() {
           rows={1} value={goal} onChange={(e) => setGoal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           disabled={agentBusy && !activeRun}
-          placeholder={activeRun ? "Add steering instruction…" : agentBusy ? "Agent is running…" : "Send a message…"}
+          placeholder={activeRun ? "Add steering instruction…" : agentBusy ? "Agent is running…" : "Add steering instruction…"}
         />
         {activeRun && (
           <button
@@ -331,7 +327,7 @@ export function AgentPanel() {
             disabled={isStopButtonDisabled(stopping, activeRun.status)}
             onClick={stopRun}
           >
-            <Square size={13} fill="currentColor" /> Stop
+            <Stop size={13} weight="fill" /> Stop
           </button>
         )}
         <button
@@ -342,7 +338,7 @@ export function AgentPanel() {
           disabled={!canSubmitAgentInstruction(goal, agentBusy, Boolean(activeRun))}
           onClick={send}
         >
-          {agentBusy ? <LoaderCircle size={15} className="tf-spin" /> : <Send size={15} />}
+          {agentBusy ? <CircleNotch size={15} className="tf-spin" /> : <><span>Send</span><PaperPlaneTilt size={14} weight="fill" /></>}
         </button>
       </div>
       <Dialog open={usageOpen} onOpenChange={setUsageOpen}>

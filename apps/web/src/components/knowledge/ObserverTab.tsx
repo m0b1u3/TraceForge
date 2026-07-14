@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ListPlus, Play, X } from "lucide-react";
+import { ListPlus, Play, X } from "@phosphor-icons/react";
 import type { AgentRun, ObserverWarning } from "@traceforge/shared";
 import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWarning, runAgent } from "../../api.js";
 import { useStore } from "../../store.js";

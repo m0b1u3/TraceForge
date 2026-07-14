@@ -7,22 +7,22 @@ import {
 import "@xyflow/react/dist/style.css";
 import ELK from "elkjs/lib/elk.bundled.js";
 import {
-  Bot, Clock, Database, Flag, Lightbulb, NotebookText, Pause, Play, RotateCcw, ShieldCheck, Zap,
-} from "lucide-react";
+  ArrowCounterClockwise, Clock, Database, Flag, Lightbulb, Lightning, Notebook, Pause, Play, Robot, ShieldCheck,
+} from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import type { Fact, Task, ActionCard, TimelineEntry } from "@traceforge/shared";
 
 const elk = new ELK();
 
-const KIND_META: Record<string, { label: string; icon: typeof NotebookText; color: string; border: string }> = {
-  fact: { label: "FACT", icon: Database, color: "#2563eb", border: "#bfdbfe" },
-  memory: { label: "MEMORY", icon: Database, color: "#2563eb", border: "#bfdbfe" },
-  task: { label: "TASK", icon: Lightbulb, color: "#b45309", border: "#fed7aa" },
-  idea: { label: "TASK", icon: Lightbulb, color: "#b45309", border: "#fed7aa" },
-  action: { label: "ACTION", icon: Zap, color: "#7c3aed", border: "#ddd6fe" },
-  solver: { label: "AGENT", icon: Bot, color: "#059669", border: "#a7f3d0" },
-  flag: { label: "FLAG", icon: Flag, color: "#d97706", border: "#fde68a" },
-  note: { label: "EVENT", icon: NotebookText, color: "#64748b", border: "#d6dbe3" },
+const KIND_META: Record<string, { label: string; icon: typeof Notebook; color: string; border: string }> = {
+  fact: { label: "FACT", icon: Database, color: "#78aef2", border: "#35516d" },
+  memory: { label: "MEMORY", icon: Database, color: "#78aef2", border: "#35516d" },
+  task: { label: "TASK", icon: Lightbulb, color: "#d7a65a", border: "#5f4b2d" },
+  idea: { label: "TASK", icon: Lightbulb, color: "#d7a65a", border: "#5f4b2d" },
+  action: { label: "ACTION", icon: Lightning, color: "#aa91d8", border: "#4c4162" },
+  solver: { label: "AGENT", icon: Robot, color: "#62c49e", border: "#315b4d" },
+  flag: { label: "FLAG", icon: Flag, color: "#d89467", border: "#624436" },
+  note: { label: "EVENT", icon: Notebook, color: "#8799a5", border: "#3a4b55" },
 };
 
 function clip(v: unknown, max = 96) {
@@ -252,15 +252,16 @@ function buildTimelineGraph(
   return { nodes, edges, focusNodeId: timeline[timeline.length - 1]?.id };
 }
 
-async function elkLayout(nodes: Node<FlowNodeData>[], edges: Edge[]): Promise<Node<FlowNodeData>[]> {
+async function elkLayout(nodes: Node<FlowNodeData>[], edges: Edge[], direction: "RIGHT" | "DOWN"): Promise<Node<FlowNodeData>[]> {
+  const isVertical = direction === "DOWN";
   try {
     const g = {
       id: "root",
       layoutOptions: {
         "elk.algorithm": "layered",
-        "elk.direction": "RIGHT",
-        "elk.spacing.nodeNode": "90",
-        "elk.layered.spacing.nodeNodeBetweenLayers": "130",
+        "elk.direction": direction,
+        "elk.spacing.nodeNode": isVertical ? "44" : "90",
+        "elk.layered.spacing.nodeNodeBetweenLayers": isVertical ? "56" : "130",
         "elk.edgeRouting": "ORTHOGONAL",
         "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
         "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
@@ -273,10 +274,20 @@ async function elkLayout(nodes: Node<FlowNodeData>[], edges: Edge[]): Promise<No
     const res = await elk.layout(g);
     return nodes.map((n) => {
       const p = res.children?.find((c) => c.id === n.id);
-      return { ...n, position: { x: p?.x ?? 0, y: p?.y ?? 0 }, sourcePosition: Position.Right, targetPosition: Position.Left };
+      return {
+        ...n,
+        position: { x: p?.x ?? 0, y: p?.y ?? 0 },
+        sourcePosition: isVertical ? Position.Bottom : Position.Right,
+        targetPosition: isVertical ? Position.Top : Position.Left,
+      };
     });
   } catch {
-    return nodes.map((n, i) => ({ ...n, position: { x: Math.floor(i / 4) * 300, y: (i % 4) * 150 }, sourcePosition: Position.Right, targetPosition: Position.Left }));
+    return nodes.map((n, i) => ({
+      ...n,
+      position: isVertical ? { x: 0, y: i * 150 } : { x: Math.floor(i / 4) * 300, y: (i % 4) * 150 },
+      sourcePosition: isVertical ? Position.Bottom : Position.Right,
+      targetPosition: isVertical ? Position.Top : Position.Left,
+    }));
   }
 }
 
@@ -292,7 +303,7 @@ function FitOnChange({ focusNodeId, nodes, version, focusLatest }: { focusNodeId
             return;
           }
         }
-        void fitView({ padding: 0.28, duration: 120 });
+        void fitView({ padding: 0.18, duration: 140, maxZoom: 0.9 });
       }),
     );
     return () => cancelAnimationFrame(frame);
@@ -306,13 +317,13 @@ function FlowCanvas({ nodes, edges, focusNodeId, focusLatest, onNodeClick }: { n
 
   useEffect(() => {
     let active = true;
-    void elkLayout(nodes, edges).then((next) => {
+    void elkLayout(nodes, edges, focusLatest ? "RIGHT" : "DOWN").then((next) => {
       if (!active) return;
       setLayouted(next);
       setVersion((v) => v + 1);
     });
     return () => { active = false; };
-  }, [nodes, edges]);
+  }, [nodes, edges, focusLatest]);
 
   return (
     <ReactFlow
@@ -446,7 +457,7 @@ function GraphInner({ interactive }: { interactive: boolean }) {
               setCursor(0);
             }}
           >
-            <RotateCcw size={14} />
+            <ArrowCounterClockwise size={14} />
           </button>
           {[1, 2, 4].map((v) => (
             <SpeedButton key={v} value={v} speed={speed} setSpeed={setSpeed} />

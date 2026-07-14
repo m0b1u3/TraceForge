@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CircleCheck, Eye, EyeOff, TriangleAlert } from "lucide-react";
+import { CheckCircle, Eye, EyeSlash, Warning } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -108,6 +108,7 @@ export function SettingsModal({
   const [provider, setProvider] = useState<LlmConfigInput["provider"]>("openai");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [apiKeyDirty, setApiKeyDirty] = useState(false);
   const [baseUrl, setBaseUrl] = useState("");
   const [jsonMode, setJsonMode] = useState("default");
   const [contextWindowTokens, setContextWindowTokens] = useState("");
@@ -137,6 +138,8 @@ export function SettingsModal({
     if (!llmConfig) return;
     setProvider(llmConfig.provider);
     setModel(llmConfig.model);
+    setApiKey(llmConfig.apiKeyMasked ?? "");
+    setApiKeyDirty(false);
     setBaseUrl(llmConfig.baseUrl ?? "");
     setJsonMode(llmConfig.jsonMode ?? "default");
     setContextWindowTokens(
@@ -152,7 +155,7 @@ export function SettingsModal({
 
   if (!settingsModalOpen_) return null;
 
-  const buildInput = () => buildLlmConfigInput({ provider, model, apiKey, baseUrl, jsonMode, contextWindowTokens, maxOutputTokens, currency, inputPricePerMillion, outputPricePerMillion });
+  const buildInput = () => buildLlmConfigInput({ provider, model, apiKey: apiKeyDirty ? apiKey : "", baseUrl, jsonMode, contextWindowTokens, maxOutputTokens, currency, inputPricePerMillion, outputPricePerMillion });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -251,11 +254,20 @@ export function SettingsModal({
               <div className="flex gap-2">
                 <Input
                   id="apiKey"
-                  type={showApiKey ? "text" : "password"}
+                  type={showApiKey && apiKeyDirty ? "text" : "password"}
                   value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
+                  onFocus={() => {
+                    if (!apiKeyDirty && llmConfig?.apiKeyMasked) setApiKey("");
+                  }}
+                  onBlur={() => {
+                    if (!apiKeyDirty && llmConfig?.apiKeyMasked) setApiKey(llmConfig.apiKeyMasked);
+                  }}
+                  onChange={(e) => {
+                    setApiKeyDirty(true);
+                    setApiKey(e.target.value);
+                  }}
                   placeholder={
-                    llmConfig?.apiKeyMasked ? "Configured" : "Enter API key"
+                    llmConfig?.apiKeyMasked ? "Enter a replacement key" : "Enter API key"
                   }
                   className="flex-1"
                 />
@@ -264,12 +276,16 @@ export function SettingsModal({
                   variant="outline"
                   size="sm"
                   onClick={() => setShowApiKey((v) => !v)}
-                  aria-label={showApiKey ? "Hide API key" : "Show API key"}
-                  title={showApiKey ? "Hide API key" : "Show API key"}
+                  disabled={!apiKeyDirty}
+                  aria-label={!apiKeyDirty ? "Stored API key is masked" : showApiKey ? "Hide API key" : "Show API key"}
+                  title={!apiKeyDirty ? "Stored keys cannot be revealed" : showApiKey ? "Hide API key" : "Show API key"}
                 >
-                  {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                  {showApiKey ? <EyeSlash size={15} /> : <Eye size={15} />}
                 </Button>
               </div>
+              {llmConfig?.apiKeyMasked && !apiKeyDirty && (
+                <div className="settings-key-status" role="status"><CheckCircle size={14} weight="fill" />Stored securely. Focus the field to replace it.</div>
+              )}
             </div>
 
             <div className="grid gap-2">
@@ -367,7 +383,7 @@ export function SettingsModal({
             )}
           </div>
 
-          {formError && <div className="settings-feedback is-error" role="alert"><TriangleAlert size={16} />{formError}</div>}
+          {formError && <div className="settings-feedback is-error" role="alert"><Warning size={16} weight="fill" />{formError}</div>}
 
           <DialogFooter className="justify-between gap-2 sm:justify-between">
             <Button
@@ -400,7 +416,7 @@ export function SettingsModal({
             testStatus.status !== "testing" &&
             testStatus.message && (
               <div className={`settings-feedback ${testStatus.status === "ok" ? "is-success" : "is-error"}`} role={testStatus.status === "ok" ? "status" : "alert"}>
-                {testStatus.status === "ok" ? <CircleCheck size={16} /> : <TriangleAlert size={16} />}
+                {testStatus.status === "ok" ? <CheckCircle size={16} weight="fill" /> : <Warning size={16} weight="fill" />}
                 <Badge
                   variant={
                     testStatus.status === "ok" ? "default" : "destructive"

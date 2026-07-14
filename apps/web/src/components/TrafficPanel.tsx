@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRight, Globe } from "lucide-react";
+import { Browser, Browsers, CaretRight, Crosshair, Pulse, Trash } from "@phosphor-icons/react";
 import type { TrafficEntry } from "@traceforge/shared";
 import { useStore } from "../store.js";
 import { BrowserControls } from "./BrowserPanel.js";
@@ -23,6 +23,15 @@ function TrafficRow({ t }: { t: TrafficEntry }) {
   const detailId = `traffic-detail-${t.id}`;
   const status = t.responseStatus ?? "Pending";
   const statusClass = t.responseStatus === null ? "st-pending" : `st-${String(t.responseStatus).charAt(0)}`;
+  let host = t.url;
+  let path = "";
+  try {
+    const parsed = new URL(t.url);
+    host = parsed.host;
+    path = `${parsed.pathname}${parsed.search}`;
+  } catch {
+    // Captured targets may be host/path fragments rather than absolute URLs.
+  }
   return (
     <article className={`request-row ${statusClass} ${open ? "is-open" : ""}`}>
       <button
@@ -34,12 +43,14 @@ function TrafficRow({ t }: { t: TrafficEntry }) {
         onClick={() => setOpen((value) => !value)}
       >
         <span className="request-row-head">
-          <ChevronRight className="request-row-caret" size={14} aria-hidden="true" />
+          <CaretRight className="request-row-caret" size={14} aria-hidden="true" />
           <MethodBadge method={t.method} />
           <strong>{status}</strong>
+          <span className="request-row-host">{host}</span>
           <time className="request-row-time" dateTime={t.createdAt}>{requestTime}</time>
         </span>
-        <span className="request-row-url">{t.url}</span>
+        <span className="request-row-url">{path || t.url}</span>
+        <span className="request-row-full-url">{t.url}</span>
       </button>
       {open && (
         <div className="request-detail" id={detailId} role="region" aria-label={`${t.method} ${t.url} evidence`}>
@@ -70,33 +81,36 @@ export function TrafficPanel() {
   return (
     <aside className="panel traffic-panel">
       <header className="panel-header">
-        <div className="panel-header-main">
-          <Globe size={18} />
-          <div>
-            <span className="section-kicker">Capture</span>
-            <h2>Traffic</h2>
-          </div>
-        </div>
+        <div className="panel-heading"><Browsers size={16} weight="duotone" aria-hidden="true" /><span className="section-kicker">Traffic capture</span></div>
         <div className="panel-header-actions">
           <BrowserControls />
-          <span className="tf-pill traffic-count-pill" aria-live="polite">{traffic.length} req</span>
-          <button className="tf-btn tf-btn-ghost" disabled={traffic.length === 0} onClick={clearTraffic}>Clear</button>
         </div>
       </header>
-      <div className="browser-strip">
-        <StatusDot tone={statusTone} />
-        <span className="browser-url" title={browserUrl || undefined}>{browserUrl || "No browser URL"}</span>
-        <span className="tf-pill">{browserController || "idle"}</span>
+      <div className="capture-summary">
+        <div><span>Connection</span><strong><StatusDot tone={statusTone} />{browserController ? "Connected" : "Offline"}</strong></div>
+        <div><span>Requests captured</span><strong>{traffic.length.toLocaleString()}</strong></div>
+      </div>
+      <div className="capture-readiness-block">
+        <span className="capture-subhead">Readiness</span>
+        <div><Browser size={14} /><span>Browser</span><strong>{browserController ? "Capture ready" : "Not connected"}</strong></div>
+        <div><Crosshair size={14} /><span>Target</span><strong title={browserUrl || undefined}>{browserUrl ? "Reachable" : "Not set"}</strong></div>
+        <div><Pulse size={14} /><span>Requests</span><strong>{traffic.length}</strong></div>
+      </div>
+      <div className="traffic-list-toolbar">
+        <span className="is-active">Live</span>
+        <strong>{traffic.length} captured</strong>
       </div>
       <div className="request-list">
         {traffic.length === 0 && (
-          <div className="tf-guide">
-            <div className="tf-guide-title">No traffic yet</div>
-            <div className="tf-guide-hint">Launch the shared browser to see captured requests here.</div>
+          <div className="capture-empty">
+            <Browsers className="capture-empty-icon" size={24} weight="duotone" aria-hidden="true" />
+            <span>No traffic captured</span>
+            <p>{browserController ? "Requests will appear here as the browser navigates the target." : "Launch the shared browser to start a trace."}</p>
           </div>
         )}
         {traffic.map((t) => <TrafficRow t={t} key={t.id} />)}
       </div>
+      <footer className="traffic-footer"><span>{browserController ? "Capture active" : "Capture paused"}</span><button className="tf-btn tf-btn-ghost" disabled={traffic.length === 0} onClick={clearTraffic}><Trash size={13} />Clear</button></footer>
     </aside>
   );
 }
