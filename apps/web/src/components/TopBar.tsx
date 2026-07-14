@@ -1,4 +1,4 @@
-import { ShieldCheck } from "@phosphor-icons/react";
+import { GearSix, ShieldCheck } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { CaseLauncher } from "./CaseLauncher.js";
 import { Button } from "@/components/ui/button";
@@ -20,13 +20,13 @@ export function TopBar() {
 
   return (
     <header className="topbar">
-      <div className="flex items-center gap-2.5">
-        <span className="grid h-7 w-7 place-items-center rounded-lg border bg-card text-foreground">
+      <div className="brand topbar-brand">
+        <span>
           <ShieldCheck size={16} />
         </span>
-        <div className="flex flex-col">
-          <strong className="text-sm font-bold text-foreground">TraceForge</strong>
-          <small className="text-xs text-muted-foreground">red-team workbench</small>
+        <div>
+          <strong>TraceForge</strong>
+          <small>red-team workbench</small>
         </div>
       </div>
       <nav>
@@ -34,7 +34,7 @@ export function TopBar() {
       </nav>
       <div className="topbar-meta">
         {caseId && (
-          <>
+          <div className="topbar-runtime" aria-label="Runtime status">
             <Badge
               variant="outline"
               className={cn(
@@ -55,7 +55,7 @@ export function TopBar() {
             <Badge variant="outline" className="topbar-token-total" title="Persisted cumulative LLM token usage">
               {formatTopBarTokenTotal(tokenUsage.totalTokens)}
             </Badge>
-          </>
+          </div>
         )}
         <Button
           type="button"
@@ -63,7 +63,8 @@ export function TopBar() {
           size="sm"
           onClick={() => setSettingsModalOpen(true)}
         >
-          Settings
+          <GearSix size={15} />
+          <span>Settings</span>
         </Button>
       </div>
     </header>

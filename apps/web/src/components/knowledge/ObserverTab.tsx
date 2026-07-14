@@ -84,12 +84,14 @@ export function ObserverTab() {
     (() => {
       const continueDisabled = observerWarningContinueDisabled(activeRun, agentBusy, busy);
       return (
-    <div className={`tf-row observer-row ${LEVEL_CLASS[w.level]}`} key={w.id}>
-      <span className={`tf-tag tf-row-level-${w.level}`}>[{w.level}]</span>
-      <span className="tf-tag">{observerWarningStatusLabel(w.status)}</span>
-      {w.title}
-      <div className="tf-text-muted">{w.description}</div>
-      <div className="tf-text-muted">Suggestion: {w.suggestedAction}</div>
+    <article className={`tf-row observer-row ${LEVEL_CLASS[w.level]}`} key={w.id}>
+      <div className="observer-row-head">
+        <span className={`tf-tag tf-row-level-${w.level}`}>{w.level}</span>
+        <span className="observer-row-status">{observerWarningStatusLabel(w.status)}</span>
+      </div>
+      <strong className="observer-row-title">{w.title}</strong>
+      <p className="observer-row-description">{w.description}</p>
+      <div className="observer-row-suggestion"><span>Suggested next step</span>{w.suggestedAction}</div>
       {w.status === "open" && (
         <div className="tf-row-actions">
           <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={continueDisabled} onClick={() => continueRun(w)} title="Start a new Agent run based on the Observer suggestion">
@@ -103,7 +105,7 @@ export function ObserverTab() {
           </button>
         </div>
       )}
-    </div>
+    </article>
       );
     })()
   ))}</>;

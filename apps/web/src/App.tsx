@@ -9,6 +9,7 @@ import { WorkspaceLayout } from "./components/WorkspaceLayout.js";
 import { GraphModal } from "./components/GraphModal.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { Button } from "@/components/ui/button";
+import { WarningDiamond } from "@phosphor-icons/react";
 import {
   Alert,
   AlertTitle,
@@ -28,17 +29,21 @@ function ObserverConfirmation() {
   if (!pendingConfirmation) return null;
   const { warning } = pendingConfirmation;
   return (
-    <Alert variant="warning" className="mx-4 mt-3">
-      <AlertTitle>Observer intervention required</AlertTitle>
-      <AlertDescription className="w-full">
-        <span>{warning.title}: {warning.description}</span>
-        <div className="mt-3 flex gap-2">
+    <Alert variant="warning" className="observer-confirmation">
+      <WarningDiamond className="observer-confirmation-icon" size={18} weight="fill" />
+      <AlertTitle className="observer-confirmation-title">
+        <span>Observer intervention</span>
+        <strong>{warning.title}</strong>
+      </AlertTitle>
+      <AlertDescription className="observer-confirmation-body">
+        <p title={warning.description}>{warning.description}</p>
+        <div className="observer-confirmation-actions">
           <Button
             type="button"
             size="sm"
             onClick={() => { setActiveTab("observer"); clearPendingConfirmation(); }}
           >
-            View in Observer
+            Review warning
           </Button>
           <Button
             type="button"
