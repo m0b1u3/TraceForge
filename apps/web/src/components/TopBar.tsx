@@ -1,4 +1,4 @@
-import { GearSix, ShieldCheck } from "@phosphor-icons/react";
+import { CircleDot, Database, Play, Settings, ShieldCheck } from "lucide-react";
 import { useStore } from "../store.js";
 import { CaseLauncher } from "./CaseLauncher.js";
 import { Button } from "@/components/ui/button";
@@ -45,14 +45,17 @@ export function TopBar() {
                   "border-cyan-500/30 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20"
               )}
             >
-              <ShieldCheck size={13} weight="fill" />
+              <CircleDot size={13} />
               {controlLabel}
               {browserUrl && (
                 <span className="browser-url text-muted-foreground">· {browserUrl}</span>
               )}
             </Badge>
-            <Badge variant="outline" className="topbar-run-status">Run {runStatus}</Badge>
+            <Badge variant="outline" className={cn("topbar-run-status", runStatus === "running" && "is-running")}>
+              <Play size={13} /> Run {runStatus}
+            </Badge>
             <Badge variant="outline" className="topbar-token-total" title="Persisted cumulative LLM token usage">
+              <Database size={13} />
               {formatTopBarTokenTotal(tokenUsage.totalTokens)}
             </Badge>
           </div>
@@ -63,7 +66,7 @@ export function TopBar() {
           size="sm"
           onClick={() => setSettingsModalOpen(true)}
         >
-          <GearSix size={15} />
+          <Settings size={15} />
           <span>Settings</span>
         </Button>
       </div>

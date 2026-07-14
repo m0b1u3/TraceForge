@@ -5,7 +5,7 @@ import { TimelineTab } from "./knowledge/TimelineTab.js";
 import { McpTab } from "./knowledge/McpTab.js";
 import { GraphTab } from "./knowledge/GraphTab.js";
 import { ObserverTab } from "./knowledge/ObserverTab.js";
-import { ArrowsOut } from "@phosphor-icons/react";
+import { Expand } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tabs,
@@ -68,7 +68,7 @@ export function KnowledgePanel() {
               size="sm"
               onClick={() => setGraphModalOpen(true)}
             >
-              <ArrowsOut size={14} /> Expand
+              <Expand size={14} /> Expand
             </Button>
           </div>
         )}

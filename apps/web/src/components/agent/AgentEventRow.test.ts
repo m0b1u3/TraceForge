@@ -43,10 +43,10 @@ describe("AgentEventRow", () => {
     expect(row.textContent).toContain("captured page content...");
     expect(row.textContent).not.toContain(fullText);
 
-    const expand = Array.from(row.querySelectorAll("button")).find((button) => button.textContent === "Expand");
+    const expand = row.querySelector<HTMLButtonElement>('button[aria-label="Expand event"]');
     act(() => expand?.click());
 
     expect(row.textContent).toContain(fullText);
-    expect(row.textContent).toContain("Collapse");
+    expect(row.querySelector('button[aria-label="Collapse event"]')).not.toBeNull();
   });
 });

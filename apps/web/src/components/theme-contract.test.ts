@@ -32,19 +32,19 @@ const primitiveRadiusClasses = [
 ].sort();
 
 describe("Operations Canvas theme contract", () => {
-  it("uses one light semantic theme", () => {
-    expect(globals).not.toContain("color-scheme: dark");
-    expect(globals).toMatch(/--color-background:\s*#f2f4f5/);
-    expect(globals).toMatch(/--color-foreground:\s*#17232d/);
-    expect(globals).toMatch(/--color-card:\s*#ffffff/);
-    expect(globals).toMatch(/--color-muted:\s*#f7f8f9/);
-    expect(globals).toMatch(/--color-primary:\s*#245b84/);
-    expect(globals).toMatch(/--color-destructive:\s*#b4232d/);
-    expect(globals).toMatch(/--color-border:\s*#d8dfe4/);
-    expect(globals).toMatch(/--color-ring:\s*#4e89b5/);
-    expect(appRoot).toMatch(/--success:\s*#16705c/);
-    expect(appRoot).toMatch(/--warning:\s*#97550d/);
-    expect(appRoot).toMatch(/--border-subtle:\s*#e9edf0/);
+  it("uses one dark semantic theme", () => {
+    expect(globals).toContain("color-scheme: dark");
+    expect(globals).toMatch(/--color-background:\s*#07111a/);
+    expect(globals).toMatch(/--color-foreground:\s*#e7edf2/);
+    expect(globals).toMatch(/--color-card:\s*#0b1822/);
+    expect(globals).toMatch(/--color-muted:\s*#101f2b/);
+    expect(globals).toMatch(/--color-primary:\s*#18a66d/);
+    expect(globals).toMatch(/--color-destructive:\s*#ef4f54/);
+    expect(globals).toMatch(/--color-border:\s*#203342/);
+    expect(globals).toMatch(/--color-ring:\s*#36c98b/);
+    expect(appRoot).toMatch(/--success:\s*#32d48d/);
+    expect(appRoot).toMatch(/--warning:\s*#f2a01b/);
+    expect(appRoot).toMatch(/--border-subtle:\s*#172a38/);
     expect(appRoot).toMatch(/--z-header:\s*20/);
     expect(appRoot).toMatch(/--z-drawer:\s*40/);
     expect(appRoot).toMatch(/--z-modal:\s*50/);

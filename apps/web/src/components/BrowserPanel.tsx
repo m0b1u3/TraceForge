@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Browser, CircleNotch } from "@phosphor-icons/react";
+import { LoaderCircle, MonitorUp } from "lucide-react";
 import { useStore } from "../store.js";
 import { startBrowser, stopBrowser, takeoverBrowser, releaseBrowser } from "../api.js";
 
@@ -17,7 +17,7 @@ export function BrowserControls() {
   if (browserController === null) {
     return (
       <button className="tf-btn tf-btn-primary" disabled={busy} onClick={run(() => startBrowser(caseId))}>
-        {busy ? <CircleNotch size={15} className="tf-spin" /> : <Browser size={15} />} {busy ? "Launching…" : "Launch browser"}
+        {busy ? <LoaderCircle size={15} className="tf-spin" /> : <MonitorUp size={15} />} {busy ? "Launching…" : "Launch browser"}
       </button>
     );
   }

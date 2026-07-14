@@ -7,22 +7,22 @@ import {
 import "@xyflow/react/dist/style.css";
 import ELK from "elkjs/lib/elk.bundled.js";
 import {
-  Notebook, ShieldCheck, Lightning, Robot, Flag, Lightbulb, Database, Clock, Play, Pause, ArrowCounterClockwise,
-} from "@phosphor-icons/react";
+  Bot, Clock, Database, Flag, Lightbulb, NotebookText, Pause, Play, RotateCcw, ShieldCheck, Zap,
+} from "lucide-react";
 import { useStore } from "../store.js";
 import type { Fact, Task, ActionCard, TimelineEntry } from "@traceforge/shared";
 
 const elk = new ELK();
 
-const KIND_META: Record<string, { label: string; icon: typeof Notebook; color: string; border: string }> = {
+const KIND_META: Record<string, { label: string; icon: typeof NotebookText; color: string; border: string }> = {
   fact: { label: "FACT", icon: Database, color: "#2563eb", border: "#bfdbfe" },
   memory: { label: "MEMORY", icon: Database, color: "#2563eb", border: "#bfdbfe" },
   task: { label: "TASK", icon: Lightbulb, color: "#b45309", border: "#fed7aa" },
   idea: { label: "TASK", icon: Lightbulb, color: "#b45309", border: "#fed7aa" },
-  action: { label: "ACTION", icon: Lightning, color: "#7c3aed", border: "#ddd6fe" },
-  solver: { label: "AGENT", icon: Robot, color: "#059669", border: "#a7f3d0" },
+  action: { label: "ACTION", icon: Zap, color: "#7c3aed", border: "#ddd6fe" },
+  solver: { label: "AGENT", icon: Bot, color: "#059669", border: "#a7f3d0" },
   flag: { label: "FLAG", icon: Flag, color: "#d97706", border: "#fde68a" },
-  note: { label: "EVENT", icon: Notebook, color: "#64748b", border: "#d6dbe3" },
+  note: { label: "EVENT", icon: NotebookText, color: "#64748b", border: "#d6dbe3" },
 };
 
 function clip(v: unknown, max = 96) {
@@ -83,7 +83,7 @@ function BwNode({ data }: NodeProps<Node<FlowNodeData>>) {
       <div className="flow-card-content">
         <div className="flow-card-head">
           <span className="flow-icon" style={{ color: meta.color, borderColor: meta.border }}>
-            <Icon size={13} weight="bold" />
+            <Icon size={13} />
           </span>
           <div>
             <span style={{ color: meta.color }}>{meta.label}</span>
@@ -446,7 +446,7 @@ function GraphInner({ interactive }: { interactive: boolean }) {
               setCursor(0);
             }}
           >
-            <ArrowCounterClockwise size={14} />
+            <RotateCcw size={14} />
           </button>
           {[1, 2, 4].map((v) => (
             <SpeedButton key={v} value={v} speed={speed} setSpeed={setSpeed} />

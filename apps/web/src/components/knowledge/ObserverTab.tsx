@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ListPlus, Play, X } from "@phosphor-icons/react";
+import { ListPlus, Play, X } from "lucide-react";
 import type { AgentRun, ObserverWarning } from "@traceforge/shared";
 import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWarning, runAgent } from "../../api.js";
 import { useStore } from "../../store.js";
@@ -95,13 +95,13 @@ export function ObserverTab() {
       {w.status === "open" && (
         <div className="tf-row-actions">
           <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={continueDisabled} onClick={() => continueRun(w)} title="Start a new Agent run based on the Observer suggestion">
-            <Play size={13} weight="fill" /> Resume
+            <Play size={13} /> Resume
           </button>
           <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={busy !== null} onClick={() => convertToTask(w)} title="Convert this warning into a Task in the Tasks panel">
-            <ListPlus size={13} weight="bold" /> Create task
+            <ListPlus size={13} /> Create task
           </button>
           <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={busy !== null} onClick={() => dismiss(w)} title="Dismiss this warning">
-            <X size={13} weight="bold" /> Ignore
+            <X size={13} /> Ignore
           </button>
         </div>
       )}

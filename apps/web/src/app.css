@@ -6,17 +6,17 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  --background: #f2f4f5;
-  --foreground: #17232d;
-  --card: #ffffff;
-  --muted: #f7f8f9;
-  --primary: #245b84;
-  --success: #16705c;
-  --warning: #97550d;
-  --destructive: #b4232d;
-  --border: #d8dfe4;
-  --border-subtle: #e9edf0;
-  --ring: #4e89b5;
+  --background: #07111a;
+  --foreground: #e7edf2;
+  --card: #0b1822;
+  --muted: #101f2b;
+  --primary: #18a66d;
+  --success: #32d48d;
+  --warning: #f2a01b;
+  --destructive: #ef4f54;
+  --border: #203342;
+  --border-subtle: #172a38;
+  --ring: #36c98b;
   --z-header: 20;
   --z-drawer: 40;
   --z-modal: 50;
@@ -115,9 +115,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .workspace-shell {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(240px, 280px) minmax(430px, 1.4fr) minmax(340px, 1fr);
-  gap: var(--space-3);
-  padding: var(--space-3);
+  grid-template-columns: minmax(240px, 0.72fr) minmax(430px, 1.42fr) minmax(340px, 1.12fr);
+  gap: var(--space-4);
+  padding: var(--space-4);
   min-width: 0;
   min-height: 0;
 }

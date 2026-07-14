@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { CaretRight, Globe } from "@phosphor-icons/react";
+import { ChevronRight, Globe } from "lucide-react";
 import type { TrafficEntry } from "@traceforge/shared";
 import { useStore } from "../store.js";
 import { BrowserControls } from "./BrowserPanel.js";
+import { MethodBadge } from "./design-system/MethodBadge.js";
+import { StatusDot, type StatusDotTone } from "./design-system/StatusDot.js";
 
 export function formatTrafficTime(createdAt: string, locale = globalThis.navigator?.language ?? "en-US", timeZone?: string): string {
   return new Date(createdAt).toLocaleTimeString(locale, {
@@ -21,9 +23,6 @@ function TrafficRow({ t }: { t: TrafficEntry }) {
   const detailId = `traffic-detail-${t.id}`;
   const status = t.responseStatus ?? "Pending";
   const statusClass = t.responseStatus === null ? "st-pending" : `st-${String(t.responseStatus).charAt(0)}`;
-  const methodClass = ["get", "post", "put", "patch", "delete"].includes(t.method.toLowerCase())
-    ? t.method.toLowerCase()
-    : "other";
   return (
     <article className={`request-row ${statusClass} ${open ? "is-open" : ""}`}>
       <button
@@ -35,8 +34,8 @@ function TrafficRow({ t }: { t: TrafficEntry }) {
         onClick={() => setOpen((value) => !value)}
       >
         <span className="request-row-head">
-          <CaretRight className="request-row-caret" size={14} weight="bold" aria-hidden="true" />
-          <span className={`method ${methodClass}`}>{t.method}</span>
+          <ChevronRight className="request-row-caret" size={14} aria-hidden="true" />
+          <MethodBadge method={t.method} />
           <strong>{status}</strong>
           <time className="request-row-time" dateTime={t.createdAt}>{requestTime}</time>
         </span>
@@ -67,7 +66,7 @@ function TrafficRow({ t }: { t: TrafficEntry }) {
 
 export function TrafficPanel() {
   const { traffic, clearTraffic, browserController, browserUrl } = useStore();
-  const statusClass = browserController === "human" ? "busy" : browserController ? "active" : "";
+  const statusTone: StatusDotTone = browserController === "human" ? "busy" : browserController ? "active" : "idle";
   return (
     <aside className="panel traffic-panel">
       <header className="panel-header">
@@ -85,7 +84,7 @@ export function TrafficPanel() {
         </div>
       </header>
       <div className="browser-strip">
-        <span className={`status-dot ${statusClass}`} />
+        <StatusDot tone={statusTone} />
         <span className="browser-url" title={browserUrl || undefined}>{browserUrl || "No browser URL"}</span>
         <span className="tf-pill">{browserController || "idle"}</span>
       </div>

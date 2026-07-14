@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle, Eye, EyeSlash, WarningCircle } from "@phosphor-icons/react";
+import { CircleCheck, Eye, EyeOff, TriangleAlert } from "lucide-react";
 import { useStore } from "../store.js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -267,7 +267,7 @@ export function SettingsModal({
                   aria-label={showApiKey ? "Hide API key" : "Show API key"}
                   title={showApiKey ? "Hide API key" : "Show API key"}
                 >
-                  {showApiKey ? <EyeSlash size={15} /> : <Eye size={15} />}
+                  {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
                 </Button>
               </div>
             </div>
@@ -367,7 +367,7 @@ export function SettingsModal({
             )}
           </div>
 
-          {formError && <div className="settings-feedback is-error" role="alert"><WarningCircle size={16} weight="fill" />{formError}</div>}
+          {formError && <div className="settings-feedback is-error" role="alert"><TriangleAlert size={16} />{formError}</div>}
 
           <DialogFooter className="justify-between gap-2 sm:justify-between">
             <Button
@@ -400,7 +400,7 @@ export function SettingsModal({
             testStatus.status !== "testing" &&
             testStatus.message && (
               <div className={`settings-feedback ${testStatus.status === "ok" ? "is-success" : "is-error"}`} role={testStatus.status === "ok" ? "status" : "alert"}>
-                {testStatus.status === "ok" ? <CheckCircle size={16} weight="fill" /> : <WarningCircle size={16} weight="fill" />}
+                {testStatus.status === "ok" ? <CircleCheck size={16} /> : <TriangleAlert size={16} />}
                 <Badge
                   variant={
                     testStatus.status === "ok" ? "default" : "destructive"

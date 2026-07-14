@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useId } from "react";
-import { CaretDown, Check } from "@phosphor-icons/react";
+import { Check, ChevronDown } from "lucide-react";
 
 export interface SelectOption {
   value: string;
@@ -43,7 +43,7 @@ export function Select({
         onClick={() => setOpen((v) => !v)}
       >
         <span className={selected ? "" : "tf-select-ph"} title={selected?.label}>{selected ? selected.label : placeholder ?? "Select…"}</span>
-        <CaretDown className="tf-select-caret" size={12} aria-hidden="true" />
+        <ChevronDown className="tf-select-caret" size={12} aria-hidden="true" />
       </button>
       {open && (
         <div className="tf-select-menu" id={listboxId} role="listbox">
@@ -55,7 +55,7 @@ export function Select({
               onClick={() => { onChange(o.value); setOpen(false); }}
             >
               <span title={o.label}>{o.label}</span>
-              {o.value === value && <Check size={13} weight="bold" aria-hidden="true" />}
+              {o.value === value && <Check size={13} aria-hidden="true" />}
             </button>
           ))}
         </div>
