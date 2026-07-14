@@ -172,5 +172,9 @@ export const agentRunUsage = sqliteTable("agent_run_usage", {
   promptTokens: integer("prompt_tokens").notNull(),
   completionTokens: integer("completion_tokens").notNull(),
   totalTokens: integer("total_tokens").notNull(),
+  currency: text("currency"),
+  inputCostMicros: integer("input_cost_micros"),
+  outputCostMicros: integer("output_cost_micros"),
+  totalCostMicros: integer("total_cost_micros"),
   createdAt: text("created_at").notNull(),
 });

@@ -9,6 +9,9 @@ export interface LlmConfig {
   jsonMode?: "json_schema" | "json_object";
   contextWindowTokens?: number;
   maxOutputTokens?: number;
+  currency?: string;
+  inputPricePerMillion?: number;
+  outputPricePerMillion?: number;
 }
 
 export interface LlmConfigInput {
@@ -19,6 +22,9 @@ export interface LlmConfigInput {
   jsonMode?: "json_schema" | "json_object";
   contextWindowTokens?: number;
   maxOutputTokens?: number;
+  currency?: string | null;
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
 }
 
 async function ensureOk(r: Response, action: string): Promise<Response> {

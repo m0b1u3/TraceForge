@@ -42,6 +42,22 @@ describe("LlmConfigSchema", () => {
     expect(c.maxOutputTokens).toBe(8192);
   });
 
+  it("accepts complete usage pricing and rejects partial pricing", () => {
+    const c = LlmConfigSchema.parse({
+      provider: "openai",
+      model: "priced-model",
+      currency: "USD",
+      inputPricePerMillion: 2.5,
+      outputPricePerMillion: 10,
+    });
+    expect(c.inputPricePerMillion).toBe(2.5);
+    expect(() => LlmConfigSchema.parse({
+      provider: "openai",
+      model: "partially-priced-model",
+      currency: "USD",
+    })).toThrow(/both per-million token prices/);
+  });
+
   it("rejects an unknown provider", () => {
     expect(() => LlmConfigSchema.parse({ provider: "grok", model: "m", apiKey: "sk-x" })).toThrow();
   });

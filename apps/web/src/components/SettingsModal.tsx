@@ -32,6 +32,8 @@ const JSON_MODES = [
   { value: "json_object", label: "JSON Object" },
 ];
 
+const CURRENCIES = ["USD", "CNY", "EUR", "GBP", "JPY"];
+
 export interface LlmSettingsFields {
   provider: LlmConfigInput["provider"];
   model: string;
@@ -40,6 +42,9 @@ export interface LlmSettingsFields {
   jsonMode: string;
   contextWindowTokens: string;
   maxOutputTokens: string;
+  currency: string;
+  inputPricePerMillion: string;
+  outputPricePerMillion: string;
 }
 
 export function buildLlmConfigInput(fields: LlmSettingsFields): LlmConfigInput {
@@ -51,6 +56,9 @@ export function buildLlmConfigInput(fields: LlmSettingsFields): LlmConfigInput {
     jsonMode: fields.jsonMode === "default" ? undefined : (fields.jsonMode as LlmConfigInput["jsonMode"]),
     contextWindowTokens: fields.contextWindowTokens ? Number(fields.contextWindowTokens) : undefined,
     maxOutputTokens: fields.maxOutputTokens ? Number(fields.maxOutputTokens) : undefined,
+    currency: fields.currency || null,
+    inputPricePerMillion: fields.inputPricePerMillion ? Number(fields.inputPricePerMillion) : null,
+    outputPricePerMillion: fields.outputPricePerMillion ? Number(fields.outputPricePerMillion) : null,
   };
 }
 
@@ -58,6 +66,20 @@ export function validateLlmSettings(input: LlmConfigInput): string | null {
   if (!input.model.trim()) return "Model is required.";
   if (input.contextWindowTokens && input.maxOutputTokens && input.maxOutputTokens >= input.contextWindowTokens) {
     return "Max output tokens must be smaller than the context window.";
+  }
+  const pricing = [input.currency, input.inputPricePerMillion, input.outputPricePerMillion];
+  const configuredPricingFields = pricing.filter((value) => value !== null && value !== undefined).length;
+  if (configuredPricingFields !== 0 && configuredPricingFields !== pricing.length) {
+    return "Currency and both token prices are required to calculate cost.";
+  }
+  if ((input.inputPricePerMillion ?? 0) < 0 || (input.outputPricePerMillion ?? 0) < 0) {
+    return "Token prices cannot be negative.";
+  }
+  if (
+    (input.inputPricePerMillion !== null && input.inputPricePerMillion !== undefined && !Number.isFinite(input.inputPricePerMillion))
+    || (input.outputPricePerMillion !== null && input.outputPricePerMillion !== undefined && !Number.isFinite(input.outputPricePerMillion))
+  ) {
+    return "Token prices must be valid numbers.";
   }
   return null;
 }
@@ -90,6 +112,9 @@ export function SettingsModal({
   const [jsonMode, setJsonMode] = useState("default");
   const [contextWindowTokens, setContextWindowTokens] = useState("");
   const [maxOutputTokens, setMaxOutputTokens] = useState("");
+  const [currency, setCurrency] = useState("");
+  const [inputPricePerMillion, setInputPricePerMillion] = useState("");
+  const [outputPricePerMillion, setOutputPricePerMillion] = useState("");
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -120,11 +145,14 @@ export function SettingsModal({
     setMaxOutputTokens(
       llmConfig.maxOutputTokens ? String(llmConfig.maxOutputTokens) : ""
     );
+    setCurrency(llmConfig.currency ?? "");
+    setInputPricePerMillion(llmConfig.inputPricePerMillion === undefined ? "" : String(llmConfig.inputPricePerMillion));
+    setOutputPricePerMillion(llmConfig.outputPricePerMillion === undefined ? "" : String(llmConfig.outputPricePerMillion));
   }, [llmConfig]);
 
   if (!settingsModalOpen_) return null;
 
-  const buildInput = () => buildLlmConfigInput({ provider, model, apiKey, baseUrl, jsonMode, contextWindowTokens, maxOutputTokens });
+  const buildInput = () => buildLlmConfigInput({ provider, model, apiKey, baseUrl, jsonMode, contextWindowTokens, maxOutputTokens, currency, inputPricePerMillion, outputPricePerMillion });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -309,6 +337,34 @@ export function SettingsModal({
                 placeholder="e.g. 8192"
               />
             </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-heading"><strong>Usage pricing</strong><span>Optional provider prices used to calculate an auditable cost snapshot for each LLM turn.</span></div>
+            <div className="grid gap-2">
+              <label htmlFor="currency" className="text-sm font-medium">Currency</label>
+              <Select value={currency || undefined} onValueChange={setCurrency}>
+                <SelectTrigger id="currency" className="w-full"><SelectValue placeholder="Not configured" /></SelectTrigger>
+                <SelectContent>
+                  {CURRENCIES.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2">
+                <label htmlFor="inputPricePerMillion" className="text-sm font-medium">Input / 1M tokens</label>
+                <Input id="inputPricePerMillion" inputMode="decimal" value={inputPricePerMillion} onChange={(e) => setInputPricePerMillion(e.target.value.replace(/[^\d.]/g, ""))} placeholder="e.g. 2.00" />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="outputPricePerMillion" className="text-sm font-medium">Output / 1M tokens</label>
+                <Input id="outputPricePerMillion" inputMode="decimal" value={outputPricePerMillion} onChange={(e) => setOutputPricePerMillion(e.target.value.replace(/[^\d.]/g, ""))} placeholder="e.g. 8.00" />
+              </div>
+            </div>
+            {(currency || inputPricePerMillion || outputPricePerMillion) && (
+              <Button type="button" variant="ghost" size="sm" onClick={() => { setCurrency(""); setInputPricePerMillion(""); setOutputPricePerMillion(""); }}>
+                Clear pricing
+              </Button>
+            )}
           </div>
 
           {formError && <div className="settings-feedback is-error" role="alert"><WarningCircle size={16} weight="fill" />{formError}</div>}

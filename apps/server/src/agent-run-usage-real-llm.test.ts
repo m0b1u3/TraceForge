@@ -1,14 +1,23 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { loadLlmConfig } from "@traceforge/llm";
 import { createDb } from "./db/client.js";
 import { EventBus } from "./event-bus.js";
 import { registerRoutes } from "./routes.js";
 import { realLlmProviderForTest } from "./real-llm-test-provider.js";
 import type { AgentRunUsage, RuntimeEvent } from "@traceforge/shared";
+import { LlmConfigService } from "./llm-config-service.js";
 
 let app: FastifyInstance;
 let events: RuntimeEvent[];
 let caseId: string;
+let configDir: string;
+
+const INPUT_PRICE_PER_MILLION = 2.5;
+const OUTPUT_PRICE_PER_MILLION = 10;
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 60000;
@@ -26,10 +35,25 @@ beforeEach(async () => {
   events = [];
   bus.subscribe((e) => events.push(e));
   const provider = realLlmProviderForTest();
-  registerRoutes(app, db, bus, provider);
+  const realConfig = loadLlmConfig(resolve("config/llm.json"));
+  if (!realConfig) throw new Error("real LLM config is required for usage tests");
+  configDir = mkdtempSync(join(tmpdir(), "traceforge-priced-llm-"));
+  const configPath = join(configDir, "llm.json");
+  writeFileSync(configPath, JSON.stringify({
+    ...realConfig,
+    currency: "USD",
+    inputPricePerMillion: INPUT_PRICE_PER_MILLION,
+    outputPricePerMillion: OUTPUT_PRICE_PER_MILLION,
+  }));
+  registerRoutes(app, db, bus, provider, undefined, new LlmConfigService(configPath));
   await app.ready();
   caseId = (await app.inject({ method: "POST", url: "/api/cases", payload: { name: "d", allowHosts: ["t.com"] } })).json().id;
   events.length = 0;
+});
+
+afterEach(async () => {
+  await app.close();
+  rmSync(configDir, { recursive: true, force: true });
 });
 
 describe("agent run usage with real LLM", () => {
@@ -52,6 +76,10 @@ describe("agent run usage with real LLM", () => {
     let lastCumulative = 0;
     for (const e of usageEvents) {
       expect(e.totalTokens).toBeGreaterThan(0);
+      expect(e.currency).toBe("USD");
+      expect(e.inputCostMicros).toBe(Math.round(e.promptTokens * INPUT_PRICE_PER_MILLION));
+      expect(e.outputCostMicros).toBe(Math.round(e.completionTokens * OUTPUT_PRICE_PER_MILLION));
+      expect(e.totalCostMicros).toBe((e.inputCostMicros ?? 0) + (e.outputCostMicros ?? 0));
       expect(e.cumulativeTotalTokens).toBeGreaterThanOrEqual(lastCumulative);
       lastCumulative = e.cumulativeTotalTokens;
     }
@@ -74,6 +102,10 @@ describe("agent run usage with real LLM", () => {
     );
     expect(persisted.reduce((sum, entry) => sum + entry.totalTokens, 0)).toBe(
       usageEvents.at(-1)?.cumulativeTotalTokens,
+    );
+    expect(persisted.every((entry) => entry.currency === "USD")).toBe(true);
+    expect(persisted.reduce((sum, entry) => sum + (entry.totalCostMicros ?? 0), 0)).toBe(
+      usageEvents.reduce((sum, entry) => sum + (entry.totalCostMicros ?? 0), 0),
     );
 
     expect(events.some((e) => e.type === "agent_done")).toBe(true);

@@ -2,7 +2,7 @@
 
 > 记录于 2026-06-29。对比对象：Claude Code / Codex 类成熟编码 / 调查 agent。
 > 用途：后续依次 brainstorm → 计划 → 真实 LLM 验证（铁律：凡 LLM 行为一律真实 LLM 测，不用 mock 下结论）。
-> 当前 agent 形态：单 agent 多轮循环（AgentRuntime，显式 `DEFAULT_RUN_BUDGET`），已支持 OpenAI-compatible 原生流式、fallback 流式、运行中 steering、interrupt、LLM transient retry、工具错误恢复、显式只读工具并行执行、预算耗尽 continuation 状态与一键续跑；暂无子 agent。
+> 当前 agent 形态：单 agent 多轮循环（AgentRuntime，显式 `DEFAULT_RUN_BUDGET`），已支持 OpenAI-compatible 原生流式、fallback 流式、运行中 steering、interrupt、LLM transient retry、工具错误恢复、显式只读工具并行执行、预算耗尽 continuation 状态与一键续跑、同 Case 单 Run 互斥、Run/Token/成本持久化与崩溃恢复；暂无子 agent。
 
 ## 优先级总览
 
@@ -16,9 +16,9 @@
 | 5 | 动态轮次（去掉固定 MAX_TURNS=25 硬停） | 🟠 中 | ✅ 已完成 |
 | 6 | 子 agent / 任务分解并行执行 | 🟠 看需求 | 待做 |
 | 7 | 真 tokenizer（替代 chars/4 字符估算） | 🟠 中 | 待做 |
-| 8 | 成本 / 用量追踪（每轮 token 与花费） | 🟡 中 | ✅ Token 审计完成，成本待价格配置 |
+| 8 | 成本 / 用量追踪（每轮 token 与花费） | 🟡 中 | ✅ 已完成 |
 | 9 | 跨会话项目级记忆文件（类 CLAUDE.md 偏好层） | 🟡 低 | 待做 |
-| 10 | 并发 Case 隔离运行时保护 + 崩溃恢复（设计 §29，P1） | 🟡 看需求 | 待做 |
+| 10 | 并发 Case 隔离运行时保护 + 崩溃恢复（设计 §29，P1） | 🟡 看需求 | ✅ 本地单进程模型已完成 |
 | 11 | Observer 实时守护（当前为 run 后旁路，非运行中拦截） | 🟡 中 | 待做 |
 
 ---
@@ -65,16 +65,15 @@
 - **目标**：精确 token 计数（tiktoken 类）+ 模型 usage 反馈闭环。
 
 ### 8. 成本 / 用量追踪 🟡
-- **现状**：✅ Provider 返回的每轮 input/output/total token 已写入 SQLite `agent_run_usage`，Run 状态与累计 token 写入 `agent_runs`；服务重启后可恢复，运行中崩溃的 Run 会标记为 interrupted。工作台 Token 按钮可查看最新 Run 的逐轮明细。当前模型配置未提供输入/输出单价，因此不伪造成本。
-- **后续**：在 LLM 配置中增加显式输入/输出单价与币种后，再由持久化 usage 计算可审计成本。
+- **现状**：✅ Provider 返回的每轮 input/output/total token 已写入 SQLite `agent_run_usage`，Run 状态与累计 token 写入 `agent_runs`；服务重启后可恢复，运行中崩溃的 Run 会标记为 interrupted。LLM 设置支持可选 ISO 币种与每百万输入/输出 Token 单价；每轮成本以整数微单位随 usage 一起持久化，保证计算稳定且价格调整不改写历史账目。工作台 Token 弹窗展示累计成本和逐轮成本；未配置价格的历史或新 Run 明确显示未计价。
 
 ### 9. 跨会话项目级记忆文件 🟡
 - **现状**：有 SQLite 存对话/Facts（case 级），无项目级长期偏好/约定层。
 - **目标**：类 CLAUDE.md 的项目记忆（红队偏好、常用目标约定等）。
 
 ### 10. 并发 / 崩溃恢复 🟡（设计 §29，P1）
-- **现状**：两个 agent run 并发、进程崩溃恢复均未处理。
-- **目标**：运行时 Case 隔离保护 + 崩溃后状态恢复。
+- **现状**：✅ 在当前本地单进程部署模型内，`AgentRunRegistry` 对同一 Case 强制单活动 Run，不同 Case 可独立运行；重复启动返回 HTTP 409。Run 和逐轮 usage 持久化到 SQLite，服务启动时遗留的非终态 Run 会恢复为 `interrupted`，而不是继续显示为运行中。
+- **边界**：若未来支持多个后端进程共同写同一数据库，还需要数据库级租约/唯一约束；当前个人本地单服务部署不需要跨进程锁。
 
 ### 11. Observer 实时守护 🟡
 - **现状**：Observer 在 run 结束后旁路审查，不能在 agent 跑偏的当下拦截。

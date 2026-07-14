@@ -86,7 +86,8 @@ export class AgentRunRegistry {
 
   addUsage(
     runId: string,
-    usage: { promptTokens: number; completionTokens: number; totalTokens: number },
+    usage: Pick<AgentRunUsage, "promptTokens" | "completionTokens" | "totalTokens">
+      & Partial<Pick<AgentRunUsage, "currency" | "inputCostMicros" | "outputCostMicros" | "totalCostMicros">>,
   ): { run: AgentRun; usage: AgentRunUsage } | undefined {
     const active = this.runs.get(runId);
     if (!active) return undefined;
@@ -98,12 +99,19 @@ export class AgentRunRegistry {
     };
     this.store?.save(active.run);
     const entries = this.usageByRun.get(runId) ?? [];
-    const entry = this.store?.appendUsage(active.run, usage) ?? {
+    const usageWithCost = {
+      ...usage,
+      currency: usage.currency ?? null,
+      inputCostMicros: usage.inputCostMicros ?? null,
+      outputCostMicros: usage.outputCostMicros ?? null,
+      totalCostMicros: usage.totalCostMicros ?? null,
+    };
+    const entry = this.store?.appendUsage(active.run, usageWithCost) ?? {
       id: `usage_${randomUUID()}`,
       runId,
       caseId: active.run.caseId,
       turn: entries.length + 1,
-      ...usage,
+      ...usageWithCost,
       createdAt: now(),
     };
     entries.push(entry);

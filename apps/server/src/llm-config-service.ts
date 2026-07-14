@@ -10,6 +10,9 @@ export interface LlmConfigDto {
   jsonMode?: "json_schema" | "json_object";
   contextWindowTokens?: number;
   maxOutputTokens?: number;
+  currency?: string | null;
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
 }
 
 export interface LlmConfigView extends LlmConfig {
@@ -65,6 +68,9 @@ export class LlmConfigService {
       jsonMode: dto.jsonMode,
       contextWindowTokens: dto.contextWindowTokens ?? existing?.contextWindowTokens,
       maxOutputTokens: dto.maxOutputTokens ?? existing?.maxOutputTokens,
+      currency: dto.currency === null ? undefined : (dto.currency?.trim().toUpperCase() ?? existing?.currency),
+      inputPricePerMillion: dto.inputPricePerMillion === null ? undefined : (dto.inputPricePerMillion ?? existing?.inputPricePerMillion),
+      outputPricePerMillion: dto.outputPricePerMillion === null ? undefined : (dto.outputPricePerMillion ?? existing?.outputPricePerMillion),
     };
     const parsed = LlmConfigSchema.safeParse(config);
     if (!parsed.success) throw new Error(`invalid LLM config: ${parsed.error.message}`);

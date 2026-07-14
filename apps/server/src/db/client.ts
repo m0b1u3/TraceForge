@@ -96,7 +96,9 @@ export function createDb(path: string) {
     CREATE TABLE IF NOT EXISTS agent_run_usage (
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL, case_id TEXT NOT NULL, turn INTEGER NOT NULL,
       prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
-      total_tokens INTEGER NOT NULL, created_at TEXT NOT NULL
+      total_tokens INTEGER NOT NULL, currency TEXT,
+      input_cost_micros INTEGER, output_cost_micros INTEGER, total_cost_micros INTEGER,
+      created_at TEXT NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_run_usage_turn ON agent_run_usage(run_id, turn);
     CREATE INDEX IF NOT EXISTS idx_agent_run_usage_case ON agent_run_usage(case_id);
@@ -110,6 +112,12 @@ export function createDb(path: string) {
   if (!hasWarningColumn("resolved_at")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN resolved_at TEXT");
   const trafficColumns = sqlite.prepare("PRAGMA table_info(traffic_entries)").all() as Array<{ name: string }>;
   if (!trafficColumns.some((c) => c.name === "request_body")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN request_body TEXT");
+  const usageColumns = sqlite.prepare("PRAGMA table_info(agent_run_usage)").all() as Array<{ name: string }>;
+  const hasUsageColumn = (name: string) => usageColumns.some((column) => column.name === name);
+  if (!hasUsageColumn("currency")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN currency TEXT");
+  if (!hasUsageColumn("input_cost_micros")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN input_cost_micros INTEGER");
+  if (!hasUsageColumn("output_cost_micros")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN output_cost_micros INTEGER");
+  if (!hasUsageColumn("total_cost_micros")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN total_cost_micros INTEGER");
   return drizzle(sqlite);
 }
 

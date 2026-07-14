@@ -34,7 +34,7 @@ export type RuntimeEvent =
   | { type: "agent_run_needs_continuation"; run: AgentRun; reason: string }
   | { type: "agent_run_completed"; run: AgentRun; content: string }
   | { type: "agent_run_failed"; run: AgentRun; error: string }
-  | { type: "agent_usage"; caseId: string; runId: string; usageId: string; turn: number; createdAt: string; promptTokens: number; completionTokens: number; totalTokens: number; cumulativePromptTokens: number; cumulativeCompletionTokens: number; cumulativeTotalTokens: number }
+  | { type: "agent_usage"; caseId: string; runId: string; usageId: string; turn: number; createdAt: string; promptTokens: number; completionTokens: number; totalTokens: number; currency: string | null; inputCostMicros: number | null; outputCostMicros: number | null; totalCostMicros: number | null; cumulativePromptTokens: number; cumulativeCompletionTokens: number; cumulativeTotalTokens: number }
   | { type: "approval_requested"; caseId: string; approvalId: string; tool: string; input: string }
   | { type: "approval_resolved"; caseId: string; approvalId: string; tool: string; decision: "approved" | "rejected" }
   | { type: "action_recorded"; action: ActionCard }

@@ -10,6 +10,18 @@ export const LlmConfigSchema = z.object({
   jsonMode: z.enum(["json_schema", "json_object"]).optional(),
   contextWindowTokens: z.number().int().positive().optional(),
   maxOutputTokens: z.number().int().positive().optional(),
+  currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  inputPricePerMillion: z.number().finite().nonnegative().optional(),
+  outputPricePerMillion: z.number().finite().nonnegative().optional(),
+}).superRefine((config, ctx) => {
+  const pricingFields = [config.currency, config.inputPricePerMillion, config.outputPricePerMillion];
+  const configured = pricingFields.filter((value) => value !== undefined).length;
+  if (configured !== 0 && configured !== pricingFields.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "currency and both per-million token prices must be configured together",
+    });
+  }
 });
 export type LlmConfig = z.infer<typeof LlmConfigSchema>;
 

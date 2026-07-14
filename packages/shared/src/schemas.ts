@@ -250,6 +250,10 @@ export const AgentRunUsageSchema = z.object({
   promptTokens: z.number().int().nonnegative(),
   completionTokens: z.number().int().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
+  currency: z.string().regex(/^[A-Z]{3}$/).nullable().default(null),
+  inputCostMicros: z.number().int().nonnegative().nullable().default(null),
+  outputCostMicros: z.number().int().nonnegative().nullable().default(null),
+  totalCostMicros: z.number().int().nonnegative().nullable().default(null),
   createdAt: z.string(),
 });
 export type AgentRunUsage = z.infer<typeof AgentRunUsageSchema>;

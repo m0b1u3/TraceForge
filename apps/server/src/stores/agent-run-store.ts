@@ -39,7 +39,7 @@ export class AgentRunStore {
 
   appendUsage(
     run: AgentRun,
-    usage: Pick<AgentRunUsage, "promptTokens" | "completionTokens" | "totalTokens">,
+    usage: Pick<AgentRunUsage, "promptTokens" | "completionTokens" | "totalTokens" | "currency" | "inputCostMicros" | "outputCostMicros" | "totalCostMicros">,
   ): AgentRunUsage {
     const turn = this.listUsage(run.id).length + 1;
     const entry = AgentRunUsageSchema.parse({

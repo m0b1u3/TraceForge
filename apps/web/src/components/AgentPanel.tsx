@@ -45,6 +45,15 @@ export function canSubmitAgentInstruction(goal: string, agentBusy: boolean, hasA
   return goal.trim().length > 0 && (!agentBusy || hasActiveRun);
 }
 
+export function formatUsageCost(micros: number, currency: string): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  }).format(micros / 1_000_000);
+}
+
 export function AgentPanel() {
   const {
     caseId, agentEvents, agentBusy, setAgentBusy, showToast, pendingApproval,
@@ -61,6 +70,11 @@ export function AgentPanel() {
   const shouldAutoScrollRef = useRef(true);
   const conversationItems = buildAgentConversationItems({ events: agentEvents, pendingApproval, pendingScope, agentBusy });
   const latestAgentText = agentEvents.at(-1)?.text;
+  const pricedUsage = tokenUsageHistory.filter((entry) => entry.currency && entry.totalCostMicros !== null);
+  const usageCurrency = pricedUsage.length === tokenUsageHistory.length ? (pricedUsage[0]?.currency ?? null) : null;
+  const totalCostMicros = usageCurrency && pricedUsage.every((entry) => entry.currency === usageCurrency)
+    ? pricedUsage.reduce((sum, entry) => sum + (entry.totalCostMicros ?? 0), 0)
+    : null;
 
   useEffect(() => {
     setInterventionAction(null);
@@ -343,12 +357,13 @@ export function AgentPanel() {
             <span><strong>{tokenUsage.promptTokens.toLocaleString()}</strong> input</span>
             <span><strong>{tokenUsage.completionTokens.toLocaleString()}</strong> output</span>
             <span><strong>{tokenUsage.totalTokens.toLocaleString()}</strong> total</span>
+            <span><strong>{usageCurrency && totalCostMicros !== null ? formatUsageCost(totalCostMicros, usageCurrency) : "Not configured"}</strong> cost</span>
           </div>
           {tokenUsageHistory.length > 0 ? (
             <div className="usage-table-wrap">
               <table className="usage-table">
                 <thead>
-                  <tr><th>Turn</th><th>Input</th><th>Output</th><th>Total</th></tr>
+                  <tr><th>Turn</th><th>Input</th><th>Output</th><th>Total</th><th>Cost</th></tr>
                 </thead>
                 <tbody>
                   {tokenUsageHistory.map((entry) => (
@@ -357,6 +372,7 @@ export function AgentPanel() {
                       <td>{entry.promptTokens.toLocaleString()}</td>
                       <td>{entry.completionTokens.toLocaleString()}</td>
                       <td>{entry.totalTokens.toLocaleString()}</td>
+                      <td>{entry.currency && entry.totalCostMicros !== null ? formatUsageCost(entry.totalCostMicros, entry.currency) : "—"}</td>
                     </tr>
                   ))}
                 </tbody>

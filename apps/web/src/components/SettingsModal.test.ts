@@ -40,6 +40,7 @@ describe("SettingsModal", () => {
     expect(html).toContain("Model");
     expect(html).toContain("API Key");
     expect(html).toContain("Base URL");
+    expect(html).toContain("Usage pricing");
     expect(html).toContain("Test Connection");
   });
 
@@ -57,6 +58,9 @@ describe("SettingsModal", () => {
       jsonMode: "default",
       contextWindowTokens: "128000",
       maxOutputTokens: "8192",
+      currency: "",
+      inputPricePerMillion: "",
+      outputPricePerMillion: "",
     });
 
     expect(input).toEqual({
@@ -67,7 +71,37 @@ describe("SettingsModal", () => {
       jsonMode: undefined,
       contextWindowTokens: 128000,
       maxOutputTokens: 8192,
+      currency: null,
+      inputPricePerMillion: null,
+      outputPricePerMillion: null,
     });
+  });
+
+  it("builds and validates a complete pricing configuration", () => {
+    const input = buildLlmConfigInput({
+      provider: "openai",
+      model: "priced-model",
+      apiKey: "",
+      baseUrl: "",
+      jsonMode: "default",
+      contextWindowTokens: "",
+      maxOutputTokens: "",
+      currency: "CNY",
+      inputPricePerMillion: "1.5",
+      outputPricePerMillion: "6",
+    });
+    expect(validateLlmSettings(input)).toBeNull();
+    expect(input).toMatchObject({ currency: "CNY", inputPricePerMillion: 1.5, outputPricePerMillion: 6 });
+  });
+
+  it("rejects incomplete pricing", () => {
+    expect(validateLlmSettings({
+      provider: "openai",
+      model: "priced-model",
+      currency: "USD",
+      inputPricePerMillion: null,
+      outputPricePerMillion: null,
+    })).toContain("both token prices");
   });
 
   it("rejects an output budget that consumes the whole context window", () => {

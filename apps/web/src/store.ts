@@ -414,6 +414,10 @@ export const useStore = create<State>((set, get) => ({
             promptTokens: event.promptTokens,
             completionTokens: event.completionTokens,
             totalTokens: event.totalTokens,
+            currency: event.currency,
+            inputCostMicros: event.inputCostMicros,
+            outputCostMicros: event.outputCostMicros,
+            totalCostMicros: event.totalCostMicros,
             createdAt: event.createdAt,
           }],
       }));

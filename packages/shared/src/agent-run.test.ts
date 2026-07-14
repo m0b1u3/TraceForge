@@ -108,6 +108,26 @@ describe("AgentRunUsageSchema", () => {
     });
 
     expect(usage.totalTokens).toBe(150);
+    expect(usage.currency).toBeNull();
+    expect(usage.totalCostMicros).toBeNull();
+  });
+
+  it("accepts an auditable per-turn cost snapshot", () => {
+    const usage = AgentRunUsageSchema.parse({
+      id: "usage_2",
+      runId: "run_1",
+      caseId: "case_1",
+      turn: 2,
+      promptTokens: 1_000,
+      completionTokens: 100,
+      totalTokens: 1_100,
+      currency: "USD",
+      inputCostMicros: 2_500,
+      outputCostMicros: 1_000,
+      totalCostMicros: 3_500,
+      createdAt: "2026-07-13T00:01:00.000Z",
+    });
+    expect(usage).toMatchObject({ currency: "USD", totalCostMicros: 3_500 });
   });
 
   it("rejects negative counts and non-positive turn numbers", () => {

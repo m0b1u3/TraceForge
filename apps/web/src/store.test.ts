@@ -114,6 +114,10 @@ describe("store token usage", () => {
       promptTokens: 10,
       completionTokens: 5,
       totalTokens: 15,
+      currency: "USD",
+      inputCostMicros: 20,
+      outputCostMicros: 50,
+      totalCostMicros: 70,
       cumulativePromptTokens: 10,
       cumulativeCompletionTokens: 5,
       cumulativeTotalTokens: 15,
@@ -130,14 +134,18 @@ describe("store token usage", () => {
       promptTokens: 3,
       completionTokens: 2,
       totalTokens: 5,
+      currency: "USD",
+      inputCostMicros: 6,
+      outputCostMicros: 20,
+      totalCostMicros: 26,
       cumulativePromptTokens: 13,
       cumulativeCompletionTokens: 7,
       cumulativeTotalTokens: 20,
     });
     expect(useStore.getState().tokenUsage).toEqual({ promptTokens: 13, completionTokens: 7, totalTokens: 20 });
     expect(useStore.getState().tokenUsageHistory).toMatchObject([
-      { id: "usage_1", turn: 1, promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      { id: "usage_2", turn: 2, promptTokens: 3, completionTokens: 2, totalTokens: 5 },
+      { id: "usage_1", turn: 1, promptTokens: 10, completionTokens: 5, totalTokens: 15, totalCostMicros: 70 },
+      { id: "usage_2", turn: 2, promptTokens: 3, completionTokens: 2, totalTokens: 5, totalCostMicros: 26 },
     ]);
   });
 
@@ -152,6 +160,10 @@ describe("store token usage", () => {
       promptTokens: 10,
       completionTokens: 5,
       totalTokens: 15,
+      currency: null,
+      inputCostMicros: null,
+      outputCostMicros: null,
+      totalCostMicros: null,
       cumulativePromptTokens: 10,
       cumulativeCompletionTokens: 5,
       cumulativeTotalTokens: 15,

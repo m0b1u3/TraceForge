@@ -38,6 +38,7 @@ import { ContextSummaryStore } from "./stores/context-summary-store.js";
 import { buildContext, compressFar, deriveContextBudget, estimateTokens, shouldCompressFarHistory } from "@traceforge/reasoning-core";
 import { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool, makeSearchFactsTool, makeGetFactDetailTool, makeSearchTrafficTool, makeRecallConversationTool } from "@traceforge/extension";
 import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
+import { calculateUsageCost } from "./llm-cost.js";
 import { PendingInterventionRegistry } from "./pending-interventions.js";
 import { AgentRunStore } from "./stores/agent-run-store.js";
 
@@ -548,7 +549,12 @@ export function registerRoutes(
       .filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done")
       .slice(-20)
       .map((e) => ({ role: e.kind === "user" ? ("user" as const) : ("assistant" as const), text: e.text }));
-    const llmConfig = loadLlmConfig() ?? undefined;
+    let llmConfig;
+    try {
+      llmConfig = llmService?.load() ?? loadLlmConfig() ?? undefined;
+    } catch {
+      llmConfig = loadLlmConfig() ?? undefined;
+    }
     const contextBudget = deriveContextBudget({
       contextWindowTokens: llmConfig?.contextWindowTokens,
       maxOutputTokens: llmConfig?.maxOutputTokens,
@@ -617,10 +623,15 @@ export function registerRoutes(
         });
       }
       else if (e.type === "usage") {
+        const cost = calculateUsageCost({
+          promptTokens: e.promptTokens ?? 0,
+          completionTokens: e.completionTokens ?? 0,
+        }, llmConfig);
         const recorded = runs.addUsage(runId, {
           promptTokens: e.promptTokens ?? 0,
           completionTokens: e.completionTokens ?? 0,
           totalTokens: e.totalTokens ?? 0,
+          ...cost,
         });
         bus.emit({
           type: "agent_usage",
@@ -632,6 +643,10 @@ export function registerRoutes(
           promptTokens: e.promptTokens ?? 0,
           completionTokens: e.completionTokens ?? 0,
           totalTokens: e.totalTokens ?? 0,
+          currency: recorded?.usage.currency ?? null,
+          inputCostMicros: recorded?.usage.inputCostMicros ?? null,
+          outputCostMicros: recorded?.usage.outputCostMicros ?? null,
+          totalCostMicros: recorded?.usage.totalCostMicros ?? null,
           cumulativePromptTokens: recorded?.run.promptTokens ?? e.cumulativePromptTokens ?? 0,
           cumulativeCompletionTokens: recorded?.run.completionTokens ?? e.cumulativeCompletionTokens ?? 0,
           cumulativeTotalTokens: recorded?.run.totalTokens ?? e.cumulativeTotalTokens ?? 0,

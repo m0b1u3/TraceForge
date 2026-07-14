@@ -65,6 +65,36 @@ describe("LlmConfigService", () => {
     expect(json.maxOutputTokens).toBe(8192);
   });
 
+  it("persists, preserves, and explicitly clears complete usage pricing", () => {
+    makeConfig(tmp, { provider: "openai", model: "m", apiKey: "sk-openai" });
+    const svc = new LlmConfigService(join(tmp, "llm.json"));
+    svc.reload({
+      provider: "openai",
+      model: "m",
+      currency: "usd",
+      inputPricePerMillion: 2.5,
+      outputPricePerMillion: 10,
+    });
+    svc.reload({ provider: "openai", model: "m2" });
+    expect(svc.load()).toMatchObject({
+      currency: "USD",
+      inputPricePerMillion: 2.5,
+      outputPricePerMillion: 10,
+    });
+
+    svc.reload({
+      provider: "openai",
+      model: "m2",
+      currency: null,
+      inputPricePerMillion: null,
+      outputPricePerMillion: null,
+    });
+    const json = JSON.parse(readFileSync(join(tmp, "llm.json"), "utf8"));
+    expect(json.currency).toBeUndefined();
+    expect(json.inputPricePerMillion).toBeUndefined();
+    expect(json.outputPricePerMillion).toBeUndefined();
+  });
+
   it("initializes the runtime provider from existing config", () => {
     makeConfig(tmp, { provider: "openai", model: "m", apiKey: "sk-openai" });
     const svc = new LlmConfigService(join(tmp, "llm.json"));
