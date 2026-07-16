@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
-import { Brain, CaretDown, Check, CheckCircle, Copy, Robot, TerminalWindow, User, Warning } from "@phosphor-icons/react";
+import { memo, useState, type ReactNode } from "react";
+import { Brain, CaretDown, Check, CheckCircle, Copy, MagnifyingGlass, Robot, TerminalWindow, User, Warning } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -7,13 +7,16 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import type { AgentConversationEventItem } from "./agent-conversation.js";
+import { useStore } from "../../store.js";
 
-export function AgentEventRow({ item }: { item: AgentConversationEventItem }) {
+export const AgentEventRow = memo(function AgentEventRow({ item }: { item: AgentConversationEventItem }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const selectAgentEvent = useStore((state) => state.selectAgentEvent);
   const isReasoning = item.kind === "reasoning";
   const isTool = item.kind === "tool_call" || item.kind === "tool_result";
   const canExpand = isReasoning || (isTool && item.summary !== item.text);
+  const inspect = isTool ? () => selectAgentEvent({ kind: item.kind, label: item.label, text: item.text }) : undefined;
 
   if (canExpand) {
     return (
@@ -23,7 +26,7 @@ export function AgentEventRow({ item }: { item: AgentConversationEventItem }) {
         className={`agent-event ${eventClassName(item.kind)} ${expanded ? "is-expanded" : ""}`}
       >
         <EventHeader item={item}>
-          <EventActions text={item.text} copied={copied} onCopiedChange={setCopied}>
+          <EventActions text={item.text} copied={copied} onCopiedChange={setCopied} onInspect={inspect}>
             <CollapsibleTrigger asChild>
               <Button type="button" variant="ghost" size="icon-xs" aria-label={expanded ? "Collapse event" : "Expand event"} title={expanded ? "Collapse" : "Expand"}>
                 <CaretDown className={`agent-event-chevron ${expanded ? "is-open" : ""}`} size={14} />
@@ -41,22 +44,24 @@ export function AgentEventRow({ item }: { item: AgentConversationEventItem }) {
 
   return (
     <article className={`agent-event ${eventClassName(item.kind)}`}>
-      <EventHeader item={item}><EventActions text={item.text} copied={copied} onCopiedChange={setCopied} /></EventHeader>
+      <EventHeader item={item}><EventActions text={item.text} copied={copied} onCopiedChange={setCopied} onInspect={inspect} /></EventHeader>
       <p className="agent-event-content">{item.text}</p>
     </article>
   );
-}
+}, (previous, next) => previous.item.key === next.item.key && previous.item.kind === next.item.kind && previous.item.label === next.item.label && previous.item.text === next.item.text && previous.item.summary === next.item.summary);
 
 function EventActions({
   text,
   copied,
   onCopiedChange,
   children,
+  onInspect,
 }: {
   text: string;
   copied: boolean;
   onCopiedChange: (copied: boolean) => void;
   children?: ReactNode;
+  onInspect?: () => void;
 }) {
   const copy = async () => {
     await navigator.clipboard.writeText(text);
@@ -65,6 +70,7 @@ function EventActions({
   };
   return (
     <span className="agent-event-actions">
+      {onInspect && <Button type="button" variant="ghost" size="icon-xs" aria-label="Inspect event" title="Inspect" onClick={onInspect}><MagnifyingGlass size={13} /></Button>}
       <Button type="button" variant="ghost" size="icon-xs" aria-label="Copy event" title="Copy" onClick={() => void copy()}>
         {copied ? <Check size={13} /> : <Copy size={13} />}
       </Button>

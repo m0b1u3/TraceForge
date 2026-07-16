@@ -218,6 +218,27 @@ describe("store agent tool events", () => {
     });
   });
 });
+
+describe("store context inspector", () => {
+  beforeEach(() => resetStore());
+
+  it("selects traffic as inspector context and clears it with captured evidence", () => {
+    useStore.getState().selectTraffic("traffic_1");
+    expect(useStore.getState()).toMatchObject({ selectedTrafficId: "traffic_1", inspectorMode: "traffic" });
+
+    useStore.getState().clearTraffic();
+    expect(useStore.getState()).toMatchObject({ traffic: [], selectedTrafficId: null, inspectorMode: "overview" });
+  });
+});
+describe("store traffic synchronization", () => {
+  beforeEach(() => resetStore());
+
+  it("does not duplicate a captured response received more than once", () => {
+    const entry = useStore.getState().traffic[0];
+    useStore.getState().addEntry(entry);
+    expect(useStore.getState().traffic).toHaveLength(1);
+  });
+});
 describe("store agent streaming", () => {
   beforeEach(() => {
     resetStore();

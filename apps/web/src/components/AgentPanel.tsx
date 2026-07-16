@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Broom, CircleNotch, PaperPlaneTilt, Sparkle, Stop, TerminalWindow } from "@phosphor-icons/react";
+import { ArrowDown, Broom, CircleNotch, PaperPlaneTilt, Play, Sparkle, Stop, TerminalWindow } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import type { AgentRun } from "@traceforge/shared";
 import { runAgent, resolveApproval, approveScope, rejectScope, steerAgentRun, interruptAgentRun } from "../api.js";
@@ -12,6 +12,8 @@ import {
   type InterventionAction,
 } from "./agent/AgentInterventionCard.js";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog.js";
+import { RunPhase, deriveRunPhase } from "./agent/RunPhase.js";
+import { useShallow } from "zustand/react/shallow";
 
 export { buildAgentConversationItems, type AgentConversationItem } from "./agent/agent-conversation.js";
 
@@ -59,13 +61,25 @@ export function AgentPanel() {
     caseId, agentEvents, agentBusy, setAgentBusy, showToast, pendingApproval,
     pendingScope, clearPendingScope, clearPendingApproval, resetAgent, addAgentEvent,
     activeRun, setActiveRun, continuationRun, setContinuationRun, tokenUsage, tokenUsageHistory,
-  } = useStore();
+    trafficCount, factCount,
+  } = useStore(useShallow((state) => ({
+    caseId: state.caseId, agentEvents: state.agentEvents, agentBusy: state.agentBusy, setAgentBusy: state.setAgentBusy,
+    showToast: state.showToast, pendingApproval: state.pendingApproval, pendingScope: state.pendingScope,
+    clearPendingScope: state.clearPendingScope, clearPendingApproval: state.clearPendingApproval,
+    resetAgent: state.resetAgent, addAgentEvent: state.addAgentEvent, activeRun: state.activeRun,
+    setActiveRun: state.setActiveRun, continuationRun: state.continuationRun,
+    setContinuationRun: state.setContinuationRun, tokenUsage: state.tokenUsage,
+    tokenUsageHistory: state.tokenUsageHistory,
+    trafficCount: state.traffic.length, factCount: state.facts.length,
+  })));
   const [goal, setGoal] = useState("");
   const [interventionAction, setInterventionAction] = useState<InterventionAction>(null);
   const [interventionError, setInterventionError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [continuing, setContinuing] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [runLauncherOpen, setRunLauncherOpen] = useState(false);
+  const [showLatest, setShowLatest] = useState(false);
   const messagesRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const conversationItems = buildAgentConversationItems({ events: agentEvents, pendingApproval, pendingScope, agentBusy });
@@ -90,6 +104,12 @@ export function AgentPanel() {
     const openUsage = () => setUsageOpen(true);
     globalThis.addEventListener("traceforge:open-token-usage", openUsage);
     return () => globalThis.removeEventListener("traceforge:open-token-usage", openUsage);
+  }, []);
+
+  useEffect(() => {
+    const openRunLauncher = () => setRunLauncherOpen(true);
+    globalThis.addEventListener("traceforge:new-run", openRunLauncher);
+    return () => globalThis.removeEventListener("traceforge:new-run", openRunLauncher);
   }, []);
 
   if (!caseId) return null;
@@ -261,6 +281,7 @@ export function AgentPanel() {
         ref={messagesRef}
         onScroll={(event) => {
           shouldAutoScrollRef.current = shouldStickToBottomAfterUpdate(event.currentTarget);
+          setShowLatest(!shouldAutoScrollRef.current);
         }}
       >
         {conversationItems.length === 0 && (
@@ -313,6 +334,7 @@ export function AgentPanel() {
           />
         )}
       </section>
+      {showLatest && <button className="console-latest" type="button" onClick={() => { const el = messagesRef.current; if (el) el.scrollTop = el.scrollHeight; shouldAutoScrollRef.current = true; setShowLatest(false); }}><ArrowDown size={13} />Latest activity</button>}
       <div className="composer">
         <textarea
           rows={1} value={goal} onChange={(e) => setGoal(e.target.value)}
@@ -341,6 +363,7 @@ export function AgentPanel() {
           {agentBusy ? <CircleNotch size={15} className="tf-spin" /> : <><span>Send</span><PaperPlaneTilt size={14} weight="fill" /></>}
         </button>
       </div>
+      <RunPhase phase={deriveRunPhase({ events: agentEvents, trafficCount, factCount, busy: agentBusy })} blocked={Boolean(pendingApproval || pendingScope)} active={agentBusy || Boolean(pendingApproval || pendingScope)} />
       <Dialog open={usageOpen} onOpenChange={setUsageOpen}>
         <DialogContent className="usage-dialog">
           <DialogHeader>
@@ -377,6 +400,14 @@ export function AgentPanel() {
           ) : (
             <p className="usage-empty">No provider usage has been recorded for this run.</p>
           )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={runLauncherOpen} onOpenChange={setRunLauncherOpen}>
+        <DialogContent className="run-launcher-dialog">
+          <DialogHeader><DialogTitle>Start a new security run</DialogTitle><DialogDescription>Define the authorized target and the outcome the Agent should pursue.</DialogDescription></DialogHeader>
+          <label className="run-launcher-field"><span>Target and objective</span><textarea rows={5} value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="Example: Review https://app.example.com/login for authorization flaws within the approved scope." autoFocus /></label>
+          <div className="run-launcher-note"><strong>Authorization boundary</strong><span>The Agent will stop and request approval before expanding beyond the case scope.</span></div>
+          <div className="run-launcher-actions"><button className="tf-btn tf-btn-ghost" type="button" onClick={() => setRunLauncherOpen(false)}>Cancel</button><button className="tf-btn tf-btn-primary" type="button" disabled={!canSubmitAgentInstruction(goal, agentBusy, Boolean(activeRun))} onClick={() => { void send(); setRunLauncherOpen(false); }}><Play size={14} weight="fill" />Start run</button></div>
         </DialogContent>
       </Dialog>
     </main>

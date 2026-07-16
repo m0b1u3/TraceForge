@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage } from "./api.js";
+import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 
 export interface AgentUiEvent {
@@ -54,6 +54,10 @@ interface State {
   pendingApproval: { approvalId: string; tool: string; input: string } | null;
   browserController: "llm" | "human" | null;
   browserUrl: string;
+  selectedTrafficId: string | null;
+  selectedFactId: string | null;
+  selectedAgentEvent: { kind: "tool_call" | "tool_result"; label: string; text: string } | null;
+  inspectorMode: "overview" | "traffic" | "finding";
   cases: Case[];
   activeTab: "facts" | "tasks" | "timeline" | "mcp" | "graph" | "observer";
   graphModalOpen: boolean;
@@ -92,6 +96,9 @@ interface State {
   setPendingApproval: (p: { approvalId: string; tool: string; input: string }) => void;
   clearPendingApproval: (approvalId?: string) => void;
   setBrowser: (controller: "llm" | "human" | null, url?: string) => void;
+  selectTraffic: (id: string | null) => void;
+  selectFact: (id: string | null) => void;
+  selectAgentEvent: (event: State["selectedAgentEvent"]) => void;
   resetBrowser: () => void;
   resetAgent: () => void;
   connectWs: () => () => void;
@@ -123,6 +130,10 @@ export const useStore = create<State>((set, get) => ({
   pendingApproval: null,
   browserController: null,
   browserUrl: "",
+  selectedTrafficId: null,
+  selectedFactId: null,
+  selectedAgentEvent: null,
+  inspectorMode: "overview",
   cases: [],
   activeTab: "facts",
   graphModalOpen: false,
@@ -182,14 +193,14 @@ export const useStore = create<State>((set, get) => ({
   clearPendingScope: (host) => set((s) => (
     !host || s.pendingScope?.host === host ? { pendingScope: null } : {}
   )),
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", warnings: [], pendingScope: null, pendingConfirmation: null }),
+  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], pendingScope: null, pendingConfirmation: null }),
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
   enterCase: async (id) => {
     get().setCase(id);
-    const [traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents, activeRun, pendingInterventions] = await Promise.all([
-      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id), listAgentEvents(id), getActiveAgentRun(id), getPendingInterventions(id),
+    const [traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents, activeRun, pendingInterventions, browserState] = await Promise.all([
+      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id), listAgentEvents(id), getActiveAgentRun(id), getPendingInterventions(id), getBrowserState(id),
     ]);
     const latestRun = activeRun ?? await getLatestAgentRun(id);
     const tokenUsageHistory = latestRun ? await getAgentRunUsage(latestRun.id) : [];
@@ -209,6 +220,8 @@ export const useStore = create<State>((set, get) => ({
       tokenUsageHistory,
       pendingApproval: pendingInterventions.approval,
       pendingScope: pendingInterventions.scope,
+      browserController: browserState.controller,
+      browserUrl: browserState.url ?? "",
     });
   },
   deleteCase: async (id) => {
@@ -239,7 +252,9 @@ export const useStore = create<State>((set, get) => ({
     }));
     get().showToast("Case deleted");
   },
-  addEntry: (e) => set((s) => ({ traffic: [...s.traffic, e] })),
+  addEntry: (e) => set((s) => (
+    s.traffic.some((entry) => entry.id === e.id) ? {} : { traffic: [...s.traffic, e] }
+  )),
   addFact: (f) => set((s) => ({ facts: [...s.facts, f] })),
   upsertFact: (f) =>
     set((s) => {
@@ -261,12 +276,15 @@ export const useStore = create<State>((set, get) => ({
   addAction: (a) => set((s) => ({ actions: [...s.actions, a] })),
   addDecision: (d) => set((s) => ({ decisions: [...s.decisions, d] })),
   addAgentEvent: (e) => set((s) => ({ agentEvents: [...s.agentEvents, e] })),
-  clearTraffic: () => set({ traffic: [] }),
+  clearTraffic: () => set((state) => ({ traffic: [], selectedTrafficId: null, ...(state.selectedTrafficId ? { inspectorMode: "overview" as const } : {}) })),
   setPendingApproval: (p) => set({ pendingApproval: p }),
   clearPendingApproval: (approvalId) => set((s) => (
     !approvalId || s.pendingApproval?.approvalId === approvalId ? { pendingApproval: null } : {}
   )),
   setBrowser: (controller, url) => set((s) => ({ browserController: controller, browserUrl: url ?? s.browserUrl })),
+  selectTraffic: (id) => set({ selectedTrafficId: id, selectedFactId: null, selectedAgentEvent: null, inspectorMode: id ? "traffic" : "overview" }),
+  selectFact: (id) => set({ selectedFactId: id, selectedTrafficId: null, selectedAgentEvent: null, inspectorMode: id ? "finding" : "overview" }),
+  selectAgentEvent: (event) => set({ selectedAgentEvent: event, selectedTrafficId: null, selectedFactId: null, inspectorMode: event ? "finding" : "overview" }),
   resetBrowser: () => set({ browserController: null, browserUrl: "" }),
   resetAgent: () => set({ agentEvents: [], pendingApproval: null, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], agentBusy: false }),
   connectWs: () => {

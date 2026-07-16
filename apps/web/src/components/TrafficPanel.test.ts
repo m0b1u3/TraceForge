@@ -57,26 +57,29 @@ describe("TrafficPanel", () => {
     expect(formatTrafficTime("2026-07-07T08:09:10.000Z", "en-US", "UTC")).toBe("08:09:10");
   });
 
-  it("uses an accessible disclosure for captured request evidence", async () => {
+  it("makes the current browser control owner explicit", async () => {
+    const panel = await renderTrafficPanel();
+    expect(panel.textContent).toContain("Control ownerAgent");
+
+    act(() => useStore.setState({ browserController: "human" }));
+    expect(panel.textContent).toContain("Control ownerOperator");
+  });
+
+  it("selects captured request evidence for the context inspector", async () => {
     const panel = await renderTrafficPanel();
     const trigger = panel.querySelector<HTMLButtonElement>(".request-row-trigger");
 
     expect(trigger?.tagName).toBe("BUTTON");
-    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
-    expect(trigger?.getAttribute("aria-controls")).toBe("traffic-detail-traffic_1");
+    expect(trigger?.getAttribute("aria-pressed")).toBe("false");
     expect(trigger?.textContent).toContain("POST");
     expect(trigger?.textContent).toContain("401");
     expect(trigger?.textContent).toContain(capturedEntry.url);
 
     act(() => trigger?.click());
 
-    expect(trigger?.getAttribute("aria-expanded")).toBe("true");
-    const detail = panel.querySelector<HTMLElement>("#traffic-detail-traffic_1");
-    expect(detail?.textContent).toContain("Request headers");
-    expect(detail?.textContent).toContain("Request body");
-    expect(detail?.textContent).toContain("Response body");
-    expect(detail?.textContent).toContain("authorization");
-    expect(detail?.textContent).toContain("invalid credentials");
+    expect(trigger?.getAttribute("aria-pressed")).toBe("true");
+    expect(useStore.getState().selectedTrafficId).toBe("traffic_1");
+    expect(useStore.getState().inspectorMode).toBe("traffic");
   });
 
   it("clears captured evidence through the real store action", async () => {
@@ -100,6 +103,6 @@ describe("TrafficPanel", () => {
 
     expect(trigger?.textContent).toContain("Pending");
     act(() => trigger?.click());
-    expect(panel.textContent).toContain("No response body captured");
+    expect(useStore.getState().selectedTrafficId).toBe("traffic_pending");
   });
 });

@@ -54,9 +54,14 @@ export async function deleteCase(caseId: string): Promise<{ deleted: boolean }> 
 }
 
 export interface BrowserRuntimeState {
-  ok: true;
-  controller: "llm" | "human";
+  ok: boolean;
+  controller: "llm" | "human" | null;
   url?: string;
+}
+
+export async function getBrowserState(caseId: string): Promise<BrowserRuntimeState> {
+  const response = await ensureOk(await fetch(`/api/cases/${caseId}/browser`), "Load browser state");
+  return response.json() as Promise<BrowserRuntimeState>;
 }
 
 export async function startBrowser(caseId: string): Promise<BrowserRuntimeState> {

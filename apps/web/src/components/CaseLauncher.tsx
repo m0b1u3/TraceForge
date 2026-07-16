@@ -4,9 +4,10 @@ import { useStore } from "../store.js";
 import { listCases, createCase } from "../api.js";
 import { Select } from "./Select.js";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu.js";
+import { useShallow } from "zustand/react/shallow";
 
 export function CaseLauncher({ variant = "hero" }: { variant?: "hero" | "bar" }) {
-  const { caseId, cases, setCases, enterCase, deleteCase, showToast } = useStore();
+  const { caseId, cases, setCases, enterCase, deleteCase, showToast } = useStore(useShallow((state) => ({ caseId: state.caseId, cases: state.cases, setCases: state.setCases, enterCase: state.enterCase, deleteCase: state.deleteCase, showToast: state.showToast })));
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [loadingCases, setLoadingCases] = useState(true);

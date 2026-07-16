@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { LlmConfigInput, LlmConfig } from "../api.js";
+import { useShallow } from "zustand/react/shallow";
 
 const PROVIDERS = [
   { value: "openai", label: "OpenAI-compatible" },
@@ -100,7 +101,14 @@ export function SettingsModal({
     loadLlmConfig,
     saveLlmConfig,
     testLlmConfig,
-  } = useStore();
+  } = useStore(useShallow((state) => ({
+    settingsModalOpen: state.settingsModalOpen,
+    setSettingsModalOpen: state.setSettingsModalOpen,
+    llmConfig: state.llmConfig,
+    loadLlmConfig: state.loadLlmConfig,
+    saveLlmConfig: state.saveLlmConfig,
+    testLlmConfig: state.testLlmConfig,
+  })));
 
   const settingsModalOpen_ = open ?? settingsModalOpen;
   const llmConfig = initialConfig ?? storeConfig;

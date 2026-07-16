@@ -80,9 +80,9 @@ describe("BrowserControls", () => {
 
     await clickButton("Take over");
     expect(useStore.getState().browserController).toBe("human");
-    expect(controls.textContent).toContain("Return to LLM");
+    expect(controls.textContent).toContain("Return to Agent");
 
-    await clickButton("Return to LLM");
+    await clickButton("Return to Agent");
     expect(useStore.getState().browserController).toBe("llm");
     expect(controls.textContent).toContain("Take over");
   });
@@ -98,5 +98,23 @@ describe("BrowserControls", () => {
     expect(useStore.getState().browserController).toBeNull();
     expect(useStore.getState().browserUrl).toBe("");
     expect(controls.textContent).toContain("Launch browser");
+  });
+
+  it("does not expose browser process details when launch fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      error: "browserType.launch: spawn UNKNOWN --user-data-dir=C:\\\\Users\\\\Administrator\\\\Temp",
+    }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    }));
+    await renderControls();
+
+    await clickButton("Launch browser");
+
+    expect(useStore.getState().toast).toBe(
+      "Unable to launch the shared browser. Check that Chromium is installed and permitted to run.",
+    );
+    expect(useStore.getState().toast).not.toContain("user-data-dir");
   });
 });

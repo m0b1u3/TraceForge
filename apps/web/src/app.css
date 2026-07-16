@@ -29,7 +29,7 @@
   --z-drawer: 40;
   --z-modal: 50;
 
-  --font: "Geist Sans", "Noto Sans SC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font: "Geist Sans", "Noto Sans CJK SC", "Microsoft YaHei UI", "PingFang SC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: "Geist Mono", ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
 
   --font-regular: 400;
@@ -736,6 +736,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .tf-modal { display: flex; flex-direction: column; width: 86vw; height: 80vh; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; box-shadow: 0 30px 80px rgba(22,24,29,0.25); }
 .graph-modal-header { justify-content: space-between; }
 .graph-modal-body { flex: 1; min-height: 0; }
+.graph-modal-dialog { display: flex; flex-direction: column; width: 86vw; max-width: none; height: 80vh; gap: 0; padding: 0; overflow: hidden; border-color: var(--border-subtle); background: var(--surface); }
 
 .panel-body { flex: 1; min-height: 0; overflow: auto; }
 .knowledge-panel { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
@@ -985,7 +986,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .message, .message.tool, .tf-confirm { max-width: 100%; width: 100%; }
   .message.operator { width: auto; max-width: 100%; }
   .composer textarea { flex-basis: 100%; }
-  .tf-modal { width: calc(100vw - 18px); height: calc(100vh - 18px); border-radius: var(--radius); }
+  .tf-modal,
+  .graph-modal-dialog { width: calc(100vw - 18px); height: calc(100vh - 18px); border-radius: var(--radius); }
   .tf-gdetail { width: min(100%, 288px); }
 }
 

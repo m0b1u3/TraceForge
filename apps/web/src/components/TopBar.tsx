@@ -6,6 +6,7 @@ import { CaseLauncher } from "./CaseLauncher.js";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/components/ui/utils";
+import { useShallow } from "zustand/react/shallow";
 
 export function getTopBarRunStatus(activeRun: { status: string } | null, agentBusy: boolean): string {
   return activeRun?.status ?? (agentBusy ? "running" : "idle");
@@ -16,9 +17,9 @@ export function formatTopBarTokenTotal(totalTokens: number): string {
 }
 
 export function TopBar() {
-  const { caseId, activeRun, agentBusy, tokenUsage, setSettingsModalOpen } = useStore();
+  const { caseId, activeRun, agentBusy, tokenUsage, setSettingsModalOpen } = useStore(useShallow((state) => ({ caseId: state.caseId, activeRun: state.activeRun, agentBusy: state.agentBusy, tokenUsage: state.tokenUsage, setSettingsModalOpen: state.setSettingsModalOpen })));
   const runStatus = getTopBarRunStatus(activeRun, agentBusy);
-  const focusComposer = () => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus();
+  const openRunLauncher = () => globalThis.dispatchEvent(new CustomEvent("traceforge:new-run"));
   const [theme, setTheme] = useState<AppTheme>(() => getStoredTheme());
   const toggleTheme = () => {
     const nextTheme = theme === "dark" ? "light" : "dark";
@@ -58,9 +59,9 @@ export function TopBar() {
           </div>
         )}
         {caseId && (
-          <Button className="topbar-run-action" type="button" size="sm" onClick={focusComposer}>
+          <Button className="topbar-run-action" type="button" size="sm" onClick={runStatus === "running" ? () => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus() : openRunLauncher}>
             <Play size={14} weight="fill" />
-            <span>{runStatus === "running" ? "Steer agent" : "Run autonomous"}</span>
+            <span>{runStatus === "running" ? "Steer agent" : "New run"}</span>
           </Button>
         )}
         <Button

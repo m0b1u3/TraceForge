@@ -153,6 +153,14 @@ export function registerRoutes(
   // 人机共享浏览器会话（每 Case 一个），内存管理
   const browserSessions = new Map<string, BrowserSession>();
 
+  app.get("/api/cases/:id/browser", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    const session = browserSessions.get(id);
+    if (!session) return { ok: true, controller: null, url: "" };
+    return { ok: true, controller: session.controller(), url: session.currentUrl() };
+  });
+
   app.post("/api/cases/:id/browser/start", async (req, reply) => {
     const { id } = req.params as { id: string };
     const c = cases.get(id);

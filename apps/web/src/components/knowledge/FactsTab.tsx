@@ -20,6 +20,7 @@ function isSensitiveField(key: string): boolean {
 }
 
 function FactRow({ fact, defaultOpen = false }: { fact: Fact; defaultOpen?: boolean }) {
+  const selectFact = useStore((state) => state.selectFact);
   const [open, setOpen] = useState(defaultOpen);
   const [showSensitive, setShowSensitive] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -39,7 +40,7 @@ function FactRow({ fact, defaultOpen = false }: { fact: Fact; defaultOpen?: bool
 
   return (
     <article className={`tf-row tf-row-expandable knowledge-row finding-card ${fact.validity === "superseded" ? "tf-row-stale" : ""}`}>
-      <button className="tf-row-head" type="button" aria-expanded={open} aria-controls={detailId} onClick={() => setOpen((value) => !value)}>
+      <button className="tf-row-head" type="button" aria-expanded={open} aria-controls={detailId} onClick={() => { selectFact(fact.id); setOpen((value) => !value); }}>
         <span className="finding-heading">
           <span className="finding-heading-meta"><span className="tf-tag">{fact.type}</span><SeverityBadge severity={factSeverity(fact)} /></span>
           <span className="tf-row-title">{fact.title}</span>

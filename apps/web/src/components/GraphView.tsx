@@ -5,14 +5,22 @@ import {
   type Edge, type EdgeProps, type Node, type NodeProps, type NodeMouseHandler,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import ELK from "elkjs/lib/elk.bundled.js";
 import {
   ArrowCounterClockwise, Clock, Database, Flag, Lightbulb, Lightning, Notebook, Pause, Play, Robot, ShieldCheck,
 } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import type { Fact, Task, ActionCard, TimelineEntry } from "@traceforge/shared";
+import { useShallow } from "zustand/react/shallow";
 
-const elk = new ELK();
+async function loadElk() {
+  const { default: ELK } = await import("elkjs/lib/elk.bundled.js");
+  return new ELK();
+}
+let elkPromise: ReturnType<typeof loadElk> | null = null;
+async function getElk() {
+  if (!elkPromise) elkPromise = loadElk();
+  return elkPromise;
+}
 
 const KIND_META: Record<string, { label: string; icon: typeof Notebook; color: string; border: string }> = {
   fact: { label: "FACT", icon: Database, color: "#78aef2", border: "#35516d" },
@@ -253,6 +261,7 @@ function buildTimelineGraph(
 }
 
 async function elkLayout(nodes: Node<FlowNodeData>[], edges: Edge[], direction: "RIGHT" | "DOWN"): Promise<Node<FlowNodeData>[]> {
+  const elk = await getElk();
   const isVertical = direction === "DOWN";
   try {
     const g = {
@@ -385,14 +394,14 @@ function DetailPanel({ entry, onClose, facts, tasks, actions }: { entry: Timelin
 
 const SpeedButton = memo(function SpeedButton({ value, speed, setSpeed }: { value: number; speed: number; setSpeed: (speed: number) => void }) {
   return (
-    <button className={speed === value ? "active" : ""} onClick={() => setSpeed(value)}>
+    <button className={speed === value ? "active" : ""} type="button" aria-label={`Set replay speed to ${value}x`} aria-pressed={speed === value} onClick={() => setSpeed(value)}>
       {value}x
     </button>
   );
 });
 
 function GraphInner({ interactive }: { interactive: boolean }) {
-  const { timeline, activeRun, facts, tasks, actions } = useStore();
+  const { timeline, activeRun, facts, tasks, actions } = useStore(useShallow((state) => ({ timeline: state.timeline, activeRun: state.activeRun, facts: state.facts, tasks: state.tasks, actions: state.actions })));
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(2);
@@ -440,6 +449,8 @@ function GraphInner({ interactive }: { interactive: boolean }) {
       <div className="graph-footer">
         <div className="replay-controls">
           <button
+            type="button"
+            aria-label={playing ? "Pause graph replay" : "Start graph replay"}
             onClick={() => {
               if (playing) setPlaying(false);
               else {
@@ -452,6 +463,8 @@ function GraphInner({ interactive }: { interactive: boolean }) {
             {playing ? "Pause" : "Replay"}
           </button>
           <button
+            type="button"
+            aria-label="Reset graph replay"
             onClick={() => {
               setPlaying(false);
               setCursor(0);
@@ -464,6 +477,7 @@ function GraphInner({ interactive }: { interactive: boolean }) {
           ))}
         </div>
         <input
+          aria-label="Graph replay progress"
           max={timeline.length}
           min={0}
           type="range"

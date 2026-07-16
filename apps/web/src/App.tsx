@@ -1,66 +1,19 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
+import { CircleNotch } from "@phosphor-icons/react";
 import { useStore } from "./store.js";
-import { TopBar } from "./components/TopBar.js";
 import { CaseLauncher } from "./components/CaseLauncher.js";
-import { TrafficPanel } from "./components/TrafficPanel.js";
-import { AgentPanel } from "./components/AgentPanel.js";
-import { KnowledgePanel } from "./components/KnowledgePanel.js";
-import { WorkspaceLayout } from "./components/WorkspaceLayout.js";
-import { GraphModal } from "./components/GraphModal.js";
-import { SettingsModal } from "./components/SettingsModal.js";
-import { Button } from "@/components/ui/button";
-import { Warning } from "@phosphor-icons/react";
-import {
-  Alert,
-  AlertTitle,
-  AlertDescription,
-} from "@/components/ui/alert";
+
+const Workbench = lazy(() => import("./components/Workbench.js"));
 
 function Toast() {
-  const toast = useStore((s) => s.toast);
+  const toast = useStore((state) => state.toast);
   if (!toast) return null;
   return <div className="tf-toast" role="status" aria-live="polite">{toast}</div>;
 }
 
-function ObserverConfirmation() {
-  const pendingConfirmation = useStore((s) => s.pendingConfirmation);
-  const clearPendingConfirmation = useStore((s) => s.clearPendingConfirmation);
-  const setActiveTab = useStore((s) => s.setActiveTab);
-  if (!pendingConfirmation) return null;
-  const { warning } = pendingConfirmation;
-  return (
-    <Alert variant="warning" className="observer-confirmation">
-      <Warning className="observer-confirmation-icon" size={18} weight="fill" />
-      <AlertTitle className="observer-confirmation-title">
-        <span>Observer intervention</span>
-        <strong>{warning.title}</strong>
-      </AlertTitle>
-      <AlertDescription className="observer-confirmation-body">
-        <p title={warning.description}>{warning.description}</p>
-        <div className="observer-confirmation-actions">
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => { setActiveTab("observer"); clearPendingConfirmation(); }}
-          >
-            Review warning
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => clearPendingConfirmation()}
-          >
-            Dismiss
-          </Button>
-        </div>
-      </AlertDescription>
-    </Alert>
-  );
-}
-
 export function App() {
-  const { caseId, connectWs } = useStore();
+  const caseId = useStore((state) => state.caseId);
+  const connectWs = useStore((state) => state.connectWs);
   useEffect(() => connectWs(), [connectWs]);
 
   if (!caseId) {
@@ -86,17 +39,9 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <TopBar />
-      <main className="workspace-page">
-        <ObserverConfirmation />
-        <WorkspaceLayout
-          traffic={<TrafficPanel />}
-          agent={<AgentPanel />}
-          knowledge={<KnowledgePanel />}
-        />
-      </main>
-      <GraphModal />
-      <SettingsModal />
+      <Suspense fallback={<div className="workbench-loading" role="status"><CircleNotch className="tf-spin" size={18} /><span>Loading workbench…</span></div>}>
+        <Workbench />
+      </Suspense>
       <Toast />
     </div>
   );

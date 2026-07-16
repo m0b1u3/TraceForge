@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 
 const globals = readFileSync(new URL("../styles/globals.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../app.css", import.meta.url), "utf8");
+const workbench = readFileSync(new URL("../styles/dark-workbench.css", import.meta.url), "utf8");
 const topBar = readFileSync(new URL("./TopBar.tsx", import.meta.url), "utf8");
+const graphModal = readFileSync(new URL("./GraphModal.tsx", import.meta.url), "utf8");
+const graphView = readFileSync(new URL("./GraphView.tsx", import.meta.url), "utf8");
 const alert = readFileSync(new URL("./ui/alert.tsx", import.meta.url), "utf8");
 const workbenchPrimitives = {
   Button: readFileSync(new URL("./ui/button.tsx", import.meta.url), "utf8"),
@@ -96,5 +99,21 @@ describe("Operations Canvas theme contract", () => {
       expect(tailwindRadiusTokens[radiusClass], `rounded-${radiusClass}`).toBeGreaterThanOrEqual(6);
       expect(tailwindRadiusTokens[radiusClass], `rounded-${radiusClass}`).toBeLessThanOrEqual(12);
     }
+  });
+
+  it("reserves independent rows for the console log, composer, and run phase", () => {
+    expect(workbench).toMatch(/\.chat-panel\s*\{\s*grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto auto/);
+  });
+
+  it("fits the three-pane workbench inside the 1100px desktop breakpoint", () => {
+    expect(workbench).toMatch(/@media\s*\(max-width:\s*1250px\)\s*and\s*\(min-width:\s*1100px\)[\s\S]*?\.workspace-shell\s*\{\s*grid-template-columns:\s*240px minmax\(480px,\s*1fr\) 340px/);
+  });
+
+  it("uses an accessible dialog and named graph replay controls", () => {
+    expect(graphModal).toContain("<Dialog open={graphModalOpen}");
+    expect(graphModal).toContain("<DialogTitle>Reasoning chain</DialogTitle>");
+    expect(graphView).toContain('aria-label="Reset graph replay"');
+    expect(graphView).toContain('aria-label="Graph replay progress"');
+    expect(graphView).toContain("aria-pressed={speed === value}");
   });
 });

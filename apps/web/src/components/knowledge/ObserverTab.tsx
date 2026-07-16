@@ -3,6 +3,7 @@ import { ListPlus, Play, X } from "@phosphor-icons/react";
 import type { AgentRun, ObserverWarning } from "@traceforge/shared";
 import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWarning, runAgent } from "../../api.js";
 import { useStore } from "../../store.js";
+import { useShallow } from "zustand/react/shallow";
 
 const LEVEL_CLASS: Record<string, string> = { critical: "critical", warning: "warning", info: "info" };
 const STATUS_LABEL: Record<ObserverWarning["status"], string> = {
@@ -28,7 +29,12 @@ export function ObserverTab() {
   const {
     caseId, warnings, showToast, addAgentEvent, setAgentBusy, setActiveRun,
     upsertWarning, upsertTask, activeRun, agentBusy,
-  } = useStore();
+  } = useStore(useShallow((state) => ({
+    caseId: state.caseId, warnings: state.warnings, showToast: state.showToast,
+    addAgentEvent: state.addAgentEvent, setAgentBusy: state.setAgentBusy,
+    setActiveRun: state.setActiveRun, upsertWarning: state.upsertWarning,
+    upsertTask: state.upsertTask, activeRun: state.activeRun, agentBusy: state.agentBusy,
+  })));
   const [busy, setBusy] = useState<string | null>(null);
   if (warnings.length === 0) return <div className="tf-guide"><div className="tf-guide-title">No observer warnings yet.</div><div className="tf-guide-hint">After each Agent run, the Observer reviews it for unfounded guesses, ignored prior information, premature exits, and surfaces warnings here.</div></div>;
 
