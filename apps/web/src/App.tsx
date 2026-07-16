@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from "react";
-import { CircleNotch } from "@phosphor-icons/react";
+import { CheckCircle, CircleNotch, Info, Warning } from "@phosphor-icons/react";
 import { useStore } from "./store.js";
 import { CaseLauncher } from "./components/CaseLauncher.js";
 
@@ -8,7 +8,8 @@ const Workbench = lazy(() => import("./components/Workbench.js"));
 function Toast() {
   const toast = useStore((state) => state.toast);
   if (!toast) return null;
-  return <div className="tf-toast" role="status" aria-live="polite">{toast}</div>;
+  const Icon = toast.tone === "error" ? Warning : toast.tone === "success" ? CheckCircle : Info;
+  return <div className="tf-toast" data-tone={toast.tone} role={toast.tone === "error" ? "alert" : "status"} aria-live={toast.tone === "error" ? "assertive" : "polite"}><Icon size={16} weight={toast.tone === "info" ? "regular" : "fill"} aria-hidden="true" /><span>{toast.message}</span></div>;
 }
 
 export function App() {

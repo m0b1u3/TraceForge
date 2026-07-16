@@ -1,4 +1,5 @@
 import { useStore } from "../../store.js";
+import { FeedbackState } from "../ui/feedback-state.js";
 
 function formatTimelineTime(value: string): string {
   const date = new Date(value);
@@ -7,7 +8,7 @@ function formatTimelineTime(value: string): string {
 
 export function TimelineTab() {
   const timeline = useStore((s) => s.timeline);
-  if (timeline.length === 0) return <div className="tf-guide"><div className="tf-guide-title">No timeline events yet.</div><div className="tf-guide-hint">Key actions like Fact / Task / Action recordings appear here in chronological order.</div></div>;
+  if (timeline.length === 0) return <FeedbackState title="No timeline events yet" description="Key Fact, Task, and Action recordings will appear here in chronological order." />;
   return <>{timeline.map((e) => (
     <div className="timeline-item" key={e.id}>
       <div className="timeline-meta"><span className="tf-tag">{e.eventType}</span><time dateTime={e.createdAt}>{formatTimelineTime(e.createdAt)}</time></div>

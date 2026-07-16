@@ -56,7 +56,7 @@ describe("store observer confirmation", () => {
     expect(useStore.getState().pendingConfirmation).toEqual({ runId: "run_1", warning });
     expect(useStore.getState().activeTab).toBe("observer");
     expect(useStore.getState().agentEvents.at(-1)?.text).toContain("偏离目标");
-    expect(useStore.getState().toast).toContain("偏离目标");
+    expect(useStore.getState().toast?.message).toContain("偏离目标");
   });
 
   it("ignores confirmation events for other cases", () => {
@@ -239,6 +239,20 @@ describe("store traffic synchronization", () => {
     expect(useStore.getState().traffic).toHaveLength(1);
   });
 });
+describe("store feedback notices", () => {
+  it("assigns semantic tones and suppresses consecutive duplicates", () => {
+    useStore.getState().showToast("Settings saved");
+    const first = useStore.getState().toast;
+    expect(first?.tone).toBe("success");
+
+    useStore.getState().showToast("Settings saved");
+    expect(useStore.getState().toast?.id).toBe(first?.id);
+
+    useStore.getState().showToast("Unable to reach server");
+    expect(useStore.getState().toast?.tone).toBe("error");
+  });
+});
+
 describe("store agent streaming", () => {
   beforeEach(() => {
     resetStore();

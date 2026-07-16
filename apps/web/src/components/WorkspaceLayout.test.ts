@@ -76,6 +76,9 @@ describe("WorkspaceLayout", () => {
 
     act(() => trafficTrigger?.click());
     expect(workspace?.getAttribute("data-active-panel")).toBe("traffic");
+    expect(document.querySelector("#workspace-traffic")?.getAttribute("role")).toBe("dialog");
+    expect(document.querySelector("#workspace-traffic")?.getAttribute("aria-modal")).toBe("true");
+    expect(document.activeElement).toBe(document.querySelector("#workspace-traffic"));
 
     act(() => globalThis.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     expect(workspace?.getAttribute("data-active-panel")).toBe("agent");

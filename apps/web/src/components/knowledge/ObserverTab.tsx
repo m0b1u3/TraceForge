@@ -4,6 +4,7 @@ import type { AgentRun, ObserverWarning } from "@traceforge/shared";
 import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWarning, runAgent } from "../../api.js";
 import { useStore } from "../../store.js";
 import { useShallow } from "zustand/react/shallow";
+import { FeedbackState } from "../ui/feedback-state.js";
 
 const LEVEL_CLASS: Record<string, string> = { critical: "critical", warning: "warning", info: "info" };
 const STATUS_LABEL: Record<ObserverWarning["status"], string> = {
@@ -36,7 +37,7 @@ export function ObserverTab() {
     upsertTask: state.upsertTask, activeRun: state.activeRun, agentBusy: state.agentBusy,
   })));
   const [busy, setBusy] = useState<string | null>(null);
-  if (warnings.length === 0) return <div className="tf-guide"><div className="tf-guide-title">No observer warnings yet.</div><div className="tf-guide-hint">After each Agent run, the Observer reviews it for unfounded guesses, ignored prior information, premature exits, and surfaces warnings here.</div></div>;
+  if (warnings.length === 0) return <FeedbackState title="No observer warnings" description="After each run, Observer checks for unsupported assumptions, ignored evidence, and premature exits." />;
 
   const continueRun = async (w: ObserverWarning) => {
     if (!caseId) return;

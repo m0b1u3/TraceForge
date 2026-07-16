@@ -11,16 +11,7 @@ import {
 import { useStore } from "../store.js";
 import type { Fact, Task, ActionCard, TimelineEntry } from "@traceforge/shared";
 import { useShallow } from "zustand/react/shallow";
-
-async function loadElk() {
-  const { default: ELK } = await import("elkjs/lib/elk.bundled.js");
-  return new ELK();
-}
-let elkPromise: ReturnType<typeof loadElk> | null = null;
-async function getElk() {
-  if (!elkPromise) elkPromise = loadElk();
-  return elkPromise;
-}
+import { FeedbackState } from "./ui/feedback-state.js";
 
 const KIND_META: Record<string, { label: string; icon: typeof Notebook; color: string; border: string }> = {
   fact: { label: "FACT", icon: Database, color: "#78aef2", border: "#35516d" },
@@ -71,7 +62,7 @@ function titleOf(entry: TimelineEntry) {
   return t.replace(/_/g, " ");
 }
 
-type FlowNodeData = {
+export type FlowNodeData = {
   entry: TimelineEntry;
   kind: string;
   title: string;
@@ -260,52 +251,93 @@ function buildTimelineGraph(
   return { nodes, edges, focusNodeId: timeline[timeline.length - 1]?.id };
 }
 
-async function elkLayout(nodes: Node<FlowNodeData>[], edges: Edge[], direction: "RIGHT" | "DOWN"): Promise<Node<FlowNodeData>[]> {
-  const elk = await getElk();
-  const isVertical = direction === "DOWN";
-  try {
-    const g = {
-      id: "root",
-      layoutOptions: {
-        "elk.algorithm": "layered",
-        "elk.direction": direction,
-        "elk.spacing.nodeNode": isVertical ? "44" : "90",
-        "elk.layered.spacing.nodeNodeBetweenLayers": isVertical ? "56" : "130",
-        "elk.edgeRouting": "ORTHOGONAL",
-        "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
-        "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
-        "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
-        "elk.padding": "[top=36,left=36,bottom=36,right=36]",
-      },
-      children: nodes.map((n) => ({ id: n.id, width: n.width ?? 240, height: n.height ?? 104 })),
-      edges: edges.map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
-    };
-    const res = await elk.layout(g);
-    return nodes.map((n) => {
-      const p = res.children?.find((c) => c.id === n.id);
-      return {
-        ...n,
-        position: { x: p?.x ?? 0, y: p?.y ?? 0 },
-        sourcePosition: isVertical ? Position.Bottom : Position.Right,
-        targetPosition: isVertical ? Position.Top : Position.Left,
-      };
-    });
-  } catch {
-    return nodes.map((n, i) => ({
-      ...n,
-      position: isVertical ? { x: 0, y: i * 150 } : { x: Math.floor(i / 4) * 300, y: (i % 4) * 150 },
-      sourcePosition: isVertical ? Position.Bottom : Position.Right,
-      targetPosition: isVertical ? Position.Top : Position.Left,
-    }));
-  }
+type LayoutPosition = { x: number; y: number };
+const layoutCache = new Map<string, Map<string, LayoutPosition>>();
+const MAX_LAYOUT_CACHE_ENTRIES = 16;
+
+function layoutKey(nodes: Node<FlowNodeData>[], edges: Edge[], direction: "RIGHT" | "DOWN") {
+  return `${direction}|${nodes.map((node) => node.id).join(",")}|${edges.map((edge) => `${edge.source}>${edge.target}`).join(",")}`;
 }
 
-function FitOnChange({ focusNodeId, nodes, version, focusLatest }: { focusNodeId?: string; nodes: Node<FlowNodeData>[]; version: number; focusLatest: boolean }) {
+export function layeredLayout(nodes: Node<FlowNodeData>[], edges: Edge[], direction: "RIGHT" | "DOWN"): Node<FlowNodeData>[] {
+  const cacheKey = layoutKey(nodes, edges, direction);
+  const cached = layoutCache.get(cacheKey);
+  const isVertical = direction === "DOWN";
+  const applyPosition = (node: Node<FlowNodeData>, position: LayoutPosition): Node<FlowNodeData> => ({
+    ...node,
+    position,
+    sourcePosition: isVertical ? Position.Bottom : Position.Right,
+    targetPosition: isVertical ? Position.Top : Position.Left,
+  });
+  if (cached) return nodes.map((node) => applyPosition(node, cached.get(node.id) ?? { x: 0, y: 0 }));
+
+  const order = new Map(nodes.map((node, index) => [node.id, index]));
+  const indegree = new Map(nodes.map((node) => [node.id, 0]));
+  const outgoing = new Map(nodes.map((node) => [node.id, [] as string[]]));
+  const incoming = new Map(nodes.map((node) => [node.id, [] as string[]]));
+
+  for (const edge of edges) {
+    if (!indegree.has(edge.source) || !indegree.has(edge.target) || edge.source === edge.target) continue;
+    outgoing.get(edge.source)?.push(edge.target);
+    incoming.get(edge.target)?.push(edge.source);
+    indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
+  }
+
+  const layer = new Map<string, number>();
+  const queue = nodes.filter((node) => indegree.get(node.id) === 0).map((node) => node.id);
+  for (const id of queue) layer.set(id, 0);
+  let cursor = 0;
+  while (cursor < queue.length) {
+    const source = queue[cursor++];
+    const nextLayer = (layer.get(source) ?? 0) + 1;
+    for (const target of outgoing.get(source) ?? []) {
+      layer.set(target, Math.max(layer.get(target) ?? 0, nextLayer));
+      const nextIndegree = (indegree.get(target) ?? 1) - 1;
+      indegree.set(target, nextIndegree);
+      if (nextIndegree === 0) queue.push(target);
+    }
+  }
+
+  // Malformed imported data may contain cycles. Place remaining nodes after
+  // their latest resolved predecessor instead of failing the entire graph.
+  for (const node of nodes) {
+    if (layer.has(node.id)) continue;
+    const predecessorLayers = (incoming.get(node.id) ?? []).map((id) => layer.get(id)).filter((value): value is number => value !== undefined);
+    layer.set(node.id, predecessorLayers.length > 0 ? Math.max(...predecessorLayers) + 1 : 0);
+  }
+
+  const groups = new Map<number, string[]>();
+  for (const node of nodes) {
+    const nodeLayer = layer.get(node.id) ?? 0;
+    const group = groups.get(nodeLayer) ?? [];
+    group.push(node.id);
+    groups.set(nodeLayer, group);
+  }
+  for (const group of groups.values()) group.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+
+  const positions = new Map<string, LayoutPosition>();
+  const positioned = nodes.map((node) => {
+    const nodeLayer = layer.get(node.id) ?? 0;
+    const group = groups.get(nodeLayer) ?? [node.id];
+    const lane = group.indexOf(node.id) - (group.length - 1) / 2;
+    const position = isVertical ? { x: lane * 290, y: nodeLayer * 168 } : { x: nodeLayer * 330, y: lane * 148 };
+    positions.set(node.id, position);
+    return applyPosition(node, position);
+  });
+
+  layoutCache.set(cacheKey, positions);
+  if (layoutCache.size > MAX_LAYOUT_CACHE_ENTRIES) layoutCache.delete(layoutCache.keys().next().value!);
+  return positioned;
+}
+
+function FitOnChange({ focusNodeId, nodes, focusLatest }: { focusNodeId?: string; nodes: Node<FlowNodeData>[]; focusLatest: boolean }) {
   const { fitView, setCenter } = useReactFlow();
   useEffect(() => {
     const frame = requestAnimationFrame(() =>
       requestAnimationFrame(() => {
-        if ((focusLatest || nodes.length > 30) && nodes.length > 3 && focusNodeId) {
+        // Small chains should remain fully visible. Centering the latest node on a
+        // four-step replay clips the first node and makes the sequence look broken.
+        if ((focusLatest || nodes.length > 30) && nodes.length > 8 && focusNodeId) {
           const focus = nodes.find((n) => n.id === focusNodeId);
           if (focus) {
             void setCenter(focus.position.x + (focus.width ?? 240) / 2, focus.position.y + (focus.height ?? 104) / 2, { zoom: focusLatest ? 0.55 : 0.42, duration: 180 });
@@ -316,23 +348,12 @@ function FitOnChange({ focusNodeId, nodes, version, focusLatest }: { focusNodeId
       }),
     );
     return () => cancelAnimationFrame(frame);
-  }, [fitView, focusLatest, focusNodeId, nodes, setCenter, version]);
+  }, [fitView, focusLatest, focusNodeId, nodes, setCenter]);
   return null;
 }
 
 function FlowCanvas({ nodes, edges, focusNodeId, focusLatest, onNodeClick }: { nodes: Node<FlowNodeData>[]; edges: Edge[]; focusNodeId?: string; focusLatest: boolean; onNodeClick?: NodeMouseHandler }) {
-  const [layouted, setLayouted] = useState<Node<FlowNodeData>[]>(nodes);
-  const [version, setVersion] = useState(0);
-
-  useEffect(() => {
-    let active = true;
-    void elkLayout(nodes, edges, focusLatest ? "RIGHT" : "DOWN").then((next) => {
-      if (!active) return;
-      setLayouted(next);
-      setVersion((v) => v + 1);
-    });
-    return () => { active = false; };
-  }, [nodes, edges, focusLatest]);
+  const layouted = useMemo(() => layeredLayout(nodes, edges, focusLatest ? "RIGHT" : "DOWN"), [nodes, edges, focusLatest]);
 
   return (
     <ReactFlow
@@ -355,7 +376,7 @@ function FlowCanvas({ nodes, edges, focusNodeId, focusLatest, onNodeClick }: { n
       }}
       proOptions={{ hideAttribution: true }}
     >
-      <FitOnChange focusLatest={focusLatest} focusNodeId={focusNodeId} nodes={layouted} version={version} />
+      <FitOnChange focusLatest={focusLatest} focusNodeId={focusNodeId} nodes={layouted} />
       <Background color="rgba(148,163,184,0.18)" gap={22} />
       <Controls position="bottom-right" showInteractive={false} />
     </ReactFlow>
@@ -373,7 +394,7 @@ function DetailPanel({ entry, onClose, facts, tasks, actions }: { entry: Timelin
     <div className="graph-detail open">
       <div className="tf-gdetail-head">
         <span>{titleOf(entry)}</span>
-        <button className="tf-btn" onClick={onClose}>Close</button>
+        <button type="button" className="tf-btn" onClick={onClose}>Close</button>
       </div>
       <div className="tf-gdetail-title">{entry.detail}</div>
       <div className="tf-gdetail-id">{entry.id}</div>
@@ -436,7 +457,7 @@ function GraphInner({ interactive }: { interactive: boolean }) {
   };
 
   if (timeline.length === 0) {
-    return <div className="tf-empty">No events to replay. Start an agent run to see the reasoning chain.</div>;
+    return <FeedbackState title="No events to replay" description="Start an Agent run to build and inspect its reasoning chain." />;
   }
 
   return (

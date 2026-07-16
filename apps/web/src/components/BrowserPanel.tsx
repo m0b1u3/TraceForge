@@ -46,7 +46,7 @@ export function BrowserControls() {
 
   if (browserController === null) {
     return (
-      <button className="tf-btn tf-btn-primary" disabled={busy} aria-busy={busy} onClick={run(async () => {
+      <button type="button" className="tf-btn tf-btn-primary" disabled={busy} aria-busy={busy} onClick={run(async () => {
         const state = await startBrowser(caseId);
         setBrowser(state.controller, state.url);
       })}>
@@ -57,15 +57,15 @@ export function BrowserControls() {
   return (
     <div className="tf-btn-group">
       {browserController === "llm"
-        ? <button className="tf-btn tf-btn-primary" disabled={busy} aria-busy={busy} aria-label="Take over browser control" onClick={run(async () => {
+        ? <button type="button" className="tf-btn tf-btn-primary" disabled={busy} aria-busy={busy} aria-label="Take over browser control" onClick={run(async () => {
             const state = await takeoverBrowser(caseId);
             setBrowser(state.controller, state.url);
           })}><HandTap size={14} aria-hidden="true" />Take over</button>
-        : <button className="tf-btn tf-btn-primary" disabled={busy} aria-busy={busy} aria-label="Return browser control to Agent" onClick={run(async () => {
+        : <button type="button" className="tf-btn tf-btn-primary" disabled={busy} aria-busy={busy} aria-label="Return browser control to Agent" onClick={run(async () => {
             const state = await releaseBrowser(caseId);
             setBrowser(state.controller, state.url);
           })}><ArrowCounterClockwise size={14} aria-hidden="true" />Return to Agent</button>}
-      <button className="tf-btn tf-btn-danger" disabled={busy} aria-busy={busy} aria-label="Stop shared browser" onClick={run(async () => {
+      <button type="button" className="tf-btn tf-btn-danger" disabled={busy} aria-busy={busy} aria-label="Stop shared browser" onClick={run(async () => {
         await stopBrowser(caseId);
         resetBrowser();
       })}><StopCircle size={14} aria-hidden="true" />Stop</button>

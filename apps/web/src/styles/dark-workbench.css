@@ -646,7 +646,7 @@ textarea:focus-visible,
 .usage-table th,
 .usage-table td { border-bottom-color: rgba(169, 184, 192, 0.1); }
 
-.tf-toast { border-color: rgba(169, 184, 192, 0.16); background: #1a2026; color: #e1e5e5; box-shadow: var(--shadow-lg); }
+.tf-toast { background: #1a2026; box-shadow: var(--shadow-lg); }
 
 /* Launch screen uses the same material language. */
 .hero-shell { padding: 32px; background: #0a0d10; }
@@ -1310,7 +1310,7 @@ textarea:focus-visible,
 [data-theme="light"] .tf-guide-icon { background: #edf4f1; color: #16815f; }
 
 [data-theme="light"] [data-slot="dialog-content"],
-[data-theme="light"] .tf-toast { background: #ffffff; color: #1d2b31; }
+[data-theme="light"] .tf-toast { background: #ffffff; }
 [data-theme="light"] .settings-section { background: #f7f9f9; }
 [data-theme="light"] [data-slot="select-trigger"],
 [data-theme="light"] input { background: #ffffff; color: #1d2b31; }

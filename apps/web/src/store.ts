@@ -27,7 +27,22 @@ function runTokenUsage(run: AgentRun): TokenUsage {
   };
 }
 
+export type ToastTone = "info" | "success" | "error";
+export interface ToastNotice {
+  id: number;
+  message: string;
+  tone: ToastTone;
+}
+
+function inferToastTone(message: string): ToastTone {
+  const normalized = message.toLowerCase();
+  if (/failed|failure|error|unable|could not|cannot|denied|invalid/.test(normalized)) return "error";
+  if (/saved|success|deleted|started|copied|connected/.test(normalized)) return "success";
+  return "info";
+}
+
 let disconnectActiveWebSocket: (() => void) | null = null;
+let toastSequence = 0;
 
 interface State {
   caseId: string | null;
@@ -49,8 +64,8 @@ interface State {
   setActiveRun: (run: AgentRun | null) => void;
   setContinuationRun: (run: AgentRun | null) => void;
   setTokenUsage: (usage: TokenUsage) => void;
-  toast: string | null;
-  showToast: (msg: string) => void;
+  toast: ToastNotice | null;
+  showToast: (msg: string, tone?: ToastTone) => void;
   pendingApproval: { approvalId: string; tool: string; input: string } | null;
   browserController: "llm" | "human" | null;
   browserUrl: string;
@@ -126,7 +141,14 @@ export const useStore = create<State>((set, get) => ({
   setContinuationRun: (run) => set({ continuationRun: run }),
   setTokenUsage: (usage) => set({ tokenUsage: usage }),
   toast: null,
-  showToast: (msg) => { set({ toast: msg }); setTimeout(() => { if (get().toast === msg) set({ toast: null }); }, 4000); },
+  showToast: (message, requestedTone) => {
+    const tone = requestedTone ?? inferToastTone(message);
+    const current = get().toast;
+    if (current?.message === message && current.tone === tone) return;
+    const notice = { id: ++toastSequence, message, tone };
+    set({ toast: notice });
+    setTimeout(() => { if (get().toast?.id === notice.id) set({ toast: null }); }, tone === "error" ? 6000 : 4000);
+  },
   pendingApproval: null,
   browserController: null,
   browserUrl: "",
@@ -155,7 +177,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       const cfg = await updateLlmConfig(input);
       set({ llmConfig: cfg });
-      get().showToast("Settings saved");
+      get().showToast("Settings saved", "success");
     } catch (err) {
       get().showToast(`Failed to save settings: ${(err as Error).message}`);
       throw err;
@@ -165,7 +187,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       const result = await testLlmConfig(input);
       if (result.ok) {
-        get().showToast(result.message ?? "Connection successful");
+        get().showToast(result.message ?? "Connection successful", "success");
       } else {
         get().showToast(`Connection failed: ${result.error ?? "unknown error"}`);
       }

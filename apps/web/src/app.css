@@ -386,6 +386,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .tf-guide-hint { max-width: 280px; font-size: 12.5px; line-height: 1.6; color: var(--text-secondary); }
 
 .tf-empty { color: var(--text-tertiary); font-size: 12.5px; line-height: 1.6; padding: var(--space-3); }
+.tf-feedback-state { display: flex; min-height: 180px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 8px; padding: 24px; color: var(--text-tertiary); }
+.tf-feedback-state > svg { color: var(--text-tertiary); }
+.tf-feedback-state > strong { color: var(--text); font-size: 13px; font-weight: var(--font-semibold); }
+.tf-feedback-state > p { max-width: 38ch; margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.tf-feedback-state[data-kind="error"] > svg { color: var(--danger); }
+.tf-feedback-action { margin-top: 4px; }
 
 .brand, .run-id, .request-top, .request-meta, .browser-strip, .session-state, .tool-strip, .composer, .flow-card-head { display: flex; align-items: center; }
 .brand { gap: 10px; }
@@ -715,7 +721,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .tf-agent-busy { display: inline-flex; align-items: center; align-self: flex-start; gap: 7px; padding: 7px 11px; border: 1px dashed var(--line-strong); border-radius: 999px; color: var(--text-secondary); background: #fbfcfd; font-size: 12px; }
 
 /* 全局错误提示 toast */
-.tf-toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 100; max-width: 80vw; padding: 11px 16px; border: 1px solid #fda29b; border-radius: var(--radius-lg); color: #b42318; background: #fffbfa; font-size: 13px; font-weight: 600; box-shadow: 0 12px 32px rgba(180,35,24,0.16); animation: tf-toast-in 180ms ease; }
+.tf-toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 100; display: flex; align-items: center; gap: 8px; max-width: min(560px, 80vw); padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-lg); color: var(--text); background: var(--panel-elevated); font-size: 13px; font-weight: 600; box-shadow: var(--shadow-lg); animation: tf-toast-in 180ms ease; }
+.tf-toast[data-tone="success"] { border-color: color-mix(in srgb, var(--success) 38%, var(--line)); color: var(--success); }
+.tf-toast[data-tone="error"] { border-color: color-mix(in srgb, var(--danger) 42%, var(--line)); color: var(--danger); }
+.tf-toast[data-tone="info"] { border-color: color-mix(in srgb, var(--information) 34%, var(--line)); color: var(--information); }
 @keyframes tf-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
 /* 图谱详情侧栏（浅色） */

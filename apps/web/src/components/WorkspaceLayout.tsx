@@ -27,6 +27,8 @@ export function WorkspaceLayout({ traffic, agent, knowledge }: WorkspaceLayoutPr
   const [mode, setMode] = useState<WorkspaceMode>(() => getWorkspaceMode(globalThis.innerWidth || 1440));
   const [activePanel, setActivePanel] = useState<WorkspacePanel>("agent");
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const trafficPaneRef = useRef<HTMLDivElement | null>(null);
+  const knowledgePaneRef = useRef<HTMLDivElement | null>(null);
 
   const closeDrawer = () => {
     setActivePanel("agent");
@@ -45,6 +47,9 @@ export function WorkspaceLayout({ traffic, agent, knowledge }: WorkspaceLayoutPr
 
   useEffect(() => {
     if (mode !== "drawer" || activePanel === "agent") return;
+    const pane = activePanel === "traffic" ? trafficPaneRef.current : knowledgePaneRef.current;
+    const firstControl = pane?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex="0"]');
+    (firstControl ?? pane)?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeDrawer();
     };
@@ -71,9 +76,9 @@ export function WorkspaceLayout({ traffic, agent, knowledge }: WorkspaceLayoutPr
           </button>
         ))}
       </nav>
-      <div className="workspace-pane workspace-traffic" id="workspace-traffic">{traffic}</div>
+      <div ref={trafficPaneRef} className="workspace-pane workspace-traffic" id="workspace-traffic" role={mode === "drawer" && activePanel === "traffic" ? "dialog" : undefined} aria-modal={mode === "drawer" && activePanel === "traffic" ? true : undefined} aria-label={mode === "drawer" && activePanel === "traffic" ? "Traffic panel" : undefined} tabIndex={mode === "drawer" && activePanel === "traffic" ? -1 : undefined}>{traffic}</div>
       <div className="workspace-pane workspace-agent" id="workspace-agent">{agent}</div>
-      <div className="workspace-pane workspace-knowledge" id="workspace-knowledge">{knowledge}</div>
+      <div ref={knowledgePaneRef} className="workspace-pane workspace-knowledge" id="workspace-knowledge" role={mode === "drawer" && activePanel === "knowledge" ? "dialog" : undefined} aria-modal={mode === "drawer" && activePanel === "knowledge" ? true : undefined} aria-label={mode === "drawer" && activePanel === "knowledge" ? "Knowledge panel" : undefined} tabIndex={mode === "drawer" && activePanel === "knowledge" ? -1 : undefined}>{knowledge}</div>
       {mode === "drawer" && activePanel !== "agent" && (
         <button className="workspace-scrim" type="button" aria-label="Close side panel" onClick={closeDrawer} />
       )}

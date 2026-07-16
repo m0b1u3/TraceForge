@@ -3,6 +3,7 @@ import { CaretDown, CircleNotch } from "@phosphor-icons/react";
 import type { Task } from "@traceforge/shared";
 import { useStore } from "../../store.js";
 import { patchTask } from "../../api.js";
+import { FeedbackState } from "../ui/feedback-state.js";
 
 // Human-editable target statuses (status is a closed state machine; these are the most common wrap-up/reopen actions)
 const HUMAN_ACTIONS: { status: Task["status"]; label: string }[] = [
@@ -44,7 +45,7 @@ function TaskRow({ t }: { t: Task }) {
           {t.relatedFacts.length > 0 && <div className="kv"><span>Related facts</span>{t.relatedFacts.join(", ")}</div>}
           <div className="tf-row-actions">
             {HUMAN_ACTIONS.filter((a) => a.status !== t.status).map((a) => (
-              <button key={a.status} className="tf-btn tf-btn-ghost" disabled={busy !== null} onClick={() => set(a.status)}>
+              <button type="button" key={a.status} className="tf-btn tf-btn-ghost" disabled={busy !== null} onClick={() => set(a.status)}>
                 {busy === a.status && <CircleNotch size={13} className="tf-spin" />}{a.label}
               </button>
             ))}
@@ -57,6 +58,6 @@ function TaskRow({ t }: { t: Task }) {
 
 export function TasksTab() {
   const tasks = useStore((s) => s.tasks);
-  if (tasks.length === 0) return <div className="tf-guide"><div className="tf-guide-title">No tasks yet.</div><div className="tf-guide-hint">Agent records todos or blocked items (e.g. "wait for credentials, then test admin panel") as Tasks. New evidence can reopen them; you can also change status manually.</div></div>;
+  if (tasks.length === 0) return <FeedbackState title="No tasks yet" description="Agent todos and blocked work will appear here. New evidence can reopen completed tasks." />;
   return <>{tasks.map((t) => <TaskRow t={t} key={t.id} />)}</>;
 }

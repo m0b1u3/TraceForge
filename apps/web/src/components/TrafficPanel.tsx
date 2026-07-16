@@ -89,7 +89,7 @@ export function TrafficPanel() {
         )}
         {traffic.map((t) => <TrafficRow t={t} selected={selectedTrafficId === t.id} onSelect={selectTraffic} key={t.id} />)}
       </div>
-      <footer className="traffic-footer"><span>{browserController ? "Capture active" : "Capture paused"}</span><button className="tf-btn tf-btn-ghost" disabled={traffic.length === 0} onClick={clearTraffic}><Trash size={13} />Clear</button></footer>
+      <footer className="traffic-footer"><span>{browserController ? "Capture active" : "Capture paused"}</span><button type="button" className="tf-btn tf-btn-ghost" disabled={traffic.length === 0} onClick={clearTraffic}><Trash size={13} />Clear</button></footer>
     </aside>
   );
 }

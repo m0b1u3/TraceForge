@@ -112,9 +112,10 @@ describe("BrowserControls", () => {
 
     await clickButton("Launch browser");
 
-    expect(useStore.getState().toast).toBe(
+    expect(useStore.getState().toast?.message).toBe(
       "Unable to launch the shared browser. Check that Chromium is installed and permitted to run.",
     );
-    expect(useStore.getState().toast).not.toContain("user-data-dir");
+    expect(useStore.getState().toast?.message).not.toContain("user-data-dir");
+    expect(useStore.getState().toast?.tone).toBe("error");
   });
 });
