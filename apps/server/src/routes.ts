@@ -465,13 +465,16 @@ export function registerRoutes(
     } catch (err) {
       return reply.code(409).send({ error: "active run exists", reason: (err as Error).message });
     }
+    for (const warning of observerStore.resolveActiveFromOtherRuns(id, active.run.id)) {
+      bus.emit({ type: "observer_warning_updated", warning });
+    }
 
     const runAgentInBackground = async (runId: string) => {
       const running = runs.get(runId);
       if (!running) return;
       const goal = running.run.goal;
 
-      const runObserverReview = async (
+      const runObserverReviewUnsafe = async (
         reviewRunId: string,
         reviewTrajectory: string,
       ): Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> => {
@@ -494,8 +497,9 @@ export function registerRoutes(
           const level = w.level === "critical" && !criticalEvidenceValid ? "warning" : w.level;
           const fingerprint = observerFingerprint(w);
           observedFingerprints.add(fingerprint);
-          const existing = observerStore.getActiveByFingerprint(id, fingerprint);
+          const existing = observerStore.getActiveByFingerprint(id, reviewRunId, fingerprint);
           if (existing) {
+            if (existing.status === "escalated") continue;
             const warning = observerStore.observeAgain(existing.id, {
               level,
               escalationReason: level === "critical"
@@ -536,6 +540,32 @@ export function registerRoutes(
         return pauseReason
           ? { action: "pause", reason: pauseReason }
           : { action: "continue", steering };
+      };
+      let observerReviewInFlight: Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> | null = null;
+      let lastObserverReviewDigest = "";
+      const runObserverReview = async (
+        reviewRunId: string,
+        reviewTrajectory: string,
+      ): Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> => {
+        const normalizedTrajectory = reviewTrajectory.trim();
+        if (!normalizedTrajectory) return { action: "continue" };
+        const digest = createHash("sha256").update(normalizedTrajectory).digest("hex");
+        if (digest === lastObserverReviewDigest || observerReviewInFlight) return { action: "continue" };
+        lastObserverReviewDigest = digest;
+        observerReviewInFlight = runObserverReviewUnsafe(reviewRunId, normalizedTrajectory);
+        try {
+          return await observerReviewInFlight;
+        } catch (error) {
+          bus.emit({
+            type: "observer_review_failed",
+            caseId: id,
+            runId: reviewRunId,
+            error: (error as Error).message,
+          });
+          return { action: "continue" };
+        } finally {
+          observerReviewInFlight = null;
+        }
       };
 
     const registry = new ToolRegistry();

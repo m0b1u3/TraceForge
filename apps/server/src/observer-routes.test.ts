@@ -153,6 +153,24 @@ describe("observer integration", () => {
       occurrenceCount: 3,
       escalationReason: "Critical evidence remained unresolved after the Observer correction window.",
     });
+    expect(store.observeAgain(first.id, { level: "critical" })).toEqual(escalated);
+  });
+
+  it("isolates fingerprints by run and resolves warnings superseded by a new run", () => {
+    const store = new ObserverWarningStore(db);
+    const previous = createOpenWarning();
+
+    expect(store.getActiveByFingerprint(caseId, "run_other", previous.fingerprint)).toBeUndefined();
+    expect(store.getActiveByFingerprint(caseId, "run_test", previous.fingerprint)?.id).toBe(previous.id);
+
+    const resolved = store.resolveActiveFromOtherRuns(caseId, "run_next");
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]).toMatchObject({
+      id: previous.id,
+      status: "resolved",
+      relatedRunId: "run_test",
+    });
+    expect(store.getById(previous.id)?.resolvedAt).toEqual(expect.any(String));
   });
 
   it("accepts an open warning and emits an update event", async () => {

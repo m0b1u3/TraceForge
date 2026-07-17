@@ -1,4 +1,4 @@
-import { eq, and, inArray, sql } from "drizzle-orm";
+import { eq, and, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { observerWarnings } from "../db/schema.js";
 import { type ObserverWarning, ObserverWarningSchema } from "@traceforge/shared";
@@ -76,18 +76,40 @@ export class ObserverWarningStore {
     return row ? rowToWarning(row) : undefined;
   }
 
-  getActiveByFingerprint(caseId: string, fingerprint: string): ObserverWarning | undefined {
+  getActiveByFingerprint(caseId: string, runId: string, fingerprint: string): ObserverWarning | undefined {
     const row = this.db.select().from(observerWarnings).where(and(
       eq(observerWarnings.caseId, caseId),
+      eq(observerWarnings.relatedRunId, runId),
       eq(observerWarnings.fingerprint, fingerprint),
       inArray(observerWarnings.status, ["open", "detected", "correcting", "escalated"]),
     )).get();
     return row ? rowToWarning(row) : undefined;
   }
 
+  resolveActiveFromOtherRuns(caseId: string, runId: string): ObserverWarning[] {
+    const rows = this.db.select().from(observerWarnings).where(and(
+      eq(observerWarnings.caseId, caseId),
+      or(isNull(observerWarnings.relatedRunId), ne(observerWarnings.relatedRunId, runId)),
+      inArray(observerWarnings.status, ["open", "detected", "correcting", "escalated"]),
+    )).all();
+    if (rows.length === 0) return [];
+    const resolvedAt = new Date().toISOString();
+    const ids = rows.map((row) => row.id);
+    this.db.update(observerWarnings)
+      .set({ status: "resolved", resolvedAt })
+      .where(inArray(observerWarnings.id, ids))
+      .run();
+    return rows.map((row) => ObserverWarningSchema.parse({
+      ...rowToWarning(row),
+      status: "resolved",
+      resolvedAt,
+    }));
+  }
+
   observeAgain(id: string, input: { level: ObserverWarning["level"]; escalationReason?: string | null }): ObserverWarning | undefined {
     const current = this.getById(id);
     if (!current) return undefined;
+    if (current.status === "escalated") return current;
     const occurrenceCount = current.occurrenceCount + 1;
     const lastObservedAt = new Date().toISOString();
     const status = input.level !== "critical"
