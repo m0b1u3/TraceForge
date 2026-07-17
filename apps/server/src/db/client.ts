@@ -11,7 +11,8 @@ export function createDb(path: string) {
     );
     CREATE TABLE IF NOT EXISTS traffic_entries (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, url TEXT NOT NULL, method TEXT NOT NULL,
-      request_headers_json TEXT NOT NULL, request_body TEXT, response_status INTEGER, response_body TEXT,
+      request_headers_json TEXT NOT NULL, request_body TEXT, response_status INTEGER,
+      response_headers_json TEXT, response_size INTEGER, content_type TEXT, response_body TEXT,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_traffic_case ON traffic_entries(case_id);
@@ -112,6 +113,9 @@ export function createDb(path: string) {
   if (!hasWarningColumn("resolved_at")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN resolved_at TEXT");
   const trafficColumns = sqlite.prepare("PRAGMA table_info(traffic_entries)").all() as Array<{ name: string }>;
   if (!trafficColumns.some((c) => c.name === "request_body")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN request_body TEXT");
+  if (!trafficColumns.some((c) => c.name === "response_headers_json")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN response_headers_json TEXT");
+  if (!trafficColumns.some((c) => c.name === "response_size")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN response_size INTEGER");
+  if (!trafficColumns.some((c) => c.name === "content_type")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN content_type TEXT");
   const usageColumns = sqlite.prepare("PRAGMA table_info(agent_run_usage)").all() as Array<{ name: string }>;
   const hasUsageColumn = (name: string) => usageColumns.some((column) => column.name === name);
   if (!hasUsageColumn("currency")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN currency TEXT");

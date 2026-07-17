@@ -16,6 +16,21 @@ export const CaseSchema = z.object({
 });
 export type Case = z.infer<typeof CaseSchema>;
 
+export const CaseSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.enum(["active", "paused", "archived"]),
+  target: z.string().nullable(),
+  runStatus: z.enum(["idle", "running", "waiting", "failed", "completed"]),
+  trafficCount: z.number().int().nonnegative(),
+  findingCount: z.number().int().nonnegative(),
+  severityCounts: z.object({ critical: z.number().int().nonnegative(), high: z.number().int().nonnegative(), medium: z.number().int().nonnegative(), low: z.number().int().nonnegative(), info: z.number().int().nonnegative() }),
+  pendingApproval: z.boolean(),
+  lastActivityAt: z.string(),
+  createdAt: z.string(),
+});
+export type CaseSummary = z.infer<typeof CaseSummarySchema>;
+
 export const TrafficEntrySchema = z.object({
   id: z.string(),
   caseId: z.string(),
@@ -24,6 +39,9 @@ export const TrafficEntrySchema = z.object({
   requestHeaders: z.record(z.string()).default({}),
   requestBody: z.string().nullable().default(null),
   responseStatus: z.number().nullable().default(null),
+  responseHeaders: z.record(z.string()).optional(),
+  responseSize: z.number().int().nonnegative().nullable().optional(),
+  contentType: z.string().nullable().optional(),
   responseBody: z.string().nullable().default(null),
   createdAt: z.string(),
 });

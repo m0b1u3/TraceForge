@@ -26,4 +26,12 @@ describe("AgentEventStore", () => {
     expect(store.listByCase("case_2")).toHaveLength(1);
     expect(store.listByCase("other")).toHaveLength(0);
   });
+
+  it("returns recent event pages in conversation order", () => {
+    const store = new AgentEventStore(db);
+    for (const text of ["one", "two", "three", "four"]) store.append("case_1", "text", text);
+
+    expect(store.listByCase("case_1", { limit: 2 }).map((event) => event.text)).toEqual(["three", "four"]);
+    expect(store.listByCase("case_1", { limit: 2, offset: 2 }).map((event) => event.text)).toEqual(["one", "two"]);
+  });
 });

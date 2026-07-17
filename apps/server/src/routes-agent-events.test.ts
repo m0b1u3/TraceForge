@@ -50,4 +50,15 @@ describe("agent events history", () => {
     const res = await app.inject({ url: `/api/cases/${other}/agent/events` });
     expect(res.json()).toHaveLength(0);
   });
+
+  it("serves recent Agent history pages without changing conversation order", async () => {
+    await app.inject({ method: "POST", url: `/api/cases/${caseId}/agent/run`, payload: { goal: "Confirm receipt in one sentence without tools." } });
+    await waitForAgentHistory();
+    const all = (await app.inject({ url: `/api/cases/${caseId}/agent/events` })).json();
+    const recent = (await app.inject({ url: `/api/cases/${caseId}/agent/events?limit=2&offset=0` })).json();
+    const previous = (await app.inject({ url: `/api/cases/${caseId}/agent/events?limit=2&offset=2` })).json();
+
+    expect(recent).toEqual(all.slice(-2));
+    expect(previous).toEqual(all.slice(-4, -2));
+  });
 });

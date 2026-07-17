@@ -16,6 +16,9 @@ export const trafficEntries = sqliteTable("traffic_entries", {
   requestHeadersJson: text("request_headers_json").notNull(),
   requestBody: text("request_body"),
   responseStatus: integer("response_status"),
+  responseHeadersJson: text("response_headers_json"),
+  responseSize: integer("response_size"),
+  contentType: text("content_type"),
   responseBody: text("response_body"),
   createdAt: text("created_at").notNull(),
 });

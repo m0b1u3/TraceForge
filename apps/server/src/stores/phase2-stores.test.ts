@@ -58,4 +58,13 @@ describe("TimelineStore", () => {
     expect(list[0].refId).toBe("fact_a");
     expect(list[1].refId).toBeNull();
   });
+
+  it("returns the newest timeline page in chronological display order", () => {
+    const store = new TimelineStore(db);
+    for (let index = 0; index < 5; index++) store.append("case_1", "timeline_appended", `event ${index}`);
+    const all = store.listByCase("case_1");
+
+    expect(store.listByCase("case_1", { limit: 2 })).toEqual(all.slice(-2));
+    expect(store.listByCase("case_1", { limit: 2, offset: 2 })).toEqual(all.slice(-4, -2));
+  });
 });

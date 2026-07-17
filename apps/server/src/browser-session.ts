@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { chromium, type Browser, type BrowserContext, type LaunchOptions, type Page, type Response } from "playwright";
 import { checkScope } from "@traceforge/tool-resolver";
 import type { ScopeRule, TrafficEntry } from "@traceforge/shared";
@@ -38,7 +39,7 @@ export class BrowserSession {
 
   async start(): Promise<void> {
     if (this.browser?.isConnected()) return;
-    const browser = await chromium.launch(this.launchOptions);
+    const browser = await this.launchBrowser();
     this.browser = browser;
     this.stopped = false;
     browser.on("disconnected", () => {
@@ -99,6 +100,30 @@ export class BrowserSession {
     this.bus.emit({ type: "browser_started", caseId: this.caseId });
   }
 
+  private async launchBrowser(): Promise<Browser> {
+    try {
+      return await chromium.launch(this.launchOptions);
+    } catch (error) {
+      const message = (error as Error).message;
+      if (this.launchOptions.headless !== false || process.platform !== "win32" || !message.includes("spawn UNKNOWN")) throw error;
+
+      const installedBrowsers = [
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+      ].filter(existsSync);
+      let fallbackError: unknown = error;
+      for (const executablePath of installedBrowsers) {
+        try {
+          return await chromium.launch({ ...this.launchOptions, executablePath });
+        } catch (candidateError) {
+          fallbackError = candidateError;
+        }
+      }
+      throw fallbackError;
+    }
+  }
+
   private attachPage(page: Page): void {
     if (this.attachedPages.has(page)) return;
     this.attachedPages.add(page);
@@ -121,6 +146,8 @@ export class BrowserSession {
   private captureResponse(res: Response): void {
     if (!/^https?:/i.test(res.url())) return;
     const req = res.request();
+    const responseHeaders = res.headers();
+    const declaredSize = Number(responseHeaders["content-length"] ?? NaN);
     const entry: TrafficEntry = {
       id: `traf_${randomUUID()}`,
       caseId: this.caseId,
@@ -129,20 +156,25 @@ export class BrowserSession {
       requestHeaders: req.headers(),
       requestBody: req.postData() ?? null,
       responseStatus: res.status(),
+      responseHeaders,
+      responseSize: Number.isFinite(declaredSize) && declaredSize >= 0 ? declaredSize : null,
+      contentType: responseHeaders["content-type"] ?? null,
       responseBody: null,
       createdAt: new Date().toISOString(),
     };
     this.traffic.add(entry);
     this.bus.emit({ type: "response_captured", entry });
-    void this.enrichBody(res, entry.id);
+    void this.enrichResponse(res, entry);
   }
 
-  private async enrichBody(res: Response, entryId: string): Promise<void> {
-    const body = await this.captureBody(res);
-    if (body) this.traffic.updateBody(entryId, body);
+  private async enrichResponse(res: Response, entry: TrafficEntry): Promise<void> {
+    const captured = await this.captureBody(res);
+    const responseSize = captured?.size ?? entry.responseSize ?? null;
+    this.traffic.updateResponse(entry.id, captured?.text ?? null, responseSize);
+    this.bus.emit({ type: "response_captured", entry: { ...entry, responseBody: captured?.text ?? null, responseSize } });
   }
 
-  private async captureBody(res: Response): Promise<string | null> {
+  private async captureBody(res: Response): Promise<{ text: string; size: number } | null> {
     try {
       const headers = res.headers();
       const contentType = String(headers["content-type"] ?? "").toLowerCase();
@@ -152,7 +184,7 @@ export class BrowserSession {
       const buffer = await res.body();
       if (!buffer) return null;
       const text = buffer.toString("utf-8");
-      return text.length > 256_000 ? text.slice(0, 256_000) : text;
+      return { text: text.length > 256_000 ? text.slice(0, 256_000) : text, size: buffer.byteLength };
     } catch {
       return null;
     }

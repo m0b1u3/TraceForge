@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { agentEvents } from "../db/schema.js";
 import { type AgentEvent, AgentEventSchema } from "@traceforge/shared";
@@ -17,10 +17,15 @@ export class AgentEventStore {
     return e;
   }
 
-  listByCase(caseId: string): AgentEvent[] {
-    return this.db.select().from(agentEvents)
-      .where(eq(agentEvents.caseId, caseId)).orderBy(asc(agentEvents.seq)).all()
-      .map((row) =>
+  listByCase(caseId: string, options: { limit?: number; offset?: number } = {}): AgentEvent[] {
+    const rows = options.limit === undefined
+      ? this.db.select().from(agentEvents)
+        .where(eq(agentEvents.caseId, caseId)).orderBy(asc(agentEvents.seq)).all()
+      : this.db.select().from(agentEvents)
+        .where(eq(agentEvents.caseId, caseId))
+        .orderBy(desc(agentEvents.seq))
+        .limit(options.limit).offset(options.offset ?? 0).all().reverse();
+    return rows.map((row) =>
         AgentEventSchema.parse({
           id: row.id, caseId: row.caseId, kind: row.kind,
           text: row.text, tool: row.tool, createdAt: row.createdAt,

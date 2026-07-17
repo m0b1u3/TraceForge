@@ -7,6 +7,16 @@ import { TrafficStore } from "./stores/traffic-store.js";
 import type { Browser, Page } from "playwright";
 import type { ScopeRule, RuntimeEvent } from "@traceforge/shared";
 
+async function waitFor<T>(read: () => T | undefined, timeoutMs = 3000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = read();
+    if (value !== undefined) return value;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("timed out waiting for real browser response capture");
+}
+
 const rules: ScopeRule[] = [{ caseId: "c", allowHosts: ["t.com"], denyHosts: [] }];
 
 function makeSession(scopeRules: ScopeRule[] = rules, headless = false, onStopped?: () => void) {
@@ -66,9 +76,15 @@ describe("BrowserSession traffic capture", () => {
       await session.start();
       await session.navigate(`http://${allowedHost}/login`);
 
+      const captured = await waitFor(() => {
+        const entry = traffic.listByCase("c").find((candidate) => candidate.url === `http://${allowedHost}/login`);
+        return entry?.responseBody === "ok" ? entry : undefined;
+      });
       const entries = traffic.listByCase("c");
       expect(entries.filter((entry) => entry.url === `http://${allowedHost}/login`)).toHaveLength(1);
-      expect(events.filter((event) => event.type === "response_captured")).toHaveLength(1);
+      expect(captured).toMatchObject({ responseStatus: 200, contentType: "text/plain; charset=utf-8", responseSize: 2, responseBody: "ok" });
+      expect(captured.responseHeaders?.["content-type"]).toBe("text/plain; charset=utf-8");
+      expect(events.some((event) => event.type === "response_captured" && event.entry.responseBody === "ok")).toBe(true);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

@@ -11,7 +11,7 @@ import { FactStore } from "./stores/fact-store.js";
 import { TaskStore } from "./stores/task-store.js";
 import { TimelineStore } from "./stores/timeline-store.js";
 import { EventBus } from "./event-bus.js";
-import type { Task, ObserverWarning } from "@traceforge/shared";
+import type { Task, ObserverWarning, CaseSummary, Fact } from "@traceforge/shared";
 import type { LlmProvider } from "@traceforge/llm";
 import { loadLlmConfig, createProviderFromConfig } from "@traceforge/llm";
 import { ActionCardStore } from "./stores/action-store.js";
@@ -41,6 +41,17 @@ import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
 import { calculateUsageCost } from "./llm-cost.js";
 import { PendingInterventionRegistry } from "./pending-interventions.js";
 import { AgentRunStore } from "./stores/agent-run-store.js";
+
+function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
+  const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
+  if (value.limit === undefined) return {};
+  const parsedLimit = Number(value.limit);
+  const parsedOffset = Number(value.offset ?? 0);
+  return {
+    limit: Number.isFinite(parsedLimit) ? Math.min(10_000, Math.max(1, Math.trunc(parsedLimit))) : 1_000,
+    offset: Number.isFinite(parsedOffset) ? Math.max(0, Math.trunc(parsedOffset)) : 0,
+  };
+}
 
 export function registerRoutes(
   app: FastifyInstance,
@@ -107,6 +118,61 @@ export function registerRoutes(
 
   app.get("/api/cases", async () => cases.list());
 
+  app.get("/api/cases/summary", async (): Promise<CaseSummary[]> => cases.list().map((entry) => {
+    const caseTraffic = traffic.listByCase(entry.id);
+    const caseFacts = factStore.listByCase(entry.id);
+    const caseFindings = caseFacts.filter(isSecurityFinding);
+    const caseTasks = taskStore.listByCase(entry.id);
+    const caseTimeline = timelineStore.listByCase(entry.id);
+    const caseEvents = agentEventStore.listByCase(entry.id);
+    const latestRun = runs.getLatestByCase(entry.id)?.run;
+    const intervention = pendingInterventions.get(entry.id);
+    const severityCounts: CaseSummary["severityCounts"] = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    for (const fact of caseFindings) severityCounts[factSeverity(fact)] += 1;
+    const activity = [
+      entry.createdAt,
+      ...caseTraffic.map((item) => item.createdAt),
+      ...caseFacts.map((item) => item.updatedAt || item.createdAt),
+      ...caseTasks.map((item) => item.updatedAt || item.createdAt),
+      ...caseTimeline.map((item) => item.createdAt),
+      ...caseEvents.map((item) => item.createdAt),
+      latestRun?.finishedAt ?? latestRun?.startedAt ?? latestRun?.createdAt ?? "",
+    ].filter(Boolean).sort();
+    const hasPending = Boolean(intervention.approval || intervention.scope);
+    const runStatus: CaseSummary["runStatus"] = hasPending
+      ? "waiting"
+      : latestRun?.status === "running" || latestRun?.status === "interrupting"
+        ? "running"
+        : latestRun?.status === "failed"
+          ? "failed"
+          : latestRun?.status === "completed"
+            ? "completed"
+            : "idle";
+    return {
+      id: entry.id,
+      name: entry.name,
+      status: entry.status,
+      target: entry.scopeRules.flatMap((rule) => rule.allowHosts)[0] ?? null,
+      runStatus,
+      trafficCount: caseTraffic.length,
+      findingCount: caseFindings.length,
+      severityCounts,
+      pendingApproval: hasPending,
+      lastActivityAt: activity.at(-1) ?? entry.createdAt,
+      createdAt: entry.createdAt,
+    };
+  }));
+
+  app.patch("/api/cases/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { name?: string; status?: "active" | "paused" | "archived" };
+    if (body.name !== undefined && !body.name.trim()) return reply.code(400).send({ error: "case name is required" });
+    if (body.status !== undefined && !["active", "paused", "archived"].includes(body.status)) return reply.code(400).send({ error: "invalid case status" });
+    const updated = cases.update(id, { ...(body.name !== undefined ? { name: body.name.trim() } : {}), ...(body.status !== undefined ? { status: body.status } : {}) });
+    if (!updated) return reply.code(404).send({ error: "case not found" });
+    return updated;
+  });
+
   app.delete("/api/cases/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
@@ -147,7 +213,15 @@ export function registerRoutes(
 
   app.get("/api/cases/:id/traffic", async (req) => {
     const { id } = req.params as { id: string };
-    return traffic.listByCase(id);
+    return traffic.listByCase(id, historyPageOptions(req.query));
+  });
+
+  app.delete("/api/cases/:id/traffic", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    const deleted = traffic.clearByCase(id);
+    bus.emit({ type: "traffic_cleared", caseId: id });
+    return { ok: true, deleted };
   });
 
   // 人机共享浏览器会话（每 Case 一个），内存管理
@@ -269,7 +343,7 @@ export function registerRoutes(
 
   app.get("/api/cases/:id/timeline", async (req) => {
     const { id } = req.params as { id: string };
-    return timelineStore.listByCase(id);
+    return timelineStore.listByCase(id, historyPageOptions(req.query));
   });
 
   app.get("/api/cases/:id/actions", async (req) => {
@@ -284,7 +358,7 @@ export function registerRoutes(
 
   app.get("/api/cases/:id/agent/events", async (req) => {
     const { id } = req.params as { id: string };
-    return agentEventStore.listByCase(id);
+    return agentEventStore.listByCase(id, historyPageOptions(req.query));
   });
 
   app.get("/api/mcp/tools", async () => (mcp ? mcp.listTools() : []));
@@ -801,4 +875,15 @@ export function registerRoutes(
     if (!ok) return reply.code(404).send({ error: "approval not found" });
     return { ok: true };
   });
+}
+
+function factSeverity(fact: Fact): keyof CaseSummary["severityCounts"] {
+  const value = fact.value as Record<string, unknown>;
+  const candidate = String(value.severity ?? fact.tags.find((tag) => /^(critical|high|medium|low|info)$/i.test(tag)) ?? "info").toLowerCase();
+  return candidate === "critical" || candidate === "high" || candidate === "medium" || candidate === "low" ? candidate : "info";
+}
+
+function isSecurityFinding(fact: Fact): boolean {
+  const value = fact.value as Record<string, unknown>;
+  return /finding|vulnerab|exposure|secret|credential/i.test(fact.type) || typeof value.severity === "string" || fact.tags.some((tag) => /^(critical|high|medium|low)$/i.test(tag));
 }

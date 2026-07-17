@@ -40,6 +40,14 @@ export class CaseStore {
     return CaseSchema.parse({ ...c, scopeRules: rules });
   }
 
+  update(id: string, patch: Partial<Pick<Case, "name" | "status">>): Case | undefined {
+    const current = this.get(id);
+    if (!current) return undefined;
+    const next = CaseSchema.parse({ ...current, ...patch });
+    this.db.update(cases).set({ name: next.name, status: next.status }).where(eq(cases.id, id)).run();
+    return next;
+  }
+
   list(): Case[] {
     return this.db.select().from(cases).all().map((row) =>
       CaseSchema.parse({

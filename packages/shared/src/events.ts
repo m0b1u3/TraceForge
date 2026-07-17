@@ -5,6 +5,7 @@ export type RuntimeEvent =
   | { type: "case_deleted"; caseId: string }
   | { type: "request_captured"; entry: TrafficEntry }
   | { type: "response_captured"; entry: TrafficEntry }
+  | { type: "traffic_cleared"; caseId: string }
   | { type: "scope_violation"; caseId: string; url: string; reason: string }
   | { type: "fact_created"; fact: Fact }
   | { type: "fact_updated"; fact: Fact }

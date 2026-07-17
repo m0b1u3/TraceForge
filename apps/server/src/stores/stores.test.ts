@@ -36,4 +36,18 @@ describe("TrafficStore", () => {
     expect(list).toHaveLength(1);
     expect(list[0].url).toBe("https://target.com/a");
   });
+
+  it("pages backward from the newest traffic while preserving page order", () => {
+    const traffic = new TrafficStore(db);
+    for (const index of [1, 2, 3]) {
+      traffic.add({
+        id: `traf_${index}`, caseId: "case_1", url: `https://target.test/${index}`, method: "GET",
+        requestHeaders: {}, requestBody: null, responseStatus: 200, responseBody: null,
+        createdAt: `2026-01-01T00:00:0${index}.000Z`,
+      });
+    }
+
+    expect(traffic.listByCase("case_1", { limit: 2 }).map((entry) => entry.id)).toEqual(["traf_2", "traf_3"]);
+    expect(traffic.listByCase("case_1", { limit: 1, offset: 1 }).map((entry) => entry.id)).toEqual(["traf_2"]);
+  });
 });
