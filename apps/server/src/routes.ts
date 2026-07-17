@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
@@ -51,6 +51,15 @@ function historyPageOptions(query: unknown): { limit?: number; offset?: number }
     limit: Number.isFinite(parsedLimit) ? Math.min(10_000, Math.max(1, Math.trunc(parsedLimit))) : 1_000,
     offset: Number.isFinite(parsedOffset) ? Math.max(0, Math.trunc(parsedOffset)) : 0,
   };
+}
+
+function observerFingerprint(warning: Pick<ObserverWarning, "title" | "relatedFacts" | "relatedTasks">): string {
+  const material = [
+    warning.title.trim().toLowerCase().replace(/\s+/g, " "),
+    [...warning.relatedFacts].sort().join(","),
+    [...warning.relatedTasks].sort().join(","),
+  ].join("|");
+  return createHash("sha256").update(material).digest("hex").slice(0, 24);
 }
 
 export function registerRoutes(
@@ -471,20 +480,44 @@ export function registerRoutes(
           return { action: "continue" };
         }
         let pauseReason: string | undefined;
+        const validFactIds = new Set(factStore.listByCase(id).map((fact) => fact.id));
+        const validTaskIds = new Set(taskStore.listByCase(id).map((task) => task.id));
         for (const w of result.warnings) {
-          if (observerStore.existsOpenDuplicate(id, w.title, w.description)) continue;
+          const referencesValid = w.relatedFacts.every((factId) => validFactIds.has(factId))
+            && w.relatedTasks.every((taskId) => validTaskIds.has(taskId));
+          const criticalEvidenceValid = Boolean(w.evidence?.trim()) && referencesValid;
+          const level = w.level === "critical" && !criticalEvidenceValid ? "warning" : w.level;
+          const fingerprint = observerFingerprint(w);
+          const existing = observerStore.getActiveByFingerprint(id, fingerprint);
+          if (existing) {
+            const warning = observerStore.observeAgain(existing.id, {
+              level,
+              escalationReason: level === "critical"
+                ? "Critical evidence remained unresolved across two Observer checkpoints."
+                : null,
+            });
+            if (!warning) continue;
+            bus.emit({ type: "observer_warning_updated", warning });
+            if (warning.status === "escalated" && !pauseReason) {
+              pauseReason = `escalated observer warning: ${warning.title}`;
+              bus.emit({ type: "agent_run_needs_confirmation", caseId: id, runId: reviewRunId, warning });
+            }
+            continue;
+          }
+          const now = new Date().toISOString();
           const warning = observerStore.create({
             ...w,
-            status: "open",
+            level,
+            status: "detected",
+            fingerprint,
+            occurrenceCount: 1,
+            lastObservedAt: now,
+            escalationReason: null,
             relatedRunId: reviewRunId,
             suggestedGoal: w.suggestedGoal || `[Observer correction]\n${w.suggestedAction}`,
             resolvedAt: null,
           });
           bus.emit({ type: "observer_warning", warning });
-          if (w.level === "critical" && !pauseReason) {
-            pauseReason = `critical observer warning: ${w.title}`;
-            bus.emit({ type: "agent_run_needs_confirmation", caseId: id, runId: reviewRunId, warning });
-          }
         }
         return pauseReason ? { action: "pause", reason: pauseReason } : { action: "continue" };
       };
@@ -747,7 +780,7 @@ export function registerRoutes(
         const interrupted = runs.markInterrupted(runId, running.run.interruptReason ?? e.content);
         if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });
       }
-    }, { signal: running.abortController.signal, runId, budget, getSteeringMessages: () => runs.consumeSteering(runId), onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory), failureMemory, onToolExecuted: (report) => {
+    }, { signal: running.abortController.signal, runId, budget, reviewIntervalTurns: 3, getSteeringMessages: () => runs.consumeSteering(runId), onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory), failureMemory, onToolExecuted: (report) => {
       if (report.ok) return;
       if (report.rejected) return;
       if (report.blocked) return;
@@ -802,12 +835,6 @@ export function registerRoutes(
       console.error("[compressor]", (e as Error).message);
     }
 
-    // 旁路监督：run 结束后触发 Observer，失败不影响已完成的 run
-    try {
-      await runObserverReview(runId, trajectory.join("\n"));
-    } catch (e) {
-      console.error("[observer]", (e as Error).message);
-    }
     };
 
     bus.emit({ type: "agent_run_started", run: active.run });

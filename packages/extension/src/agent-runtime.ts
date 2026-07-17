@@ -44,6 +44,7 @@ export interface AgentRunOptions {
   getSteeringMessages?: () => string[];
   budget?: Partial<AgentRunBudget>;
   onTurnComplete?: (summary: TurnSummary) => Promise<{ action: "continue" | "pause"; reason?: string }>;
+  reviewIntervalTurns?: number;
   failureMemory?: FailureMemory;
   onToolExecuted?: (report: ToolExecutionReport) => void | Promise<void>;
 }
@@ -52,6 +53,7 @@ export interface TurnSummary {
   runId: string;
   turnCount: number;
   trajectory: string;
+  trigger: "checkpoint" | "final";
 }
 
 export const DEFAULT_RUN_BUDGET: AgentRunBudget = {
@@ -79,6 +81,11 @@ export function normalizeRunBudget(input?: Partial<AgentRunBudget>): AgentRunBud
     maxTurns,
     warningTurnsRemaining,
   };
+}
+
+export function shouldReviewAtCheckpoint(turnCount: number, intervalTurns = 3): boolean {
+  const interval = Math.max(1, Math.floor(intervalTurns));
+  return turnCount > 0 && turnCount % interval === 0;
 }
 
 const RUN_BUDGET_NOTICE = `[Run budget notice]
@@ -180,6 +187,18 @@ export class AgentRuntime {
     let cumulativeCompletionTokens = 0;
     let cumulativeTotalTokens = 0;
     const budgetFinite = Number.isFinite(budget.maxTurns);
+    const reviewIntervalTurns = Math.max(1, Math.floor(options.reviewIntervalTurns ?? 3));
+
+    const review = async (trigger: TurnSummary["trigger"], count: number, extra?: TurnMessage) => {
+      if (!options.onTurnComplete || !options.runId) return { action: "continue" as const };
+      const trajectoryMessages = extra ? [...messages, extra] : messages;
+      return options.onTurnComplete({
+        runId: options.runId,
+        turnCount: count,
+        trajectory: trajectoryMessages.map((message) => `${message.role}: ${message.content}`).join("\n"),
+        trigger,
+      });
+    };
 
     while (true) {
       if (this.interrupted(options)) {
@@ -261,6 +280,11 @@ export class AgentRuntime {
       if (turn.text) onEvent({ type: "text", content: turn.text });
 
       if (turn.toolCalls.length === 0 || turn.done) {
+        const decision = await review("final", turnCount + 1, { role: "assistant", content: turn.text });
+        if (decision.action === "pause") {
+          onEvent({ type: "interrupted", content: decision.reason ?? "paused by observer" });
+          return;
+        }
         onEvent({ type: "done", content: turn.text });
         return;
       }
@@ -293,16 +317,14 @@ export class AgentRuntime {
         messages.push({ role: "user", content: `[Human steering]\n用户运行中补充指令：${text}` });
       }
 
-      if (options.onTurnComplete && options.runId) {
-        const trajectory = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
-        const decision = await options.onTurnComplete({ runId: options.runId, turnCount, trajectory });
+      turnCount += 1;
+      if (shouldReviewAtCheckpoint(turnCount, reviewIntervalTurns)) {
+        const decision = await review("checkpoint", turnCount);
         if (decision?.action === "pause") {
           onEvent({ type: "interrupted", content: decision.reason ?? "paused by observer" });
           return;
         }
       }
-
-      turnCount += 1;
     }
   }
 

@@ -1,4 +1,4 @@
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { observerWarnings } from "../db/schema.js";
 import { type ObserverWarning, ObserverWarningSchema } from "@traceforge/shared";
@@ -9,6 +9,8 @@ function rowToWarning(row: typeof observerWarnings.$inferSelect): ObserverWarnin
     relatedFacts: JSON.parse(row.relatedFactsJson), relatedTasks: JSON.parse(row.relatedTasksJson),
     suggestedAction: row.suggestedAction, status: row.status, relatedRunId: row.relatedRunId,
     suggestedGoal: row.suggestedGoal, evidence: row.evidence ?? undefined,
+    fingerprint: row.fingerprint, occurrenceCount: row.occurrenceCount,
+    lastObservedAt: row.lastObservedAt, escalationReason: row.escalationReason,
     resolvedAt: row.resolvedAt, createdAt: row.createdAt,
   });
 }
@@ -24,6 +26,9 @@ export class ObserverWarningStore {
       relatedFactsJson: JSON.stringify(parsed.relatedFacts),
       relatedTasksJson: JSON.stringify(parsed.relatedTasks),
       suggestedAction: parsed.suggestedAction, status: parsed.status,
+      fingerprint: parsed.fingerprint, occurrenceCount: parsed.occurrenceCount,
+      lastObservedAt: parsed.lastObservedAt || parsed.createdAt,
+      escalationReason: parsed.escalationReason,
       relatedRunId: parsed.relatedRunId, suggestedGoal: parsed.suggestedGoal,
       evidence: parsed.evidence ?? null,
       resolvedAt: parsed.resolvedAt, createdAt: parsed.createdAt,
@@ -69,6 +74,38 @@ export class ObserverWarningStore {
   getById(id: string): ObserverWarning | undefined {
     const row = this.db.select().from(observerWarnings).where(eq(observerWarnings.id, id)).get();
     return row ? rowToWarning(row) : undefined;
+  }
+
+  getActiveByFingerprint(caseId: string, fingerprint: string): ObserverWarning | undefined {
+    const row = this.db.select().from(observerWarnings).where(and(
+      eq(observerWarnings.caseId, caseId),
+      eq(observerWarnings.fingerprint, fingerprint),
+      inArray(observerWarnings.status, ["open", "detected", "correcting", "escalated"]),
+    )).get();
+    return row ? rowToWarning(row) : undefined;
+  }
+
+  observeAgain(id: string, input: { level: ObserverWarning["level"]; escalationReason?: string | null }): ObserverWarning | undefined {
+    const current = this.getById(id);
+    if (!current) return undefined;
+    const occurrenceCount = current.occurrenceCount + 1;
+    const lastObservedAt = new Date().toISOString();
+    const status = input.level === "critical" && occurrenceCount >= 2 ? "escalated" : "detected";
+    this.db.update(observerWarnings).set({
+      level: input.level,
+      status,
+      occurrenceCount,
+      lastObservedAt,
+      escalationReason: input.escalationReason ?? null,
+    }).where(eq(observerWarnings.id, id)).run();
+    return ObserverWarningSchema.parse({
+      ...current,
+      level: input.level,
+      status,
+      occurrenceCount,
+      lastObservedAt,
+      escalationReason: input.escalationReason ?? null,
+    });
   }
 
   updateStatus(id: string, status: ObserverWarning["status"]): ObserverWarning | undefined {

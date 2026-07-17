@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyToolFailure } from "./agent-runtime.js";
+import { classifyToolFailure, shouldReviewAtCheckpoint } from "./agent-runtime.js";
 
 describe("AgentRuntime failure classification", () => {
   it("classifies tool failures by retry policy", () => {
@@ -9,5 +9,11 @@ describe("AgentRuntime failure classification", () => {
     expect(classifyToolFailure("浏览器未启动")).toBe("environment");
     expect(classifyToolFailure("unknown mcp server: poc")).toBe("environment");
     expect(classifyToolFailure("sh: nuclei: command not found")).toBe("permanent");
+  });
+});
+
+describe("Observer checkpoint scheduling", () => {
+  it("reviews every third completed tool turn", () => {
+    expect([1, 2, 3, 4, 5, 6].filter((turn) => shouldReviewAtCheckpoint(turn, 3))).toEqual([3, 6]);
   });
 });

@@ -40,6 +40,10 @@ function createOpenWarning() {
     relatedTasks: [],
     suggestedAction: "继续测 X",
     status: "open",
+    fingerprint: "warn-test-fingerprint",
+    occurrenceCount: 1,
+    lastObservedAt: new Date().toISOString(),
+    escalationReason: null,
     relatedRunId: "run_test",
     suggestedGoal: "[Observer correction]\n继续测 X",
     evidence: "trajectory: agent stopped before testing X",
@@ -90,6 +94,10 @@ describe("observer integration", () => {
       relatedTasks: [],
       suggestedAction: "回到登录流程",
       status: "open",
+      fingerprint: "warn-other-fingerprint",
+      occurrenceCount: 1,
+      lastObservedAt: new Date().toISOString(),
+      escalationReason: null,
       relatedRunId: "run_other",
       suggestedGoal: "",
       resolvedAt: null,
@@ -109,6 +117,32 @@ describe("observer integration", () => {
     const store = new ObserverWarningStore(db);
     expect(store.existsOpenDuplicate(caseId, "过早结束", "还有点没测")).toBe(true);
     expect(store.existsOpenDuplicate(caseId, "过早结束", "不同描述")).toBe(false);
+  });
+
+  it("escalates a repeated critical warning only after the second observation", () => {
+    const store = new ObserverWarningStore(db);
+    const first = store.create({
+      ...createOpenWarning(),
+      id: "warn_escalation",
+      level: "critical",
+      status: "detected",
+      fingerprint: "stable-fingerprint",
+      occurrenceCount: 1,
+      lastObservedAt: new Date().toISOString(),
+      escalationReason: null,
+    });
+
+    expect(first.status).toBe("detected");
+    const repeated = store.observeAgain(first.id, {
+      level: "critical",
+      escalationReason: "Critical evidence remained unresolved across two Observer checkpoints.",
+    });
+
+    expect(repeated).toMatchObject({
+      status: "escalated",
+      occurrenceCount: 2,
+      escalationReason: "Critical evidence remained unresolved across two Observer checkpoints.",
+    });
   });
 
   it("accepts an open warning and emits an update event", async () => {

@@ -13,6 +13,10 @@ const STATUS_LABEL: Record<ObserverWarning["status"], string> = {
   accepted: "Resumed",
   converted_to_task: "Tasked",
   dismissed: "Ignored",
+  detected: "Detected",
+  correcting: "Correcting",
+  resolved: "Resolved",
+  escalated: "Escalated",
 };
 
 export function observerWarningStatusLabel(status: ObserverWarning["status"]): string {
@@ -101,7 +105,7 @@ export function ObserverTab() {
       <strong className="observer-row-title">{w.title}</strong>
       <p className="observer-row-description">{w.description}</p>
       <div className="observer-row-suggestion"><span>Suggested next step</span>{w.suggestedAction}</div>
-      {w.status === "open" && (
+      {(w.status === "open" || w.status === "detected" || w.status === "correcting" || w.status === "escalated") && (
         <div className="tf-row-actions">
           <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={continueDisabled} onClick={() => continueRun(w)} title="Start a new Agent run based on the Observer suggestion">
             <Play size={13} /> Resume
