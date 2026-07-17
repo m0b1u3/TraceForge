@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { observerWarningContinueDisabled, observerWarningRunGoal, observerWarningStatusLabel } from "./ObserverTab.js";
+import { observerWarningContinueDisabled, observerWarningGroup, observerWarningRunGoal, observerWarningStatusLabel } from "./ObserverTab.js";
 
 describe("ObserverTab helpers", () => {
   it("labels observer warning workflow states", () => {
@@ -25,5 +25,14 @@ describe("ObserverTab helpers", () => {
     expect(observerWarningContinueDisabled({ status: "running" }, false, null)).toBe(true);
     expect(observerWarningContinueDisabled(null, true, null)).toBe(true);
     expect(observerWarningContinueDisabled(null, false, "warn_1:task")).toBe(true);
+  });
+
+  it("groups warnings by intervention priority", () => {
+    expect(observerWarningGroup("escalated")).toBe("action");
+    expect(observerWarningGroup("open")).toBe("action");
+    expect(observerWarningGroup("correcting")).toBe("monitoring");
+    expect(observerWarningGroup("detected")).toBe("monitoring");
+    expect(observerWarningGroup("resolved")).toBe("history");
+    expect(observerWarningGroup("converted_to_task")).toBe("history");
   });
 });

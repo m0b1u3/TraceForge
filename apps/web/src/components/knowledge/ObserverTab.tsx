@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowBendDownRight, ListPlus, Play, Pulse, X } from "@phosphor-icons/react";
+import { ArrowBendDownRight, CheckCircle, Clock, Eye, ListPlus, Play, Pulse, Warning, X } from "@phosphor-icons/react";
 import type { AgentRun, ObserverWarning } from "@traceforge/shared";
 import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWarning, runAgent } from "../../api.js";
 import { useStore } from "../../store.js";
@@ -31,6 +31,14 @@ export function observerWarningContinueDisabled(activeRun: Pick<AgentRun, "statu
   return busy !== null || agentBusy || activeRun !== null;
 }
 
+type ObserverGroup = "action" | "monitoring" | "history";
+
+export function observerWarningGroup(status: ObserverWarning["status"]): ObserverGroup {
+  if (status === "open" || status === "escalated") return "action";
+  if (status === "detected" || status === "correcting") return "monitoring";
+  return "history";
+}
+
 export function ObserverTab() {
   const {
     caseId, warnings, showToast, addAgentEvent, setAgentBusy, setActiveRun,
@@ -44,16 +52,29 @@ export function ObserverTab() {
   })));
   const [busy, setBusy] = useState<string | null>(null);
   const window = useKnowledgeWindow(warnings.length);
+  const visibleWarnings = warnings.slice(0, window.count);
+  const groups: Array<{ id: ObserverGroup; label: string; icon: typeof Warning; items: ObserverWarning[] }> = [
+    { id: "action", label: "Needs action", icon: Warning, items: visibleWarnings.filter((warning) => observerWarningGroup(warning.status) === "action") },
+    { id: "monitoring", label: "Monitoring", icon: Eye, items: visibleWarnings.filter((warning) => observerWarningGroup(warning.status) === "monitoring") },
+    { id: "history", label: "History", icon: Clock, items: visibleWarnings.filter((warning) => observerWarningGroup(warning.status) === "history") },
+  ];
   const telemetry = (
     <div className="observer-telemetry" aria-label="Observer review activity">
-      <span><Pulse size={12} /> {observerTelemetry.reviewCount} reviews</span>
-      <span><ArrowBendDownRight size={12} /> {observerTelemetry.correctionCount} corrections</span>
-      <span>{observerTelemetry.totalTokens.toLocaleString()} tokens</span>
-      {observerTelemetry.failureCount > 0 && <span className="observer-telemetry-error">{observerTelemetry.failureCount} failed</span>}
-      {observerTelemetry.lastDurationMs !== null && <span>{observerTelemetry.lastDurationMs} ms</span>}
+      <div className="observer-telemetry-state">
+        <span className={observerTelemetry.failureCount > 0 ? "is-degraded" : "is-healthy"}><Pulse size={13} weight="bold" /></span>
+        <div>
+          <strong>{observerTelemetry.failureCount > 0 ? "Review degraded" : observerTelemetry.reviewCount > 0 ? "Observer active" : "Observer standing by"}</strong>
+          <small>{observerTelemetry.lastTrigger ? `Last ${observerTelemetry.lastTrigger} review · ${observerTelemetry.lastDurationMs ?? 0} ms` : "Reviews run after three tool turns and before completion"}</small>
+        </div>
+      </div>
+      <div className="observer-telemetry-metrics">
+        <span><strong>{observerTelemetry.reviewCount}</strong> reviews</span>
+        <span><strong>{observerTelemetry.correctionCount}</strong> corrections</span>
+        <span><strong>{observerTelemetry.totalTokens.toLocaleString()}</strong> tokens</span>
+      </div>
     </div>
   );
-  if (warnings.length === 0) return <>{telemetry}<FeedbackState title="No observer warnings" description="Observer reviews checkpoints and final output without interrupting healthy runs." /></>;
+  if (warnings.length === 0) return <>{telemetry}{observerTelemetry.failureCount > 0 && <div className="observer-review-failure" role="status"><Warning size={14} /><span><strong>{observerTelemetry.failureCount} review failed</strong>Agent continued normally. Check the LLM connection if this repeats.</span></div>}<FeedbackState title="No intervention required" description="No unsupported conclusions or unresolved critical evidence were detected." /></>;
 
   const continueRun = async (w: ObserverWarning) => {
     if (!caseId) return;
@@ -103,8 +124,7 @@ export function ObserverTab() {
     }
   };
 
-  return <>{telemetry}{warnings.slice(0, window.count).map((w) => (
-    (() => {
+  const warningRow = (w: ObserverWarning) => {
       const continueDisabled = observerWarningContinueDisabled(activeRun, agentBusy, busy);
       return (
     <article className={`tf-row observer-row ${LEVEL_CLASS[w.level]}`} key={w.id}>
@@ -115,6 +135,7 @@ export function ObserverTab() {
       </div>
       <strong className="observer-row-title">{w.title}</strong>
       <p className="observer-row-description">{w.description}</p>
+      {w.status === "correcting" && <div className="observer-correction-track" aria-label="Correction in progress"><span className="is-complete"><CheckCircle size={11} weight="fill" />Detected</span><i /><span className="is-active"><ArrowBendDownRight size={11} />Correcting</span><i /><span>Verify</span></div>}
       <div className="observer-row-suggestion"><span>Suggested next step</span>{w.suggestedAction}</div>
       {(w.status === "open" || w.status === "detected" || w.status === "correcting" || w.status === "escalated") && (
         <div className="tf-row-actions">
@@ -131,8 +152,18 @@ export function ObserverTab() {
       )}
     </article>
       );
-    })()
-  ))}
+  };
+
+  return <>{telemetry}{observerTelemetry.failureCount > 0 && <div className="observer-review-failure" role="status"><Warning size={14} /><span><strong>{observerTelemetry.failureCount} review failed</strong>Agent continued normally. Check the LLM connection if this repeats.</span></div>}
+    <div className="observer-groups">
+      {groups.filter((group) => group.items.length > 0).map((group) => {
+        const Icon = group.icon;
+        return <section className={`observer-group observer-group-${group.id}`} key={group.id}>
+          <header><span><Icon size={12} />{group.label}</span><strong>{group.items.length}</strong></header>
+          {group.items.map(warningRow)}
+        </section>;
+      })}
+    </div>
     <KnowledgeWindowFooter visible={window.count} total={warnings.length} onShowMore={window.showMore} />
   </>;
 }
