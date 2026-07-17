@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle, Eye, EyeSlash, Warning } from "@phosphor-icons/react";
+import { CheckCircle, Cpu, Eye, EyeSlash, Moon, Palette, SlidersHorizontal, Sun, Warning } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import type { LlmConfigInput, LlmConfig } from "../api.js";
 import { useShallow } from "zustand/react/shallow";
+import { useAppTheme } from "../hooks/useAppTheme.js";
 
 const PROVIDERS = [
   { value: "openai", label: "OpenAI-compatible" },
@@ -132,6 +133,8 @@ export function SettingsModal({
     status: "idle" | "testing" | "ok" | "error";
     message?: string;
   }>({ status: "idle" });
+  const [activeSection, setActiveSection] = useState<"model" | "runtime" | "interface">("model");
+  const { theme, setTheme } = useAppTheme();
 
   useEffect(() => {
     if (settingsModalOpen_) {
@@ -139,6 +142,7 @@ export function SettingsModal({
       setShowApiKey(false);
       setTestStatus({ status: "idle" });
       setFormError(null);
+      setActiveSection("model");
     }
   }, [settingsModalOpen_, initialConfig, loadLlmConfig]);
 
@@ -164,6 +168,24 @@ export function SettingsModal({
   if (!settingsModalOpen_) return null;
 
   const buildInput = () => buildLlmConfigInput({ provider, model, apiKey: apiKeyDirty ? apiKey : "", baseUrl, jsonMode, contextWindowTokens, maxOutputTokens, currency, inputPricePerMillion, outputPricePerMillion });
+
+  const isDirty = Boolean(llmConfig && (
+    provider !== llmConfig.provider
+    || model !== llmConfig.model
+    || apiKeyDirty
+    || baseUrl !== (llmConfig.baseUrl ?? "")
+    || jsonMode !== (llmConfig.jsonMode ?? "default")
+    || contextWindowTokens !== (llmConfig.contextWindowTokens ? String(llmConfig.contextWindowTokens) : "")
+    || maxOutputTokens !== (llmConfig.maxOutputTokens ? String(llmConfig.maxOutputTokens) : "")
+    || currency !== (llmConfig.currency ?? "")
+    || inputPricePerMillion !== (llmConfig.inputPricePerMillion === undefined ? "" : String(llmConfig.inputPricePerMillion))
+    || outputPricePerMillion !== (llmConfig.outputPricePerMillion === undefined ? "" : String(llmConfig.outputPricePerMillion))
+  ));
+
+  const requestClose = () => {
+    if (isDirty && !globalThis.confirm("Discard unsaved settings changes?")) return;
+    setSettingsModalOpen(false);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -209,17 +231,23 @@ export function SettingsModal({
   };
 
   return (
-    <Dialog open={settingsModalOpen_} onOpenChange={setSettingsModalOpen}>
-      <DialogContent className="settings-dialog sm:max-w-[560px]">
-        <DialogHeader>
+    <Dialog open={settingsModalOpen_} onOpenChange={(nextOpen) => { if (!nextOpen) requestClose(); }}>
+      <DialogContent className="settings-dialog" showCloseButton={false}>
+        <DialogHeader className="settings-header">
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
             Configure the LLM endpoint used by the agent.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="grid gap-5">
-          <div className="settings-section">
-            <div className="settings-section-heading"><strong>Connection</strong><span>Endpoint and credentials used for every real Agent request.</span></div>
+        <form onSubmit={handleSubmit} className="settings-layout">
+          <nav className="settings-nav" aria-label="Settings sections">
+            <button type="button" className={activeSection === "model" ? "is-active" : ""} onClick={() => setActiveSection("model")}><Cpu size={17} /><span><strong>Model</strong><small>Provider and credentials</small></span></button>
+            <button type="button" className={activeSection === "runtime" ? "is-active" : ""} onClick={() => setActiveSection("runtime")}><SlidersHorizontal size={17} /><span><strong>Runtime</strong><small>Context and pricing</small></span></button>
+            <button type="button" className={activeSection === "interface" ? "is-active" : ""} onClick={() => setActiveSection("interface")}><Palette size={17} /><span><strong>Interface</strong><small>Appearance preferences</small></span></button>
+          </nav>
+          <div className="settings-content">
+          {activeSection === "model" && <section className="settings-section" aria-labelledby="settings-model-title">
+            <div className="settings-section-heading"><strong id="settings-model-title">Connection</strong><span>Endpoint and credentials used for every real Agent request.</span></div>
             <div className="grid gap-2">
               <label htmlFor="provider" className="text-sm font-medium">
                 Provider
@@ -307,10 +335,10 @@ export function SettingsModal({
                 placeholder="https://api.example.com/v1"
               />
             </div>
-          </div>
+          </section>}
 
-          <div className="settings-section">
-            <div className="settings-section-heading"><strong>Context budget</strong><span>Optional limits used by context compression and model output.</span></div>
+          {activeSection === "runtime" && <section className="settings-section" aria-labelledby="settings-runtime-title">
+            <div className="settings-section-heading"><strong id="settings-runtime-title">Context budget</strong><span>Optional limits used by context compression and model output.</span></div>
             <div className="grid gap-2">
               <label htmlFor="jsonMode" className="text-sm font-medium">
                 JSON Mode
@@ -361,9 +389,9 @@ export function SettingsModal({
                 placeholder="e.g. 8192"
               />
             </div>
-          </div>
+          </section>}
 
-          <div className="settings-section">
+          {activeSection === "runtime" && <section className="settings-section">
             <div className="settings-section-heading"><strong>Usage pricing</strong><span>Optional provider prices used to calculate an auditable cost snapshot for each LLM turn.</span></div>
             <div className="grid gap-2">
               <label htmlFor="currency" className="text-sm font-medium">Currency</label>
@@ -389,52 +417,56 @@ export function SettingsModal({
                 Clear pricing
               </Button>
             )}
-          </div>
+          </section>}
+
+          {activeSection === "interface" && <section className="settings-section settings-interface">
+            <div className="settings-section-heading"><strong>Appearance</strong><span>Choose the workbench theme. Technical code surfaces retain their optimized contrast.</span></div>
+            <div className="settings-theme-options" role="radiogroup" aria-label="Color theme">
+              <button type="button" role="radio" aria-checked={theme === "light"} className={theme === "light" ? "is-selected" : ""} onClick={() => setTheme("light")}><Sun size={18} /><span><strong>Light</strong><small>Laboratory paper</small></span><CheckCircle size={16} weight={theme === "light" ? "fill" : "regular"} /></button>
+              <button type="button" role="radio" aria-checked={theme === "dark"} className={theme === "dark" ? "is-selected" : ""} onClick={() => setTheme("dark")}><Moon size={18} /><span><strong>Dark</strong><small>Low-light operations</small></span><CheckCircle size={16} weight={theme === "dark" ? "fill" : "regular"} /></button>
+            </div>
+          </section>}
 
           {formError && <div className="settings-feedback is-error" role="alert"><Warning size={16} weight="fill" />{formError}</div>}
 
-          <DialogFooter className="justify-between gap-2 sm:justify-between">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={handleTest}
-              disabled={testing || saving || !model.trim()}
-            >
-              {testing ? "Testing..." : "Test Connection"}
-            </Button>
+          {testStatus.status !== "idle" && testStatus.status !== "testing" && testStatus.message && (
+            <div className={`settings-feedback ${testStatus.status === "ok" ? "is-success" : "is-error"}`} role={testStatus.status === "ok" ? "status" : "alert"}>
+              {testStatus.status === "ok" ? <CheckCircle size={16} weight="fill" /> : <Warning size={16} weight="fill" />}
+              <Badge variant={testStatus.status === "ok" ? "default" : "destructive"}>{testStatus.status === "ok" ? "Connected" : "Error"}</Badge>
+              <span>{testStatus.message}</span>
+            </div>
+          )}
+          </div>
+
+          <DialogFooter className="settings-footer">
+            <div className="settings-footer-context">
+              {activeSection === "model" && <Button
+                type="button"
+                variant="secondary"
+                onClick={handleTest}
+                disabled={testing || saving || !model.trim()}
+              >
+                {testing ? "Testing..." : "Test Connection"}
+              </Button>}
+            </div>
             <div className="flex gap-2">
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setSettingsModalOpen(false)}
+                onClick={requestClose}
                 disabled={saving || testing}
               >
                 Cancel
               </Button>
               <Button
                 type="submit"
-                disabled={saving || testing || !model.trim()}
+                disabled={saving || testing || !model.trim() || !isDirty}
               >
-                {saving ? "Saving..." : "Save"}
+                {saving ? "Saving..." : "Save changes"}
               </Button>
             </div>
           </DialogFooter>
 
-          {testStatus.status !== "idle" &&
-            testStatus.status !== "testing" &&
-            testStatus.message && (
-              <div className={`settings-feedback ${testStatus.status === "ok" ? "is-success" : "is-error"}`} role={testStatus.status === "ok" ? "status" : "alert"}>
-                {testStatus.status === "ok" ? <CheckCircle size={16} weight="fill" /> : <Warning size={16} weight="fill" />}
-                <Badge
-                  variant={
-                    testStatus.status === "ok" ? "default" : "destructive"
-                  }
-                >
-                  {testStatus.status === "ok" ? "Connected" : "Error"}
-                </Badge>
-                <span>{testStatus.message}</span>
-              </div>
-            )}
         </form>
       </DialogContent>
     </Dialog>

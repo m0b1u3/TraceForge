@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowCounterClockwise, Browser, CircleNotch, HandTap, StopCircle } from "@phosphor-icons/react";
-import { useStore } from "../store.js";
-import { startBrowser, stopBrowser, takeoverBrowser, releaseBrowser } from "../api.js";
 import { useShallow } from "zustand/react/shallow";
+import { startBrowser, stopBrowser, takeoverBrowser, releaseBrowser } from "../api.js";
+import { useStore } from "../store.js";
+
+export type BrowserAction = "launch" | "takeover" | "release" | "stop";
 
 function browserActionError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -20,7 +22,14 @@ function browserActionError(error: unknown): string {
   return "The browser action could not be completed. Try again or check the server logs.";
 }
 
-export function BrowserControls() {
+const actionLabels: Record<BrowserAction, string> = {
+  launch: "Launching…",
+  takeover: "Taking over…",
+  release: "Returning…",
+  stop: "Stopping…",
+};
+
+export function BrowserControls({ onActionChange }: { onActionChange?: (action: BrowserAction | null) => void }) {
   const { caseId, browserController, setBrowser, resetBrowser, showToast } = useStore(useShallow((state) => ({
     caseId: state.caseId,
     browserController: state.browserController,
@@ -28,47 +37,83 @@ export function BrowserControls() {
     resetBrowser: state.resetBrowser,
     showToast: state.showToast,
   })));
-  const [busy, setBusy] = useState(false);
+  const [action, setAction] = useState<BrowserAction | null>(null);
+  const actionLock = useRef(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   if (!caseId) return null;
 
-  // Show failures and disable controls while a browser action is in flight.
-  const run = (fn: () => Promise<void>) => async () => {
-    setBusy(true);
+  const run = (nextAction: BrowserAction, fn: (activeCaseId: string) => Promise<void>) => async () => {
+    if (actionLock.current) return;
+    actionLock.current = true;
+    setAction(nextAction);
+    onActionChange?.(nextAction);
+    const activeCaseId = caseId;
     try {
-      await fn();
-    } catch (e) {
-      const rawMessage = e instanceof Error ? e.message : String(e);
+      await fn(activeCaseId);
+    } catch (error) {
+      if (useStore.getState().caseId !== activeCaseId) return;
+      const rawMessage = error instanceof Error ? error.message : String(error);
       if (rawMessage.toLowerCase().includes("no browser session")) resetBrowser();
-      console.error("Browser action failed", e);
-      showToast(browserActionError(e));
-    } finally { setBusy(false); }
+      console.error("Browser action failed", error);
+      showToast(browserActionError(error), "error");
+    } finally {
+      actionLock.current = false;
+      if (mounted.current) {
+        setAction(null);
+        onActionChange?.(null);
+      }
+    }
   };
 
   if (browserController === null) {
     return (
-      <button type="button" className="tf-btn tf-btn-primary" disabled={busy} aria-busy={busy} onClick={run(async () => {
-        const state = await startBrowser(caseId);
-        setBrowser(state.controller, state.url);
+      <button type="button" className="tf-btn tf-btn-primary" disabled={action !== null} aria-busy={action === "launch"} onClick={run("launch", async (activeCaseId) => {
+        const state = await startBrowser(activeCaseId);
+        if (useStore.getState().caseId === activeCaseId) setBrowser(state.controller, state.url);
       })}>
-        {busy ? <CircleNotch size={15} className="tf-spin" /> : <Browser size={15} weight="duotone" />} {busy ? "Launching…" : "Launch browser"}
+        {action === "launch" ? <CircleNotch size={15} className="tf-spin" aria-hidden="true" /> : <Browser size={15} weight="duotone" aria-hidden="true" />}
+        {action === "launch" ? actionLabels.launch : "Launch browser"}
       </button>
     );
   }
+
+  const busy = action !== null;
   return (
     <div className="tf-btn-group">
       {browserController === "llm"
-        ? <button type="button" className="tf-btn tf-btn-primary" disabled={busy} aria-busy={busy} aria-label="Take over browser control" onClick={run(async () => {
-            const state = await takeoverBrowser(caseId);
-            setBrowser(state.controller, state.url);
-          })}><HandTap size={14} aria-hidden="true" />Take over</button>
-        : <button type="button" className="tf-btn tf-btn-primary" disabled={busy} aria-busy={busy} aria-label="Return browser control to Agent" onClick={run(async () => {
-            const state = await releaseBrowser(caseId);
-            setBrowser(state.controller, state.url);
-          })}><ArrowCounterClockwise size={14} aria-hidden="true" />Return to Agent</button>}
-      <button type="button" className="tf-btn tf-btn-danger" disabled={busy} aria-busy={busy} aria-label="Stop shared browser" onClick={run(async () => {
-        await stopBrowser(caseId);
-        resetBrowser();
-      })}><StopCircle size={14} aria-hidden="true" />Stop</button>
+        ? (
+          <button type="button" className="tf-btn tf-btn-primary" disabled={busy} aria-busy={action === "takeover"} aria-label="Take over browser control" onClick={run("takeover", async (activeCaseId) => {
+            const state = await takeoverBrowser(activeCaseId);
+            if (useStore.getState().caseId === activeCaseId) setBrowser(state.controller, state.url);
+          })}>
+            {action === "takeover" ? <CircleNotch size={14} className="tf-spin" aria-hidden="true" /> : <HandTap size={14} aria-hidden="true" />}
+            {action === "takeover" ? actionLabels.takeover : "Take over"}
+          </button>
+        )
+        : (
+          <button type="button" className="tf-btn tf-btn-primary" disabled={busy} aria-busy={action === "release"} aria-label="Return browser control to Agent" onClick={run("release", async (activeCaseId) => {
+            const state = await releaseBrowser(activeCaseId);
+            if (useStore.getState().caseId === activeCaseId) setBrowser(state.controller, state.url);
+          })}>
+            {action === "release" ? <CircleNotch size={14} className="tf-spin" aria-hidden="true" /> : <ArrowCounterClockwise size={14} aria-hidden="true" />}
+            {action === "release" ? actionLabels.release : "Return to Agent"}
+          </button>
+        )}
+      <button type="button" className="tf-btn tf-btn-danger" disabled={busy} aria-busy={action === "stop"} aria-label="Stop shared browser" onClick={run("stop", async (activeCaseId) => {
+        await stopBrowser(activeCaseId);
+        if (useStore.getState().caseId === activeCaseId) resetBrowser();
+      })}>
+        {action === "stop" ? <CircleNotch size={14} className="tf-spin" aria-hidden="true" /> : <StopCircle size={14} aria-hidden="true" />}
+        {action === "stop" ? actionLabels.stop : "Stop"}
+      </button>
     </div>
   );
 }

@@ -1,7 +1,6 @@
-import { Circle, Coins, Gear, Moon, Play, Sun } from "@phosphor-icons/react";
-import { useState } from "react";
+import { ArrowsClockwise, Circle, Coins, Gear, Moon, Play, Sun, WifiHigh, WifiSlash } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
-import { getStoredTheme, persistTheme, type AppTheme } from "../lib/theme.js";
+import { useAppTheme } from "../hooks/useAppTheme.js";
 import { CaseLauncher } from "./CaseLauncher.js";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,32 +16,31 @@ export function formatTopBarTokenTotal(totalTokens: number): string {
 }
 
 export function TopBar() {
-  const { caseId, activeRun, agentBusy, tokenUsage, setSettingsModalOpen } = useStore(useShallow((state) => ({ caseId: state.caseId, activeRun: state.activeRun, agentBusy: state.agentBusy, tokenUsage: state.tokenUsage, setSettingsModalOpen: state.setSettingsModalOpen })));
+  const { caseId, activeRun, agentBusy, tokenUsage, connectionStatus, setCase, setSettingsModalOpen } = useStore(useShallow((state) => ({ caseId: state.caseId, activeRun: state.activeRun, agentBusy: state.agentBusy, tokenUsage: state.tokenUsage, connectionStatus: state.connectionStatus, setCase: state.setCase, setSettingsModalOpen: state.setSettingsModalOpen })));
   const runStatus = getTopBarRunStatus(activeRun, agentBusy);
   const openRunLauncher = () => globalThis.dispatchEvent(new CustomEvent("traceforge:new-run"));
-  const [theme, setTheme] = useState<AppTheme>(() => getStoredTheme());
-  const toggleTheme = () => {
-    const nextTheme = theme === "dark" ? "light" : "dark";
-    persistTheme(nextTheme);
-    setTheme(nextTheme);
-  };
+  const { theme, toggleTheme } = useAppTheme();
 
   return (
     <header className="topbar">
-      <div className="brand topbar-brand">
+      <button type="button" className="brand topbar-brand" onClick={() => setCase(null)} aria-label="Return to TraceForge home">
         <div>
           <strong>TraceForge</strong>
           <small>red-team workbench</small>
         </div>
-      </div>
+      </button>
       <nav className="topbar-workspace">
-        <span className="topbar-workspace-label">Engagements</span>
+        <button type="button" className="topbar-workspace-label" onClick={() => setCase(null)}>Engagements</button>
         <span className="topbar-workspace-separator" aria-hidden="true">/</span>
         <CaseLauncher variant="bar" />
       </nav>
       <div className="topbar-meta">
         {caseId && (
           <div className="topbar-runtime" aria-label="Runtime status">
+            <span className={`runtime-connection is-${connectionStatus}`} role="status" title={`Live sync: ${connectionStatus}`}>
+              {connectionStatus === "online" ? <WifiHigh size={13} aria-hidden="true" /> : connectionStatus === "reconnecting" ? <ArrowsClockwise size={13} aria-hidden="true" /> : <WifiSlash size={13} aria-hidden="true" />}
+              <span>{connectionStatus === "online" ? "Online" : connectionStatus === "reconnecting" ? "Reconnecting" : "Offline"}</span>
+            </span>
             <Badge variant="outline" className={cn("topbar-run-status", runStatus === "running" && "is-running")}>
               <Circle size={7} weight="fill" /> Agent {runStatus}
             </Badge>

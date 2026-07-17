@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { Select } from "./Select.js";
 
 // @ts-expect-error enable React act in jsdom tests
@@ -19,7 +19,8 @@ afterEach(() => {
 
 describe("Select keyboard navigation", () => {
   it("opens with ArrowDown and moves focus through options", () => {
-    const onChange = vi.fn();
+    const changes: string[] = [];
+    const onChange = (value: string) => { changes.push(value); };
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -40,7 +41,7 @@ describe("Select keyboard navigation", () => {
     expect(document.activeElement).toBe(options[1]);
 
     act(() => options[1].dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-    expect(onChange).toHaveBeenCalledWith("two");
+    expect(changes).toEqual(["two"]);
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(document.activeElement).toBe(trigger);
   });

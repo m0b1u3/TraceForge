@@ -67,7 +67,7 @@ describe("desktop workspace layout", () => {
 });
 
 describe("WorkspaceLayout", () => {
-  it("closes a tablet drawer with Escape and returns focus to its trigger", () => {
+  it("provides a visible tablet drawer close action and returns focus to its trigger", () => {
     const workspace = renderWorkspace(1024).querySelector(".workspace-shell");
     const trafficTrigger = document.querySelector<HTMLButtonElement>("button[value='traffic']");
 
@@ -78,7 +78,15 @@ describe("WorkspaceLayout", () => {
     expect(workspace?.getAttribute("data-active-panel")).toBe("traffic");
     expect(document.querySelector("#workspace-traffic")?.getAttribute("role")).toBe("dialog");
     expect(document.querySelector("#workspace-traffic")?.getAttribute("aria-modal")).toBe("true");
-    expect(document.activeElement).toBe(document.querySelector("#workspace-traffic"));
+    const closeButton = document.querySelector<HTMLButtonElement>("button[aria-label='Close Traffic panel']");
+    expect(closeButton).not.toBeNull();
+    expect(document.activeElement).toBe(closeButton);
+
+    act(() => closeButton?.click());
+    expect(workspace?.getAttribute("data-active-panel")).toBe("agent");
+    expect(document.activeElement).toBe(trafficTrigger);
+
+    act(() => trafficTrigger?.click());
 
     act(() => globalThis.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     expect(workspace?.getAttribute("data-active-panel")).toBe("agent");

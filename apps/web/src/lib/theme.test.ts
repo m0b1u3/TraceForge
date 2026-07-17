@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { applyTheme, getStoredTheme, persistTheme, THEME_STORAGE_KEY } from "./theme.js";
+import { applyTheme, getStoredTheme, persistTheme, THEME_CHANGE_EVENT, THEME_STORAGE_KEY } from "./theme.js";
 
 describe("app theme", () => {
   beforeEach(() => {
@@ -16,10 +16,14 @@ describe("app theme", () => {
   });
 
   it("applies and persists the selected theme", () => {
+    let themeChangeCount = 0;
+    const onThemeChange = () => { themeChangeCount += 1; };
+    window.addEventListener(THEME_CHANGE_EVENT, onThemeChange, { once: true });
     persistTheme("light");
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
     expect(document.documentElement.dataset.theme).toBe("light");
     expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(themeChangeCount).toBe(1);
 
     applyTheme("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");

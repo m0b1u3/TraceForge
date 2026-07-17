@@ -50,6 +50,7 @@ describe("TopBar", () => {
       activeRun,
       agentBusy: true,
       tokenUsage: { promptTokens: 9_000, completionTokens: 876, totalTokens: 9_876 },
+      connectionStatus: "online",
     });
   });
 
@@ -90,6 +91,18 @@ describe("TopBar", () => {
 
     expect(topBar.innerHTML).toContain("Agent idle");
     expect(topBar.innerHTML).toContain("Tokens 4,321");
+  });
+
+  it("makes live synchronization status explicit without relying on color", async () => {
+    const topBar = await renderTopBar();
+    expect(topBar.textContent).toContain("Online");
+    expect(topBar.querySelector('[role="status"]')?.getAttribute("title")).toBe("Live sync: online");
+
+    act(() => useStore.setState({ connectionStatus: "reconnecting" }));
+    expect(topBar.textContent).toContain("Reconnecting");
+
+    act(() => useStore.setState({ connectionStatus: "offline" }));
+    expect(topBar.textContent).toContain("Offline");
   });
 
   it("formats persisted run status and token totals", () => {

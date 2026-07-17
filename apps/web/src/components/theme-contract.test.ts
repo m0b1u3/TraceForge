@@ -116,4 +116,24 @@ describe("Operations Canvas theme contract", () => {
     expect(graphView).toContain('aria-label="Graph replay progress"');
     expect(graphView).toContain("aria-pressed={speed === value}");
   });
+
+  it("keeps analytical surfaces readable in light mode", () => {
+    expect(workbench).toMatch(/\[data-theme="light"\] \.observer-row\s*\{[^}]*background:\s*var\(--surface-elevated\)/);
+    expect(workbench).toMatch(/\[data-theme="light"\] \[data-slot="dialog-title"\]\s*\{[^}]*color:\s*var\(--foreground\)/);
+    expect(workbench).toMatch(/\[data-theme="light"\] \[data-slot="dialog-close"\]\s*\{[^}]*color:\s*var\(--foreground-muted\)/);
+    expect(workbench).toMatch(/\[data-theme="light"\] \.graph-modal-header\s*\{[^}]*background:\s*var\(--surface-elevated\)/);
+  });
+
+  it("keeps the settings dialog inside narrow viewports with independent content scrolling", () => {
+    expect(app).toMatch(/@media\s*\(max-width:\s*759px\)[\s\S]*?\.settings-dialog\s*\{[^}]*inset:\s*8px\s*!important[^}]*translate:\s*none\s*!important/);
+    expect(app).toMatch(/\.settings-content\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/);
+    expect(app).toMatch(/\.settings-layout\s*\{[^}]*grid-template-columns:\s*190px minmax\(0,\s*1fr\)[^}]*overflow:\s*hidden/);
+    expect(app).toMatch(/@media\s*\(max-width:\s*479px\)[\s\S]*?\.settings-footer-context \[data-slot="button"\]\s*\{[^}]*width:\s*100%/);
+  });
+
+  it("uses a compact launchpad table instead of horizontal scrolling on narrow windows", () => {
+    expect(app).toMatch(/@media\s*\(max-width:\s*799px\)[\s\S]*?\.launchpad-table\s*\{[^}]*overflow-x:\s*visible/);
+    expect(app).toMatch(/@media\s*\(max-width:\s*799px\)[\s\S]*?\.launchpad-table-head,[\s\S]*?\.launchpad-row\s*\{[^}]*min-width:\s*0[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) 112px 32px/);
+    expect(app).toMatch(/\.launchpad-tools label,[\s\S]*?\.launchpad-tools label:focus-within\s*\{[^}]*width:\s*min\(100%,\s*320px\)/);
+  });
 });

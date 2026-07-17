@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect } from "react";
 import { CheckCircle, CircleNotch, Info, Warning } from "@phosphor-icons/react";
 import { useStore } from "./store.js";
-import { CaseLauncher } from "./components/CaseLauncher.js";
+import { Launchpad } from "./components/Launchpad.js";
 
 const Workbench = lazy(() => import("./components/Workbench.js"));
+const SettingsModal = lazy(async () => ({ default: (await import("./components/SettingsModal.js")).SettingsModal }));
 
 function Toast() {
   const toast = useStore((state) => state.toast);
@@ -14,25 +15,15 @@ function Toast() {
 
 export function App() {
   const caseId = useStore((state) => state.caseId);
+  const settingsModalOpen = useStore((state) => state.settingsModalOpen);
   const connectWs = useStore((state) => state.connectWs);
   useEffect(() => connectWs(), [connectWs]);
 
   if (!caseId) {
     return (
-      <div className="app-shell hero-shell">
-        <div className="hero-inner">
-          <div className="hero-text">
-            <div className="hero-brand"><span className="hero-dot" />TRACEFORGE</div>
-            <h1 className="hero-title">Autonomous<br />red-team workbench</h1>
-            <p className="hero-sub">Let the Agent explore, capture evidence, and reason through findings while you steer scope, approvals, and direction in real time.</p>
-            <div className="hero-feats">
-              <span>Shared browser</span><span className="hero-sep" />
-              <span>Evidence-driven Agent</span><span className="hero-sep" />
-              <span>Traceable graph</span>
-            </div>
-          </div>
-          <CaseLauncher variant="hero" />
-        </div>
+      <div className="app-shell">
+        <Launchpad />
+        {settingsModalOpen && <Suspense fallback={null}><SettingsModal /></Suspense>}
         <Toast />
       </div>
     );
