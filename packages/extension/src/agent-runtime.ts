@@ -43,7 +43,7 @@ export interface AgentRunOptions {
   runId?: string;
   getSteeringMessages?: () => string[];
   budget?: Partial<AgentRunBudget>;
-  onTurnComplete?: (summary: TurnSummary) => Promise<{ action: "continue" | "pause"; reason?: string }>;
+  onTurnComplete?: (summary: TurnSummary) => Promise<ObserverReviewDecision>;
   reviewIntervalTurns?: number;
   failureMemory?: FailureMemory;
   onToolExecuted?: (report: ToolExecutionReport) => void | Promise<void>;
@@ -83,9 +83,22 @@ export function normalizeRunBudget(input?: Partial<AgentRunBudget>): AgentRunBud
   };
 }
 
+export interface ObserverReviewDecision {
+  action: "continue" | "pause";
+  reason?: string;
+  steering?: string[];
+}
+
 export function shouldReviewAtCheckpoint(turnCount: number, intervalTurns = 3): boolean {
   const interval = Math.max(1, Math.floor(intervalTurns));
   return turnCount > 0 && turnCount % interval === 0;
+}
+
+export function incrementalTrajectory(messages: TurnMessage[], reviewedMessageCount: number): string {
+  return messages
+    .slice(Math.max(0, reviewedMessageCount))
+    .map((message) => `${message.role}: ${message.content}`)
+    .join("\n");
 }
 
 const RUN_BUDGET_NOTICE = `[Run budget notice]
@@ -186,18 +199,29 @@ export class AgentRuntime {
     let cumulativePromptTokens = 0;
     let cumulativeCompletionTokens = 0;
     let cumulativeTotalTokens = 0;
+    let lastReviewedMessageIndex = 0;
     const budgetFinite = Number.isFinite(budget.maxTurns);
     const reviewIntervalTurns = Math.max(1, Math.floor(options.reviewIntervalTurns ?? 3));
 
     const review = async (trigger: TurnSummary["trigger"], count: number, extra?: TurnMessage) => {
       if (!options.onTurnComplete || !options.runId) return { action: "continue" as const };
       const trajectoryMessages = extra ? [...messages, extra] : messages;
-      return options.onTurnComplete({
+      const decision = await options.onTurnComplete({
         runId: options.runId,
         turnCount: count,
-        trajectory: trajectoryMessages.map((message) => `${message.role}: ${message.content}`).join("\n"),
+        trajectory: incrementalTrajectory(trajectoryMessages, lastReviewedMessageIndex),
         trigger,
       });
+      lastReviewedMessageIndex = trajectoryMessages.length;
+      return decision;
+    };
+
+    const applyObserverSteering = (decision: ObserverReviewDecision): boolean => {
+      const steering = decision.steering?.map((text) => text.trim()).filter(Boolean) ?? [];
+      for (const text of steering) {
+        messages.push({ role: "user", content: `[Observer correction]\n${text}` });
+      }
+      return steering.length > 0;
     };
 
     while (true) {
@@ -285,6 +309,12 @@ export class AgentRuntime {
           onEvent({ type: "interrupted", content: decision.reason ?? "paused by observer" });
           return;
         }
+        if (decision.steering?.some((text) => text.trim())) {
+          messages.push({ role: "assistant", content: turn.text });
+          applyObserverSteering(decision);
+          turnCount += 1;
+          continue;
+        }
         onEvent({ type: "done", content: turn.text });
         return;
       }
@@ -324,6 +354,7 @@ export class AgentRuntime {
           onEvent({ type: "interrupted", content: decision.reason ?? "paused by observer" });
           return;
         }
+        applyObserverSteering(decision);
       }
     }
   }

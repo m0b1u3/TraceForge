@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyToolFailure, shouldReviewAtCheckpoint } from "./agent-runtime.js";
+import { classifyToolFailure, incrementalTrajectory, shouldReviewAtCheckpoint } from "./agent-runtime.js";
 
 describe("AgentRuntime failure classification", () => {
   it("classifies tool failures by retry policy", () => {
@@ -15,5 +15,15 @@ describe("AgentRuntime failure classification", () => {
 describe("Observer checkpoint scheduling", () => {
   it("reviews every third completed tool turn", () => {
     expect([1, 2, 3, 4, 5, 6].filter((turn) => shouldReviewAtCheckpoint(turn, 3))).toEqual([3, 6]);
+  });
+
+  it("sends only messages added after the previous review", () => {
+    const messages = [
+      { role: "user" as const, content: "goal" },
+      { role: "assistant" as const, content: "inspect" },
+      { role: "tool" as const, content: "result", toolCallId: "call_1" },
+      { role: "user" as const, content: "[Observer correction]\nverify evidence" },
+    ];
+    expect(incrementalTrajectory(messages, 3)).toBe("user: [Observer correction]\nverify evidence");
   });
 });

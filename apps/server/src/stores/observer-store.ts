@@ -90,7 +90,11 @@ export class ObserverWarningStore {
     if (!current) return undefined;
     const occurrenceCount = current.occurrenceCount + 1;
     const lastObservedAt = new Date().toISOString();
-    const status = input.level === "critical" && occurrenceCount >= 2 ? "escalated" : "detected";
+    const status = input.level !== "critical"
+      ? "detected"
+      : current.status === "correcting"
+        ? "escalated"
+        : "correcting";
     this.db.update(observerWarnings).set({
       level: input.level,
       status,

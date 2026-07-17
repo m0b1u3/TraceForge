@@ -119,7 +119,7 @@ describe("observer integration", () => {
     expect(store.existsOpenDuplicate(caseId, "过早结束", "不同描述")).toBe(false);
   });
 
-  it("escalates a repeated critical warning only after the second observation", () => {
+  it("opens one correction window before escalating a repeated critical warning", () => {
     const store = new ObserverWarningStore(db);
     const first = store.create({
       ...createOpenWarning(),
@@ -133,15 +133,25 @@ describe("observer integration", () => {
     });
 
     expect(first.status).toBe("detected");
-    const repeated = store.observeAgain(first.id, {
+    const correcting = store.observeAgain(first.id, {
       level: "critical",
       escalationReason: "Critical evidence remained unresolved across two Observer checkpoints.",
     });
 
-    expect(repeated).toMatchObject({
-      status: "escalated",
+    expect(correcting).toMatchObject({
+      status: "correcting",
       occurrenceCount: 2,
       escalationReason: "Critical evidence remained unresolved across two Observer checkpoints.",
+    });
+
+    const escalated = store.observeAgain(first.id, {
+      level: "critical",
+      escalationReason: "Critical evidence remained unresolved after the Observer correction window.",
+    });
+    expect(escalated).toMatchObject({
+      status: "escalated",
+      occurrenceCount: 3,
+      escalationReason: "Critical evidence remained unresolved after the Observer correction window.",
     });
   });
 

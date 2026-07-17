@@ -471,7 +471,10 @@ export function registerRoutes(
       if (!running) return;
       const goal = running.run.goal;
 
-      const runObserverReview = async (reviewRunId: string, reviewTrajectory: string): Promise<{ action: "continue" | "pause"; reason?: string }> => {
+      const runObserverReview = async (
+        reviewRunId: string,
+        reviewTrajectory: string,
+      ): Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> => {
         const factsSummary = factStore.listByCase(id).map((f) => `${f.id} [${f.type}] ${f.title}`).join("\n") || "(无)";
         const tasksSummary = taskStore.listByCase(id).map((t) => `${t.id} [${t.status}] ${t.title}`).join("\n") || "(无)";
         const result = await new Observer(llm).review(id, { goal, trajectory: reviewTrajectory, factsSummary, tasksSummary });
@@ -480,6 +483,8 @@ export function registerRoutes(
           return { action: "continue" };
         }
         let pauseReason: string | undefined;
+        const steering: string[] = [];
+        const observedFingerprints = new Set<string>();
         const validFactIds = new Set(factStore.listByCase(id).map((fact) => fact.id));
         const validTaskIds = new Set(taskStore.listByCase(id).map((task) => task.id));
         for (const w of result.warnings) {
@@ -488,12 +493,13 @@ export function registerRoutes(
           const criticalEvidenceValid = Boolean(w.evidence?.trim()) && referencesValid;
           const level = w.level === "critical" && !criticalEvidenceValid ? "warning" : w.level;
           const fingerprint = observerFingerprint(w);
+          observedFingerprints.add(fingerprint);
           const existing = observerStore.getActiveByFingerprint(id, fingerprint);
           if (existing) {
             const warning = observerStore.observeAgain(existing.id, {
               level,
               escalationReason: level === "critical"
-                ? "Critical evidence remained unresolved across two Observer checkpoints."
+                ? "Critical evidence remained unresolved after the Observer correction window."
                 : null,
             });
             if (!warning) continue;
@@ -501,6 +507,8 @@ export function registerRoutes(
             if (warning.status === "escalated" && !pauseReason) {
               pauseReason = `escalated observer warning: ${warning.title}`;
               bus.emit({ type: "agent_run_needs_confirmation", caseId: id, runId: reviewRunId, warning });
+            } else if (warning.status === "correcting") {
+              steering.push(warning.suggestedGoal || warning.suggestedAction);
             }
             continue;
           }
@@ -519,7 +527,15 @@ export function registerRoutes(
           });
           bus.emit({ type: "observer_warning", warning });
         }
-        return pauseReason ? { action: "pause", reason: pauseReason } : { action: "continue" };
+        const correcting = observerStore.listByCase(id, { status: "correcting" }).warnings;
+        for (const warning of correcting) {
+          if (warning.relatedRunId !== reviewRunId || observedFingerprints.has(warning.fingerprint)) continue;
+          const resolved = observerStore.updateStatus(warning.id, "resolved");
+          if (resolved) bus.emit({ type: "observer_warning_updated", warning: resolved });
+        }
+        return pauseReason
+          ? { action: "pause", reason: pauseReason }
+          : { action: "continue", steering };
       };
 
     const registry = new ToolRegistry();
