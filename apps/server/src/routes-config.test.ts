@@ -30,6 +30,7 @@ describe("config routes", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.provider).toBe("openai");
+    expect(body).not.toHaveProperty("apiKey");
     expect(body.apiKeyMasked).toContain("•");
   });
 
@@ -41,6 +42,7 @@ describe("config routes", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().provider).toBe("anthropic");
+    expect(res.json()).not.toHaveProperty("apiKey");
   });
 
   it("POST /api/config/llm/test returns 400 when model is missing", async () => {

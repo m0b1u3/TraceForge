@@ -15,7 +15,7 @@ export interface LlmConfigDto {
   outputPricePerMillion?: number | null;
 }
 
-export interface LlmConfigView extends LlmConfig {
+export interface LlmConfigView extends Omit<LlmConfig, "apiKey"> {
   apiKeyMasked: string;
 }
 
@@ -32,6 +32,11 @@ function maskKey(key: string): string {
   return "••••••••";
 }
 
+function configView(config: LlmConfig): LlmConfigView {
+  const { apiKey, ...safe } = config;
+  return { ...safe, apiKeyMasked: maskKey(apiKey ?? "") };
+}
+
 export class LlmConfigService {
   private holder: ProviderHolder;
   private currentProvider: LlmProvider | null = null;
@@ -46,14 +51,13 @@ export class LlmConfigService {
   }
 
   load(): LlmConfigView {
-    const config = this.parseConfig();
-    return { ...config, apiKeyMasked: maskKey(config.apiKey ?? "") };
+    return configView(this.parseConfig());
   }
 
   initializeFromConfig(): LlmConfigView {
     const config = this.parseConfig();
     this.currentProvider = this.createProvider(config);
-    return { ...config, apiKeyMasked: maskKey(config.apiKey ?? "") };
+    return configView(config);
   }
 
   private buildConfig(dto: LlmConfigDto): LlmConfig {
@@ -81,7 +85,7 @@ export class LlmConfigService {
     const config = this.buildConfig(dto);
     writeFileSync(this.configPath, JSON.stringify(config, null, 2));
     this.currentProvider = this.createProvider(config);
-    return { ...config, apiKeyMasked: maskKey(config.apiKey ?? "") };
+    return configView(config);
   }
 
   async test(dto: LlmConfigDto): Promise<{ ok: boolean; message?: string; error?: string }> {

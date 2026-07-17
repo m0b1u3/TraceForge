@@ -45,6 +45,7 @@ export interface AgentRunOptions {
   budget?: Partial<AgentRunBudget>;
   onTurnComplete?: (summary: TurnSummary) => Promise<ObserverReviewDecision>;
   reviewIntervalTurns?: number;
+  toolTimeoutMs?: number;
   failureMemory?: FailureMemory;
   onToolExecuted?: (report: ToolExecutionReport) => void | Promise<void>;
 }
@@ -99,6 +100,29 @@ export function incrementalTrajectory(messages: TurnMessage[], reviewedMessageCo
     .slice(Math.max(0, reviewedMessageCount))
     .map((message) => `${message.role}: ${message.content}`)
     .join("\n");
+}
+
+export async function executeWithDeadline<T>(
+  execute: () => Promise<T>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal?.aborted) throw new Error("tool execution aborted");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`tool execution timed out after ${timeoutMs}ms`)), timeoutMs);
+    if (signal) {
+      onAbort = () => reject(new Error("tool execution aborted"));
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+  try {
+    return await Promise.race([execute(), deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+  }
 }
 
 const RUN_BUDGET_NOTICE = `[Run budget notice]
@@ -443,7 +467,11 @@ export class AgentRuntime {
     }
 
     try {
-      const res = await tool.execute(call.input);
+      const res = await executeWithDeadline(
+        () => tool.execute(call.input),
+        Math.max(1_000, options.toolTimeoutMs ?? 45_000),
+        options.signal,
+      );
       if (res.ok && changesWorkspace(call.name)) failureMemory.clear();
       const failureClass = res.ok ? undefined : classifyToolFailure(res.content);
       const transient = failureClass === "transient";

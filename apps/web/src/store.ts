@@ -45,6 +45,19 @@ const EMPTY_OBSERVER_TELEMETRY: ObserverTelemetry = {
   lastDurationMs: null,
 };
 
+export function observerTelemetryFromHistory(
+  usage: AgentRunUsage[],
+  warnings: ObserverWarning[],
+): ObserverTelemetry {
+  const observerUsage = usage.filter((entry) => entry.source === "observer");
+  return {
+    ...EMPTY_OBSERVER_TELEMETRY,
+    reviewCount: observerUsage.length,
+    correctionCount: warnings.filter((warning) => warning.occurrenceCount >= 2).length,
+    totalTokens: observerUsage.reduce((sum, entry) => sum + entry.totalTokens, 0),
+  };
+}
+
 export type ToastTone = "info" | "success" | "error";
 export type ConnectionStatus = "online" | "reconnecting" | "offline";
 export interface ToastNotice {
@@ -333,6 +346,7 @@ export const useStore = create<State>((set, get) => ({
       agentBusy: isRunBusy(activeRun),
       tokenUsage: latestRun ? runTokenUsage(latestRun) : { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       tokenUsageHistory,
+      observerTelemetry: observerTelemetryFromHistory(tokenUsageHistory, warnings),
       pendingApproval: pendingInterventions.approval,
       pendingScope: pendingInterventions.scope,
       browserController: browserState.controller,

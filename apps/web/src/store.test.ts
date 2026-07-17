@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { CLIENT_AGENT_EVENT_LIMIT, takeRecent, useStore } from "./store.js";
+import { CLIENT_AGENT_EVENT_LIMIT, observerTelemetryFromHistory, takeRecent, useStore } from "./store.js";
 
 function resetStore() {
   useStore.setState({
@@ -21,6 +21,7 @@ function resetStore() {
     streamedAgentTexts: [],
     toast: null,
     warnings: [],
+    observerTelemetry: { reviewCount: 0, correctionCount: 0, failureCount: 0, totalTokens: 0, lastTrigger: null, lastDurationMs: null },
     pendingApproval: null,
     pendingScope: null,
     browserController: null,
@@ -42,6 +43,10 @@ const warning = {
   suggestedAction: "回到登录流程",
   suggestedGoal: "",
   status: "open" as const,
+  fingerprint: "fp_1",
+  occurrenceCount: 2,
+  lastObservedAt: new Date().toISOString(),
+  escalationReason: null,
   relatedRunId: "run_1",
   resolvedAt: null,
   createdAt: new Date().toISOString(),
@@ -260,6 +265,15 @@ describe("store context inspector", () => {
       lastTrigger: "checkpoint",
       lastDurationMs: 42,
     });
+  });
+
+  it("restores Observer review counts and tokens from persisted run usage", () => {
+    const telemetry = observerTelemetryFromHistory([
+      { id: "u1", runId: "run_1", caseId: "case_1", turn: 1, source: "agent", promptTokens: 10, completionTokens: 2, totalTokens: 12, currency: null, inputCostMicros: null, outputCostMicros: null, totalCostMicros: null, createdAt: "now" },
+      { id: "u2", runId: "run_1", caseId: "case_1", turn: 2, source: "observer", promptTokens: 20, completionTokens: 3, totalTokens: 23, currency: null, inputCostMicros: null, outputCostMicros: null, totalCostMicros: null, createdAt: "later" },
+    ], [warning]);
+
+    expect(telemetry).toMatchObject({ reviewCount: 1, correctionCount: 1, totalTokens: 23 });
   });
 });
 describe("store traffic synchronization", () => {

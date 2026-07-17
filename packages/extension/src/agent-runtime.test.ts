@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyToolFailure, incrementalTrajectory, shouldReviewAtCheckpoint } from "./agent-runtime.js";
+import { classifyToolFailure, executeWithDeadline, incrementalTrajectory, shouldReviewAtCheckpoint } from "./agent-runtime.js";
 
 describe("AgentRuntime failure classification", () => {
   it("classifies tool failures by retry policy", () => {
@@ -25,5 +25,22 @@ describe("Observer checkpoint scheduling", () => {
       { role: "user" as const, content: "[Observer correction]\nverify evidence" },
     ];
     expect(incrementalTrajectory(messages, 3)).toBe("user: [Observer correction]\nverify evidence");
+  });
+});
+
+describe("tool execution deadline", () => {
+  it("returns completed real work before the deadline", async () => {
+    await expect(executeWithDeadline(async () => "done", 1_000)).resolves.toBe("done");
+  });
+
+  it("stops waiting when the run is interrupted", async () => {
+    const controller = new AbortController();
+    const pending = executeWithDeadline(
+      () => new Promise<string>((resolve) => setTimeout(() => resolve("late"), 500)),
+      1_000,
+      controller.signal,
+    );
+    controller.abort();
+    await expect(pending).rejects.toThrow("tool execution aborted");
   });
 });
