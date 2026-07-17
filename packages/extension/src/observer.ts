@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { LlmProvider } from "./provider.js";
+import type { LlmProvider, UsageSnapshot } from "./provider.js";
 import { ObserverWarningSchema, type ObserverWarning } from "@traceforge/shared";
 
 export interface ReviewInput {
@@ -11,6 +11,7 @@ export interface ReviewInput {
 
 export interface ReviewResult {
   warnings: ObserverWarning[];
+  usage: UsageSnapshot;
   error?: string;
 }
 
@@ -65,10 +66,20 @@ export class Observer {
 
   async review(caseId: string, input: ReviewInput): Promise<ReviewResult> {
     const user = `目标：${input.goal}\n\n当前 Facts：\n${input.factsSummary}\n\n当前 Tasks：\n${input.tasksSummary}\n\n<untrusted_data>\nagent 轨迹：\n${input.trajectory}\n</untrusted_data>`;
+    const usage: UsageSnapshot = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     try {
-      const raw = await this.provider.extractJson({ system: SYSTEM, user, schema: SCHEMA });
+      const raw = await this.provider.extractJson({
+        system: SYSTEM,
+        user,
+        schema: SCHEMA,
+        onUsage: (snapshot) => {
+          usage.promptTokens += snapshot.promptTokens;
+          usage.completionTokens += snapshot.completionTokens;
+          usage.totalTokens += snapshot.totalTokens;
+        },
+      });
       const arr = (raw as { warnings?: unknown }).warnings;
-      if (!Array.isArray(arr)) return { warnings: [] };
+      if (!Array.isArray(arr)) return { warnings: [], usage };
       const now = new Date().toISOString();
       const warnings = arr.map((w) => {
         const x = w as Record<string, unknown>;
@@ -85,9 +96,13 @@ export class Observer {
           createdAt: now,
         });
       });
-      return { warnings };
+      return { warnings, usage };
     } catch (err) {
-      return { warnings: [], error: (err as Error).message };
+      return {
+        warnings: [],
+        usage,
+        error: (err as Error).message,
+      };
     }
   }
 }

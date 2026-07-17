@@ -87,7 +87,7 @@ export class AgentRunRegistry {
   addUsage(
     runId: string,
     usage: Pick<AgentRunUsage, "promptTokens" | "completionTokens" | "totalTokens">
-      & Partial<Pick<AgentRunUsage, "currency" | "inputCostMicros" | "outputCostMicros" | "totalCostMicros">>,
+      & Partial<Pick<AgentRunUsage, "source" | "currency" | "inputCostMicros" | "outputCostMicros" | "totalCostMicros">>,
   ): { run: AgentRun; usage: AgentRunUsage } | undefined {
     const active = this.runs.get(runId);
     if (!active) return undefined;
@@ -101,6 +101,7 @@ export class AgentRunRegistry {
     const entries = this.usageByRun.get(runId) ?? [];
     const usageWithCost = {
       ...usage,
+      source: usage.source ?? "agent",
       currency: usage.currency ?? null,
       inputCostMicros: usage.inputCostMicros ?? null,
       outputCostMicros: usage.outputCostMicros ?? null,

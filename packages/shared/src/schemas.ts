@@ -275,6 +275,7 @@ export const AgentRunUsageSchema = z.object({
   promptTokens: z.number().int().nonnegative(),
   completionTokens: z.number().int().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
+  source: z.enum(["agent", "observer"]).default("agent"),
   currency: z.string().regex(/^[A-Z]{3}$/).nullable().default(null),
   inputCostMicros: z.number().int().nonnegative().nullable().default(null),
   outputCostMicros: z.number().int().nonnegative().nullable().default(null),

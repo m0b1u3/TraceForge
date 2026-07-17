@@ -473,14 +473,44 @@ export function registerRoutes(
       const running = runs.get(runId);
       if (!running) return;
       const goal = running.run.goal;
+      let llmConfig: ReturnType<typeof loadLlmConfig> | undefined;
+
+      const recordRunUsage = (
+        source: "agent" | "observer",
+        usage: { promptTokens: number; completionTokens: number; totalTokens: number },
+      ) => {
+        const cost = calculateUsageCost(usage, llmConfig);
+        const recorded = runs.addUsage(runId, { ...usage, source, ...cost });
+        bus.emit({
+          type: "agent_usage",
+          caseId: id,
+          runId,
+          usageId: recorded?.usage.id ?? `usage_${randomUUID()}`,
+          turn: recorded?.usage.turn ?? 1,
+          source,
+          createdAt: recorded?.usage.createdAt ?? new Date().toISOString(),
+          ...usage,
+          currency: recorded?.usage.currency ?? null,
+          inputCostMicros: recorded?.usage.inputCostMicros ?? null,
+          outputCostMicros: recorded?.usage.outputCostMicros ?? null,
+          totalCostMicros: recorded?.usage.totalCostMicros ?? null,
+          cumulativePromptTokens: recorded?.run.promptTokens ?? usage.promptTokens,
+          cumulativeCompletionTokens: recorded?.run.completionTokens ?? usage.completionTokens,
+          cumulativeTotalTokens: recorded?.run.totalTokens ?? usage.totalTokens,
+        });
+        return recorded;
+      };
 
       const runObserverReviewUnsafe = async (
         reviewRunId: string,
         reviewTrajectory: string,
+        trigger: "checkpoint" | "final",
       ): Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> => {
+        const startedAt = Date.now();
         const factsSummary = factStore.listByCase(id).map((f) => `${f.id} [${f.type}] ${f.title}`).join("\n") || "(无)";
         const tasksSummary = taskStore.listByCase(id).map((t) => `${t.id} [${t.status}] ${t.title}`).join("\n") || "(无)";
         const result = await new Observer(llm).review(id, { goal, trajectory: reviewTrajectory, factsSummary, tasksSummary });
+        if (result.usage.totalTokens > 0) recordRunUsage("observer", result.usage);
         if (result.error) {
           bus.emit({ type: "observer_review_failed", caseId: id, runId: reviewRunId, error: result.error });
           return { action: "continue" };
@@ -537,6 +567,16 @@ export function registerRoutes(
           const resolved = observerStore.updateStatus(warning.id, "resolved");
           if (resolved) bus.emit({ type: "observer_warning_updated", warning: resolved });
         }
+        bus.emit({
+          type: "observer_review_completed",
+          caseId: id,
+          runId: reviewRunId,
+          trigger,
+          warningCount: result.warnings.length,
+          correctionCount: steering.length,
+          durationMs: Date.now() - startedAt,
+          totalTokens: result.usage.totalTokens,
+        });
         return pauseReason
           ? { action: "pause", reason: pauseReason }
           : { action: "continue", steering };
@@ -546,13 +586,14 @@ export function registerRoutes(
       const runObserverReview = async (
         reviewRunId: string,
         reviewTrajectory: string,
+        trigger: "checkpoint" | "final",
       ): Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> => {
         const normalizedTrajectory = reviewTrajectory.trim();
         if (!normalizedTrajectory) return { action: "continue" };
         const digest = createHash("sha256").update(normalizedTrajectory).digest("hex");
         if (digest === lastObserverReviewDigest || observerReviewInFlight) return { action: "continue" };
         lastObserverReviewDigest = digest;
-        observerReviewInFlight = runObserverReviewUnsafe(reviewRunId, normalizedTrajectory);
+        observerReviewInFlight = runObserverReviewUnsafe(reviewRunId, normalizedTrajectory, trigger);
         try {
           return await observerReviewInFlight;
         } catch (error) {
@@ -719,7 +760,6 @@ export function registerRoutes(
       .filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done")
       .slice(-20)
       .map((e) => ({ role: e.kind === "user" ? ("user" as const) : ("assistant" as const), text: e.text }));
-    let llmConfig;
     try {
       llmConfig = llmService?.load() ?? loadLlmConfig() ?? undefined;
     } catch {
@@ -793,40 +833,17 @@ export function registerRoutes(
         });
       }
       else if (e.type === "usage") {
-        const cost = calculateUsageCost({
-          promptTokens: e.promptTokens ?? 0,
-          completionTokens: e.completionTokens ?? 0,
-        }, llmConfig);
-        const recorded = runs.addUsage(runId, {
+        recordRunUsage("agent", {
           promptTokens: e.promptTokens ?? 0,
           completionTokens: e.completionTokens ?? 0,
           totalTokens: e.totalTokens ?? 0,
-          ...cost,
-        });
-        bus.emit({
-          type: "agent_usage",
-          caseId: id,
-          runId,
-          usageId: recorded?.usage.id ?? `usage_${randomUUID()}`,
-          turn: recorded?.usage.turn ?? 1,
-          createdAt: recorded?.usage.createdAt ?? new Date().toISOString(),
-          promptTokens: e.promptTokens ?? 0,
-          completionTokens: e.completionTokens ?? 0,
-          totalTokens: e.totalTokens ?? 0,
-          currency: recorded?.usage.currency ?? null,
-          inputCostMicros: recorded?.usage.inputCostMicros ?? null,
-          outputCostMicros: recorded?.usage.outputCostMicros ?? null,
-          totalCostMicros: recorded?.usage.totalCostMicros ?? null,
-          cumulativePromptTokens: recorded?.run.promptTokens ?? e.cumulativePromptTokens ?? 0,
-          cumulativeCompletionTokens: recorded?.run.completionTokens ?? e.cumulativeCompletionTokens ?? 0,
-          cumulativeTotalTokens: recorded?.run.totalTokens ?? e.cumulativeTotalTokens ?? 0,
         });
       }
       else if (e.type === "interrupted") {
         const interrupted = runs.markInterrupted(runId, running.run.interruptReason ?? e.content);
         if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });
       }
-    }, { signal: running.abortController.signal, runId, budget, reviewIntervalTurns: 3, getSteeringMessages: () => runs.consumeSteering(runId), onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory), failureMemory, onToolExecuted: (report) => {
+    }, { signal: running.abortController.signal, runId, budget, reviewIntervalTurns: 3, getSteeringMessages: () => runs.consumeSteering(runId), onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger), failureMemory, onToolExecuted: (report) => {
       if (report.ok) return;
       if (report.rejected) return;
       if (report.blocked) return;

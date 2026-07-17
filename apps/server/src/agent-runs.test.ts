@@ -81,7 +81,7 @@ describe("AgentRunRegistry", () => {
     const firstRegistry = new AgentRunRegistry(store);
     const { run } = firstRegistry.start("case_1", "goal");
     firstRegistry.addUsage(run.id, { promptTokens: 100, completionTokens: 25, totalTokens: 125 });
-    firstRegistry.addUsage(run.id, { promptTokens: 140, completionTokens: 35, totalTokens: 175 });
+    firstRegistry.addUsage(run.id, { promptTokens: 140, completionTokens: 35, totalTokens: 175, source: "observer" });
     firstRegistry.complete(run.id, "done");
 
     const restoredRegistry = new AgentRunRegistry(store);
@@ -93,8 +93,8 @@ describe("AgentRunRegistry", () => {
       totalTokens: 300,
     });
     expect(restoredRegistry.getUsage(run.id)).toMatchObject([
-      { turn: 1, promptTokens: 100, completionTokens: 25, totalTokens: 125 },
-      { turn: 2, promptTokens: 140, completionTokens: 35, totalTokens: 175 },
+      { turn: 1, source: "agent", promptTokens: 100, completionTokens: 25, totalTokens: 125 },
+      { turn: 2, source: "observer", promptTokens: 140, completionTokens: 35, totalTokens: 175 },
     ]);
   });
 

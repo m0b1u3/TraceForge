@@ -27,6 +27,24 @@ function runTokenUsage(run: AgentRun): TokenUsage {
   };
 }
 
+export interface ObserverTelemetry {
+  reviewCount: number;
+  correctionCount: number;
+  failureCount: number;
+  totalTokens: number;
+  lastTrigger: "checkpoint" | "final" | null;
+  lastDurationMs: number | null;
+}
+
+const EMPTY_OBSERVER_TELEMETRY: ObserverTelemetry = {
+  reviewCount: 0,
+  correctionCount: 0,
+  failureCount: 0,
+  totalTokens: 0,
+  lastTrigger: null,
+  lastDurationMs: null,
+};
+
 export type ToastTone = "info" | "success" | "error";
 export type ConnectionStatus = "online" | "reconnecting" | "offline";
 export interface ToastNotice {
@@ -142,6 +160,7 @@ interface State {
   graphModalOpen: boolean;
   mcpTools: McpToolHandle[];
   warnings: ObserverWarning[];
+  observerTelemetry: ObserverTelemetry;
   llmConfig: LlmConfig | null;
   settingsModalOpen: boolean;
   setLlmConfig: (cfg: LlmConfig | null) => void;
@@ -228,6 +247,7 @@ export const useStore = create<State>((set, get) => ({
   graphModalOpen: false,
   mcpTools: [],
   warnings: [],
+  observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY },
   llmConfig: null,
   settingsModalOpen: false,
   setLlmConfig: (cfg) => set({ llmConfig: cfg }),
@@ -284,7 +304,7 @@ export const useStore = create<State>((set, get) => ({
   )),
   setCase: (id) => {
     cancelPendingStreamDeltas();
-    set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], pendingScope: null, pendingConfirmation: null });
+    set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, pendingScope: null, pendingConfirmation: null });
   },
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
@@ -586,6 +606,7 @@ export const useStore = create<State>((set, get) => ({
             promptTokens: event.promptTokens,
             completionTokens: event.completionTokens,
             totalTokens: event.totalTokens,
+            source: event.source,
             currency: event.currency,
             inputCostMicros: event.inputCostMicros,
             outputCostMicros: event.outputCostMicros,
@@ -629,6 +650,26 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "browser_navigated" && event.caseId === cid) get().setBrowser(get().browserController, event.url);
     else if (event.type === "observer_warning" && event.warning.caseId === cid) get().addWarning(event.warning);
     else if (event.type === "observer_warning_updated" && event.warning.caseId === cid) get().upsertWarning(event.warning);
+    else if (event.type === "observer_review_completed" && event.caseId === cid) {
+      set((state) => ({
+        observerTelemetry: {
+          reviewCount: state.observerTelemetry.reviewCount + 1,
+          correctionCount: state.observerTelemetry.correctionCount + event.correctionCount,
+          failureCount: state.observerTelemetry.failureCount,
+          totalTokens: state.observerTelemetry.totalTokens + event.totalTokens,
+          lastTrigger: event.trigger,
+          lastDurationMs: event.durationMs,
+        },
+      }));
+    }
+    else if (event.type === "observer_review_failed" && event.caseId === cid) {
+      set((state) => ({
+        observerTelemetry: {
+          ...state.observerTelemetry,
+          failureCount: state.observerTelemetry.failureCount + 1,
+        },
+      }));
+    }
     else if (event.type === "scope_expansion_proposed" && event.caseId === cid) get().setPendingScope({ host: event.host, reason: event.reason });
     else if (event.type === "scope_expansion_rejected" && event.caseId === cid) {
       const text = `Scope kept blocked: ${event.host}`;

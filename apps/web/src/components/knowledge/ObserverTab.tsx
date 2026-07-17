@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ListPlus, Play, X } from "@phosphor-icons/react";
+import { ArrowBendDownRight, ListPlus, Play, Pulse, X } from "@phosphor-icons/react";
 import type { AgentRun, ObserverWarning } from "@traceforge/shared";
 import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWarning, runAgent } from "../../api.js";
 import { useStore } from "../../store.js";
@@ -34,16 +34,26 @@ export function observerWarningContinueDisabled(activeRun: Pick<AgentRun, "statu
 export function ObserverTab() {
   const {
     caseId, warnings, showToast, addAgentEvent, setAgentBusy, setActiveRun,
-    upsertWarning, upsertTask, activeRun, agentBusy,
+    upsertWarning, upsertTask, activeRun, agentBusy, observerTelemetry,
   } = useStore(useShallow((state) => ({
     caseId: state.caseId, warnings: state.warnings, showToast: state.showToast,
     addAgentEvent: state.addAgentEvent, setAgentBusy: state.setAgentBusy,
     setActiveRun: state.setActiveRun, upsertWarning: state.upsertWarning,
     upsertTask: state.upsertTask, activeRun: state.activeRun, agentBusy: state.agentBusy,
+    observerTelemetry: state.observerTelemetry,
   })));
   const [busy, setBusy] = useState<string | null>(null);
   const window = useKnowledgeWindow(warnings.length);
-  if (warnings.length === 0) return <FeedbackState title="No observer warnings" description="After each run, Observer checks for unsupported assumptions, ignored evidence, and premature exits." />;
+  const telemetry = (
+    <div className="observer-telemetry" aria-label="Observer review activity">
+      <span><Pulse size={12} /> {observerTelemetry.reviewCount} reviews</span>
+      <span><ArrowBendDownRight size={12} /> {observerTelemetry.correctionCount} corrections</span>
+      <span>{observerTelemetry.totalTokens.toLocaleString()} tokens</span>
+      {observerTelemetry.failureCount > 0 && <span className="observer-telemetry-error">{observerTelemetry.failureCount} failed</span>}
+      {observerTelemetry.lastDurationMs !== null && <span>{observerTelemetry.lastDurationMs} ms</span>}
+    </div>
+  );
+  if (warnings.length === 0) return <>{telemetry}<FeedbackState title="No observer warnings" description="Observer reviews checkpoints and final output without interrupting healthy runs." /></>;
 
   const continueRun = async (w: ObserverWarning) => {
     if (!caseId) return;
@@ -93,7 +103,7 @@ export function ObserverTab() {
     }
   };
 
-  return <>{warnings.slice(0, window.count).map((w) => (
+  return <>{telemetry}{warnings.slice(0, window.count).map((w) => (
     (() => {
       const continueDisabled = observerWarningContinueDisabled(activeRun, agentBusy, busy);
       return (
@@ -101,6 +111,7 @@ export function ObserverTab() {
       <div className="observer-row-head">
         <span className={`tf-tag tf-row-level-${w.level}`}>{w.level}</span>
         <span className="observer-row-status">{observerWarningStatusLabel(w.status)}</span>
+        <span className="observer-row-status">seen {w.occurrenceCount}×</span>
       </div>
       <strong className="observer-row-title">{w.title}</strong>
       <p className="observer-row-description">{w.description}</p>

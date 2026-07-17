@@ -35,7 +35,7 @@ export type RuntimeEvent =
   | { type: "agent_run_needs_continuation"; run: AgentRun; reason: string }
   | { type: "agent_run_completed"; run: AgentRun; content: string }
   | { type: "agent_run_failed"; run: AgentRun; error: string }
-  | { type: "agent_usage"; caseId: string; runId: string; usageId: string; turn: number; createdAt: string; promptTokens: number; completionTokens: number; totalTokens: number; currency: string | null; inputCostMicros: number | null; outputCostMicros: number | null; totalCostMicros: number | null; cumulativePromptTokens: number; cumulativeCompletionTokens: number; cumulativeTotalTokens: number }
+  | { type: "agent_usage"; caseId: string; runId: string; usageId: string; turn: number; source: "agent" | "observer"; createdAt: string; promptTokens: number; completionTokens: number; totalTokens: number; currency: string | null; inputCostMicros: number | null; outputCostMicros: number | null; totalCostMicros: number | null; cumulativePromptTokens: number; cumulativeCompletionTokens: number; cumulativeTotalTokens: number }
   | { type: "approval_requested"; caseId: string; approvalId: string; tool: string; input: string }
   | { type: "approval_resolved"; caseId: string; approvalId: string; tool: string; decision: "approved" | "rejected" }
   | { type: "action_recorded"; action: ActionCard }
@@ -47,5 +47,6 @@ export type RuntimeEvent =
   | { type: "browser_navigated"; caseId: string; url: string }
   | { type: "observer_warning"; warning: ObserverWarning }
   | { type: "observer_warning_updated"; warning: ObserverWarning }
+  | { type: "observer_review_completed"; caseId: string; runId: string; trigger: "checkpoint" | "final"; warningCount: number; correctionCount: number; durationMs: number; totalTokens: number }
   | { type: "observer_review_failed"; caseId: string; runId: string | null; error: string }
   | { type: "scope_updated"; caseId: string; allowHosts: string[] };

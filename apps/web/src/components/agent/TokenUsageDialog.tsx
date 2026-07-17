@@ -42,11 +42,12 @@ export function TokenUsageDialog({ open, onOpenChange }: { open: boolean; onOpen
         {tokenUsageHistory.length > 0 ? (
           <div className="usage-table-wrap">
             <table className="usage-table">
-              <thead><tr><th>Turn</th><th>Input</th><th>Output</th><th>Total</th><th>Cost</th></tr></thead>
+              <thead><tr><th>Turn</th><th>Source</th><th>Input</th><th>Output</th><th>Total</th><th>Cost</th></tr></thead>
               <tbody>
                 {tokenUsageHistory.map((entry) => (
                   <tr key={entry.id}>
                     <td>{entry.turn}</td>
+                    <td>{entry.source === "observer" ? "Observer" : "Agent"}</td>
                     <td>{entry.promptTokens.toLocaleString()}</td>
                     <td>{entry.completionTokens.toLocaleString()}</td>
                     <td>{entry.totalTokens.toLocaleString()}</td>

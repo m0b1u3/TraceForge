@@ -107,6 +107,7 @@ describe("store token usage", () => {
   it("updates cumulative token usage on agent_usage events", () => {
     useStore.getState().handleRuntimeEvent({
       type: "agent_usage",
+      source: "agent",
       caseId: "case_1",
       runId: "run_1",
       usageId: "usage_1",
@@ -127,6 +128,7 @@ describe("store token usage", () => {
 
     useStore.getState().handleRuntimeEvent({
       type: "agent_usage",
+      source: "observer",
       caseId: "case_1",
       runId: "run_1",
       usageId: "usage_2",
@@ -153,6 +155,7 @@ describe("store token usage", () => {
   it("ignores agent_usage events for other cases", () => {
     useStore.getState().handleRuntimeEvent({
       type: "agent_usage",
+      source: "agent",
       caseId: "case_2",
       runId: "run_1",
       usageId: "usage_other",
@@ -229,6 +232,34 @@ describe("store context inspector", () => {
 
     useStore.getState().handleRuntimeEvent({ type: "traffic_cleared", caseId: "case_1" });
     expect(useStore.getState()).toMatchObject({ traffic: [], selectedTrafficId: null, inspectorMode: "overview" });
+  });
+
+  it("tracks Observer reviews, corrections, failures, and attributed tokens", () => {
+    useStore.getState().handleRuntimeEvent({
+      type: "observer_review_completed",
+      caseId: "case_1",
+      runId: "run_1",
+      trigger: "checkpoint",
+      warningCount: 1,
+      correctionCount: 1,
+      durationMs: 42,
+      totalTokens: 120,
+    });
+    useStore.getState().handleRuntimeEvent({
+      type: "observer_review_failed",
+      caseId: "case_1",
+      runId: "run_1",
+      error: "provider unavailable",
+    });
+
+    expect(useStore.getState().observerTelemetry).toEqual({
+      reviewCount: 1,
+      correctionCount: 1,
+      failureCount: 1,
+      totalTokens: 120,
+      lastTrigger: "checkpoint",
+      lastDurationMs: 42,
+    });
   });
 });
 describe("store traffic synchronization", () => {

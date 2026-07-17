@@ -101,7 +101,7 @@ export function createDb(path: string) {
     CREATE TABLE IF NOT EXISTS agent_run_usage (
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL, case_id TEXT NOT NULL, turn INTEGER NOT NULL,
       prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
-      total_tokens INTEGER NOT NULL, currency TEXT,
+      total_tokens INTEGER NOT NULL, source TEXT NOT NULL DEFAULT 'agent', currency TEXT,
       input_cost_micros INTEGER, output_cost_micros INTEGER, total_cost_micros INTEGER,
       created_at TEXT NOT NULL
     );
@@ -131,6 +131,7 @@ export function createDb(path: string) {
   if (!hasUsageColumn("input_cost_micros")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN input_cost_micros INTEGER");
   if (!hasUsageColumn("output_cost_micros")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN output_cost_micros INTEGER");
   if (!hasUsageColumn("total_cost_micros")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN total_cost_micros INTEGER");
+  if (!hasUsageColumn("source")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'");
   return drizzle(sqlite);
 }
 
