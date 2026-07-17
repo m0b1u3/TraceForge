@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage } from "@traceforge/shared";
+import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 export interface LlmConfig {
@@ -59,6 +59,20 @@ export interface BrowserRuntimeState {
   url?: string;
 }
 
+export interface HistoryPage {
+  limit?: number;
+  offset?: number;
+}
+
+function historyUrl(path: string, page?: HistoryPage): string {
+  if (!page?.limit) return path;
+  const query = new URLSearchParams({
+    limit: String(page.limit),
+    offset: String(page.offset ?? 0),
+  });
+  return `${path}?${query}`;
+}
+
 export async function getBrowserState(caseId: string): Promise<BrowserRuntimeState> {
   const response = await ensureOk(await fetch(`/api/cases/${caseId}/browser`), "Load browser state");
   return response.json() as Promise<BrowserRuntimeState>;
@@ -80,9 +94,15 @@ export async function releaseBrowser(caseId: string): Promise<BrowserRuntimeStat
   return response.json() as Promise<BrowserRuntimeState>;
 }
 
-export async function listTraffic(caseId: string): Promise<TrafficEntry[]> {
-  const r = await fetch(`/api/cases/${caseId}/traffic`);
+export async function listTraffic(caseId: string, page?: HistoryPage): Promise<TrafficEntry[]> {
+  const r = await fetch(historyUrl(`/api/cases/${caseId}/traffic`, page));
+  await ensureOk(r, "Load traffic");
   return r.json();
+}
+
+export async function clearTraffic(caseId: string): Promise<{ deleted: number }> {
+  const response = await ensureOk(await fetch(`/api/cases/${caseId}/traffic`, { method: "DELETE" }), "Clear traffic");
+  return response.json() as Promise<{ deleted: number }>;
 }
 
 export async function createFact(
@@ -131,8 +151,9 @@ export async function patchTask(taskId: string, status: Task["status"], reason?:
   return r.json();
 }
 
-export async function listTimeline(caseId: string): Promise<TimelineEntry[]> {
-  return (await fetch(`/api/cases/${caseId}/timeline`)).json();
+export async function listTimeline(caseId: string, page?: HistoryPage): Promise<TimelineEntry[]> {
+  const response = await ensureOk(await fetch(historyUrl(`/api/cases/${caseId}/timeline`, page)), "Load timeline");
+  return response.json();
 }
 
 export async function runAgent(caseId: string, goal: string): Promise<AgentRun> {
@@ -187,6 +208,20 @@ export async function listCases(): Promise<Case[]> {
   return (await fetch("/api/cases")).json();
 }
 
+export async function listCaseSummaries(): Promise<CaseSummary[]> {
+  const response = await ensureOk(await fetch("/api/cases/summary"), "Load case summaries");
+  return response.json() as Promise<CaseSummary[]>;
+}
+
+export async function updateCase(caseId: string, patch: Partial<Pick<Case, "name" | "status">>): Promise<Case> {
+  const response = await ensureOk(await fetch(`/api/cases/${caseId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  }), "Update case");
+  return response.json() as Promise<Case>;
+}
+
 export async function listMcpTools(): Promise<McpToolHandle[]> {
   return (await fetch("/api/mcp/tools")).json();
 }
@@ -211,8 +246,9 @@ export async function convertObserverWarningToTask(warningId: string): Promise<{
   return r.json();
 }
 
-export async function listAgentEvents(caseId: string): Promise<AgentEvent[]> {
-  return (await fetch(`/api/cases/${caseId}/agent/events`)).json();
+export async function listAgentEvents(caseId: string, page?: HistoryPage): Promise<AgentEvent[]> {
+  const response = await ensureOk(await fetch(historyUrl(`/api/cases/${caseId}/agent/events`, page)), "Load Agent history");
+  return response.json();
 }
 
 export async function approveScope(caseId: string, host: string): Promise<void> {

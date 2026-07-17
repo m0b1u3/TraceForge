@@ -42,23 +42,48 @@ function TabPanel({ tab }: { tab: TabKey }) {
   return <ObserverTab />;
 }
 
-export function KnowledgePanel() {
-  const { activeTab, setActiveTab, setGraphModalOpen, facts, tasks, timeline, mcpTools, warnings, traffic, selectedTrafficId, selectedFactId, selectedAgentEvent } = useStore(useShallow((state) => ({ activeTab: state.activeTab, setActiveTab: state.setActiveTab, setGraphModalOpen: state.setGraphModalOpen, facts: state.facts, tasks: state.tasks, timeline: state.timeline, mcpTools: state.mcpTools, warnings: state.warnings, traffic: state.traffic, selectedTrafficId: state.selectedTrafficId, selectedFactId: state.selectedFactId, selectedAgentEvent: state.selectedAgentEvent })));
-  const selectedTraffic = selectedTrafficId ? traffic.find((entry) => entry.id === selectedTrafficId) ?? null : null;
-  if (selectedTraffic) return <aside className="panel knowledge-panel"><TrafficInspector entry={selectedTraffic} /></aside>;
-  const selectedFact = selectedFactId ? facts.find((fact) => fact.id === selectedFactId) ?? null : null;
-  if (selectedFact) return <aside className="panel knowledge-panel"><FindingInspector fact={selectedFact} /></aside>;
-  if (selectedAgentEvent) return <aside className="panel knowledge-panel"><ToolEventInspector event={selectedAgentEvent} /></aside>;
-  const visibleTab = activeTab === "graph" ? "facts" : activeTab;
-  const counts: Partial<Record<TabKey, number>> = {
-    facts: facts.length,
-    tasks: tasks.length,
-    timeline: timeline.length,
-    mcp: mcpTools.length,
-    observer: warnings.filter((warning) => warning.status === "open").length,
-  };
+function KnowledgeInspector() {
+  const { selectedTraffic, selectedFact, selectedAgentEvent } = useStore(useShallow((state) => ({
+    selectedTraffic: state.selectedTrafficId
+      ? state.traffic.find((entry) => entry.id === state.selectedTrafficId)
+        ?? (state.selectedTrafficSnapshot?.id === state.selectedTrafficId ? state.selectedTrafficSnapshot : null)
+      : null,
+    selectedFact: state.selectedFactId
+      ? state.facts.find((fact) => fact.id === state.selectedFactId) ?? null
+      : null,
+    selectedAgentEvent: state.selectedAgentEvent,
+  })));
+  if (selectedTraffic) return <TrafficInspector entry={selectedTraffic} />;
+  if (selectedFact) return <FindingInspector fact={selectedFact} />;
+  if (selectedAgentEvent) return <ToolEventInspector event={selectedAgentEvent} />;
+  return null;
+}
+
+function KnowledgeTabCounts() {
+  const counts = useStore(useShallow((state) => ({
+    facts: state.facts.length,
+    tasks: state.tasks.length,
+    timeline: state.timeline.length,
+    mcp: state.mcpTools.length,
+    observer: state.warnings.reduce((count, warning) => count + Number(warning.status === "open"), 0),
+  } satisfies Record<TabKey, number>)));
+  return TABS.map((tab) => (
+    <TabsTrigger key={tab.key} value={tab.key}>
+      {tab.label}
+      {counts[tab.key] > 0 && <span className="knowledge-tab-count">{counts[tab.key]}</span>}
+    </TabsTrigger>
+  ));
+}
+
+function KnowledgeOverview() {
+  const { activeTab, setActiveTab, setGraphModalOpen } = useStore(useShallow((state) => ({
+    activeTab: state.activeTab,
+    setActiveTab: state.setActiveTab,
+    setGraphModalOpen: state.setGraphModalOpen,
+  })));
+  const visibleTab: TabKey = activeTab === "graph" ? "facts" : activeTab;
   return (
-    <aside className="panel knowledge-panel">
+    <>
       <div className="panel-header">
         <div className="panel-heading">
           <Database size={16} weight="duotone" aria-hidden="true" />
@@ -82,25 +107,23 @@ export function KnowledgePanel() {
         className="knowledge-tabs"
       >
         <TabsList className="knowledge-tab-list" aria-label="Knowledge views">
-          {TABS.map((t) => (
-            <TabsTrigger key={t.key} value={t.key}>
-              {t.label}
-              {(counts[t.key] ?? 0) > 0 && <span className="knowledge-tab-count">{counts[t.key]}</span>}
-            </TabsTrigger>
-          ))}
+          <KnowledgeTabCounts />
         </TabsList>
         <div className="panel-body">
-          {TABS.map((t) => (
-            <TabsContent
-              key={t.key}
-              value={t.key}
-              className={`knowledge-tab-content ${t.key === "graph" ? "is-graph" : ""}`}
-            >
-              <TabPanel tab={t.key} />
-            </TabsContent>
-          ))}
+          <TabsContent value={visibleTab} className="knowledge-tab-content">
+            <TabPanel tab={visibleTab} />
+          </TabsContent>
         </div>
       </Tabs>
+    </>
+  );
+}
+
+export function KnowledgePanel() {
+  const inspectorOpen = useStore((state) => Boolean(state.selectedTrafficId || state.selectedFactId || state.selectedAgentEvent));
+  return (
+    <aside className="panel knowledge-panel">
+      {inspectorOpen ? <KnowledgeInspector /> : <KnowledgeOverview />}
     </aside>
   );
 }

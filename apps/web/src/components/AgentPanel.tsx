@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, Broom, CircleNotch, PaperPlaneTilt, Play, Sparkle, Stop, TerminalWindow } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
-import type { AgentRun } from "@traceforge/shared";
-import { runAgent, resolveApproval, approveScope, rejectScope, steerAgentRun, interruptAgentRun } from "../api.js";
+import type { AgentEvent, AgentRun } from "@traceforge/shared";
+import { runAgent, resolveApproval, approveScope, rejectScope, steerAgentRun, interruptAgentRun, listAgentEvents } from "../api.js";
 import { AgentEventRow } from "./agent/AgentEventRow.js";
 import { buildAgentConversationItems } from "./agent/agent-conversation.js";
 import {
@@ -14,6 +14,8 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog.js";
 import { RunPhase, deriveRunPhase } from "./agent/RunPhase.js";
 import { useShallow } from "zustand/react/shallow";
+import { TokenUsageDialog } from "./agent/TokenUsageDialog.js";
+import { useOlderHistory } from "../hooks/use-older-history.js";
 
 export { buildAgentConversationItems, type AgentConversationItem } from "./agent/agent-conversation.js";
 
@@ -47,20 +49,23 @@ export function canSubmitAgentInstruction(goal: string, agentBusy: boolean, hasA
   return goal.trim().length > 0 && (!agentBusy || hasActiveRun);
 }
 
-export function formatUsageCost(micros: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  }).format(micros / 1_000_000);
+export const AGENT_EVENT_PAGE_SIZE = 300;
+const AGENT_HISTORY_PAGE_SIZE = 500;
+
+export function getAgentEventPage(total: number, requestedEnd: number | null, size = AGENT_EVENT_PAGE_SIZE) {
+  const end = requestedEnd === null ? total : Math.min(total, Math.max(0, requestedEnd));
+  return {
+    start: Math.max(0, end - size),
+    end,
+    latest: requestedEnd === null || end === total,
+  };
 }
 
 export function AgentPanel() {
   const {
     caseId, agentEvents, agentBusy, setAgentBusy, showToast, pendingApproval,
     pendingScope, clearPendingScope, clearPendingApproval, resetAgent, addAgentEvent,
-    activeRun, setActiveRun, continuationRun, setContinuationRun, tokenUsage, tokenUsageHistory,
+    activeRun, setActiveRun, continuationRun, setContinuationRun,
     trafficCount, factCount,
   } = useStore(useShallow((state) => ({
     caseId: state.caseId, agentEvents: state.agentEvents, agentBusy: state.agentBusy, setAgentBusy: state.setAgentBusy,
@@ -68,8 +73,7 @@ export function AgentPanel() {
     clearPendingScope: state.clearPendingScope, clearPendingApproval: state.clearPendingApproval,
     resetAgent: state.resetAgent, addAgentEvent: state.addAgentEvent, activeRun: state.activeRun,
     setActiveRun: state.setActiveRun, continuationRun: state.continuationRun,
-    setContinuationRun: state.setContinuationRun, tokenUsage: state.tokenUsage,
-    tokenUsageHistory: state.tokenUsageHistory,
+    setContinuationRun: state.setContinuationRun,
     trafficCount: state.traffic.length, factCount: state.facts.length,
   })));
   const [goal, setGoal] = useState("");
@@ -80,15 +84,26 @@ export function AgentPanel() {
   const [usageOpen, setUsageOpen] = useState(false);
   const [runLauncherOpen, setRunLauncherOpen] = useState(false);
   const [showLatest, setShowLatest] = useState(false);
+  const [eventPageEnd, setEventPageEnd] = useState<number | null>(null);
   const messagesRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
-  const conversationItems = buildAgentConversationItems({ events: agentEvents, pendingApproval, pendingScope, agentBusy });
-  const latestAgentText = agentEvents.at(-1)?.text;
-  const pricedUsage = tokenUsageHistory.filter((entry) => entry.currency && entry.totalCostMicros !== null);
-  const usageCurrency = pricedUsage.length === tokenUsageHistory.length ? (pricedUsage[0]?.currency ?? null) : null;
-  const totalCostMicros = usageCurrency && pricedUsage.every((entry) => entry.currency === usageCurrency)
-    ? pricedUsage.reduce((sum, entry) => sum + (entry.totalCostMicros ?? 0), 0)
-    : null;
+  const liveHistoryEvents = useMemo(() => agentEvents.map((event, index) => ({ ...event, id: `live-${index}` })), [agentEvents]);
+  const history = useOlderHistory<AgentEvent | (typeof liveHistoryEvents)[number]>({
+    caseId,
+    live: liveHistoryEvents,
+    pageSize: AGENT_HISTORY_PAGE_SIZE,
+    loadPage: (id, limit, offset) => listAgentEvents(id, { limit, offset }),
+  });
+  const allAgentEvents = useMemo(() => history.items.map(({ kind, text }) => ({ kind, text })), [history.items]);
+  const { start: pageStart, end: pageEnd, latest: latestPage } = getAgentEventPage(allAgentEvents.length, eventPageEnd);
+  const pageEvents = useMemo(() => allAgentEvents.slice(pageStart, pageEnd), [allAgentEvents, pageEnd, pageStart]);
+  const conversationItems = useMemo(() => buildAgentConversationItems({
+    events: pageEvents,
+    pendingApproval: latestPage ? pendingApproval : null,
+    pendingScope: latestPage ? pendingScope : null,
+    agentBusy: latestPage && agentBusy,
+  }), [agentBusy, latestPage, pageEvents, pendingApproval, pendingScope]);
+  const latestAgentText = pageEvents.at(-1)?.text;
 
   useEffect(() => {
     setInterventionAction(null);
@@ -97,8 +112,13 @@ export function AgentPanel() {
 
   useEffect(() => {
     const el = messagesRef.current;
-    if (el && shouldAutoScrollRef.current) el.scrollTop = el.scrollHeight;
-  }, [conversationItems.length, latestAgentText]);
+    if (el && latestPage && shouldAutoScrollRef.current) el.scrollTop = el.scrollHeight;
+  }, [conversationItems.length, latestAgentText, latestPage]);
+
+  useLayoutEffect(() => {
+    const el = messagesRef.current;
+    if (el && !latestPage) el.scrollTop = 0;
+  }, [latestPage, pageEnd]);
 
   useEffect(() => {
     const openUsage = () => setUsageOpen(true);
@@ -138,6 +158,8 @@ export function AgentPanel() {
     const scope = pendingScope;
     const host = scope.host;
     const continuation = scopeApprovalContinuationGoal(host);
+    setEventPageEnd(null);
+    shouldAutoScrollRef.current = true;
     setInterventionAction("scope-approved");
     setInterventionError(null);
     try {
@@ -200,6 +222,7 @@ export function AgentPanel() {
     if (!canSubmitAgentInstruction(goal, agentBusy, Boolean(activeRun))) return;
     const g = goal.trim();
     setGoal("");
+    setEventPageEnd(null);
     shouldAutoScrollRef.current = true;
     try {
       if (activeRun) {
@@ -239,6 +262,7 @@ export function AgentPanel() {
     const continuation = runContinuationGoal(previousRun);
     setContinuing(true);
     setAgentBusy(true);
+    setEventPageEnd(null);
     shouldAutoScrollRef.current = true;
     addAgentEvent({ kind: "user", text: `[continue] ${previousRun.goal}` });
     try {
@@ -265,7 +289,10 @@ export function AgentPanel() {
             <button
               className="tf-btn tf-btn-ghost"
               disabled={!canClearAgentConversation(agentBusy, Boolean(activeRun))}
-              onClick={resetAgent}
+              onClick={() => {
+                history.clearOlder();
+                resetAgent();
+              }}
               title={activeRun || agentBusy ? "Stop or finish the active run before clearing" : "Clear conversation"}
             >
               <Broom size={13} />Clear
@@ -284,6 +311,35 @@ export function AgentPanel() {
           setShowLatest(!shouldAutoScrollRef.current);
         }}
       >
+        {(pageStart > 0 || !latestPage) && (
+          <nav className="console-history-nav" aria-label="Agent event history">
+            <button
+              type="button"
+              disabled={history.loading || (pageStart === 0 && history.exhausted)}
+              onClick={() => {
+                shouldAutoScrollRef.current = false;
+                if (pageStart === 0) {
+                  void history.loadOlder().then(() => setEventPageEnd(AGENT_EVENT_PAGE_SIZE));
+                } else {
+                  setEventPageEnd(pageStart);
+                }
+              }}
+            >
+              {history.loading ? "Loading…" : pageStart === 0 && history.exhausted ? "Beginning" : "Earlier"}
+            </button>
+            <span>{history.error ? `History unavailable: ${history.error}` : `${pageStart + 1}–${pageEnd} of ${allAgentEvents.length}`}</span>
+            <button
+              type="button"
+              disabled={latestPage}
+              onClick={() => {
+                const nextEnd = Math.min(allAgentEvents.length, pageEnd + AGENT_EVENT_PAGE_SIZE);
+                setEventPageEnd(nextEnd === allAgentEvents.length ? null : nextEnd);
+              }}
+            >
+              Newer
+            </button>
+          </nav>
+        )}
         {conversationItems.length === 0 && (
           <div className="tf-guide">
             <div className="tf-guide-icon"><Sparkle size={22} weight="duotone" /></div>
@@ -334,7 +390,23 @@ export function AgentPanel() {
           />
         )}
       </section>
-      {showLatest && <button className="console-latest" type="button" onClick={() => { const el = messagesRef.current; if (el) el.scrollTop = el.scrollHeight; shouldAutoScrollRef.current = true; setShowLatest(false); }}><ArrowDown size={13} />Latest activity</button>}
+      {(showLatest || !latestPage) && (
+        <button
+          className="console-latest"
+          type="button"
+          onClick={() => {
+            shouldAutoScrollRef.current = true;
+            setEventPageEnd(null);
+            setShowLatest(false);
+            requestAnimationFrame(() => {
+              const el = messagesRef.current;
+              if (el) el.scrollTop = el.scrollHeight;
+            });
+          }}
+        >
+          <ArrowDown size={13} />Latest activity
+        </button>
+      )}
       <div className="composer">
         <textarea
           rows={1} value={goal} onChange={(e) => setGoal(e.target.value)}
@@ -364,44 +436,7 @@ export function AgentPanel() {
         </button>
       </div>
       <RunPhase phase={deriveRunPhase({ events: agentEvents, trafficCount, factCount, busy: agentBusy })} blocked={Boolean(pendingApproval || pendingScope)} active={agentBusy || Boolean(pendingApproval || pendingScope)} />
-      <Dialog open={usageOpen} onOpenChange={setUsageOpen}>
-        <DialogContent className="usage-dialog">
-          <DialogHeader>
-            <DialogTitle>Run token usage</DialogTitle>
-            <DialogDescription>
-              Provider-reported token counts persisted for each LLM turn in the latest run.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="usage-summary" aria-label="Cumulative token usage">
-            <span><strong>{tokenUsage.promptTokens.toLocaleString()}</strong> input</span>
-            <span><strong>{tokenUsage.completionTokens.toLocaleString()}</strong> output</span>
-            <span><strong>{tokenUsage.totalTokens.toLocaleString()}</strong> total</span>
-            <span><strong>{usageCurrency && totalCostMicros !== null ? formatUsageCost(totalCostMicros, usageCurrency) : "Not configured"}</strong> cost</span>
-          </div>
-          {tokenUsageHistory.length > 0 ? (
-            <div className="usage-table-wrap">
-              <table className="usage-table">
-                <thead>
-                  <tr><th>Turn</th><th>Input</th><th>Output</th><th>Total</th><th>Cost</th></tr>
-                </thead>
-                <tbody>
-                  {tokenUsageHistory.map((entry) => (
-                    <tr key={entry.id}>
-                      <td>{entry.turn}</td>
-                      <td>{entry.promptTokens.toLocaleString()}</td>
-                      <td>{entry.completionTokens.toLocaleString()}</td>
-                      <td>{entry.totalTokens.toLocaleString()}</td>
-                      <td>{entry.currency && entry.totalCostMicros !== null ? formatUsageCost(entry.totalCostMicros, entry.currency) : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="usage-empty">No provider usage has been recorded for this run.</p>
-          )}
-        </DialogContent>
-      </Dialog>
+      <TokenUsageDialog open={usageOpen} onOpenChange={setUsageOpen} />
       <Dialog open={runLauncherOpen} onOpenChange={setRunLauncherOpen}>
         <DialogContent className="run-launcher-dialog">
           <DialogHeader><DialogTitle>Start a new security run</DialogTitle><DialogDescription>Define the authorized target and the outcome the Agent should pursue.</DialogDescription></DialogHeader>

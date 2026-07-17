@@ -5,6 +5,7 @@ import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWar
 import { useStore } from "../../store.js";
 import { useShallow } from "zustand/react/shallow";
 import { FeedbackState } from "../ui/feedback-state.js";
+import { KnowledgeWindowFooter, useKnowledgeWindow } from "./knowledge-window.js";
 
 const LEVEL_CLASS: Record<string, string> = { critical: "critical", warning: "warning", info: "info" };
 const STATUS_LABEL: Record<ObserverWarning["status"], string> = {
@@ -37,6 +38,7 @@ export function ObserverTab() {
     upsertTask: state.upsertTask, activeRun: state.activeRun, agentBusy: state.agentBusy,
   })));
   const [busy, setBusy] = useState<string | null>(null);
+  const window = useKnowledgeWindow(warnings.length);
   if (warnings.length === 0) return <FeedbackState title="No observer warnings" description="After each run, Observer checks for unsupported assumptions, ignored evidence, and premature exits." />;
 
   const continueRun = async (w: ObserverWarning) => {
@@ -87,7 +89,7 @@ export function ObserverTab() {
     }
   };
 
-  return <>{warnings.map((w) => (
+  return <>{warnings.slice(0, window.count).map((w) => (
     (() => {
       const continueDisabled = observerWarningContinueDisabled(activeRun, agentBusy, busy);
       return (
@@ -115,5 +117,7 @@ export function ObserverTab() {
     </article>
       );
     })()
-  ))}</>;
+  ))}
+    <KnowledgeWindowFooter visible={window.count} total={warnings.length} onShowMore={window.showMore} />
+  </>;
 }

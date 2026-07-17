@@ -128,8 +128,15 @@ function EventEdge(props: EdgeProps) {
   );
 }
 const edgeTypes = { event: EventEdge };
+export const GRAPH_NODE_WINDOW_SIZE = 240;
 
-function buildTimelineGraph(
+export function graphTimelineWindow(timeline: TimelineEntry[], cursor: number, limit = GRAPH_NODE_WINDOW_SIZE) {
+  const end = Math.min(timeline.length, Math.max(0, cursor));
+  const start = Math.max(0, end - limit);
+  return { entries: timeline.slice(start, end), start, end, truncated: start > 0 };
+}
+
+export function buildTimelineGraph(
   timeline: TimelineEntry[],
   goal: string | null | undefined,
   facts: Fact[],
@@ -142,6 +149,7 @@ function buildTimelineGraph(
   const edges: Edge[] = [];
   const taskById = new Map(tasks.map((t) => [t.id, t]));
   const actionById = new Map(actions.map((a) => [a.id, a]));
+  const edgeIds = new Set<string>();
   const latestNodeByRef = new Map<string, string>();
   const latestNodeByKind = new Map<string, string>();
   let latestContextNode: string | undefined;
@@ -166,7 +174,8 @@ function buildTimelineGraph(
   const addEdge = (source: string | undefined, target: string, label: string, color: string, active = false) => {
     if (!source || source === target) return false;
     const id = `${source}->${target}:${label}`;
-    if (edges.some((e) => e.id === id)) return false;
+    if (edgeIds.has(id)) return false;
+    edgeIds.add(id);
     edges.push({
       id,
       source,
@@ -357,7 +366,6 @@ function FlowCanvas({ nodes, edges, focusNodeId, focusLatest, onNodeClick }: { n
 
   return (
     <ReactFlow
-      key={`flow-${nodes.length}`}
       nodes={layouted}
       edges={edges}
       nodeTypes={nodeTypes}
@@ -422,14 +430,21 @@ const SpeedButton = memo(function SpeedButton({ value, speed, setSpeed }: { valu
 });
 
 function GraphInner({ interactive }: { interactive: boolean }) {
-  const { timeline, activeRun, facts, tasks, actions } = useStore(useShallow((state) => ({ timeline: state.timeline, activeRun: state.activeRun, facts: state.facts, tasks: state.tasks, actions: state.actions })));
+  const { timeline, runGoal, facts, tasks, actions } = useStore(useShallow((state) => ({
+    timeline: state.timeline,
+    runGoal: state.activeRun?.goal ?? null,
+    facts: state.facts,
+    tasks: state.tasks,
+    actions: state.actions,
+  })));
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(2);
   const [selected, setSelected] = useState<TimelineEntry | null>(null);
 
-  const visible = useMemo(() => timeline.slice(0, cursor), [timeline, cursor]);
-  const graph = useMemo(() => buildTimelineGraph(visible, activeRun?.goal, facts, tasks, actions), [visible, activeRun?.goal, facts, tasks, actions]);
+  const timelineWindow = useMemo(() => graphTimelineWindow(timeline, cursor), [timeline, cursor]);
+  const visible = timelineWindow.entries;
+  const graph = useMemo(() => buildTimelineGraph(visible, runGoal, facts, tasks, actions), [visible, runGoal, facts, tasks, actions]);
 
   useEffect(() => {
     if (!playing) return;
@@ -448,6 +463,10 @@ function GraphInner({ interactive }: { interactive: boolean }) {
     }
   }, [timeline.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (selected && !visible.some((entry) => entry.id === selected.id)) setSelected(null);
+  }, [selected, visible]);
+
   const current = visible[visible.length - 1];
 
   const onNodeClick: NodeMouseHandler = (_e, node) => {
@@ -463,9 +482,7 @@ function GraphInner({ interactive }: { interactive: boolean }) {
   return (
     <div className="graph-wrapper">
       <div className="graph-canvas" onClick={() => setSelected(null)}>
-        <ReactFlowProvider>
-          <FlowCanvas nodes={graph.nodes} edges={graph.edges} focusLatest={interactive} focusNodeId={graph.focusNodeId} onNodeClick={onNodeClick} />
-        </ReactFlowProvider>
+        <FlowCanvas nodes={graph.nodes} edges={graph.edges} focusLatest={interactive} focusNodeId={graph.focusNodeId} onNodeClick={onNodeClick} />
       </div>
       <div className="graph-footer">
         <div className="replay-controls">
@@ -511,6 +528,7 @@ function GraphInner({ interactive }: { interactive: boolean }) {
         <div className="current-event">
           <span>{cursor} / {timeline.length}</span>
           <strong>{current ? clip(current.detail, 80) : "Ready"}</strong>
+          {timelineWindow.truncated && <small>Showing latest {visible.length} events</small>}
         </div>
       </div>
       {interactive && selected && (

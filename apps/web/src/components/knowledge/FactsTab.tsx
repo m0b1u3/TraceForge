@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useStore } from "../../store.js";
 import { FindingField } from "../design-system/FindingField.js";
 import { SeverityBadge, type Severity } from "../design-system/SeverityBadge.js";
+import { confidencePercent, KnowledgeWindowFooter, useKnowledgeWindow } from "./knowledge-window.js";
 
 function factSeverity(fact: Fact): Severity {
   const text = [fact.type, fact.title, ...fact.tags].join(" ").toLowerCase();
@@ -74,7 +75,7 @@ function FactRow({ fact, defaultOpen = false }: { fact: Fact; defaultOpen?: bool
             <div className="tf-row-detail-block"><div className="request-detail-label">Evidence</div><pre>{valueString}</pre></div>
           )}
           <div className="fact-meta-grid">
-            <div className="kv"><span>Confidence</span>{Math.round(fact.confidence * 100)}%</div>
+            <div className="kv"><span>Confidence</span>{confidencePercent(fact.confidence)}%</div>
             <div className="kv"><span>Source</span>{fact.source.type} · {fact.source.ref}</div>
             <div className="kv"><span>Fact ID</span><code>{fact.id}</code></div>
             <div className="kv"><span>Observed</span><time dateTime={fact.createdAt}>{new Date(fact.createdAt).toLocaleString()}</time></div>
@@ -88,6 +89,7 @@ function FactRow({ fact, defaultOpen = false }: { fact: Fact; defaultOpen?: bool
 
 export function FactsTab() {
   const facts = useStore((state) => state.facts);
+  const window = useKnowledgeWindow(facts.length);
   if (facts.length === 0) {
     return (
       <div className="inspector-empty">
@@ -102,5 +104,10 @@ export function FactsTab() {
       </div>
     );
   }
-  return <>{facts.map((fact, index) => <FactRow fact={fact} defaultOpen={index === 0} key={fact.id} />)}</>;
+  return (
+    <>
+      {facts.slice(0, window.count).map((fact, index) => <FactRow fact={fact} defaultOpen={index === 0} key={fact.id} />)}
+      <KnowledgeWindowFooter visible={window.count} total={facts.length} onShowMore={window.showMore} />
+    </>
+  );
 }

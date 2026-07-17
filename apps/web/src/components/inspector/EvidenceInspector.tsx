@@ -1,5 +1,6 @@
 import { Check, Copy, Eye, EyeSlash, Fingerprint, TerminalWindow, X } from "@phosphor-icons/react";
 import type { Fact } from "@traceforge/shared";
+import { confidencePercent } from "../knowledge/knowledge-window.js";
 import { Button } from "../ui/button.js";
 import { useStore } from "../../store.js";
 import { useState, type ReactNode } from "react";
@@ -28,7 +29,7 @@ export function FindingInspector({ fact }: { fact: Fact }) {
   const maskedValue = stringify(maskSensitiveValue(fact.value));
   const hasSensitiveValue = maskedValue !== value;
   return <InspectorShell kicker="Verified evidence" title={fact.title} icon={<Fingerprint size={15} />} onClose={() => close(null)}>
-    <dl className="inspector-meta"><div><dt>Type</dt><dd>{fact.type}</dd></div><div><dt>Confidence</dt><dd>{Math.round(fact.confidence * 100)}%</dd></div><div><dt>Source</dt><dd>{fact.source.type} · {fact.source.ref}</dd></div><div><dt>Fact ID</dt><dd><code>{fact.id}</code></dd></div></dl>
+    <dl className="inspector-meta"><div><dt>Type</dt><dd>{fact.type}</dd></div><div><dt>Confidence</dt><dd>{confidencePercent(fact.confidence)}%</dd></div><div><dt>Source</dt><dd>{fact.source.type} · {fact.source.ref}</dd></div><div><dt>Fact ID</dt><dd><code>{fact.id}</code></dd></div></dl>
     <InspectorCode label="Evidence" value={revealed ? value : maskedValue} copyValue={value} action={hasSensitiveValue ? <Button variant="ghost" size="icon-xs" aria-label={revealed ? "Hide sensitive evidence" : "Show sensitive evidence"} title={revealed ? "Hide sensitive evidence" : "Show sensitive evidence"} onClick={() => setRevealed((current) => !current)}>{revealed ? <EyeSlash size={13} /> : <Eye size={13} />}</Button> : undefined} />
   </InspectorShell>;
 }

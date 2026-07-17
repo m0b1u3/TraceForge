@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useStore } from "./store.js";
+import { CLIENT_AGENT_EVENT_LIMIT, takeRecent, useStore } from "./store.js";
 
 function resetStore() {
   useStore.setState({
@@ -27,6 +27,7 @@ function resetStore() {
     browserUrl: "",
     tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     tokenUsageHistory: [],
+    connectionStatus: "offline",
   });
 }
 
@@ -222,21 +223,22 @@ describe("store agent tool events", () => {
 describe("store context inspector", () => {
   beforeEach(() => resetStore());
 
-  it("selects traffic as inspector context and clears it with captured evidence", () => {
+  it("selects traffic as inspector context and closes it after persisted evidence is cleared", () => {
     useStore.getState().selectTraffic("traffic_1");
     expect(useStore.getState()).toMatchObject({ selectedTrafficId: "traffic_1", inspectorMode: "traffic" });
 
-    useStore.getState().clearTraffic();
+    useStore.getState().handleRuntimeEvent({ type: "traffic_cleared", caseId: "case_1" });
     expect(useStore.getState()).toMatchObject({ traffic: [], selectedTrafficId: null, inspectorMode: "overview" });
   });
 });
 describe("store traffic synchronization", () => {
   beforeEach(() => resetStore());
 
-  it("does not duplicate a captured response received more than once", () => {
+  it("enriches a captured response in place without duplicating it", () => {
     const entry = useStore.getState().traffic[0];
-    useStore.getState().addEntry(entry);
+    useStore.getState().addEntry({ ...entry, responseBody: "complete", responseSize: 8, contentType: "text/plain" });
     expect(useStore.getState().traffic).toHaveLength(1);
+    expect(useStore.getState().traffic[0]).toMatchObject({ responseBody: "complete", responseSize: 8, contentType: "text/plain" });
   });
 });
 describe("store feedback notices", () => {
@@ -284,6 +286,33 @@ describe("store agent streaming", () => {
     }
 
     expect(useStore.getState().agentEvents.map((event) => event.text)).toEqual(["first", "second"]);
+  });
+
+  it("coalesces stream deltas arriving in the same render frame", async () => {
+    const handle = useStore.getState().handleRuntimeEvent;
+    handle({ type: "agent_stream_start", caseId: "case_1", runId: "run_1", messageId: "msg_batch" });
+    let updates = 0;
+    const unsubscribe = useStore.subscribe(() => { updates += 1; });
+
+    handle({ type: "agent_stream_delta", caseId: "case_1", runId: "run_1", messageId: "msg_batch", delta: "a" });
+    handle({ type: "agent_stream_delta", caseId: "case_1", runId: "run_1", messageId: "msg_batch", delta: "b" });
+    handle({ type: "agent_stream_delta", caseId: "case_1", runId: "run_1", messageId: "msg_batch", delta: "c" });
+
+    expect(useStore.getState().agentEvents.at(-1)?.text).toBe("");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    unsubscribe();
+
+    expect(useStore.getState().agentEvents.at(-1)?.text).toBe("abc");
+    expect(updates).toBe(1);
+  });
+
+  it("keeps only the recent client-side Agent working set", () => {
+    const events = Array.from({ length: CLIENT_AGENT_EVENT_LIMIT + 2 }, (_, index) => index);
+    const recent = takeRecent(events, CLIENT_AGENT_EVENT_LIMIT);
+
+    expect(recent).toHaveLength(CLIENT_AGENT_EVENT_LIMIT);
+    expect(recent[0]).toBe(2);
+    expect(recent.at(-1)).toBe(CLIENT_AGENT_EVENT_LIMIT + 1);
   });
 
   it("retains a budget-exhausted run as a continuation target", () => {

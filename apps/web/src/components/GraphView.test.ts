@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { Edge, Node } from "@xyflow/react";
 import type { TimelineEntry } from "@traceforge/shared";
-import { layeredLayout, type FlowNodeData } from "./GraphView.js";
+import { GRAPH_NODE_WINDOW_SIZE, graphTimelineWindow, layeredLayout, type FlowNodeData } from "./GraphView.js";
 
 const entry = {} as TimelineEntry;
 
@@ -53,5 +53,33 @@ describe("layeredLayout", () => {
     const result = layeredLayout(updated, [], "RIGHT");
 
     expect(result[0].data.body).toBe("updated evidence");
+  });
+});
+
+describe("graphTimelineWindow", () => {
+  const timeline: TimelineEntry[] = Array.from({ length: 500 }, (_, index) => ({
+    id: `event_${index}`,
+    caseId: "case_1",
+    eventType: "timeline_appended",
+    refId: null,
+    detail: `event ${index}`,
+    createdAt: String(index),
+  }));
+
+  it("bounds the mounted graph while preserving the latest replay position", () => {
+    const window = graphTimelineWindow(timeline, 500);
+
+    expect(window.entries).toHaveLength(GRAPH_NODE_WINDOW_SIZE);
+    expect(window.entries[0]?.id).toBe("event_260");
+    expect(window.entries.at(-1)?.id).toBe("event_499");
+    expect(window.truncated).toBe(true);
+  });
+
+  it("keeps early replay steps complete", () => {
+    const window = graphTimelineWindow(timeline, 20);
+
+    expect(window.entries).toHaveLength(20);
+    expect(window.start).toBe(0);
+    expect(window.truncated).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState } from "./api.js";
+import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 
 export interface AgentUiEvent {
@@ -28,6 +28,7 @@ function runTokenUsage(run: AgentRun): TokenUsage {
 }
 
 export type ToastTone = "info" | "success" | "error";
+export type ConnectionStatus = "online" | "reconnecting" | "offline";
 export interface ToastNotice {
   id: number;
   message: string;
@@ -43,6 +44,67 @@ function inferToastTone(message: string): ToastTone {
 
 let disconnectActiveWebSocket: (() => void) | null = null;
 let toastSequence = 0;
+let streamDeltaTimer: ReturnType<typeof setTimeout> | null = null;
+const pendingStreamDeltas = new Map<string, string>();
+
+export const CLIENT_TRAFFIC_LIMIT = 5_000;
+export const CLIENT_TIMELINE_LIMIT = 3_000;
+export const CLIENT_AGENT_EVENT_LIMIT = 5_000;
+
+export function takeRecent<T>(items: T[], limit: number): T[] {
+  return items.length <= limit ? items : items.slice(items.length - limit);
+}
+
+function appendAgentUiEvent(
+  agentEvents: AgentUiEvent[],
+  streamingMessages: Record<string, number>,
+  event: AgentUiEvent,
+) {
+  const nextEvents = takeRecent([...agentEvents, event], CLIENT_AGENT_EVENT_LIMIT);
+  const removed = agentEvents.length + 1 - nextEvents.length;
+  if (removed === 0) return { agentEvents: nextEvents, streamingMessages };
+  return {
+    agentEvents: nextEvents,
+    streamingMessages: Object.fromEntries(
+      Object.entries(streamingMessages)
+        .map(([messageId, index]) => [messageId, index - removed] as const)
+        .filter(([, index]) => index >= 0),
+    ),
+  };
+}
+
+function cancelPendingStreamDeltas(messageId?: string) {
+  if (messageId) pendingStreamDeltas.delete(messageId);
+  else pendingStreamDeltas.clear();
+  if (pendingStreamDeltas.size === 0 && streamDeltaTimer) {
+    clearTimeout(streamDeltaTimer);
+    streamDeltaTimer = null;
+  }
+}
+
+function flushPendingStreamDeltas() {
+  streamDeltaTimer = null;
+  if (pendingStreamDeltas.size === 0) return;
+  const deltas = new Map(pendingStreamDeltas);
+  pendingStreamDeltas.clear();
+  useStore.setState((state) => {
+    let events: typeof state.agentEvents | null = null;
+    for (const [messageId, delta] of deltas) {
+      const index = state.streamingMessages[messageId];
+      if (index === undefined) continue;
+      const current = (events ?? state.agentEvents)[index];
+      if (!current) continue;
+      events ??= state.agentEvents.slice();
+      events[index] = { ...current, text: current.text + delta };
+    }
+    return events ? { agentEvents: events } : {};
+  });
+}
+
+function queueStreamDelta(messageId: string, delta: string) {
+  pendingStreamDeltas.set(messageId, (pendingStreamDeltas.get(messageId) ?? "") + delta);
+  streamDeltaTimer ??= setTimeout(flushPendingStreamDeltas, 16);
+}
 
 interface State {
   caseId: string | null;
@@ -60,6 +122,7 @@ interface State {
   streamedAgentTexts: string[];
   tokenUsage: TokenUsage;
   tokenUsageHistory: AgentRunUsage[];
+  connectionStatus: ConnectionStatus;
   setAgentBusy: (b: boolean) => void;
   setActiveRun: (run: AgentRun | null) => void;
   setContinuationRun: (run: AgentRun | null) => void;
@@ -70,6 +133,7 @@ interface State {
   browserController: "llm" | "human" | null;
   browserUrl: string;
   selectedTrafficId: string | null;
+  selectedTrafficSnapshot: TrafficEntry | null;
   selectedFactId: string | null;
   selectedAgentEvent: { kind: "tool_call" | "tool_result"; label: string; text: string } | null;
   inspectorMode: "overview" | "traffic" | "finding";
@@ -107,11 +171,12 @@ interface State {
   addAction: (a: ActionCard) => void;
   addDecision: (d: Decision) => void;
   addAgentEvent: (e: AgentUiEvent) => void;
-  clearTraffic: () => void;
+  clearTraffic: () => Promise<boolean>;
   setPendingApproval: (p: { approvalId: string; tool: string; input: string }) => void;
   clearPendingApproval: (approvalId?: string) => void;
   setBrowser: (controller: "llm" | "human" | null, url?: string) => void;
   selectTraffic: (id: string | null) => void;
+  inspectTraffic: (entry: TrafficEntry) => void;
   selectFact: (id: string | null) => void;
   selectAgentEvent: (event: State["selectedAgentEvent"]) => void;
   resetBrowser: () => void;
@@ -136,6 +201,7 @@ export const useStore = create<State>((set, get) => ({
   streamedAgentTexts: [],
   tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   tokenUsageHistory: [],
+  connectionStatus: "offline",
   setAgentBusy: (b) => set({ agentBusy: b }),
   setActiveRun: (run) => set({ activeRun: run, agentBusy: isRunBusy(run) }),
   setContinuationRun: (run) => set({ continuationRun: run }),
@@ -153,6 +219,7 @@ export const useStore = create<State>((set, get) => ({
   browserController: null,
   browserUrl: "",
   selectedTrafficId: null,
+  selectedTrafficSnapshot: null,
   selectedFactId: null,
   selectedAgentEvent: null,
   inspectorMode: "overview",
@@ -215,26 +282,32 @@ export const useStore = create<State>((set, get) => ({
   clearPendingScope: (host) => set((s) => (
     !host || s.pendingScope?.host === host ? { pendingScope: null } : {}
   )),
-  setCase: (id) => set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], pendingScope: null, pendingConfirmation: null }),
+  setCase: (id) => {
+    cancelPendingStreamDeltas();
+    set({ caseId: id, traffic: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], pendingScope: null, pendingConfirmation: null });
+  },
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
   enterCase: async (id) => {
     get().setCase(id);
     const [traffic, facts, tasks, timeline, mcpTools, warnings, agentEvents, activeRun, pendingInterventions, browserState] = await Promise.all([
-      listTraffic(id), listFacts(id), listTasks(id), listTimeline(id), listMcpTools(), listWarnings(id), listAgentEvents(id), getActiveAgentRun(id), getPendingInterventions(id), getBrowserState(id),
+      listTraffic(id, { limit: CLIENT_TRAFFIC_LIMIT }), listFacts(id), listTasks(id),
+      listTimeline(id, { limit: CLIENT_TIMELINE_LIMIT }), listMcpTools(), listWarnings(id),
+      listAgentEvents(id, { limit: CLIENT_AGENT_EVENT_LIMIT }), getActiveAgentRun(id),
+      getPendingInterventions(id), getBrowserState(id),
     ]);
     const latestRun = activeRun ?? await getLatestAgentRun(id);
     const tokenUsageHistory = latestRun ? await getAgentRunUsage(latestRun.id) : [];
     if (get().caseId !== id) return;
     set({
-      traffic,
+      traffic: takeRecent(traffic, CLIENT_TRAFFIC_LIMIT),
       facts,
       tasks,
-      timeline,
+      timeline: takeRecent(timeline, CLIENT_TIMELINE_LIMIT),
       mcpTools,
       warnings,
-      agentEvents: agentEvents.map((e) => ({ kind: e.kind, text: e.text })),
+      agentEvents: takeRecent(agentEvents.map((e) => ({ kind: e.kind, text: e.text })), CLIENT_AGENT_EVENT_LIMIT),
       activeRun,
       continuationRun: latestRun?.status === "needs_continuation" ? latestRun : null,
       agentBusy: isRunBusy(activeRun),
@@ -266,6 +339,11 @@ export const useStore = create<State>((set, get) => ({
             agentBusy: false,
             browserController: null,
             browserUrl: "",
+            selectedTrafficId: null,
+            selectedTrafficSnapshot: null,
+            selectedFactId: null,
+            selectedAgentEvent: null,
+            inspectorMode: "overview" as const,
             pendingApproval: null,
             pendingScope: null,
             pendingConfirmation: null,
@@ -274,9 +352,20 @@ export const useStore = create<State>((set, get) => ({
     }));
     get().showToast("Case deleted");
   },
-  addEntry: (e) => set((s) => (
-    s.traffic.some((entry) => entry.id === e.id) ? {} : { traffic: [...s.traffic, e] }
-  )),
+  addEntry: (e) => set((s) => {
+    const index = s.traffic.findIndex((entry) => entry.id === e.id);
+    if (index < 0) {
+      const traffic = takeRecent([...s.traffic, e], CLIENT_TRAFFIC_LIMIT);
+      const selectionExpired = Boolean(s.selectedTrafficId) && !traffic.some((entry) => entry.id === s.selectedTrafficId);
+      return {
+        traffic,
+        ...(selectionExpired ? { selectedTrafficId: null, selectedTrafficSnapshot: null, inspectorMode: "overview" as const } : {}),
+      };
+    }
+    const traffic = [...s.traffic];
+    traffic[index] = { ...traffic[index], ...e };
+    return { traffic };
+  }),
   addFact: (f) => set((s) => ({ facts: [...s.facts, f] })),
   upsertFact: (f) =>
     set((s) => {
@@ -294,23 +383,41 @@ export const useStore = create<State>((set, get) => ({
       copy[i] = t;
       return { tasks: copy };
     }),
-  addTimeline: (e) => set((s) => ({ timeline: [...s.timeline, e] })),
+  addTimeline: (e) => set((s) => ({ timeline: takeRecent([...s.timeline, e], CLIENT_TIMELINE_LIMIT) })),
   addAction: (a) => set((s) => ({ actions: [...s.actions, a] })),
   addDecision: (d) => set((s) => ({ decisions: [...s.decisions, d] })),
-  addAgentEvent: (e) => set((s) => ({ agentEvents: [...s.agentEvents, e] })),
-  clearTraffic: () => set((state) => ({ traffic: [], selectedTrafficId: null, ...(state.selectedTrafficId ? { inspectorMode: "overview" as const } : {}) })),
+  addAgentEvent: (e) => set((s) => appendAgentUiEvent(s.agentEvents, s.streamingMessages, e)),
+  clearTraffic: async () => {
+    const caseId = get().caseId;
+    if (!caseId) return false;
+    try {
+      await clearTrafficApi(caseId);
+    } catch {
+      get().showToast("Unable to clear traffic", "error");
+      return false;
+    }
+    if (get().caseId !== caseId) return false;
+    set((state) => ({ traffic: [], selectedTrafficId: null, selectedTrafficSnapshot: null, ...(state.selectedTrafficId ? { inspectorMode: "overview" as const } : {}) }));
+    get().showToast("Traffic cleared");
+    return true;
+  },
   setPendingApproval: (p) => set({ pendingApproval: p }),
   clearPendingApproval: (approvalId) => set((s) => (
     !approvalId || s.pendingApproval?.approvalId === approvalId ? { pendingApproval: null } : {}
   )),
   setBrowser: (controller, url) => set((s) => ({ browserController: controller, browserUrl: url ?? s.browserUrl })),
-  selectTraffic: (id) => set({ selectedTrafficId: id, selectedFactId: null, selectedAgentEvent: null, inspectorMode: id ? "traffic" : "overview" }),
-  selectFact: (id) => set({ selectedFactId: id, selectedTrafficId: null, selectedAgentEvent: null, inspectorMode: id ? "finding" : "overview" }),
-  selectAgentEvent: (event) => set({ selectedAgentEvent: event, selectedTrafficId: null, selectedFactId: null, inspectorMode: event ? "finding" : "overview" }),
+  selectTraffic: (id) => set({ selectedTrafficId: id, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: id ? "traffic" : "overview" }),
+  inspectTraffic: (entry) => set({ selectedTrafficId: entry.id, selectedTrafficSnapshot: entry, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "traffic" }),
+  selectFact: (id) => set({ selectedFactId: id, selectedTrafficId: null, selectedTrafficSnapshot: null, selectedAgentEvent: null, inspectorMode: id ? "finding" : "overview" }),
+  selectAgentEvent: (event) => set({ selectedAgentEvent: event, selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, inspectorMode: event ? "finding" : "overview" }),
   resetBrowser: () => set({ browserController: null, browserUrl: "" }),
-  resetAgent: () => set({ agentEvents: [], pendingApproval: null, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], agentBusy: false }),
+  resetAgent: () => {
+    cancelPendingStreamDeltas();
+    set({ agentEvents: [], pendingApproval: null, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], agentBusy: false });
+  },
   connectWs: () => {
     disconnectActiveWebSocket?.();
+    set({ connectionStatus: "reconnecting" });
 
     let disposed = false;
     let retry = 0;
@@ -319,21 +426,45 @@ export const useStore = create<State>((set, get) => ({
 
     const disconnect = () => {
       disposed = true;
+      cancelPendingStreamDeltas();
       if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectTimer = null;
       const current = socket;
       socket = null;
       if (current && current.readyState < WebSocket.CLOSING) current.close();
       if (disconnectActiveWebSocket === disconnect) disconnectActiveWebSocket = null;
+      set({ connectionStatus: "offline" });
     };
 
     const open = () => {
       if (disposed) return;
       const ws = new WebSocket(`ws://${location.host}/ws`);
       socket = ws;
-      ws.onopen = () => { retry = 0; };
+      ws.onopen = () => {
+        retry = 0;
+        set({ connectionStatus: "online" });
+        const caseId = get().caseId;
+        if (!caseId) return;
+        void Promise.all([listTraffic(caseId, { limit: CLIENT_TRAFFIC_LIMIT }), getBrowserState(caseId)])
+          .then(([traffic, browserState]) => {
+            if (disposed || socket !== ws || get().caseId !== caseId) return;
+            const clientTraffic = takeRecent(traffic, CLIENT_TRAFFIC_LIMIT);
+            set((state) => ({
+              traffic: clientTraffic,
+              browserController: browserState.controller,
+              browserUrl: browserState.url ?? "",
+              ...(!state.selectedTrafficId || clientTraffic.some((entry) => entry.id === state.selectedTrafficId)
+                ? {}
+                : { selectedTrafficId: null, selectedTrafficSnapshot: null, inspectorMode: "overview" as const }),
+            }));
+          })
+          .catch(() => {
+            if (!disposed && socket === ws) get().showToast("Unable to resync runtime state", "error");
+          });
+      };
       ws.onclose = () => {
         if (disposed || socket !== ws) return;
+        set({ connectionStatus: globalThis.navigator?.onLine === false ? "offline" : "reconnecting" });
         const delay = Math.min(1000 * 2 ** retry, 10000);
         retry += 1;
         reconnectTimer = setTimeout(open, delay);
@@ -352,6 +483,9 @@ export const useStore = create<State>((set, get) => ({
   handleRuntimeEvent: (event) => {
     const cid = get().caseId;
     if (event.type === "response_captured" && event.entry.caseId === cid) get().addEntry(event.entry);
+    else if (event.type === "traffic_cleared" && event.caseId === cid) {
+      set({ traffic: [], selectedTrafficId: null, selectedTrafficSnapshot: null, inspectorMode: "overview" });
+    }
     else if (event.type === "fact_created" && event.fact.caseId === cid) get().addFact(event.fact);
     else if (event.type === "fact_updated" && event.fact.caseId === cid) get().upsertFact(event.fact);
     else if (event.type === "task_created" && event.task.caseId === cid) get().upsertTask(event.task);
@@ -368,21 +502,19 @@ export const useStore = create<State>((set, get) => ({
     }
     else if (event.type === "agent_stream_start" && event.caseId === cid) {
       if (get().streamingMessages[event.messageId] !== undefined) return;
-      set((s) => ({ streamingMessages: { ...s.streamingMessages, [event.messageId]: s.agentEvents.length } }));
-      get().addAgentEvent({ kind: "text", text: "" });
-    }
-    else if (event.type === "agent_stream_delta" && event.caseId === cid) {
-      set((s) => {
-        const index = s.streamingMessages[event.messageId];
-        if (index === undefined) return {};
-        const events = s.agentEvents.slice();
-        const cur = events[index];
-        if (!cur) return {};
-        events[index] = { ...cur, text: cur.text + event.delta };
-        return { agentEvents: events };
+      set((state) => {
+        const appended = appendAgentUiEvent(state.agentEvents, state.streamingMessages, { kind: "text", text: "" });
+        return {
+          agentEvents: appended.agentEvents,
+          streamingMessages: { ...appended.streamingMessages, [event.messageId]: appended.agentEvents.length - 1 },
+        };
       });
     }
+    else if (event.type === "agent_stream_delta" && event.caseId === cid) {
+      if (get().streamingMessages[event.messageId] !== undefined) queueStreamDelta(event.messageId, event.delta);
+    }
     else if (event.type === "agent_stream_end" && event.caseId === cid) {
+      cancelPendingStreamDeltas(event.messageId);
       set((s) => {
         const index = s.streamingMessages[event.messageId];
         if (index === undefined) return {};

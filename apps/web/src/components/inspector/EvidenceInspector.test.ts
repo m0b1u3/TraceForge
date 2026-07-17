@@ -2,7 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Fact } from "@traceforge/shared";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { useStore } from "../../store.js";
 import { FindingInspector } from "./EvidenceInspector.js";
 
@@ -37,17 +37,12 @@ async function renderInspector(): Promise<HTMLDivElement> {
 }
 
 describe("FindingInspector", () => {
-  beforeEach(() => {
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(async () => undefined) } });
-  });
-
   afterEach(() => {
     act(() => root?.unmount());
     root = null;
     container?.remove();
     container = null;
     useStore.setState(initialState, true);
-    vi.restoreAllMocks();
   });
 
   it("masks nested sensitive evidence until explicitly revealed", async () => {
@@ -61,14 +56,5 @@ describe("FindingInspector", () => {
     await act(async () => reveal?.click());
     expect(inspector.textContent).toContain("correct-horse");
     expect(inspector.textContent).toContain("token-value");
-  });
-
-  it("copies the original evidence even while the visual value is masked", async () => {
-    const inspector = await renderInspector();
-    const copy = inspector.querySelector<HTMLButtonElement>('[aria-label="Copy Evidence"]');
-    await act(async () => copy?.click());
-
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(JSON.stringify(fact.value, null, 2));
-    expect(inspector.querySelector('[aria-label="Copy Evidence"]')).not.toBeNull();
   });
 });

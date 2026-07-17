@@ -8,12 +8,24 @@ import {
   isStopButtonDisabled,
   canClearAgentConversation,
   canSubmitAgentInstruction,
+  getAgentEventPage,
   runContinuationGoal,
 } from "./AgentPanel.js";
 
 function eventItems(items: AgentConversationItem[]): Extract<AgentConversationItem, { type: "event" }>[] {
   return items.filter((item): item is Extract<AgentConversationItem, { type: "event" }> => item.type === "event");
 }
+
+describe("getAgentEventPage", () => {
+  it("bounds the latest mounted event window", () => {
+    expect(getAgentEventPage(1_000, null)).toEqual({ start: 700, end: 1_000, latest: true });
+  });
+
+  it("moves backward and clamps the oldest partial page", () => {
+    expect(getAgentEventPage(1_000, 700)).toEqual({ start: 400, end: 700, latest: false });
+    expect(getAgentEventPage(1_000, 100)).toEqual({ start: 0, end: 100, latest: false });
+  });
+});
 
 describe("scopeApprovalContinuationGoal", () => {
   it("asks the agent to continue after scope approval", () => {
