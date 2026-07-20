@@ -111,7 +111,7 @@ describe("Operations Canvas theme contract", () => {
 
   it("uses an accessible dialog and named graph replay controls", () => {
     expect(graphModal).toContain("<Dialog open={graphModalOpen}");
-    expect(graphModal).toContain("<DialogTitle>Reasoning chain</DialogTitle>");
+    expect(graphModal).toContain("<DialogTitle>Attack paths</DialogTitle>");
     expect(graphView).toContain('aria-label="Reset graph replay"');
     expect(graphView).toContain('aria-label="Graph replay progress"');
     expect(graphView).toContain("aria-pressed={speed === value}");

@@ -262,7 +262,7 @@ describe("store context inspector", () => {
       correctionCount: 1,
       failureCount: 1,
       totalTokens: 120,
-      lastTrigger: "checkpoint",
+      lastTrigger: "interval",
       lastDurationMs: 42,
     });
   });

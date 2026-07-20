@@ -982,7 +982,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .observer-review-failure > svg { flex: 0 0 auto; margin-top: 1px; color: var(--warning); }
 .observer-review-failure strong { display: block; color: var(--foreground); }
 .observer-groups { min-width: 0; }
-.observer-group > header { display: flex; height: 30px; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--border-subtle); color: var(--foreground-muted); font-size: 9.5px; font-weight: 650; letter-spacing: .055em; text-transform: uppercase; }
+.observer-group > header { display: flex; height: 30px; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--border-subtle); color: var(--foreground-muted); font-size: 9.5px; font-weight: 650; letter-spacing: 0; text-transform: uppercase; }
 .observer-group > header span { display: inline-flex; align-items: center; gap: 6px; }
 .observer-group > header strong { display: grid; min-width: 18px; height: 18px; place-items: center; border-radius: 6px; background: var(--surface-hover); color: var(--foreground-secondary); font: 600 9px/1 var(--font-mono); }
 .observer-group-action > header span { color: var(--warning); }

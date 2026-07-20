@@ -1,8 +1,7 @@
-import { useStore } from "../../store.js";
-import { GraphView } from "../GraphView.js";
+import { AttackPathView } from "../AttackPathView.js";
 
 export function GraphTab() {
   return (
-    <div className="knowledge-graph"><GraphView interactive={false} /></div>
+    <div className="knowledge-graph"><AttackPathView /></div>
   );
 }

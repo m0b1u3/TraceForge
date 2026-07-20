@@ -1,4 +1,4 @@
-import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage } from "@traceforge/shared";
+import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 export interface LlmConfig {
@@ -98,6 +98,16 @@ export async function listTraffic(caseId: string, page?: HistoryPage): Promise<T
   const r = await fetch(historyUrl(`/api/cases/${caseId}/traffic`, page));
   await ensureOk(r, "Load traffic");
   return r.json();
+}
+
+export async function listAttackPaths(caseId: string): Promise<AttackPath[]> {
+  const response = await ensureOk(await fetch(`/api/cases/${caseId}/attack-paths`), "Load attack paths");
+  return response.json();
+}
+
+export async function listIdentities(caseId: string): Promise<IdentityContext[]> {
+  const response = await ensureOk(await fetch(`/api/cases/${caseId}/identities`), "Load identities");
+  return response.json();
 }
 
 export async function clearTraffic(caseId: string): Promise<{ deleted: number }> {

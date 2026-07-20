@@ -4,7 +4,7 @@ import { TasksTab } from "./knowledge/TasksTab.js";
 import { TimelineTab } from "./knowledge/TimelineTab.js";
 import { McpTab } from "./knowledge/McpTab.js";
 import { ObserverTab } from "./knowledge/ObserverTab.js";
-import { ArrowsOut, Database } from "@phosphor-icons/react";
+import { Database, GitBranch } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { TrafficInspector } from "./inspector/TrafficInspector.js";
 import { FindingInspector, ToolEventInspector } from "./inspector/EvidenceInspector.js";
@@ -97,7 +97,7 @@ function KnowledgeOverview() {
               size="sm"
               onClick={() => setGraphModalOpen(true)}
             >
-              <ArrowsOut size={14} /> Graph
+              <GitBranch size={14} /> Paths
             </Button>
           </div>
       </div>
