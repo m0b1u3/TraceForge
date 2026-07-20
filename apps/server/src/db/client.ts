@@ -9,9 +9,16 @@ export function createDb(path: string) {
       id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL,
       scope_rules_json TEXT NOT NULL, created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS identity_contexts (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL,
+      status TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+      credentials_json TEXT NOT NULL DEFAULT '{}', headers_json TEXT NOT NULL DEFAULT '{}',
+      cookies_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_identity_contexts_case ON identity_contexts(case_id);
     CREATE TABLE IF NOT EXISTS traffic_entries (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, url TEXT NOT NULL, method TEXT NOT NULL,
-      run_id TEXT, identity_id TEXT, parent_traffic_id TEXT,
+      run_id TEXT, identity_id TEXT, identity_version INTEGER, attribution_source TEXT, parent_traffic_id TEXT,
       request_headers_json TEXT NOT NULL, request_body TEXT, response_status INTEGER,
       response_headers_json TEXT, response_size INTEGER, content_type TEXT, response_body TEXT,
       created_at TEXT NOT NULL
@@ -136,6 +143,8 @@ export function createDb(path: string) {
   if (!trafficColumns.some((c) => c.name === "content_type")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN content_type TEXT");
   if (!trafficColumns.some((c) => c.name === "run_id")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN run_id TEXT");
   if (!trafficColumns.some((c) => c.name === "identity_id")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN identity_id TEXT");
+  if (!trafficColumns.some((c) => c.name === "identity_version")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN identity_version INTEGER");
+  if (!trafficColumns.some((c) => c.name === "attribution_source")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN attribution_source TEXT");
   if (!trafficColumns.some((c) => c.name === "parent_traffic_id")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN parent_traffic_id TEXT");
   const ensureColumns = (table: string, columns: Array<{ name: string; definition: string }>) => {
     const existing = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;

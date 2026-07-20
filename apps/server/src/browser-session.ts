@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chromium, type Browser, type BrowserContext, type LaunchOptions, type Page, type Response } from "playwright";
 import { checkScope } from "@traceforge/tool-resolver";
-import type { ScopeRule, TrafficEntry } from "@traceforge/shared";
+import type { IdentityContext, ScopeRule, TrafficEntry } from "@traceforge/shared";
 import type { EventBus } from "./event-bus.js";
 import type { TrafficStore } from "./stores/traffic-store.js";
 
@@ -21,6 +21,7 @@ export class BrowserSession {
   private attachedPages = new WeakSet<Page>();
   private _controller: Controller = "llm";
   private stopped = true;
+  private activeIdentity: IdentityContext | null = null;
 
   // scopeRules 用 getter 实时取：对话中批准纳入的新 host 立即对正在运行的浏览器生效，
   // 不再是 start 时的快照（否则对话扩范围后已开的浏览器仍按旧空范围过滤掉一切流量）。
@@ -33,6 +34,7 @@ export class BrowserSession {
     private bus: EventBus,
     private launchOptions: LaunchOptions = { headless: false },
     private onStopped?: () => void,
+    private getRunId?: () => string | null,
   ) {
     this.scopeRules = typeof scopeRules === "function" ? scopeRules : () => scopeRules;
   }
@@ -151,6 +153,10 @@ export class BrowserSession {
     const entry: TrafficEntry = {
       id: `traf_${randomUUID()}`,
       caseId: this.caseId,
+      runId: this.getRunId?.() ?? null,
+      identityId: this.activeIdentity?.id ?? null,
+      identityVersion: this.activeIdentity?.version ?? null,
+      attributionSource: "browser",
       url: res.url(),
       method: req.method(),
       requestHeaders: req.headers(),
@@ -247,6 +253,23 @@ export class BrowserSession {
 
   currentUrl(): string {
     return this.page?.url() ?? "";
+  }
+
+  currentIdentity(): { id: string; version: number } | null {
+    return this.activeIdentity
+      ? { id: this.activeIdentity.id, version: this.activeIdentity.version }
+      : null;
+  }
+
+  async applyIdentity(identity: IdentityContext): Promise<void> {
+    if (!this.context) throw new Error("browser not started");
+    if (identity.caseId !== this.caseId) throw new Error("identity belongs to another case");
+    if (identity.status !== "active") throw new Error(`identity is ${identity.status}`);
+    await this.context.clearCookies();
+    const cookies = identity.cookies.filter((cookie) => cookie.url || cookie.domain);
+    if (cookies.length) await this.context.addCookies(cookies);
+    await this.context.setExtraHTTPHeaders(identity.headers);
+    this.activeIdentity = identity;
   }
 
   // ---- 浏览器操作（BrowserController 接口）----

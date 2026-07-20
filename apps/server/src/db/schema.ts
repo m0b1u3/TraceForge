@@ -8,11 +8,27 @@ export const cases = sqliteTable("cases", {
   createdAt: text("created_at").notNull(),
 });
 
+export const identityContexts = sqliteTable("identity_contexts", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  name: text("name").notNull(),
+  kind: text("kind").notNull(),
+  status: text("status").notNull(),
+  version: integer("version").notNull().default(1),
+  credentialsJson: text("credentials_json").notNull().default("{}"),
+  headersJson: text("headers_json").notNull().default("{}"),
+  cookiesJson: text("cookies_json").notNull().default("[]"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const trafficEntries = sqliteTable("traffic_entries", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),
   runId: text("run_id"),
   identityId: text("identity_id"),
+  identityVersion: integer("identity_version"),
+  attributionSource: text("attribution_source"),
   parentTrafficId: text("parent_traffic_id"),
   url: text("url").notNull(),
   method: text("method").notNull(),

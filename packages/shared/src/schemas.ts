@@ -31,11 +31,38 @@ export const CaseSummarySchema = z.object({
 });
 export type CaseSummary = z.infer<typeof CaseSummarySchema>;
 
+export const IdentityContextSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  name: z.string().min(1),
+  kind: z.enum(["guest", "user", "admin", "service", "custom"]),
+  status: z.enum(["active", "expired", "revoked"]).default("active"),
+  version: z.number().int().positive().default(1),
+  credentials: z.record(z.unknown()).default({}),
+  headers: z.record(z.string()).default({}),
+  cookies: z.array(z.object({
+    name: z.string(),
+    value: z.string(),
+    domain: z.string().optional(),
+    path: z.string().optional(),
+    url: z.string().optional(),
+    expires: z.number().optional(),
+    httpOnly: z.boolean().optional(),
+    secure: z.boolean().optional(),
+    sameSite: z.enum(["Strict", "Lax", "None"]).optional(),
+  })).default([]),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type IdentityContext = z.infer<typeof IdentityContextSchema>;
+
 export const TrafficEntrySchema = z.object({
   id: z.string(),
   caseId: z.string(),
   runId: z.string().nullable().optional(),
   identityId: z.string().nullable().optional(),
+  identityVersion: z.number().int().positive().nullable().optional(),
+  attributionSource: z.enum(["browser", "http_replay", "manual", "agent"]).nullable().optional(),
   parentTrafficId: z.string().nullable().optional(),
   url: z.string(),
   method: z.string(),

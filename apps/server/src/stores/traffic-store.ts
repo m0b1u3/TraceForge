@@ -10,6 +10,7 @@ export class TrafficStore {
     const e = TrafficEntrySchema.parse(entry);
     this.db.insert(trafficEntries).values({
       id: e.id, caseId: e.caseId, runId: e.runId, identityId: e.identityId,
+      identityVersion: e.identityVersion, attributionSource: e.attributionSource,
       parentTrafficId: e.parentTrafficId, url: e.url, method: e.method,
       requestHeadersJson: JSON.stringify(e.requestHeaders),
       requestBody: e.requestBody,
@@ -41,6 +42,7 @@ export class TrafficStore {
     return rows.map((row) =>
         TrafficEntrySchema.parse({
           id: row.id, caseId: row.caseId, runId: row.runId, identityId: row.identityId,
+          identityVersion: row.identityVersion, attributionSource: row.attributionSource,
           parentTrafficId: row.parentTrafficId, url: row.url, method: row.method,
           requestHeaders: JSON.parse(row.requestHeadersJson),
           requestBody: row.requestBody,
