@@ -218,6 +218,8 @@ export const knowledgeUsage = sqliteTable("knowledge_usage", {
   knowledgeKind: text("knowledge_kind").notNull(),
   injectedCount: integer("injected_count").notNull().default(0),
   usedCount: integer("used_count").notNull().default(0),
+  positiveOutcomeScore: real("positive_outcome_score").notNull().default(0),
+  negativeOutcomeScore: real("negative_outcome_score").notNull().default(0),
   firstInjectedAt: text("first_injected_at").notNull(),
   lastInjectedAt: text("last_injected_at").notNull(),
   lastUsedAt: text("last_used_at"),

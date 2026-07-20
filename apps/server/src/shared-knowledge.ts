@@ -5,7 +5,12 @@ export interface SharedKnowledgeSources {
   facts: Fact[];
   identities: IdentityContext[];
   attackPaths: AttackPath[];
-  usageScores?: Map<string, { injected: number; used: number }>;
+  usageScores?: Map<string, {
+    injected: number;
+    used: number;
+    positiveOutcome: number;
+    negativeOutcome: number;
+  }>;
 }
 
 export interface SharedKnowledgeFocus {
@@ -34,7 +39,14 @@ function usageBoost(id: string, sources: SharedKnowledgeSources): number {
   const usage = sources.usageScores?.get(id);
   if (!usage?.injected) return 0;
   const ratio = usage.used / usage.injected;
-  return ratio * 20 + Math.log2(usage.used + 1) * 4 - (usage.used === 0 ? Math.min(5, usage.injected) : 0);
+  const outcomeSamples = usage.positiveOutcome + usage.negativeOutcome;
+  const outcomeQuality = outcomeSamples > 0
+    ? ((usage.positiveOutcome - usage.negativeOutcome) / outcomeSamples) * 24
+    : 0;
+  return ratio * 12
+    + Math.log2(usage.used + 1) * 3
+    + outcomeQuality
+    - (usage.used === 0 ? Math.min(5, usage.injected) : 0);
 }
 
 export function buildSharedKnowledge(sources: SharedKnowledgeSources, currentRunId: string, focus: SharedKnowledgeFocus = { goal: "" }): SharedKnowledgeContext {

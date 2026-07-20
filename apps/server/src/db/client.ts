@@ -97,6 +97,8 @@ export function createDb(path: string) {
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT NOT NULL,
       knowledge_id TEXT NOT NULL, knowledge_kind TEXT NOT NULL,
       injected_count INTEGER NOT NULL DEFAULT 0, used_count INTEGER NOT NULL DEFAULT 0,
+      positive_outcome_score REAL NOT NULL DEFAULT 0,
+      negative_outcome_score REAL NOT NULL DEFAULT 0,
       first_injected_at TEXT NOT NULL, last_injected_at TEXT NOT NULL, last_used_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_knowledge_usage_case ON knowledge_usage(case_id, knowledge_id);
@@ -187,6 +189,10 @@ export function createDb(path: string) {
       if (!existing.some((item) => item.name === column.name)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column.name} ${column.definition}`);
     }
   };
+  ensureColumns("knowledge_usage", [
+    { name: "positive_outcome_score", definition: "REAL NOT NULL DEFAULT 0" },
+    { name: "negative_outcome_score", definition: "REAL NOT NULL DEFAULT 0" },
+  ]);
   ensureColumns("facts", [
     { name: "source_run_id", definition: "TEXT" },
     { name: "finding_status", definition: "TEXT" },

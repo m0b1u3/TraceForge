@@ -18,8 +18,15 @@ describe("KnowledgeUsageStore with real SQLite", () => {
       identity: "new_identity",
     }, refs)).toEqual([{ id: "fact_order_idor", kind: "fact" }]);
 
-    expect(store.scores("case_1").get("fact_order_idor")).toEqual({ injected: 2, used: 1 });
-    expect(store.scores("case_1").get("identity_alice")).toEqual({ injected: 2, used: 0 });
+    store.recordOutcome("case_1", "run_1", [refs[0]], 3, 0);
+    store.recordOutcome("case_1", "run_1", [refs[1]], 0, 1);
+
+    expect(store.scores("case_1").get("fact_order_idor")).toEqual({
+      injected: 2, used: 1, positiveOutcome: 3, negativeOutcome: 0,
+    });
+    expect(store.scores("case_1").get("identity_alice")).toEqual({
+      injected: 2, used: 0, positiveOutcome: 0, negativeOutcome: 1,
+    });
     expect(store.scores("case_1", "run_1").size).toBe(0);
   });
 

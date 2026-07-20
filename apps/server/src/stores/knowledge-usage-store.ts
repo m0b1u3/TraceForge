@@ -4,7 +4,12 @@ import { knowledgeUsage } from "../db/schema.js";
 
 export type KnowledgeKind = "fact" | "identity" | "attack_path";
 export interface KnowledgeRef { id: string; kind: KnowledgeKind }
-export interface KnowledgeUsageScore { injected: number; used: number }
+export interface KnowledgeUsageScore {
+  injected: number;
+  used: number;
+  positiveOutcome: number;
+  negativeOutcome: number;
+}
 
 const rowId = (runId: string, ref: KnowledgeRef): string => `${runId}:${ref.kind}:${ref.id}`;
 
@@ -30,6 +35,8 @@ export class KnowledgeUsageStore {
           knowledgeKind: ref.kind,
           injectedCount: 1,
           usedCount: 0,
+          positiveOutcomeScore: 0,
+          negativeOutcomeScore: 0,
           firstInjectedAt: now,
           lastInjectedAt: now,
         }).run();
@@ -56,14 +63,37 @@ export class KnowledgeUsageStore {
     return matched;
   }
 
+  recordOutcome(caseId: string, runId: string, refs: KnowledgeRef[], positive: number, negative: number): void {
+    if (positive <= 0 && negative <= 0) return;
+    for (const ref of refs) {
+      const id = rowId(runId, ref);
+      const existing = this.db.select().from(knowledgeUsage).where(and(
+        eq(knowledgeUsage.id, id),
+        eq(knowledgeUsage.caseId, caseId),
+      )).get();
+      if (!existing) continue;
+      this.db.update(knowledgeUsage).set({
+        positiveOutcomeScore: existing.positiveOutcomeScore + positive,
+        negativeOutcomeScore: existing.negativeOutcomeScore + negative,
+      }).where(eq(knowledgeUsage.id, id)).run();
+    }
+  }
+
   scores(caseId: string, excludeRunId?: string): Map<string, KnowledgeUsageScore> {
     const rows = this.db.select().from(knowledgeUsage).where(eq(knowledgeUsage.caseId, caseId)).all();
     const scores = new Map<string, KnowledgeUsageScore>();
     for (const row of rows) {
       if (row.runId === excludeRunId) continue;
-      const current = scores.get(row.knowledgeId) ?? { injected: 0, used: 0 };
+      const current = scores.get(row.knowledgeId) ?? {
+        injected: 0,
+        used: 0,
+        positiveOutcome: 0,
+        negativeOutcome: 0,
+      };
       current.injected += row.injectedCount;
       current.used += row.usedCount;
+      current.positiveOutcome += row.positiveOutcomeScore;
+      current.negativeOutcome += row.negativeOutcomeScore;
       scores.set(row.knowledgeId, current);
     }
     return scores;

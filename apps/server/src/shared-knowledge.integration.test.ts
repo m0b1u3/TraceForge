@@ -63,7 +63,12 @@ describe("cross-run shared knowledge with real SQLite", () => {
       facts: facts.listByCase("case_1"),
       identities: identities.listByCase("case_1"),
       attackPaths: paths.listByCase("case_1"),
-      usageScores: new Map([[unrelatedFinding.id, { injected: 2, used: 2 }]]),
+      usageScores: new Map([[unrelatedFinding.id, {
+        injected: 2,
+        used: 2,
+        positiveOutcome: 4,
+        negativeOutcome: 0,
+      }]]),
     }, "run_2");
     expect(usageRanked.verifiedFindings[0]).toContain("Unrelated TLS configuration");
   });

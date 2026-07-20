@@ -53,6 +53,7 @@ import { securityReportExport, securityReportMarkdown } from "./security-report-
 import { ObserverScheduler } from "./observer-scheduler.js";
 import { buildSharedKnowledge } from "./shared-knowledge.js";
 import { KnowledgeUsageStore, type KnowledgeRef } from "./stores/knowledge-usage-store.js";
+import { KnowledgeOutcomeTracker } from "./knowledge-outcome.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -789,6 +790,7 @@ export function registerRoutes(
     registry.register(makeSearchTrafficTool(id, traffic));
     registry.register(makeRecallConversationTool(id, agentEventStore, contextSummaryStore, { expander: queryExpander }));
     const availableKnowledge = new Map<string, KnowledgeRef>();
+    const knowledgeOutcomeTracker = new KnowledgeOutcomeTracker();
     const getSharedKnowledge = (query?: string) => {
       const runState = sessionStore.get(id, runId);
       const knowledge = buildSharedKnowledge({
@@ -984,6 +986,24 @@ export function registerRoutes(
         if (referencedKnowledge.length) {
           const detail = `Tool=${report.name}; knowledge=${referencedKnowledge.map((ref) => `${ref.kind}:${ref.id}`).join(",")}`;
           const entry = timelineStore.append(id, "knowledge_used", detail, referencedKnowledge[0].id, runId);
+          bus.emit({ type: "timeline_appended", entry });
+        }
+        const settledKnowledge = knowledgeOutcomeTracker.settle(report, referencedKnowledge);
+        if (settledKnowledge.refs.length) {
+          knowledgeUsageStore.recordOutcome(
+            id,
+            runId,
+            settledKnowledge.refs,
+            settledKnowledge.outcome.positive,
+            settledKnowledge.outcome.negative,
+          );
+          const detail = [
+            `Tool=${report.name}`,
+            `outcome=${settledKnowledge.outcome.reason}`,
+            `score=+${settledKnowledge.outcome.positive}/-${settledKnowledge.outcome.negative}`,
+            `knowledge=${settledKnowledge.refs.map((ref) => `${ref.kind}:${ref.id}`).join(",")}`,
+          ].join("; ");
+          const entry = timelineStore.append(id, "knowledge_outcome", detail, settledKnowledge.refs[0].id, runId);
           bus.emit({ type: "timeline_appended", entry });
         }
         observerScheduler.observe(report);
