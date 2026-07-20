@@ -16,6 +16,12 @@ export {
 } from "./agent-runtime.js";
 export type { ObserverReviewTrigger } from "./agent-runtime.js";
 export { compareTrafficResponses, makeCompareIdentityTrafficTool, makeHttpReplayTool, makeProposeScopeExpansionTool, makeReplayTrafficTool } from "./builtin-tools.js";
+export {
+  assessValidationExperiment,
+  makeAssessValidationExperimentTool,
+  type ValidationAssessment,
+  type ValidationVerdict,
+} from "./validation-tools.js";
 export { makeListIdentitiesTool, makeRecordIdentityTool, makeUseBrowserIdentityTool } from "./identity-tools.js";
 export type { IdentityWriter, BrowserIdentityController } from "./identity-tools.js";
 export { makeListAttackPathsTool, makeRecordAttackPathTool } from "./attack-path-tools.js";

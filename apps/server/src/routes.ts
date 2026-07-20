@@ -24,6 +24,7 @@ import {
   makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools,
   makeReplayTrafficTool, makeExtractApiEndpointsTool,
   makeCompareIdentityTrafficTool, makeListIdentitiesTool, makeRecordIdentityTool, makeUseBrowserIdentityTool,
+  makeAssessValidationExperimentTool,
   makeListAttackPathsTool, makeRecordAttackPathTool,
   makeListSecurityReportsTool, makeRecordSecurityReportTool,
   McpManager, mcpToolToDescriptor, Observer, LlmQueryExpander,
@@ -723,6 +724,7 @@ export function registerRoutes(
     registry.register(makeHttpReplayTool(c.scopeRules, undefined, id, traffic, (e) => bus.emit(e), replayIdentityContext));
     registry.register(makeReplayTrafficTool(c.scopeRules, traffic, undefined, id, traffic, (e) => bus.emit(e), replayIdentityContext));
     registry.register(makeCompareIdentityTrafficTool(c.scopeRules, traffic, identityStore, undefined, id, traffic, (e) => bus.emit(e), runId));
+    registry.register(makeAssessValidationExperimentTool(id, traffic));
     registry.register(makeExtractApiEndpointsTool(id, c.scopeRules, {
       traffic,
       facts: factStore,

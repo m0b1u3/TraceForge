@@ -19,6 +19,18 @@ describe("knowledge outcome classification", () => {
       content: "resolved",
       ok: true,
     })).toMatchObject({ positive: 2, negative: 0 });
+    expect(classifyKnowledgeOutcome({
+      name: "assess_validation_experiment",
+      input: { baselineTrafficId: "a", variantTrafficId: "b" },
+      content: JSON.stringify({ verdict: "supports" }),
+      ok: true,
+    })).toMatchObject({ positive: 2, negative: 0 });
+    expect(classifyKnowledgeOutcome({
+      name: "assess_validation_experiment",
+      input: { baselineTrafficId: "a", variantTrafficId: "b" },
+      content: JSON.stringify({ verdict: "inconclusive" }),
+      ok: true,
+    })).toMatchObject({ positive: 0, negative: 0 });
   });
 
   it("penalizes only permanent failures", () => {

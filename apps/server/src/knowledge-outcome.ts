@@ -18,6 +18,16 @@ export function classifyKnowledgeOutcome(report: ToolExecutionReport): Knowledge
   }
 
   const input = (report.input ?? {}) as Record<string, unknown>;
+  if (report.name === "assess_validation_experiment") {
+    try {
+      const verdict = (JSON.parse(report.content) as { verdict?: string }).verdict;
+      if (verdict === "supports" || verdict === "refutes") {
+        return { positive: 2, negative: 0, reason: `validation experiment ${verdict}` };
+      }
+    } catch {
+      return neutral("validation assessment was not structured");
+    }
+  }
   if (report.name === "record_fact") {
     if (input.type === "finding" && input.findingStatus === "verified") {
       return { positive: 3, negative: 0, reason: "verified finding" };
