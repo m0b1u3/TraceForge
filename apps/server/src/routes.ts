@@ -785,11 +785,20 @@ export function registerRoutes(
     registry.register(makeGetFactDetailTool(id, factStore));
     registry.register(makeSearchTrafficTool(id, traffic));
     registry.register(makeRecallConversationTool(id, agentEventStore, contextSummaryStore, { expander: queryExpander }));
-    const getSharedKnowledge = () => buildSharedKnowledge({
-      facts: factStore.listByCase(id),
-      identities: identityStore.listByCase(id),
-      attackPaths: attackPathStore.listByCase(id),
-    }, runId);
+    const getSharedKnowledge = (query?: string) => {
+      const runState = sessionStore.get(id, runId);
+      return buildSharedKnowledge({
+        facts: factStore.listByCase(id),
+        identities: identityStore.listByCase(id),
+        attackPaths: attackPathStore.listByCase(id),
+      }, runId, {
+        goal: query?.trim() || runState?.currentGoal || goal,
+        phase: runState?.phase,
+        host: runState?.focus.host,
+        url: runState?.focus.url,
+        note: query?.trim() || runState?.focus.note,
+      });
+    };
     registry.register(makeRecallCaseKnowledgeTool({ get: getSharedKnowledge }));
     registry.register(makeReevaluateFactsTool(id, factStore, async (_cid, goal, focus, facts) => {
       const factsText = facts.map((f) => `${f.id} [${f.type}] ${f.title}: ${JSON.stringify(f.value)}`).join("\n") || "(无)";

@@ -80,6 +80,10 @@ describe("recall_case_knowledge", () => {
     expect(result.content).toContain("f1 verified");
     expect(result.content).toContain("excludedConflictCount");
   });
+  it("passes a temporary focus query to the knowledge reader", async () => {
+    const tool = makeRecallCaseKnowledgeTool({ get: (query) => ({ verifiedFindings: [query ?? "default"], identities: [], attackPaths: [], failedAttempts: [], excludedConflictCount: 0, injectedFactIds: [] }) });
+    expect((await tool.execute({ query: "order IDOR" })).content).toContain("order IDOR");
+  });
 });
 
 describe("search_traffic", () => {

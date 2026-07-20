@@ -9,7 +9,7 @@ export interface TrafficSearchReader { listByCase(caseId: string): TrafficEntry[
 export interface ConvoSearchReader { listByCase(caseId: string): AgentEvent[] }
 export interface SummaryReader { latest(caseId: string): { content: string } | undefined }
 export interface MemoryToolOptions { expander?: QueryExpander }
-export interface SharedKnowledgeReader { get(): SharedKnowledgeContext }
+export interface SharedKnowledgeReader { get(query?: string): SharedKnowledgeContext }
 
 function clip(s: string, max = 120): string {
   const one = s.replace(/\s+/g, " ").trim();
@@ -70,9 +70,12 @@ export function makeRecallCaseKnowledgeTool(reader: SharedKnowledgeReader): Tool
   return {
     name: "recall_case_knowledge",
     description: "读取跨 Run 的可信项目知识摘要：已验证 Findings、active Identities、非 invalidated Attack Paths 和历史失败。冲突/过期知识只返回隔离数量，不作为结论注入。",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: { type: "object", properties: { query: { type: "string", description: "Optional temporary focus used to rerank trusted project knowledge." } } },
     risk: "normal", source: "builtin", executionMode: "parallel",
-    execute: async () => ({ ok: true, content: JSON.stringify(reader.get(), null, 2) }),
+    execute: async (input) => {
+      const query = typeof (input as { query?: unknown } | undefined)?.query === "string" ? (input as { query: string }).query : undefined;
+      return { ok: true, content: JSON.stringify(reader.get(query), null, 2) };
+    },
   };
 }
 
