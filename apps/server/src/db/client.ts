@@ -93,6 +93,13 @@ export function createDb(path: string) {
       new_facts_json TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_decisions_case ON decisions(case_id);
+    CREATE TABLE IF NOT EXISTS knowledge_usage (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT NOT NULL,
+      knowledge_id TEXT NOT NULL, knowledge_kind TEXT NOT NULL,
+      injected_count INTEGER NOT NULL DEFAULT 0, used_count INTEGER NOT NULL DEFAULT 0,
+      first_injected_at TEXT NOT NULL, last_injected_at TEXT NOT NULL, last_used_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_knowledge_usage_case ON knowledge_usage(case_id, knowledge_id);
     CREATE TABLE IF NOT EXISTS observer_warnings (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, level TEXT NOT NULL,
       title TEXT NOT NULL, description TEXT NOT NULL,

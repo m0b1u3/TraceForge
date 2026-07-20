@@ -9,6 +9,10 @@ export interface SharedKnowledgeContext {
   failedAttempts: string[];
   excludedConflictCount: number;
   injectedFactIds: string[];
+  injectedKnowledgeRefs?: Array<{
+    id: string;
+    kind: "fact" | "identity" | "attack_path";
+  }>;
 }
 export interface ContextInput {
   goal: string;

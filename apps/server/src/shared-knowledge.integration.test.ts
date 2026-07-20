@@ -54,5 +54,17 @@ describe("cross-run shared knowledge with real SQLite", () => {
     expect(knowledge.failedAttempts.join(" ")).not.toContain("/current");
     expect(knowledge.excludedConflictCount).toBeGreaterThanOrEqual(1);
     expect(knowledge.injectedFactIds).toContain(finding.id);
+    expect(knowledge.injectedKnowledgeRefs).toEqual(expect.arrayContaining([
+      { id: finding.id, kind: "fact" },
+      { id: activeIdentity.id, kind: "identity" },
+    ]));
+
+    const usageRanked = buildSharedKnowledge({
+      facts: facts.listByCase("case_1"),
+      identities: identities.listByCase("case_1"),
+      attackPaths: paths.listByCase("case_1"),
+      usageScores: new Map([[unrelatedFinding.id, { injected: 2, used: 2 }]]),
+    }, "run_2");
+    expect(usageRanked.verifiedFindings[0]).toContain("Unrelated TLS configuration");
   });
 });

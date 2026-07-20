@@ -5,6 +5,7 @@ export interface SharedKnowledgeSources {
   facts: Fact[];
   identities: IdentityContext[];
   attackPaths: AttackPath[];
+  usageScores?: Map<string, { injected: number; used: number }>;
 }
 
 export interface SharedKnowledgeFocus {
@@ -29,6 +30,13 @@ function freshness(updatedAt: string): number {
   return Math.max(0, 5 - ageDays * 0.1);
 }
 
+function usageBoost(id: string, sources: SharedKnowledgeSources): number {
+  const usage = sources.usageScores?.get(id);
+  if (!usage?.injected) return 0;
+  const ratio = usage.used / usage.injected;
+  return ratio * 20 + Math.log2(usage.used + 1) * 4 - (usage.used === 0 ? Math.min(5, usage.injected) : 0);
+}
+
 export function buildSharedKnowledge(sources: SharedKnowledgeSources, currentRunId: string, focus: SharedKnowledgeFocus = { goal: "" }): SharedKnowledgeContext {
   const excluded = sources.facts.filter((fact) =>
     fact.validity !== "valid" || ["needs_review", "rejected", "stale"].includes(fact.findingStatus ?? ""));
@@ -47,6 +55,7 @@ export function buildSharedKnowledge(sources: SharedKnowledgeSources, currentRun
     .sort((a, b) => {
       const score = (fact: Fact) => focusScore(`${fact.type} ${fact.title} ${JSON.stringify(fact.value)} ${fact.tags.join(" ")} ${fact.verificationSummary ?? ""}`, focus)
         + (linkedFindingBoost.get(fact.id) ?? 0) + fact.confidence * 10 + freshness(fact.updatedAt)
+        + usageBoost(fact.id, sources)
         + (["validate", "chain", "report"].includes(phase) ? 15 : 0);
       return score(b) - score(a) || b.updatedAt.localeCompare(a.updatedAt);
     })
@@ -56,6 +65,7 @@ export function buildSharedKnowledge(sources: SharedKnowledgeSources, currentRun
     .sort((a, b) => {
       const score = (identity: IdentityContext) => focusScore(`${identity.name} ${identity.kind} ${JSON.stringify(identity.credentials)} ${Object.keys(identity.headers).join(" ")}`, focus)
         + (linkedIdentityBoost.get(identity.id) ?? 0) + freshness(identity.updatedAt)
+        + usageBoost(identity.id, sources)
         + (["test", "validate", "chain"].includes(phase) ? 10 : 0);
       return score(b) - score(a) || b.updatedAt.localeCompare(a.updatedAt);
     })
@@ -64,6 +74,7 @@ export function buildSharedKnowledge(sources: SharedKnowledgeSources, currentRun
     .filter((path) => path.status !== "invalidated")
     .sort((a, b) => {
       const score = (path: AttackPath) => (pathScores.get(path.id) ?? 0) + path.confidence * 10
+        + usageBoost(path.id, sources)
         + (path.status === "validated" ? 20 : 0) + (["chain", "validate", "report"].includes(phase) ? 15 : 0) + freshness(path.updatedAt);
       return score(b) - score(a) || b.updatedAt.localeCompare(a.updatedAt);
     })
@@ -72,6 +83,7 @@ export function buildSharedKnowledge(sources: SharedKnowledgeSources, currentRun
     .filter((fact) => fact.type === "failed_attempt" && fact.validity === "valid" && fact.sourceRunId !== currentRunId)
     .sort((a, b) => {
       const score = (fact: Fact) => focusScore(`${fact.title} ${JSON.stringify(fact.value)}`, focus) + freshness(fact.updatedAt)
+        + usageBoost(fact.id, sources)
         + (["test", "validate"].includes(phase) ? 8 : 0);
       return score(b) - score(a) || b.updatedAt.localeCompare(a.updatedAt);
     })
@@ -87,5 +99,11 @@ export function buildSharedKnowledge(sources: SharedKnowledgeSources, currentRun
     failedAttempts: failedAttempts.map((fact) => `${fact.id} ${clip(JSON.stringify(fact.value))}`),
     excludedConflictCount: excluded.length,
     injectedFactIds: [...verifiedFindings.map((fact) => fact.id), ...failedAttempts.map((fact) => fact.id)],
+    injectedKnowledgeRefs: [
+      ...verifiedFindings.map((fact) => ({ id: fact.id, kind: "fact" as const })),
+      ...failedAttempts.map((fact) => ({ id: fact.id, kind: "fact" as const })),
+      ...identities.map((identity) => ({ id: identity.id, kind: "identity" as const })),
+      ...attackPaths.map((path) => ({ id: path.id, kind: "attack_path" as const })),
+    ],
   };
 }

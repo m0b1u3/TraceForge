@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
-import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries } from "./db/schema.js";
+import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -52,6 +52,7 @@ import { SecurityReportStore } from "./stores/security-report-store.js";
 import { securityReportExport, securityReportMarkdown } from "./security-report-export.js";
 import { ObserverScheduler } from "./observer-scheduler.js";
 import { buildSharedKnowledge } from "./shared-knowledge.js";
+import { KnowledgeUsageStore, type KnowledgeRef } from "./stores/knowledge-usage-store.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -117,6 +118,7 @@ export function registerRoutes(
   const identityStore = new IdentityStore(db);
   const attackPathStore = new AttackPathStore(db);
   const securityReportStore = new SecurityReportStore(db);
+  const knowledgeUsageStore = new KnowledgeUsageStore(db);
   bus.subscribe((event) => {
     const dependency = event.type === "fact_updated"
       ? { caseId: event.fact.caseId, id: event.fact.id }
@@ -230,6 +232,7 @@ export function registerRoutes(
     db.delete(timeline).where(eq(timeline.caseId, id)).run();
     db.delete(actionCards).where(eq(actionCards.caseId, id)).run();
     db.delete(decisions).where(eq(decisions.caseId, id)).run();
+    db.delete(knowledgeUsage).where(eq(knowledgeUsage.caseId, id)).run();
     db.delete(agentEvents).where(eq(agentEvents.caseId, id)).run();
     db.delete(observerWarnings).where(eq(observerWarnings.caseId, id)).run();
     db.delete(runCognitiveState).where(eq(runCognitiveState.caseId, id)).run();
@@ -785,12 +788,14 @@ export function registerRoutes(
     registry.register(makeGetFactDetailTool(id, factStore));
     registry.register(makeSearchTrafficTool(id, traffic));
     registry.register(makeRecallConversationTool(id, agentEventStore, contextSummaryStore, { expander: queryExpander }));
+    const availableKnowledge = new Map<string, KnowledgeRef>();
     const getSharedKnowledge = (query?: string) => {
       const runState = sessionStore.get(id, runId);
-      return buildSharedKnowledge({
+      const knowledge = buildSharedKnowledge({
         facts: factStore.listByCase(id),
         identities: identityStore.listByCase(id),
         attackPaths: attackPathStore.listByCase(id),
+        usageScores: knowledgeUsageStore.scores(id, runId),
       }, runId, {
         goal: query?.trim() || runState?.currentGoal || goal,
         phase: runState?.phase,
@@ -798,6 +803,9 @@ export function registerRoutes(
         url: runState?.focus.url,
         note: query?.trim() || runState?.focus.note,
       });
+      for (const ref of knowledge.injectedKnowledgeRefs ?? []) availableKnowledge.set(`${ref.kind}:${ref.id}`, ref);
+      knowledgeUsageStore.recordInjected(id, runId, knowledge.injectedKnowledgeRefs ?? []);
+      return knowledge;
     };
     registry.register(makeRecallCaseKnowledgeTool({ get: getSharedKnowledge }));
     registry.register(makeReevaluateFactsTool(id, factStore, async (_cid, goal, focus, facts) => {
@@ -967,6 +975,17 @@ export function registerRoutes(
       onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger),
       failureMemory,
       onToolExecuted: (report) => {
+        const referencedKnowledge = knowledgeUsageStore.markReferenced(
+          id,
+          runId,
+          report.input,
+          [...availableKnowledge.values()],
+        );
+        if (referencedKnowledge.length) {
+          const detail = `Tool=${report.name}; knowledge=${referencedKnowledge.map((ref) => `${ref.kind}:${ref.id}`).join(",")}`;
+          const entry = timelineStore.append(id, "knowledge_used", detail, referencedKnowledge[0].id, runId);
+          bus.emit({ type: "timeline_appended", entry });
+        }
         observerScheduler.observe(report);
         const replanTriggers = new Set([
           "record_fact",

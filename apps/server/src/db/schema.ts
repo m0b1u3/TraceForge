@@ -210,6 +210,19 @@ export const observerWarnings = sqliteTable("observer_warnings", {
   createdAt: text("created_at").notNull(),
 });
 
+export const knowledgeUsage = sqliteTable("knowledge_usage", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  runId: text("run_id").notNull(),
+  knowledgeId: text("knowledge_id").notNull(),
+  knowledgeKind: text("knowledge_kind").notNull(),
+  injectedCount: integer("injected_count").notNull().default(0),
+  usedCount: integer("used_count").notNull().default(0),
+  firstInjectedAt: text("first_injected_at").notNull(),
+  lastInjectedAt: text("last_injected_at").notNull(),
+  lastUsedAt: text("last_used_at"),
+});
+
 export const hypotheses = sqliteTable("hypotheses", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),
