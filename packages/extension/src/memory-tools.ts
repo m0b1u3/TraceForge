@@ -1,4 +1,4 @@
-import { expandedKeywordSearch, keywordScore } from "@traceforge/reasoning-core";
+import { expandedKeywordSearch, keywordScore, type SharedKnowledgeContext } from "@traceforge/reasoning-core";
 import type { Fact, TrafficEntry, AgentEvent } from "@traceforge/shared";
 import type { ToolDescriptor } from "./tool.js";
 import type { QueryExpander } from "./query-expander.js";
@@ -9,6 +9,7 @@ export interface TrafficSearchReader { listByCase(caseId: string): TrafficEntry[
 export interface ConvoSearchReader { listByCase(caseId: string): AgentEvent[] }
 export interface SummaryReader { latest(caseId: string): { content: string } | undefined }
 export interface MemoryToolOptions { expander?: QueryExpander }
+export interface SharedKnowledgeReader { get(): SharedKnowledgeContext }
 
 function clip(s: string, max = 120): string {
   const one = s.replace(/\s+/g, " ").trim();
@@ -23,14 +24,16 @@ export function makeSearchFactsTool(caseId: string, facts: FactSearchReader, opt
   return {
     name: "search_facts",
     description: "按关键词检索本 Case 已记录的 Fact（接口/凭据/漏洞线索等），搜索范围含类型/标题/内容/标签。返回命中的 id+类型+标题摘要；要完整内容用 get_fact_detail(id)。",
-    inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] },
+    inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" }, includeInvalid: { type: "boolean", description: "Include conflicted, superseded, stale, rejected, and needs-review facts for deliberate re-evaluation." } }, required: ["query"] },
     risk: "normal", source: "builtin", executionMode: "parallel",
     execute: async (input) => {
-      const { query, limit = 10 } = (input ?? {}) as { query?: string; limit?: number };
+      const { query, limit = 10, includeInvalid = false } = (input ?? {}) as { query?: string; limit?: number; includeInvalid?: boolean };
       if (!query) return { ok: false, content: "缺少 query" };
       const terms = await expandQuery(options, caseId, "search_facts", query);
       const hits = expandedKeywordSearch(
-        facts.listByCase(caseId),
+        facts.listByCase(caseId).filter((fact) => includeInvalid || (
+          fact.validity === "valid" && !["needs_review", "rejected", "stale"].includes(fact.findingStatus ?? "")
+        )),
         terms,
         (f) => `${f.type} ${f.title} ${JSON.stringify(f.value)} ${f.tags.join(" ")}`,
         { originalQuery: query, limit },
@@ -40,7 +43,7 @@ export function makeSearchFactsTool(caseId: string, facts: FactSearchReader, opt
         ok: true,
         content: `${hits.map((h) => {
           const matched = h.matchedTerms.length ? `\n  matched: ${h.matchedTerms.join(", ")}` : "";
-          return `${h.item.id} [${h.item.type}] ${h.item.title}${matched}`;
+          return `${h.item.id} [${h.item.type}] [${h.item.validity}${h.item.findingStatus ? `/${h.item.findingStatus}` : ""}] ${h.item.title}${matched}`;
         }).join("\n")}\n（用 get_fact_detail(id) 看完整内容）`,
       };
     },
@@ -48,7 +51,6 @@ export function makeSearchFactsTool(caseId: string, facts: FactSearchReader, opt
 }
 
 export function makeGetFactDetailTool(caseId: string, facts: FactDetailReader): ToolDescriptor {
-  void caseId;
   return {
     name: "get_fact_detail",
     description: "按 id 取一条 Fact 的完整内容（含 value/source/confidence/tags）。先用 search_facts 找到 id。",
@@ -58,9 +60,19 @@ export function makeGetFactDetailTool(caseId: string, facts: FactDetailReader): 
       const { id } = (input ?? {}) as { id?: string };
       if (!id) return { ok: false, content: "缺少 id" };
       const f = facts.getById(id);
-      if (!f) return { ok: false, content: `未找到 Fact ${id}` };
+      if (!f || f.caseId !== caseId) return { ok: false, content: `未找到 Fact ${id}` };
       return { ok: true, content: JSON.stringify({ type: f.type, title: f.title, value: f.value, source: f.source, confidence: f.confidence, tags: f.tags, validity: f.validity }, null, 2) };
     },
+  };
+}
+
+export function makeRecallCaseKnowledgeTool(reader: SharedKnowledgeReader): ToolDescriptor {
+  return {
+    name: "recall_case_knowledge",
+    description: "读取跨 Run 的可信项目知识摘要：已验证 Findings、active Identities、非 invalidated Attack Paths 和历史失败。冲突/过期知识只返回隔离数量，不作为结论注入。",
+    inputSchema: { type: "object", properties: {} },
+    risk: "normal", source: "builtin", executionMode: "parallel",
+    execute: async () => ({ ok: true, content: JSON.stringify(reader.get(), null, 2) }),
   };
 }
 

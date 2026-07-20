@@ -2,6 +2,14 @@ import type { Task, SessionState, Hypothesis } from "@traceforge/shared";
 import { estimateTokens } from "./token-estimate.js";
 
 export interface ConvoEntry { role: "user" | "assistant"; text: string }
+export interface SharedKnowledgeContext {
+  verifiedFindings: string[];
+  identities: string[];
+  attackPaths: string[];
+  failedAttempts: string[];
+  excludedConflictCount: number;
+  injectedFactIds: string[];
+}
 export interface ContextInput {
   goal: string;
   state?: SessionState;
@@ -14,6 +22,7 @@ export interface ContextInput {
   doneTaskSummaries: string[];
   farSummary?: string;
   scopeHosts: string[];
+  sharedKnowledge?: SharedKnowledgeContext;
 }
 export interface ContextBudget { maxTokens: number; focusReserve: number }
 export interface BuiltMessage { role: "user" | "assistant"; content: string }
@@ -31,6 +40,16 @@ export function buildContext(input: ContextInput, budget: ContextBudget): BuildR
     ? `活跃任务：\n${input.activeTasks.map((t) => `- [${t.status}] ${t.title}`).join("\n")}`
     : "活跃任务：（无）";
   const inventoryLine = `📁 本 Case 已积累：${input.factCount} 个 Fact、${input.trafficCount} 条流量、${input.summaryCount} 条远期对话摘要。需要历史发现时用 search_facts("关键词") / search_traffic(...) / recall_conversation(...) 检索；要某 Fact 细节用 get_fact_detail(id)。`;
+  const sharedKnowledgeLine = input.sharedKnowledge
+    ? [
+        "跨 Run 已验证项目知识（只复用 valid/active/non-invalidated 项；不要把排除的冲突知识当结论）：",
+        input.sharedKnowledge.verifiedFindings.length ? `已验证 Findings：\n${input.sharedKnowledge.verifiedFindings.map((item) => `- ${item}`).join("\n")}` : "已验证 Findings：（无）",
+        input.sharedKnowledge.identities.length ? `可用 Identities：\n${input.sharedKnowledge.identities.map((item) => `- ${item}`).join("\n")}` : "可用 Identities：（无）",
+        input.sharedKnowledge.attackPaths.length ? `攻击路径：\n${input.sharedKnowledge.attackPaths.map((item) => `- ${item}`).join("\n")}` : "攻击路径：（无）",
+        input.sharedKnowledge.failedAttempts.length ? `历史失败（禁止原样重复）：\n${input.sharedKnowledge.failedAttempts.map((item) => `- ${item}`).join("\n")}` : "历史失败：（无）",
+        input.sharedKnowledge.excludedConflictCount > 0 ? `已隔离 ${input.sharedKnowledge.excludedConflictCount} 条 conflicted/superseded/stale 知识；仅在主动检索并复核时使用。` : "",
+      ].filter(Boolean).join("\n")
+    : "";
 
   // ---- Layer 2 活跃假设----
   const buildLayer2 = (): string => {
@@ -50,6 +69,7 @@ export function buildContext(input: ContextInput, budget: ContextBudget): BuildR
 
   const assemble = (): string => {
     const sections = [stateLine, scopeLine, taskLine, inventoryLine];
+    if (sharedKnowledgeLine) sections.push(sharedKnowledgeLine);
     if (layer2) sections.push(layer2);
     if (layer3) sections.push(layer3);
     return sections.join("\n\n");
@@ -70,5 +90,5 @@ export function buildContext(input: ContextInput, budget: ContextBudget): BuildR
   for (const c of input.recentConvo) messages.push({ role: c.role, content: c.text });
   messages.push({ role: "user", content: input.goal });
 
-  return { messages, injectedFactIds: [], estimatedTokens: total(), degraded };
+  return { messages, injectedFactIds: input.sharedKnowledge?.injectedFactIds ?? [], estimatedTokens: total(), degraded };
 }

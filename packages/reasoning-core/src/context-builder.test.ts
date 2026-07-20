@@ -29,6 +29,16 @@ describe("buildContext", () => {
     const r = buildContext({ ...base, factCount: 5 }, budget);
     expect(r.injectedFactIds).toEqual([]);
   });
+  it("injects a bounded trusted cross-run summary and reports injected ids", () => {
+    const r = buildContext({ ...base, sharedKnowledge: {
+      verifiedFindings: ["fact_verified Verified IDOR"], identities: ["identity_1 user alice"],
+      attackPaths: ["path_1 validated"], failedAttempts: ["fact_fail do not repeat"],
+      excludedConflictCount: 2, injectedFactIds: ["fact_verified", "fact_fail"],
+    } }, budget);
+    expect(r.messages[0].content).toContain("Verified IDOR");
+    expect(r.messages[0].content).toContain("已隔离 2");
+    expect(r.injectedFactIds).toEqual(["fact_verified", "fact_fail"]);
+  });
   it("degrades when over budget", () => {
     const huge = { ...base, doneTaskSummaries: Array.from({ length: 200 }, (_, i) => `task ${i} 结论很长很长很长很长`), farSummary: "x".repeat(5000) };
     const r = buildContext(huge, { maxTokens: 300, focusReserve: 150 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  makeSearchFactsTool, makeGetFactDetailTool, makeSearchTrafficTool, makeRecallConversationTool,
+  makeSearchFactsTool, makeGetFactDetailTool, makeSearchTrafficTool, makeRecallConversationTool, makeRecallCaseKnowledgeTool,
 } from "./memory-tools.js";
 import type { Fact, TrafficEntry, AgentEvent } from "@traceforge/shared";
 
@@ -44,6 +44,12 @@ describe("search_facts", () => {
     expect(r.ok).toBe(true);
     expect(r.content).toContain("f1");
   });
+  it("excludes conflicted facts unless deliberate re-evaluation is requested", async () => {
+    const conflictedFacts = { listByCase: () => [fact({ id: "bad", title: "admin secret", validity: "conflicted" })] };
+    const t = makeSearchFactsTool("c", conflictedFacts);
+    expect((await t.execute({ query: "admin" })).content).not.toContain("bad");
+    expect((await t.execute({ query: "admin", includeInvalid: true })).content).toContain("bad");
+  });
 });
 
 describe("get_fact_detail", () => {
@@ -60,6 +66,19 @@ describe("get_fact_detail", () => {
     const r = await t.execute({ id: "nope" });
     expect(r.ok).toBe(false);
     expect(r.content).toContain("未找到");
+  });
+  it("does not reveal a Fact from another case", async () => {
+    const t = makeGetFactDetailTool("c", { getById: () => fact({ id: "foreign", caseId: "other" }) });
+    expect((await t.execute({ id: "foreign" })).ok).toBe(false);
+  });
+});
+
+describe("recall_case_knowledge", () => {
+  it("returns the pre-filtered trusted cross-run summary", async () => {
+    const tool = makeRecallCaseKnowledgeTool({ get: () => ({ verifiedFindings: ["f1 verified"], identities: [], attackPaths: [], failedAttempts: [], excludedConflictCount: 1, injectedFactIds: ["f1"] }) });
+    const result = await tool.execute({});
+    expect(result.content).toContain("f1 verified");
+    expect(result.content).toContain("excludedConflictCount");
   });
 });
 

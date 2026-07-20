@@ -39,7 +39,7 @@ import { SessionStateStore } from "./stores/session-state-store.js";
 import { HypothesisStore } from "./stores/hypothesis-store.js";
 import { ContextSummaryStore } from "./stores/context-summary-store.js";
 import { buildContext, compressFar, deriveContextBudget, estimateTokens, shouldCompressFarHistory } from "@traceforge/reasoning-core";
-import { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool, makeSearchFactsTool, makeGetFactDetailTool, makeSearchTrafficTool, makeRecallConversationTool } from "@traceforge/extension";
+import { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool, makeSearchFactsTool, makeGetFactDetailTool, makeSearchTrafficTool, makeRecallConversationTool, makeRecallCaseKnowledgeTool } from "@traceforge/extension";
 import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
 import { calculateUsageCost } from "./llm-cost.js";
 import { PendingInterventionRegistry } from "./pending-interventions.js";
@@ -51,6 +51,7 @@ import { AttackPathStore } from "./stores/attack-path-store.js";
 import { SecurityReportStore } from "./stores/security-report-store.js";
 import { securityReportExport, securityReportMarkdown } from "./security-report-export.js";
 import { ObserverScheduler } from "./observer-scheduler.js";
+import { buildSharedKnowledge } from "./shared-knowledge.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -784,6 +785,12 @@ export function registerRoutes(
     registry.register(makeGetFactDetailTool(id, factStore));
     registry.register(makeSearchTrafficTool(id, traffic));
     registry.register(makeRecallConversationTool(id, agentEventStore, contextSummaryStore, { expander: queryExpander }));
+    const getSharedKnowledge = () => buildSharedKnowledge({
+      facts: factStore.listByCase(id),
+      identities: identityStore.listByCase(id),
+      attackPaths: attackPathStore.listByCase(id),
+    }, runId);
+    registry.register(makeRecallCaseKnowledgeTool({ get: getSharedKnowledge }));
     registry.register(makeReevaluateFactsTool(id, factStore, async (_cid, goal, focus, facts) => {
       const factsText = facts.map((f) => `${f.id} [${f.type}] ${f.title}: ${JSON.stringify(f.value)}`).join("\n") || "(无)";
       const res = await llm.extractJson({
@@ -841,7 +848,7 @@ export function registerRoutes(
 - 重试相同失败输入会被 runtime 自动拒绝，不要一直重复尝试，不要浪费轮次。`;
 
     const failedAttempts = factStore.listByCase(id)
-      .filter((f) => f.type === "failed_attempt")
+      .filter((f) => f.type === "failed_attempt" && f.validity === "valid")
       .map((f) => {
         const v = f.value as { tool?: string; input?: unknown } | undefined;
         return { tool: v?.tool ?? f.title, input: v?.input ?? {} };
@@ -877,6 +884,7 @@ export function registerRoutes(
       doneTaskSummaries: taskStore.listByCase(id).filter((t) => t.runId === runId && t.status === "done").map((t) => `${t.title}：${t.reason || "完成"}`),
       farSummary: contextSummaryStore.latest(id)?.content,
       scopeHosts: c.scopeRules.flatMap((r) => r.allowHosts),
+      sharedKnowledge: getSharedKnowledge(),
     }, { maxTokens: contextBudget.maxTokens, focusReserve: contextBudget.focusReserve });
 
     agentEventStore.append(id, "user", goal); // 存用户这句目标，刷新/切 Case 后历史可见完整双边对话
