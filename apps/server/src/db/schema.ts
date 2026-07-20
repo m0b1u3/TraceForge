@@ -241,6 +241,20 @@ export const validationConclusions = sqliteTable("validation_conclusions", {
   createdAt: text("created_at").notNull(),
 });
 
+export const validationConsensus = sqliteTable("validation_consensus", {
+  findingId: text("finding_id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  status: text("status").notNull(),
+  independentSupports: integer("independent_supports").notNull(),
+  independentRefutes: integer("independent_refutes").notNull(),
+  inconclusiveCount: integer("inconclusive_count").notNull(),
+  duplicatesExcluded: integer("duplicates_excluded").notNull(),
+  confidence: real("confidence").notNull(),
+  recommendation: text("recommendation").notNull(),
+  resultJson: text("result_json").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const hypotheses = sqliteTable("hypotheses", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

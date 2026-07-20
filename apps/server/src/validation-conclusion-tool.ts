@@ -7,6 +7,8 @@ import type { FactStore } from "./stores/fact-store.js";
 import type { TimelineStore } from "./stores/timeline-store.js";
 import type { TrafficStore } from "./stores/traffic-store.js";
 import type { ValidationConclusionStore } from "./stores/validation-conclusion-store.js";
+import type { ValidationConsensusStore } from "./stores/validation-consensus-store.js";
+import { evaluateValidationConsensus } from "./validation-consensus.js";
 
 export function makeRecordValidationConclusionTool(input: {
   caseId: string;
@@ -14,6 +16,7 @@ export function makeRecordValidationConclusionTool(input: {
   facts: FactStore;
   traffic: TrafficStore;
   conclusions: ValidationConclusionStore;
+  consensus: ValidationConsensusStore;
   timeline: TimelineStore;
   emit: (event: RuntimeEvent) => void;
 }): ToolDescriptor {
@@ -76,6 +79,11 @@ export function makeRecordValidationConclusionTool(input: {
         identityId: value.identityId ?? variant.identityId ?? null,
         assessment,
       });
+      const consensus = input.consensus.upsert(input.caseId, evaluateValidationConsensus({
+        findingId: finding.id,
+        conclusions: input.conclusions.listByCase(input.caseId),
+        traffic: entries,
+      }));
 
       let updatedFinding = finding;
       if (assessment.verdict === "supports" && assessment.confidence >= 0.75) {
@@ -95,6 +103,9 @@ export function makeRecordValidationConclusionTool(input: {
       } else if (assessment.verdict === "refutes" && assessment.confidence >= 0.8 && finding.findingStatus === "verified") {
         updatedFinding = input.facts.update(finding.id, { findingStatus: "needs_review" }) ?? finding;
       }
+      if (consensus.status === "conflicted" && ["validating", "verified"].includes(updatedFinding.findingStatus ?? "")) {
+        updatedFinding = input.facts.update(finding.id, { findingStatus: "needs_review" }) ?? updatedFinding;
+      }
 
       if (updatedFinding.updateCount !== finding.updateCount) input.emit({ type: "fact_updated", fact: updatedFinding });
       const entry = input.timeline.append(
@@ -105,7 +116,15 @@ export function makeRecordValidationConclusionTool(input: {
         input.runId,
       );
       input.emit({ type: "timeline_appended", entry });
-      return { ok: true, content: JSON.stringify({ conclusion, findingStatus: updatedFinding.findingStatus }, null, 2) };
+      const consensusEntry = input.timeline.append(
+        input.caseId,
+        "validation_consensus_updated",
+        `${consensus.status}; ${consensus.rationale.join("; ")}; recommendation=${consensus.recommendation}`,
+        finding.id,
+        input.runId,
+      );
+      input.emit({ type: "timeline_appended", entry: consensusEntry });
+      return { ok: true, content: JSON.stringify({ conclusion, consensus, findingStatus: updatedFinding.findingStatus }, null, 2) };
     },
   };
 }

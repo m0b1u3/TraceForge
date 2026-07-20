@@ -110,6 +110,14 @@ export function createDb(path: string) {
       identity_id TEXT, assessment_json TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_validation_conclusions_case ON validation_conclusions(case_id, created_at);
+    CREATE TABLE IF NOT EXISTS validation_consensus (
+      finding_id TEXT PRIMARY KEY, case_id TEXT NOT NULL, status TEXT NOT NULL,
+      independent_supports INTEGER NOT NULL, independent_refutes INTEGER NOT NULL,
+      inconclusive_count INTEGER NOT NULL, duplicates_excluded INTEGER NOT NULL,
+      confidence REAL NOT NULL, recommendation TEXT NOT NULL,
+      result_json TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_validation_consensus_case ON validation_consensus(case_id, updated_at);
     CREATE TABLE IF NOT EXISTS observer_warnings (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, level TEXT NOT NULL,
       title TEXT NOT NULL, description TEXT NOT NULL,

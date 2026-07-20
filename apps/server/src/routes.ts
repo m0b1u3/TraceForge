@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
-import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions } from "./db/schema.js";
+import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions, validationConsensus } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -61,6 +61,7 @@ import { formatEvidenceGapPlan, mapEvidenceGaps } from "./evidence-gap-planner.j
 import { buildValidationMatrices, formatValidationMatrices } from "./validation-matrix.js";
 import { ValidationConclusionStore } from "./stores/validation-conclusion-store.js";
 import { makeRecordValidationConclusionTool } from "./validation-conclusion-tool.js";
+import { ValidationConsensusStore } from "./stores/validation-consensus-store.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -128,6 +129,7 @@ export function registerRoutes(
   const securityReportStore = new SecurityReportStore(db);
   const knowledgeUsageStore = new KnowledgeUsageStore(db);
   const validationConclusionStore = new ValidationConclusionStore(db);
+  const validationConsensusStore = new ValidationConsensusStore(db);
   bus.subscribe((event) => {
     const dependency = event.type === "fact_updated"
       ? { caseId: event.fact.caseId, id: event.fact.id }
@@ -243,6 +245,7 @@ export function registerRoutes(
     db.delete(decisions).where(eq(decisions.caseId, id)).run();
     db.delete(knowledgeUsage).where(eq(knowledgeUsage.caseId, id)).run();
     db.delete(validationConclusions).where(eq(validationConclusions.caseId, id)).run();
+    db.delete(validationConsensus).where(eq(validationConsensus.caseId, id)).run();
     db.delete(agentEvents).where(eq(agentEvents.caseId, id)).run();
     db.delete(observerWarnings).where(eq(observerWarnings.caseId, id)).run();
     db.delete(runCognitiveState).where(eq(runCognitiveState.caseId, id)).run();
@@ -408,6 +411,11 @@ export function registerRoutes(
   app.get("/api/cases/:id/validation-conclusions", async (req) => {
     const { id } = req.params as { id: string };
     return validationConclusionStore.listByCase(id);
+  });
+
+  app.get("/api/cases/:id/validation-consensus", async (req) => {
+    const { id } = req.params as { id: string };
+    return validationConsensusStore.listByCase(id);
   });
 
   app.get("/api/cases/:id/identities", async (req, reply) => {
@@ -740,6 +748,7 @@ export function registerRoutes(
       facts: factStore,
       traffic,
       conclusions: validationConclusionStore,
+      consensus: validationConsensusStore,
       timeline: timelineStore,
       emit: (event) => bus.emit(event),
     }));

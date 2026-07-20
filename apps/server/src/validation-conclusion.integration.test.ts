@@ -7,6 +7,7 @@ import { TaskStore } from "./stores/task-store.js";
 import { TimelineStore } from "./stores/timeline-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { ValidationConclusionStore } from "./stores/validation-conclusion-store.js";
+import { ValidationConsensusStore } from "./stores/validation-consensus-store.js";
 import { makeRecordValidationConclusionTool } from "./validation-conclusion-tool.js";
 
 describe("validation conclusion lifecycle with real SQLite", () => {
@@ -18,6 +19,7 @@ describe("validation conclusion lifecycle with real SQLite", () => {
     const actions = new ActionCardStore(db);
     const traffic = new TrafficStore(db);
     const conclusions = new ValidationConclusionStore(db);
+    const consensus = new ValidationConsensusStore(db);
     const timeline = new TimelineStore(db);
     const evidence = facts.create("case_1", {
       type: "http_observation", title: "Order response", value: { orderId: 42 },
@@ -60,7 +62,7 @@ describe("validation conclusion lifecycle with real SQLite", () => {
     }
     const events: string[] = [];
     const tool = makeRecordValidationConclusionTool({
-      caseId: "case_1", runId: "run_2", facts, traffic, conclusions, timeline,
+      caseId: "case_1", runId: "run_2", facts, traffic, conclusions, consensus, timeline,
       emit: (event) => events.push(event.type),
     });
 
@@ -91,6 +93,7 @@ describe("validation conclusion lifecycle with real SQLite", () => {
     expect(refuted.ok).toBe(true);
     expect(facts.getById(finding.id)?.findingStatus).toBe("needs_review");
     expect(conclusions.listByCase("case_1").map((item) => item.verdict)).toEqual(["supports", "refutes"]);
+    expect(consensus.listByCase("case_1")[0].status).toBe("conflicted");
     expect(events).toContain("fact_updated");
     expect(timeline.listByCase("case_1").filter((item) => item.eventType === "validation_conclusion_recorded")).toHaveLength(2);
   });
