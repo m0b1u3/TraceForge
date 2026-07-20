@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
-import { cases, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, sessionState, hypotheses, contextSummaries } from "./db/schema.js";
+import { cases, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -203,7 +203,7 @@ export function registerRoutes(
     db.delete(decisions).where(eq(decisions.caseId, id)).run();
     db.delete(agentEvents).where(eq(agentEvents.caseId, id)).run();
     db.delete(observerWarnings).where(eq(observerWarnings.caseId, id)).run();
-    db.delete(sessionState).where(eq(sessionState.caseId, id)).run();
+    db.delete(runCognitiveState).where(eq(runCognitiveState.caseId, id)).run();
     db.delete(hypotheses).where(eq(hypotheses.caseId, id)).run();
     db.delete(contextSummaries).where(eq(contextSummaries.caseId, id)).run();
 
@@ -765,14 +765,14 @@ export function registerRoutes(
     });
     const built = buildContext({
       goal,
-      state: sessionStore.get(id),
+      state: sessionStore.get(id, runId),
       recentConvo,
       factCount: factStore.listByCase(id).length,
       trafficCount: traffic.listByCase(id).length,
       summaryCount: contextSummaryStore.latest(id) ? 1 : 0,
-      activeHypotheses: hypothesisStore.listByCase(id).filter((h) => h.status === "open"),
-      activeTasks: taskStore.listByCase(id).filter((t) => ["open", "blocked", "running", "recheck_candidate"].includes(t.status)),
-      doneTaskSummaries: taskStore.listByCase(id).filter((t) => t.status === "done").map((t) => `${t.title}：${t.reason || "完成"}`),
+      activeHypotheses: hypothesisStore.listByCase(id).filter((h) => h.runId === runId && h.status === "active"),
+      activeTasks: taskStore.listByCase(id).filter((t) => t.runId === runId && ["open", "blocked", "running", "recheck_candidate"].includes(t.status)),
+      doneTaskSummaries: taskStore.listByCase(id).filter((t) => t.runId === runId && t.status === "done").map((t) => `${t.title}：${t.reason || "完成"}`),
       farSummary: contextSummaryStore.latest(id)?.content,
       scopeHosts: c.scopeRules.flatMap((r) => r.allowHosts),
     }, { maxTokens: contextBudget.maxTokens, focusReserve: contextBudget.focusReserve });

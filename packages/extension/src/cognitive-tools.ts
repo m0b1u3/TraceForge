@@ -1,7 +1,7 @@
 import type { ToolDescriptor } from "./tool.js";
 
 export interface SessionStateWriter {
-  upsert(caseId: string, patch: { currentGoal?: string; phase?: string; focus?: { host?: string; url?: string; note?: string }; activeHypothesisIds?: string[] }, runId?: string | null): { phase: string };
+  upsert(caseId: string, patch: { currentGoal?: string; phase?: string; focus?: { host?: string; url?: string; note?: string }; activeHypothesisIds?: string[] }, runId: string): { phase: string };
 }
 export interface HypothesisWriter {
   create(caseId: string, input: { statement: string; basedOnFactIds: string[]; relatedTaskIds?: string[]; runId?: string | null; priorityScore?: number; status?: "candidate" | "active" }): { id: string; status?: string };
@@ -12,7 +12,7 @@ export interface FactReader {
   getById(id: string): { id: string } | undefined;
 }
 
-export function makeUpdateSessionStateTool(caseId: string, ss: SessionStateWriter, runId?: string): ToolDescriptor {
+export function makeUpdateSessionStateTool(caseId: string, ss: SessionStateWriter, runId: string): ToolDescriptor {
   return {
     name: "update_session_state",
     description: "更新当前会话状态：currentGoal（你正在追的目标）、phase（recon/analyze/exploit/report）、focus（当前关注的 host/url/说明）。在目标或关注点变化时调用，帮助你和系统对齐当前在做什么。",

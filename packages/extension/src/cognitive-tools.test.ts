@@ -7,7 +7,7 @@ describe("update_session_state tool", () => {
   it("upserts goal/phase/focus", async () => {
     const calls: unknown[] = [];
     const ss = { upsert: (_c: string, p: unknown) => { calls.push(p); return { phase: "analyze" }; } };
-    const t = makeUpdateSessionStateTool("c1", ss);
+    const t = makeUpdateSessionStateTool("c1", ss, "run_1");
     const r = await t.execute({ currentGoal: "测越权", phase: "analyze" });
     expect(r.ok).toBe(true);
     expect(calls[0]).toMatchObject({ currentGoal: "测越权", phase: "analyze" });
@@ -16,7 +16,7 @@ describe("update_session_state tool", () => {
   it("normalizes focus when LLM passes a JSON string", async () => {
     const calls: { focus?: unknown }[] = [];
     const ss = { upsert: (_c: string, p: { focus?: unknown }) => { calls.push(p); return { phase: "recon" }; } };
-    const t = makeUpdateSessionStateTool("c1", ss);
+    const t = makeUpdateSessionStateTool("c1", ss, "run_1");
     const r = await t.execute({ focus: '{"host": "example.com", "note": "登录越权"}' });
     expect(r.ok).toBe(true);
     expect(calls[0].focus).toEqual({ host: "example.com", note: "登录越权" });
@@ -24,7 +24,7 @@ describe("update_session_state tool", () => {
   it("normalizes focus when LLM passes a plain string", async () => {
     const calls: { focus?: unknown }[] = [];
     const ss = { upsert: (_c: string, p: { focus?: unknown }) => { calls.push(p); return { phase: "recon" }; } };
-    const t = makeUpdateSessionStateTool("c1", ss);
+    const t = makeUpdateSessionStateTool("c1", ss, "run_1");
     const r = await t.execute({ focus: "登录接口" });
     expect(r.ok).toBe(true);
     expect(calls[0].focus).toEqual({ note: "登录接口" });

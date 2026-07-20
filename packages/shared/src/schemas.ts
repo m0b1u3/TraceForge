@@ -225,7 +225,7 @@ export const SessionStateSchema = z.object({
   caseId: z.string(),
   runId: z.string().nullable().optional(),
   currentGoal: z.string().default(""),
-  phase: z.enum(["scope", "discover", "map", "test", "validate", "chain", "report", "recon", "analyze", "exploit"]).default("discover"),
+  phase: z.enum(["scope", "discover", "map", "test", "validate", "chain", "report"]).default("discover"),
   focus: z.object({
     host: z.string().optional(),
     url: z.string().optional(),
@@ -241,7 +241,7 @@ export const HypothesisSchema = z.object({
   caseId: z.string(),
   runId: z.string().nullable().optional(),
   statement: z.string().min(1),
-  status: z.enum(["open", "candidate", "active", "confirmed", "refuted", "archived"]).default("candidate"),
+  status: z.enum(["candidate", "active", "confirmed", "refuted", "archived"]).default("candidate"),
   priorityScore: z.number().min(0).max(100).optional(),
   basedOnFactIds: z.array(z.string()),
   relatedTaskIds: z.array(z.string()).default([]),

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "../db/client.js";
 import { SessionStateStore } from "./session-state-store.js";
 
@@ -7,19 +7,23 @@ beforeEach(() => { store = new SessionStateStore(createDb(":memory:")); });
 
 describe("SessionStateStore", () => {
   it("returns undefined before any upsert", () => {
-    expect(store.get("c1")).toBeUndefined();
+    expect(store.get("c1", "run_1")).toBeUndefined();
   });
-  it("upsert creates then updates the single row", () => {
-    const a = store.upsert("c1", { currentGoal: "测越权", phase: "analyze" });
-    expect(a.currentGoal).toBe("测越权");
-    expect(a.phase).toBe("analyze");
-    const b = store.upsert("c1", { focus: { host: "x.com" } });
-    expect(b.currentGoal).toBe("测越权"); // 保留旧值
-    expect(b.focus).toEqual({ host: "x.com" });
-    expect(store.get("c1")?.phase).toBe("map");
+
+  it("upsert creates then updates a run row", () => {
+    const first = store.upsert("c1", { currentGoal: "测越权", phase: "map" }, "run_1");
+    expect(first.currentGoal).toBe("测越权");
+    expect(first.phase).toBe("map");
+    const updated = store.upsert("c1", { focus: { host: "x.com" } }, "run_1");
+    expect(updated.currentGoal).toBe("测越权");
+    expect(updated.focus).toEqual({ host: "x.com" });
+    expect(store.get("c1", "run_1")?.phase).toBe("map");
   });
-  it("isolates by case", () => {
-    store.upsert("c1", { currentGoal: "a" });
-    expect(store.get("c2")).toBeUndefined();
+
+  it("isolates state by run", () => {
+    store.upsert("c1", { currentGoal: "a" }, "run_1");
+    store.upsert("c1", { currentGoal: "b" }, "run_2");
+    expect(store.get("c1", "run_1")?.currentGoal).toBe("a");
+    expect(store.get("c1", "run_2")?.currentGoal).toBe("b");
   });
 });

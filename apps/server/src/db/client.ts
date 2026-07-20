@@ -74,13 +74,6 @@ export function createDb(path: string) {
       text TEXT NOT NULL, tool TEXT, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_agent_events_case ON agent_events(case_id);
-    CREATE TABLE IF NOT EXISTS session_state (
-      case_id TEXT PRIMARY KEY,
-      run_id TEXT,
-      current_goal TEXT NOT NULL, phase TEXT NOT NULL,
-      focus_json TEXT NOT NULL, active_hypothesis_ids_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
     CREATE TABLE IF NOT EXISTS hypotheses (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, statement TEXT NOT NULL,
       run_id TEXT, status TEXT NOT NULL, priority_score INTEGER NOT NULL DEFAULT 50, based_on_fact_ids_json TEXT NOT NULL,
@@ -156,7 +149,6 @@ export function createDb(path: string) {
     { name: "hypothesis_ids_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
   ]);
   ensureColumns("timeline", [{ name: "run_id", definition: "TEXT" }]);
-  ensureColumns("session_state", [{ name: "run_id", definition: "TEXT" }]);
   ensureColumns("hypotheses", [
     { name: "run_id", definition: "TEXT" },
     { name: "priority_score", definition: "INTEGER NOT NULL DEFAULT 50" },
