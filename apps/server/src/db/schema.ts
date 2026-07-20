@@ -225,6 +225,22 @@ export const knowledgeUsage = sqliteTable("knowledge_usage", {
   lastUsedAt: text("last_used_at"),
 });
 
+export const validationConclusions = sqliteTable("validation_conclusions", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  runId: text("run_id").notNull(),
+  findingId: text("finding_id").notNull(),
+  gapId: text("gap_id").notNull(),
+  verdict: text("verdict").notNull(),
+  confidence: real("confidence").notNull(),
+  baselineTrafficId: text("baseline_traffic_id").notNull(),
+  variantTrafficId: text("variant_traffic_id").notNull(),
+  confirmationTrafficId: text("confirmation_traffic_id"),
+  identityId: text("identity_id"),
+  assessmentJson: text("assessment_json").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 export const hypotheses = sqliteTable("hypotheses", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

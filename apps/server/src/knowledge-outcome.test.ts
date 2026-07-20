@@ -31,6 +31,12 @@ describe("knowledge outcome classification", () => {
       content: JSON.stringify({ verdict: "inconclusive" }),
       ok: true,
     })).toMatchObject({ positive: 0, negative: 0 });
+    expect(classifyKnowledgeOutcome({
+      name: "record_validation_conclusion",
+      input: { findingId: "fact_1" },
+      content: JSON.stringify({ conclusion: { verdict: "refutes" } }),
+      ok: true,
+    })).toMatchObject({ positive: 2, negative: 0 });
   });
 
   it("penalizes only permanent failures", () => {

@@ -102,6 +102,14 @@ export function createDb(path: string) {
       first_injected_at TEXT NOT NULL, last_injected_at TEXT NOT NULL, last_used_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_knowledge_usage_case ON knowledge_usage(case_id, knowledge_id);
+    CREATE TABLE IF NOT EXISTS validation_conclusions (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT NOT NULL,
+      finding_id TEXT NOT NULL, gap_id TEXT NOT NULL, verdict TEXT NOT NULL,
+      confidence REAL NOT NULL, baseline_traffic_id TEXT NOT NULL,
+      variant_traffic_id TEXT NOT NULL, confirmation_traffic_id TEXT,
+      identity_id TEXT, assessment_json TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_validation_conclusions_case ON validation_conclusions(case_id, created_at);
     CREATE TABLE IF NOT EXISTS observer_warnings (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, level TEXT NOT NULL,
       title TEXT NOT NULL, description TEXT NOT NULL,

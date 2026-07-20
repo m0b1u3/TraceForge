@@ -18,9 +18,10 @@ export function classifyKnowledgeOutcome(report: ToolExecutionReport): Knowledge
   }
 
   const input = (report.input ?? {}) as Record<string, unknown>;
-  if (report.name === "assess_validation_experiment") {
+  if (report.name === "assess_validation_experiment" || report.name === "record_validation_conclusion") {
     try {
-      const verdict = (JSON.parse(report.content) as { verdict?: string }).verdict;
+      const parsed = JSON.parse(report.content) as { verdict?: string; conclusion?: { verdict?: string } };
+      const verdict = parsed.verdict ?? parsed.conclusion?.verdict;
       if (verdict === "supports" || verdict === "refutes") {
         return { positive: 2, negative: 0, reason: `validation experiment ${verdict}` };
       }
