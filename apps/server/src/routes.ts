@@ -56,6 +56,7 @@ import { KnowledgeUsageStore, type KnowledgeRef } from "./stores/knowledge-usage
 import { KnowledgeOutcomeTracker } from "./knowledge-outcome.js";
 import { buildExplorationAdvisory } from "./exploration-advisor.js";
 import { formatAttackPathPlan, rankAttackPathBreakpoints } from "./attack-path-planner.js";
+import { formatEvidenceGapPlan, mapEvidenceGaps } from "./evidence-gap-planner.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -820,6 +821,12 @@ export function registerRoutes(
       tasks: taskStore.listByCase(id).filter((item) => item.runId === runId),
       goal: sessionStore.get(id, runId)?.currentGoal || goal,
     }));
+    const getEvidenceGapPlan = () => formatEvidenceGapPlan(mapEvidenceGaps({
+      facts: factStore.listByCase(id),
+      paths: attackPathStore.listByCase(id),
+      traffic: traffic.listByCase(id),
+      identities: identityStore.listByCase(id),
+    }));
     registry.register(makeReevaluateFactsTool(id, factStore, async (_cid, goal, focus, facts) => {
       const factsText = facts.map((f) => `${f.id} [${f.type}] ${f.title}: ${JSON.stringify(f.value)}`).join("\n") || "(无)";
       const res = await llm.extractJson({
@@ -919,7 +926,10 @@ export function registerRoutes(
     agentEventStore.append(id, "user", goal); // 存用户这句目标，刷新/切 Case 后历史可见完整双边对话
     agentEventStore.append(id, "started", `Started: ${goal}`);
     const observerScheduler = new ObserverScheduler();
-    await new AgentRuntime(llm, registry, gate).run(`${system}\n\n${getAttackPathPlan()}`, built.messages, (e) => {
+    await new AgentRuntime(llm, registry, gate).run(
+      `${system}\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}`,
+      built.messages,
+      (e) => {
       if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
       else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined); trajectory.push(`[result] ${e.name} → ${e.content}`); }
       else if (e.type === "tool_blocked") {
@@ -1059,10 +1069,11 @@ export function registerRoutes(
               .map((item) => `${item.id}(${item.priorityScore ?? 0})`)
               .join(", ") || "none";
             const pathPlan = getAttackPathPlan();
+            const evidenceGapPlan = getEvidenceGapPlan();
             const entry = timelineStore.append(
               id,
               "investigation_replan_requested",
-              `Trigger=${report.name}; active hypotheses=${activeSummary}; ${pathPlan.replace(/\n/g, " | ")}`,
+              `Trigger=${report.name}; active hypotheses=${activeSummary}; ${pathPlan.replace(/\n/g, " | ")}; ${evidenceGapPlan.replace(/\n/g, " | ")}`,
               undefined,
               runId,
             );
@@ -1072,6 +1083,7 @@ export function registerRoutes(
               `Important state changed after ${report.name}.`,
               `Active hypotheses by priority: ${activeSummary}.`,
               pathPlan,
+              evidenceGapPlan,
               "Re-evaluate the current task against both the ranked hypotheses and path breakpoints. Continue when it advances a leading breakpoint; otherwise explain the evidence-backed pivot before selecting the next verification task.",
             ].join("\n"));
           } catch (error) {
