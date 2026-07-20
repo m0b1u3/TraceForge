@@ -43,6 +43,24 @@ export const attackPaths = sqliteTable("attack_paths", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const securityReports = sqliteTable("security_reports", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  title: text("title").notNull(),
+  status: text("status").notNull(),
+  executiveSummary: text("executive_summary").notNull(),
+  scope: text("scope").notNull(),
+  methodology: text("methodology").notNull(),
+  limitationsJson: text("limitations_json").notNull().default("[]"),
+  findingFactIdsJson: text("finding_fact_ids_json").notNull(),
+  attackPathIdsJson: text("attack_path_ids_json").notNull().default("[]"),
+  evidenceRefsJson: text("evidence_refs_json").notNull(),
+  sourceRunIdsJson: text("source_run_ids_json").notNull().default("[]"),
+  version: integer("version").notNull().default(1),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const trafficEntries = sqliteTable("traffic_entries", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

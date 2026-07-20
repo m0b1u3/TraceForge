@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage, AttackPath, IdentityContext } from "@traceforge/shared";
+import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities } from "./api.js";
+import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities, listSecurityReports } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 
 export interface AgentUiEvent {
@@ -142,6 +142,7 @@ interface State {
   traffic: TrafficEntry[];
   identities: IdentityContext[];
   attackPaths: AttackPath[];
+  securityReports: SecurityReport[];
   facts: Fact[];
   tasks: Task[];
   timeline: TimelineEntry[];
@@ -171,7 +172,7 @@ interface State {
   selectedAgentEvent: { kind: "tool_call" | "tool_result"; label: string; text: string } | null;
   inspectorMode: "overview" | "traffic" | "finding";
   cases: Case[];
-  activeTab: "facts" | "tasks" | "timeline" | "mcp" | "graph" | "observer";
+  activeTab: "facts" | "tasks" | "timeline" | "mcp" | "graph" | "observer" | "reports";
   graphModalOpen: boolean;
   mcpTools: McpToolHandle[];
   warnings: ObserverWarning[];
@@ -200,6 +201,7 @@ interface State {
   addEntry: (e: TrafficEntry) => void;
   upsertIdentity: (identity: IdentityContext) => void;
   upsertAttackPath: (path: AttackPath) => void;
+  upsertSecurityReport: (report: SecurityReport) => void;
   addFact: (f: Fact) => void;
   upsertFact: (f: Fact) => void;
   upsertTask: (t: Task) => void;
@@ -226,6 +228,7 @@ export const useStore = create<State>((set, get) => ({
   traffic: [],
   identities: [],
   attackPaths: [],
+  securityReports: [],
   facts: [],
   tasks: [],
   timeline: [],
@@ -323,15 +326,15 @@ export const useStore = create<State>((set, get) => ({
   )),
   setCase: (id) => {
     cancelPendingStreamDeltas();
-    set({ caseId: id, traffic: [], identities: [], attackPaths: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, pendingScope: null, pendingConfirmation: null });
+    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, pendingScope: null, pendingConfirmation: null });
   },
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
   enterCase: async (id) => {
     get().setCase(id);
-    const [traffic, identities, attackPaths, facts, tasks, timeline, mcpTools, warnings, agentEvents, activeRun, pendingInterventions, browserState] = await Promise.all([
-      listTraffic(id, { limit: CLIENT_TRAFFIC_LIMIT }), listIdentities(id), listAttackPaths(id), listFacts(id), listTasks(id),
+    const [traffic, identities, attackPaths, securityReports, facts, tasks, timeline, mcpTools, warnings, agentEvents, activeRun, pendingInterventions, browserState] = await Promise.all([
+      listTraffic(id, { limit: CLIENT_TRAFFIC_LIMIT }), listIdentities(id), listAttackPaths(id), listSecurityReports(id), listFacts(id), listTasks(id),
       listTimeline(id, { limit: CLIENT_TIMELINE_LIMIT }), listMcpTools(), listWarnings(id),
       listAgentEvents(id, { limit: CLIENT_AGENT_EVENT_LIMIT }), getActiveAgentRun(id),
       getPendingInterventions(id), getBrowserState(id),
@@ -343,6 +346,7 @@ export const useStore = create<State>((set, get) => ({
       traffic: takeRecent(traffic, CLIENT_TRAFFIC_LIMIT),
       identities,
       attackPaths,
+      securityReports,
       facts,
       tasks,
       timeline: takeRecent(timeline, CLIENT_TIMELINE_LIMIT),
@@ -372,6 +376,7 @@ export const useStore = create<State>((set, get) => ({
             traffic: [],
             identities: [],
             attackPaths: [],
+            securityReports: [],
             facts: [],
             tasks: [],
             timeline: [],
@@ -423,6 +428,13 @@ export const useStore = create<State>((set, get) => ({
     const attackPaths = state.attackPaths.slice();
     attackPaths[index] = path;
     return { attackPaths };
+  }),
+  upsertSecurityReport: (report) => set((state) => {
+    const index = state.securityReports.findIndex((item) => item.id === report.id);
+    if (index === -1) return { securityReports: [report, ...state.securityReports] };
+    const securityReports = state.securityReports.slice();
+    securityReports[index] = report;
+    return { securityReports };
   }),
   addFact: (f) => set((s) => ({ facts: [...s.facts, f] })),
   upsertFact: (f) =>
@@ -542,6 +554,7 @@ export const useStore = create<State>((set, get) => ({
     const cid = get().caseId;
     if ((event.type === "identity_created" || event.type === "identity_updated") && event.identity.caseId === cid) get().upsertIdentity(event.identity);
     else if ((event.type === "attack_path_created" || event.type === "attack_path_updated") && event.attackPath.caseId === cid) get().upsertAttackPath(event.attackPath);
+    else if ((event.type === "security_report_created" || event.type === "security_report_updated") && event.report.caseId === cid) get().upsertSecurityReport(event.report);
     else if (event.type === "response_captured" && event.entry.caseId === cid) get().addEntry(event.entry);
     else if (event.type === "traffic_cleared" && event.caseId === cid) {
       set({ traffic: [], selectedTrafficId: null, selectedTrafficSnapshot: null, inspectorMode: "overview" });

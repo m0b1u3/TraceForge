@@ -26,6 +26,15 @@ export function createDb(path: string) {
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_attack_paths_case ON attack_paths(case_id, updated_at);
+    CREATE TABLE IF NOT EXISTS security_reports (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
+      executive_summary TEXT NOT NULL, scope TEXT NOT NULL, methodology TEXT NOT NULL,
+      limitations_json TEXT NOT NULL DEFAULT '[]', finding_fact_ids_json TEXT NOT NULL,
+      attack_path_ids_json TEXT NOT NULL DEFAULT '[]', evidence_refs_json TEXT NOT NULL,
+      source_run_ids_json TEXT NOT NULL DEFAULT '[]', version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_security_reports_case ON security_reports(case_id, updated_at);
     CREATE TABLE IF NOT EXISTS traffic_entries (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, url TEXT NOT NULL, method TEXT NOT NULL,
       run_id TEXT, identity_id TEXT, identity_version INTEGER, attribution_source TEXT, parent_traffic_id TEXT,

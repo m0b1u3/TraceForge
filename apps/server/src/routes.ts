@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
-import { cases, identityContexts, attackPaths, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries } from "./db/schema.js";
+import { cases, identityContexts, attackPaths, securityReports, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -25,6 +25,7 @@ import {
   makeReplayTrafficTool, makeExtractApiEndpointsTool,
   makeCompareIdentityTrafficTool, makeListIdentitiesTool, makeRecordIdentityTool, makeUseBrowserIdentityTool,
   makeListAttackPathsTool, makeRecordAttackPathTool,
+  makeListSecurityReportsTool, makeRecordSecurityReportTool,
   McpManager, mcpToolToDescriptor, Observer, LlmQueryExpander,
   makeReevaluateFactsTool, FailureMemory, makeDownloadTool,
   type AgentRunBudget, type ObserverReviewTrigger,
@@ -47,6 +48,7 @@ import { observerFingerprint, observerIntervention, validatedObserverLevel } fro
 import { HypothesisScheduler } from "./hypothesis-scheduler.js";
 import { IdentityStore } from "./stores/identity-store.js";
 import { AttackPathStore } from "./stores/attack-path-store.js";
+import { SecurityReportStore } from "./stores/security-report-store.js";
 import { ObserverScheduler } from "./observer-scheduler.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
@@ -112,6 +114,7 @@ export function registerRoutes(
   const hypothesisScheduler = new HypothesisScheduler(hypothesisStore);
   const identityStore = new IdentityStore(db);
   const attackPathStore = new AttackPathStore(db);
+  const securityReportStore = new SecurityReportStore(db);
   const contextSummaryStore = new ContextSummaryStore(db);
   const approvals = new ApprovalRegistry();
   const pendingInterventions = new PendingInterventionRegistry();
@@ -207,6 +210,7 @@ export function registerRoutes(
     db.delete(trafficEntries).where(eq(trafficEntries.caseId, id)).run();
     db.delete(identityContexts).where(eq(identityContexts.caseId, id)).run();
     db.delete(attackPaths).where(eq(attackPaths.caseId, id)).run();
+    db.delete(securityReports).where(eq(securityReports.caseId, id)).run();
     db.delete(facts).where(eq(facts.caseId, id)).run();
     db.delete(tasks).where(eq(tasks.caseId, id)).run();
     db.delete(timeline).where(eq(timeline.caseId, id)).run();
@@ -451,6 +455,12 @@ export function registerRoutes(
     return updated;
   });
 
+  app.get("/api/cases/:id/security-reports", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    return securityReportStore.listByCase(id);
+  });
+
   app.post("/api/cases/:id/scope/reject", async (req, reply) => {
     const { id } = req.params as { id: string };
     const { host } = (req.body ?? {}) as { host?: string };
@@ -649,6 +659,8 @@ export function registerRoutes(
     registry.register(makeRecordIdentityTool(id, identityStore, runTimeline, (e) => bus.emit(e)));
     registry.register(makeListAttackPathsTool(id, attackPathStore));
     registry.register(makeRecordAttackPathTool(id, runId, attackPathStore, runTimeline, (e) => bus.emit(e)));
+    registry.register(makeListSecurityReportsTool(id, securityReportStore));
+    registry.register(makeRecordSecurityReportTool(id, runId, securityReportStore, runTimeline, (e) => bus.emit(e)));
     const replayIdentityContext = {
       runId,
       resolveIdentity: (identityId: string) => {

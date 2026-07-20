@@ -4,6 +4,7 @@ import { TasksTab } from "./knowledge/TasksTab.js";
 import { TimelineTab } from "./knowledge/TimelineTab.js";
 import { McpTab } from "./knowledge/McpTab.js";
 import { ObserverTab } from "./knowledge/ObserverTab.js";
+import { ReportsTab } from "./knowledge/ReportsTab.js";
 import { Database, GitBranch } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { TrafficInspector } from "./inspector/TrafficInspector.js";
@@ -22,6 +23,7 @@ const TABS = [
   { key: "timeline", label: "Timeline" },
   { key: "mcp", label: "MCP" },
   { key: "observer", label: "Observer" },
+  { key: "reports", label: "Reports" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -32,6 +34,7 @@ const TAB_TITLE: Record<TabKey, string> = {
   timeline: "Timeline",
   mcp: "MCP",
   observer: "Observer",
+  reports: "Reports",
 };
 
 function TabPanel({ tab }: { tab: TabKey }) {
@@ -39,6 +42,7 @@ function TabPanel({ tab }: { tab: TabKey }) {
   if (tab === "tasks") return <TasksTab />;
   if (tab === "timeline") return <TimelineTab />;
   if (tab === "mcp") return <McpTab />;
+  if (tab === "reports") return <ReportsTab />;
   return <ObserverTab />;
 }
 
@@ -66,6 +70,7 @@ function KnowledgeTabCounts() {
     timeline: state.timeline.length,
     mcp: state.mcpTools.length,
     observer: state.warnings.reduce((count, warning) => count + Number(warning.status === "open"), 0),
+    reports: state.securityReports.length,
   } satisfies Record<TabKey, number>)));
   return TABS.map((tab) => (
     <TabsTrigger key={tab.key} value={tab.key}>

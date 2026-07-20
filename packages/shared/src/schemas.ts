@@ -95,6 +95,25 @@ export const AttackPathSchema = z.object({
 });
 export type AttackPath = z.infer<typeof AttackPathSchema>;
 
+export const SecurityReportSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  title: z.string().min(1),
+  status: z.enum(["draft", "final"]).default("draft"),
+  executiveSummary: z.string().min(1),
+  scope: z.string().default(""),
+  methodology: z.string().default(""),
+  limitations: z.array(z.string()).default([]),
+  findingFactIds: z.array(z.string()).min(1),
+  attackPathIds: z.array(z.string()).default([]),
+  evidenceRefs: z.array(z.string()).min(1),
+  sourceRunIds: z.array(z.string()).default([]),
+  version: z.number().int().positive().default(1),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SecurityReport = z.infer<typeof SecurityReportSchema>;
+
 export const TrafficEntrySchema = z.object({
   id: z.string(),
   caseId: z.string(),

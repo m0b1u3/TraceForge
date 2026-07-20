@@ -1,4 +1,4 @@
-import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext } from "@traceforge/shared";
+import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 export interface LlmConfig {
@@ -107,6 +107,11 @@ export async function listAttackPaths(caseId: string): Promise<AttackPath[]> {
 
 export async function listIdentities(caseId: string): Promise<IdentityContext[]> {
   const response = await ensureOk(await fetch(`/api/cases/${caseId}/identities`), "Load identities");
+  return response.json();
+}
+
+export async function listSecurityReports(caseId: string): Promise<SecurityReport[]> {
+  const response = await ensureOk(await fetch(`/api/cases/${caseId}/security-reports`), "Load security reports");
   return response.json();
 }
 

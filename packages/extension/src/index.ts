@@ -20,6 +20,8 @@ export { makeListIdentitiesTool, makeRecordIdentityTool, makeUseBrowserIdentityT
 export type { IdentityWriter, BrowserIdentityController } from "./identity-tools.js";
 export { makeListAttackPathsTool, makeRecordAttackPathTool } from "./attack-path-tools.js";
 export type { AttackPathWriter } from "./attack-path-tools.js";
+export { makeListSecurityReportsTool, makeRecordSecurityReportTool } from "./security-report-tools.js";
+export type { SecurityReportWriter } from "./security-report-tools.js";
 export { makeBrowserTools, type BrowserController } from "./browser-tools.js";
 export { loadMcpConfig, McpServerConfigSchema, McpConfigSchema, type McpServerConfig } from "./mcp-config.js";
 export { mcpToolToDescriptor, type McpToolHandle, type McpCaller } from "./mcp-tools.js";

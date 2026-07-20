@@ -6,6 +6,9 @@ function resetStore() {
     caseId: "case_1",
     cases: [{ id: "case_1", name: "Case 1", status: "active", scopeRules: [], createdAt: "now" }],
     traffic: [{ id: "traffic_1", caseId: "case_1", url: "https://t.com", method: "GET", requestHeaders: {}, requestBody: null, responseStatus: 200, responseBody: null, createdAt: "now" }],
+    identities: [],
+    attackPaths: [],
+    securityReports: [],
     facts: [],
     tasks: [],
     timeline: [],
@@ -31,6 +34,28 @@ function resetStore() {
     connectionStatus: "offline",
   });
 }
+
+describe("store security reports", () => {
+  beforeEach(() => resetStore());
+
+  it("upserts persisted report runtime events for the active case", () => {
+    const report = {
+      id: "report_1", caseId: "case_1", title: "Assessment", status: "draft" as const,
+      executiveSummary: "Verified finding", scope: "API", methodology: "Replay",
+      limitations: [], findingFactIds: ["finding_1"], attackPathIds: [],
+      evidenceRefs: ["evidence_1"], sourceRunIds: ["run_1"], version: 1,
+      createdAt: "now", updatedAt: "now",
+    };
+    useStore.getState().handleRuntimeEvent({ type: "security_report_created", report });
+    useStore.getState().handleRuntimeEvent({
+      type: "security_report_updated",
+      report: { ...report, status: "final", version: 2, updatedAt: "later" },
+    });
+    expect(useStore.getState().securityReports).toEqual([
+      { ...report, status: "final", version: 2, updatedAt: "later" },
+    ]);
+  });
+});
 
 const warning = {
   id: "warn_1",
