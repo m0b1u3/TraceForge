@@ -117,6 +117,31 @@ export const SecurityReportSchema = z.object({
 });
 export type SecurityReport = z.infer<typeof SecurityReportSchema>;
 
+export const SecurityReportDiffSchema = z.object({
+  changedFields: z.array(z.string()).default([]),
+  addedFindingFactIds: z.array(z.string()).default([]),
+  removedFindingFactIds: z.array(z.string()).default([]),
+  addedAttackPathIds: z.array(z.string()).default([]),
+  removedAttackPathIds: z.array(z.string()).default([]),
+  addedEvidenceRefs: z.array(z.string()).default([]),
+  removedEvidenceRefs: z.array(z.string()).default([]),
+});
+export type SecurityReportDiff = z.infer<typeof SecurityReportDiffSchema>;
+
+export const SecurityReportRevisionSchema = z.object({
+  id: z.string(),
+  reportId: z.string(),
+  caseId: z.string(),
+  version: z.number().int().positive(),
+  changeType: z.enum(["created", "content_updated", "dependency_changed"]),
+  snapshot: SecurityReportSchema,
+  diff: SecurityReportDiffSchema,
+  reviewDecision: z.enum(["pending", "accepted"]).default("pending"),
+  reviewedAt: z.string().nullable().default(null),
+  createdAt: z.string(),
+});
+export type SecurityReportRevision = z.infer<typeof SecurityReportRevisionSchema>;
+
 export const TrafficEntrySchema = z.object({
   id: z.string(),
   caseId: z.string(),

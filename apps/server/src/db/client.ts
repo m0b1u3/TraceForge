@@ -37,6 +37,13 @@ export function createDb(path: string) {
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_security_reports_case ON security_reports(case_id, updated_at);
+    CREATE TABLE IF NOT EXISTS security_report_revisions (
+      id TEXT PRIMARY KEY, report_id TEXT NOT NULL, case_id TEXT NOT NULL, version INTEGER NOT NULL,
+      change_type TEXT NOT NULL, snapshot_json TEXT NOT NULL, diff_json TEXT NOT NULL,
+      review_decision TEXT NOT NULL DEFAULT 'pending', reviewed_at TEXT, created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_security_report_revisions_version ON security_report_revisions(report_id, version);
+    CREATE INDEX IF NOT EXISTS idx_security_report_revisions_case ON security_report_revisions(case_id, created_at);
     CREATE TABLE IF NOT EXISTS traffic_entries (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, url TEXT NOT NULL, method TEXT NOT NULL,
       run_id TEXT, identity_id TEXT, identity_version INTEGER, attribution_source TEXT, parent_traffic_id TEXT,

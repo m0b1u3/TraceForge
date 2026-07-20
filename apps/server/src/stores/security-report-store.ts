@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
-import { SecurityReportSchema, type SecurityReport } from "@traceforge/shared";
+import { asc, desc, eq } from "drizzle-orm";
+import {
+  SecurityReportRevisionSchema,
+  SecurityReportSchema,
+  type SecurityReport,
+  type SecurityReportDiff,
+  type SecurityReportRevision,
+} from "@traceforge/shared";
 import type { Db } from "../db/client.js";
-import { attackPaths, facts, securityReports } from "../db/schema.js";
+import { attackPaths, facts, securityReportRevisions, securityReports } from "../db/schema.js";
 
 type ManagedFields = "id" | "caseId" | "reviewStatus" | "reviewReasons" | "dependencyVersions" | "version" | "createdAt" | "updatedAt";
 export type SecurityReportInput = Omit<SecurityReport, ManagedFields>;
@@ -31,6 +37,48 @@ function hydrate(row: typeof securityReports.$inferSelect): SecurityReport {
   });
 }
 
+function hydrateRevision(row: typeof securityReportRevisions.$inferSelect): SecurityReportRevision {
+  return SecurityReportRevisionSchema.parse({
+    id: row.id,
+    reportId: row.reportId,
+    caseId: row.caseId,
+    version: row.version,
+    changeType: row.changeType,
+    snapshot: JSON.parse(row.snapshotJson),
+    diff: JSON.parse(row.diffJson),
+    reviewDecision: row.reviewDecision,
+    reviewedAt: row.reviewedAt,
+    createdAt: row.createdAt,
+  });
+}
+
+const difference = (next: string[], previous: string[]): string[] => next.filter((id) => !previous.includes(id));
+
+function reportDiff(previous: SecurityReport | undefined, next: SecurityReport): SecurityReportDiff {
+  if (!previous) return {
+    changedFields: ["created"],
+    addedFindingFactIds: next.findingFactIds,
+    removedFindingFactIds: [],
+    addedAttackPathIds: next.attackPathIds,
+    removedAttackPathIds: [],
+    addedEvidenceRefs: next.evidenceRefs,
+    removedEvidenceRefs: [],
+  };
+  const fields: Array<keyof SecurityReport> = [
+    "title", "status", "executiveSummary", "scope", "methodology", "limitations",
+    "findingFactIds", "attackPathIds", "evidenceRefs", "sourceRunIds", "reviewStatus", "reviewReasons",
+  ];
+  return {
+    changedFields: fields.filter((field) => JSON.stringify(previous[field]) !== JSON.stringify(next[field])),
+    addedFindingFactIds: difference(next.findingFactIds, previous.findingFactIds),
+    removedFindingFactIds: difference(previous.findingFactIds, next.findingFactIds),
+    addedAttackPathIds: difference(next.attackPathIds, previous.attackPathIds),
+    removedAttackPathIds: difference(previous.attackPathIds, next.attackPathIds),
+    addedEvidenceRefs: difference(next.evidenceRefs, previous.evidenceRefs),
+    removedEvidenceRefs: difference(previous.evidenceRefs, next.evidenceRefs),
+  };
+}
+
 export class SecurityReportStore {
   constructor(private db: Db) {}
 
@@ -49,6 +97,7 @@ export class SecurityReportStore {
     });
     this.validate(report);
     this.db.insert(securityReports).values(this.values(report)).run();
+    this.recordRevision(undefined, report, "created");
     return report;
   }
 
@@ -74,6 +123,7 @@ export class SecurityReportStore {
     });
     this.validate(next);
     this.db.update(securityReports).set(this.values(next)).where(eq(securityReports.id, id)).run();
+    this.recordRevision(current, next, "content_updated");
     return next;
   }
 
@@ -104,8 +154,29 @@ export class SecurityReportStore {
         updatedAt: new Date().toISOString(),
       });
       this.db.update(securityReports).set(this.values(updated)).where(eq(securityReports.id, report.id)).run();
+      this.recordRevision(report, updated, "dependency_changed");
       return [updated];
     });
+  }
+
+  listRevisions(reportId: string): SecurityReportRevision[] {
+    return this.db.select().from(securityReportRevisions).where(eq(securityReportRevisions.reportId, reportId))
+      .orderBy(asc(securityReportRevisions.version)).all().map(hydrateRevision);
+  }
+
+  acceptRevision(revisionId: string): SecurityReportRevision | undefined {
+    const row = this.db.select().from(securityReportRevisions).where(eq(securityReportRevisions.id, revisionId)).get();
+    if (!row) return undefined;
+    const accepted = SecurityReportRevisionSchema.parse({
+      ...hydrateRevision(row),
+      reviewDecision: "accepted",
+      reviewedAt: new Date().toISOString(),
+    });
+    this.db.update(securityReportRevisions).set({
+      reviewDecision: accepted.reviewDecision,
+      reviewedAt: accepted.reviewedAt,
+    }).where(eq(securityReportRevisions.id, revisionId)).run();
+    return accepted;
   }
 
   private validate(report: SecurityReport): void {
@@ -176,6 +247,34 @@ export class SecurityReportStore {
       createdAt: report.createdAt,
       updatedAt: report.updatedAt,
     };
+  }
+
+  private recordRevision(previous: SecurityReport | undefined, report: SecurityReport, changeType: SecurityReportRevision["changeType"]): void {
+    const createdAt = new Date().toISOString();
+    const revision = SecurityReportRevisionSchema.parse({
+      id: `report_revision_${randomUUID()}`,
+      reportId: report.id,
+      caseId: report.caseId,
+      version: report.version,
+      changeType,
+      snapshot: report,
+      diff: reportDiff(previous, report),
+      reviewDecision: "pending",
+      reviewedAt: null,
+      createdAt,
+    });
+    this.db.insert(securityReportRevisions).values({
+      id: revision.id,
+      reportId: revision.reportId,
+      caseId: revision.caseId,
+      version: revision.version,
+      changeType: revision.changeType,
+      snapshotJson: JSON.stringify(revision.snapshot),
+      diffJson: JSON.stringify(revision.diff),
+      reviewDecision: revision.reviewDecision,
+      reviewedAt: revision.reviewedAt,
+      createdAt: revision.createdAt,
+    }).run();
   }
 
   private dependencyVersions(caseId: string, findingIds: string[], evidenceIds: string[], pathIds: string[]): Record<string, number> {

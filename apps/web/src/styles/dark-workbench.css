@@ -1831,6 +1831,50 @@ textarea:focus-visible,
 .report-review-warning div { display: grid; gap: 3px; }
 .report-review-warning strong { color: var(--foreground); font-size: var(--type-control); }
 .report-review-warning p { margin: 0; color: var(--foreground-secondary); font-size: var(--type-meta); line-height: 1.45; }
+.report-workbench section.report-history {
+  display: grid;
+  grid-template-columns: 106px minmax(0, 1fr);
+  padding: 0;
+  background: var(--surface);
+}
+.report-history-versions {
+  padding: 6px;
+  border-right: 1px solid var(--border-subtle);
+}
+.report-history-versions button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--foreground-secondary);
+  background: transparent;
+  text-align: left;
+}
+.report-history-versions button:hover { background: var(--surface-hover); }
+.report-history-versions button[data-selected="true"] { background: var(--surface-elevated); box-shadow: inset 2px 0 0 var(--information); }
+.report-history-versions button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.report-history-versions span,
+.report-history-versions small { color: var(--foreground-muted); font: 9px var(--mono); text-transform: uppercase; }
+.report-history-versions strong { font-size: var(--type-meta); font-weight: 550; }
+.report-diff { min-width: 0; padding: 12px; }
+.report-diff > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.report-diff > header > div { display: grid; gap: 3px; }
+.report-diff > header strong { font-size: var(--type-control); }
+.report-diff dl { display: grid; gap: 0; margin: 10px 0 0; }
+.report-diff dl > div {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.report-diff dt { color: var(--foreground-muted); font-size: var(--type-meta); }
+.report-diff dd { min-width: 0; margin: 0; color: var(--foreground-secondary); font: 9px var(--mono); overflow-wrap: anywhere; }
+.report-diff ins { margin-right: 8px; color: var(--success); text-decoration: none; }
+.report-diff del { color: var(--danger); text-decoration: none; }
+.report-diff > p { margin: 8px 0 0; color: var(--foreground-muted); font: 9px var(--mono); }
 .report-workbench section { padding: 16px 0; border-bottom: 1px solid var(--border-subtle); }
 .report-workbench section h4 {
   margin: 0 0 8px;

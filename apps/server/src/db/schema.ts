@@ -64,6 +64,19 @@ export const securityReports = sqliteTable("security_reports", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const securityReportRevisions = sqliteTable("security_report_revisions", {
+  id: text("id").primaryKey(),
+  reportId: text("report_id").notNull(),
+  caseId: text("case_id").notNull(),
+  version: integer("version").notNull(),
+  changeType: text("change_type").notNull(),
+  snapshotJson: text("snapshot_json").notNull(),
+  diffJson: text("diff_json").notNull(),
+  reviewDecision: text("review_decision").notNull().default("pending"),
+  reviewedAt: text("reviewed_at"),
+  createdAt: text("created_at").notNull(),
+});
+
 export const trafficEntries = sqliteTable("traffic_entries", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

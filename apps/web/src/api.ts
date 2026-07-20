@@ -1,4 +1,4 @@
-import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport } from "@traceforge/shared";
+import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 export interface LlmConfig {
@@ -128,6 +128,22 @@ export async function downloadSecurityReport(caseId: string, reportId: string, f
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+export async function listSecurityReportRevisions(caseId: string, reportId: string): Promise<SecurityReportRevision[]> {
+  const response = await ensureOk(
+    await fetch(`/api/cases/${caseId}/security-reports/${reportId}/revisions`),
+    "Load report revisions",
+  );
+  return response.json();
+}
+
+export async function acceptSecurityReportRevision(caseId: string, reportId: string, revisionId: string): Promise<SecurityReportRevision> {
+  const response = await ensureOk(
+    await fetch(`/api/cases/${caseId}/security-reports/${reportId}/revisions/${revisionId}/accept`, { method: "POST" }),
+    "Accept report revision",
+  );
+  return response.json();
 }
 
 export async function clearTraffic(caseId: string): Promise<{ deleted: number }> {

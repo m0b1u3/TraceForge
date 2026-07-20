@@ -68,6 +68,9 @@ describe("SecurityReportStore real SQLite lifecycle", () => {
       sourceRunIds: ["run_1"],
     });
     expect(new SecurityReportStore(db).getById(report.id)).toEqual(report);
+    expect(reports.listRevisions(report.id)).toEqual([
+      expect.objectContaining({ version: 1, changeType: "created", snapshot: report, reviewDecision: "pending" }),
+    ]);
   });
 
   it("rejects cross-case evidence and provenance-free final reports", () => {
@@ -98,12 +101,19 @@ describe("SecurityReportStore real SQLite lifecycle", () => {
     const [stale] = reports.refreshAffected("case_1", evidence.id);
     expect(stale).toMatchObject({ reviewStatus: "needs_review", version: 2 });
     expect(stale.reviewReasons.join(" ")).toContain(evidence.id);
+    const revised = reports.update(report.id, { executiveSummary: "Verified IDOR after evidence re-review." });
+    expect(revised).toMatchObject({ version: 3, reviewStatus: "current" });
+    const revisions = reports.listRevisions(report.id);
+    expect(revisions.map((revision) => revision.changeType)).toEqual(["created", "dependency_changed", "content_updated"]);
+    expect(revisions[0].snapshot.executiveSummary).toBe("Verified IDOR.");
+    expect(revisions[2].diff.changedFields).toContain("executiveSummary");
+    expect(reports.acceptRevision(revisions[2].id)).toMatchObject({ reviewDecision: "accepted" });
 
     const document = securityReportExport(db, report.id, "2026-07-20T03:00:00.000Z");
     expect(document).toMatchObject({ schemaVersion: 1, exportedAt: "2026-07-20T03:00:00.000Z" });
     const markdown = securityReportMarkdown(document!);
     expect(markdown).toContain("# Authorization review");
-    expect(markdown).toContain("## Review required");
+    expect(markdown).not.toContain("## Review required");
     expect(markdown).toContain("Read-only validation.");
   });
 
@@ -125,6 +135,15 @@ describe("SecurityReportStore real SQLite lifecycle", () => {
     bus.emit({ type: "fact_updated", fact: changedEvidence });
     const reports = await app.inject({ url: `/api/cases/${caseId}/security-reports` });
     expect(reports.json()[0]).toMatchObject({ id: report.id, reviewStatus: "needs_review" });
+    const revisions = await app.inject({ url: `/api/cases/${caseId}/security-reports/${report.id}/revisions` });
+    expect(revisions.statusCode).toBe(200);
+    expect(revisions.json()).toHaveLength(2);
+    const latestRevisionId = revisions.json()[1].id as string;
+    const accepted = await app.inject({
+      method: "POST",
+      url: `/api/cases/${caseId}/security-reports/${report.id}/revisions/${latestRevisionId}/accept`,
+    });
+    expect(accepted.json()).toMatchObject({ id: latestRevisionId, reviewDecision: "accepted" });
     const markdown = await app.inject({ url: `/api/cases/${caseId}/security-reports/${report.id}/export?format=markdown` });
     expect(markdown.statusCode).toBe(200);
     expect(markdown.headers["content-type"]).toContain("text/markdown");

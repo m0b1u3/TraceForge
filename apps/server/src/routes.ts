@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
-import { cases, identityContexts, attackPaths, securityReports, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries } from "./db/schema.js";
+import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -223,6 +223,7 @@ export function registerRoutes(
     db.delete(identityContexts).where(eq(identityContexts.caseId, id)).run();
     db.delete(attackPaths).where(eq(attackPaths.caseId, id)).run();
     db.delete(securityReports).where(eq(securityReports.caseId, id)).run();
+    db.delete(securityReportRevisions).where(eq(securityReportRevisions.caseId, id)).run();
     db.delete(facts).where(eq(facts.caseId, id)).run();
     db.delete(tasks).where(eq(tasks.caseId, id)).run();
     db.delete(timeline).where(eq(timeline.caseId, id)).run();
@@ -486,6 +487,21 @@ export function registerRoutes(
     if (format !== "markdown") return reply.code(400).send({ error: "format must be markdown or json" });
     return reply.header("content-disposition", `attachment; filename="${safeName}.md"`)
       .type("text/markdown; charset=utf-8").send(securityReportMarkdown(document));
+  });
+
+  app.get("/api/cases/:id/security-reports/:reportId/revisions", async (req, reply) => {
+    const { id, reportId } = req.params as { id: string; reportId: string };
+    const report = securityReportStore.getById(reportId);
+    if (!report || report.caseId !== id) return reply.code(404).send({ error: "security report not found" });
+    return securityReportStore.listRevisions(reportId);
+  });
+
+  app.post("/api/cases/:id/security-reports/:reportId/revisions/:revisionId/accept", async (req, reply) => {
+    const { id, reportId, revisionId } = req.params as { id: string; reportId: string; revisionId: string };
+    const report = securityReportStore.getById(reportId);
+    const revision = securityReportStore.listRevisions(reportId).find((item) => item.id === revisionId);
+    if (!report || report.caseId !== id || !revision) return reply.code(404).send({ error: "report revision not found" });
+    return securityReportStore.acceptRevision(revisionId);
   });
 
   app.post("/api/cases/:id/scope/reject", async (req, reply) => {

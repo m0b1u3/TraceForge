@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { CheckCircle, DownloadSimple, FileText, GitBranch, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
+import { useEffect, useState } from "react";
+import { Check, CheckCircle, ClockCounterClockwise, DownloadSimple, FileText, GitBranch, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
 import { useStore } from "../../store.js";
-import { downloadSecurityReport } from "../../api.js";
+import { acceptSecurityReportRevision, downloadSecurityReport, listSecurityReportRevisions } from "../../api.js";
 import { Button } from "../ui/button.js";
+import type { SecurityReportRevision } from "@traceforge/shared";
 
 export function ReportsTab() {
   const reports = useStore((state) => state.securityReports);
@@ -10,7 +11,24 @@ export function ReportsTab() {
   const paths = useStore((state) => state.attackPaths);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"markdown" | "json" | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [revisions, setRevisions] = useState<SecurityReportRevision[]>([]);
+  const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(null);
   const selected = reports.find((report) => report.id === selectedId) ?? reports[0];
+  useEffect(() => {
+    if (!selected) return;
+    let active = true;
+    void listSecurityReportRevisions(selected.caseId, selected.id).then((items) => {
+      if (!active) return;
+      setRevisions(items);
+      setSelectedRevisionId(items.at(-1)?.id ?? null);
+    }).catch(() => {
+      if (!active) return;
+      setRevisions([]);
+      setSelectedRevisionId(null);
+    });
+    return () => { active = false; };
+  }, [selected?.caseId, selected?.id, selected?.version]);
 
   if (!selected) {
     return (
@@ -39,6 +57,12 @@ export function ReportsTab() {
       setExporting(null);
     }
   };
+  const selectedRevision = revisions.find((revision) => revision.id === selectedRevisionId) ?? revisions.at(-1);
+  const acceptRevision = async () => {
+    if (!selectedRevision) return;
+    const accepted = await acceptSecurityReportRevision(selected.caseId, selected.id, selectedRevision.id);
+    setRevisions((items) => items.map((item) => item.id === accepted.id ? accepted : item));
+  };
 
   return (
     <div className="report-workbench">
@@ -65,8 +89,38 @@ export function ReportsTab() {
             <Button type="button" variant="ghost" size="sm" disabled={exporting !== null} onClick={() => void exportReport("json")} aria-label="Export report as JSON">
               <DownloadSimple size={13} />{exporting === "json" ? "Exporting" : "JSON"}
             </Button>
+            <Button type="button" variant="ghost" size="sm" aria-expanded={historyOpen} onClick={() => setHistoryOpen((value) => !value)}>
+              <ClockCounterClockwise size={13} />History
+            </Button>
           </div>
         </header>
+        {historyOpen && selectedRevision && (
+          <section className="report-history" aria-label="Report version history">
+            <div className="report-history-versions">
+              {revisions.map((revision) => (
+                <button type="button" key={revision.id} data-selected={revision.id === selectedRevision.id} onClick={() => setSelectedRevisionId(revision.id)}>
+                  <span>v{revision.version}</span>
+                  <strong>{revision.changeType.replaceAll("_", " ")}</strong>
+                  <small>{revision.reviewDecision}</small>
+                </button>
+              ))}
+            </div>
+            <div className="report-diff">
+              <header><div><span className="section-kicker">Revision diff</span><strong>Version {selectedRevision.version}</strong></div>
+                <Button type="button" size="sm" variant="outline" disabled={selectedRevision.reviewDecision === "accepted"} onClick={() => void acceptRevision()}>
+                  <Check size={13} />{selectedRevision.reviewDecision === "accepted" ? "Accepted" : "Accept revision"}
+                </Button>
+              </header>
+              <dl>
+                <div><dt>Changed</dt><dd>{selectedRevision.diff.changedFields.join(", ") || "No content fields"}</dd></div>
+                <div><dt>Findings</dt><dd><ins>+{selectedRevision.diff.addedFindingFactIds.length}</ins><del>−{selectedRevision.diff.removedFindingFactIds.length}</del></dd></div>
+                <div><dt>Paths</dt><dd><ins>+{selectedRevision.diff.addedAttackPathIds.length}</ins><del>−{selectedRevision.diff.removedAttackPathIds.length}</del></dd></div>
+                <div><dt>Evidence</dt><dd><ins>+{selectedRevision.diff.addedEvidenceRefs.length}</ins><del>−{selectedRevision.diff.removedEvidenceRefs.length}</del></dd></div>
+              </dl>
+              <p>{new Date(selectedRevision.createdAt).toLocaleString()} · immutable snapshot</p>
+            </div>
+          </section>
+        )}
         {selected.reviewReasons.length > 0 && (
           <aside className="report-review-warning" aria-label="Report requires review">
             <WarningCircle size={16} weight="fill" />
