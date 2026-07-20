@@ -5,7 +5,7 @@ import type { ApprovalGate } from "./approval-gate.js";
 import { FailureMemory } from "./failure-memory.js";
 
 export interface AgentEvent {
-  type: "tool_call" | "tool_result" | "tool_rejected" | "tool_blocked" | "text" | "reasoning" | "done" |
+  type: "tool_call" | "tool_result" | "tool_rejected" | "tool_blocked" | "tool_advisory" | "text" | "reasoning" | "done" |
     "stream_start" | "stream_delta" | "stream_end" | "interrupted" | "retrying" |
     "budget_warning" | "budget_exhausted" | "usage";
   name?: string;
@@ -49,6 +49,7 @@ export interface AgentRunOptions {
   getObserverReviewTrigger?: () => ObserverReviewTrigger | null;
   toolTimeoutMs?: number;
   failureMemory?: FailureMemory;
+  onBeforeToolExecute?: (call: { name: string; input: unknown }) => string | undefined | Promise<string | undefined>;
   onToolExecuted?: (report: ToolExecutionReport) => void | Promise<void>;
 }
 
@@ -464,6 +465,8 @@ export class AgentRuntime {
       return result;
     }
 
+    const advisory = await options.onBeforeToolExecute?.({ name: call.name, input: call.input });
+    if (advisory) onEvent({ type: "tool_advisory", name: call.name, content: advisory });
     onEvent({ type: "tool_call", name: call.name, content: JSON.stringify(call.input) });
 
     const decision = await this.gate.check(tool, call.input);
@@ -488,7 +491,10 @@ export class AgentRuntime {
       const transient = failureClass === "transient";
       if (!res.ok && failureClass === "permanent") failureMemory.add(call.name, call.input);
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: res.content });
-      const result = { content: res.content, ok: res.ok };
+      const content = advisory
+        ? `[Exploration advisory issued before execution]\n${advisory}\n\n[Tool result]\n${res.content}`
+        : res.content;
+      const result = { content, ok: res.ok };
       if (options.onToolExecuted) {
         await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, transient, failureClass, risk: tool.risk });
       }

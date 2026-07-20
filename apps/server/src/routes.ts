@@ -54,6 +54,7 @@ import { ObserverScheduler } from "./observer-scheduler.js";
 import { buildSharedKnowledge } from "./shared-knowledge.js";
 import { KnowledgeUsageStore, type KnowledgeRef } from "./stores/knowledge-usage-store.js";
 import { KnowledgeOutcomeTracker } from "./knowledge-outcome.js";
+import { buildExplorationAdvisory } from "./exploration-advisor.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -791,6 +792,7 @@ export function registerRoutes(
     registry.register(makeRecallConversationTool(id, agentEventStore, contextSummaryStore, { expander: queryExpander }));
     const availableKnowledge = new Map<string, KnowledgeRef>();
     const knowledgeOutcomeTracker = new KnowledgeOutcomeTracker();
+    let latestSharedKnowledge: ReturnType<typeof buildSharedKnowledge> | undefined;
     const getSharedKnowledge = (query?: string) => {
       const runState = sessionStore.get(id, runId);
       const knowledge = buildSharedKnowledge({
@@ -807,6 +809,7 @@ export function registerRoutes(
       });
       for (const ref of knowledge.injectedKnowledgeRefs ?? []) availableKnowledge.set(`${ref.kind}:${ref.id}`, ref);
       knowledgeUsageStore.recordInjected(id, runId, knowledge.injectedKnowledgeRefs ?? []);
+      latestSharedKnowledge = knowledge;
       return knowledge;
     };
     registry.register(makeRecallCaseKnowledgeTool({ get: getSharedKnowledge }));
@@ -922,6 +925,12 @@ export function registerRoutes(
           reason: "identical call already failed in this run",
         });
       }
+      else if (e.type === "tool_advisory") {
+        const content = `Exploration advisory for ${e.name ?? "tool"}:\n${e.content}`;
+        bus.emit({ type: "agent_text", caseId: id, content });
+        agentEventStore.append(id, "text", content, e.name ?? undefined);
+        trajectory.push(`[advisory] ${content}`);
+      }
       else if (e.type === "text") { bus.emit({ type: "agent_text", caseId: id, content: e.content }); agentEventStore.append(id, "text", e.content); trajectory.push(`[text] ${e.content}`); }
       else if (e.type === "reasoning") {
         bus.emit({ type: "agent_reasoning", caseId: id, content: e.content });
@@ -976,6 +985,24 @@ export function registerRoutes(
       getSteeringMessages: () => runs.consumeSteering(runId),
       onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger),
       failureMemory,
+      onBeforeToolExecute: (call) => {
+        const serialized = JSON.stringify(call.input);
+        const referencedKnowledge = [...availableKnowledge.values()].filter((ref) => serialized.includes(ref.id));
+        const alternatives = [
+          latestSharedKnowledge?.attackPaths[0],
+          latestSharedKnowledge?.verifiedFindings[0],
+          latestSharedKnowledge?.identities[0],
+        ].filter((item): item is string => Boolean(item));
+        return buildExplorationAdvisory({
+          tool: call.name,
+          input: call.input,
+          referencedKnowledge,
+          usageScores: knowledgeUsageStore.scores(id, runId),
+          failedAttempts: factStore.listByCase(id).filter((fact) =>
+            fact.type === "failed_attempt" && fact.validity === "valid" && fact.sourceRunId !== runId),
+          alternatives,
+        });
+      },
       onToolExecuted: (report) => {
         const referencedKnowledge = knowledgeUsageStore.markReferenced(
           id,
