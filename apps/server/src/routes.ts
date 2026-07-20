@@ -41,6 +41,7 @@ import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
 import { calculateUsageCost } from "./llm-cost.js";
 import { PendingInterventionRegistry } from "./pending-interventions.js";
 import { AgentRunStore } from "./stores/agent-run-store.js";
+import { observerFingerprint, observerIntervention, validatedObserverLevel } from "./observer-policy.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -51,15 +52,6 @@ function historyPageOptions(query: unknown): { limit?: number; offset?: number }
     limit: Number.isFinite(parsedLimit) ? Math.min(10_000, Math.max(1, Math.trunc(parsedLimit))) : 1_000,
     offset: Number.isFinite(parsedOffset) ? Math.max(0, Math.trunc(parsedOffset)) : 0,
   };
-}
-
-function observerFingerprint(warning: Pick<ObserverWarning, "title" | "relatedFacts" | "relatedTasks">): string {
-  const material = [
-    warning.title.trim().toLowerCase().replace(/\s+/g, " "),
-    [...warning.relatedFacts].sort().join(","),
-    [...warning.relatedTasks].sort().join(","),
-  ].join("|");
-  return createHash("sha256").update(material).digest("hex").slice(0, 24);
 }
 
 export function registerRoutes(
@@ -521,10 +513,7 @@ export function registerRoutes(
         const validFactIds = new Set(factStore.listByCase(id).map((fact) => fact.id));
         const validTaskIds = new Set(taskStore.listByCase(id).map((task) => task.id));
         for (const w of result.warnings) {
-          const referencesValid = w.relatedFacts.every((factId) => validFactIds.has(factId))
-            && w.relatedTasks.every((taskId) => validTaskIds.has(taskId));
-          const criticalEvidenceValid = Boolean(w.evidence?.trim()) && referencesValid;
-          const level = w.level === "critical" && !criticalEvidenceValid ? "warning" : w.level;
+          const level = validatedObserverLevel(w, validFactIds, validTaskIds);
           const fingerprint = observerFingerprint(w);
           observedFingerprints.add(fingerprint);
           const existing = observerStore.getActiveByFingerprint(id, reviewRunId, fingerprint);
@@ -538,11 +527,12 @@ export function registerRoutes(
             });
             if (!warning) continue;
             bus.emit({ type: "observer_warning_updated", warning });
-            if (warning.status === "escalated" && !pauseReason) {
-              pauseReason = `escalated observer warning: ${warning.title}`;
+            const intervention = observerIntervention(warning);
+            if (intervention.pauseReason && !pauseReason) {
+              pauseReason = intervention.pauseReason;
               bus.emit({ type: "agent_run_needs_confirmation", caseId: id, runId: reviewRunId, warning });
-            } else if (warning.status === "correcting") {
-              steering.push(warning.suggestedGoal || warning.suggestedAction);
+            } else if (intervention.steering) {
+              steering.push(intervention.steering);
             }
             continue;
           }

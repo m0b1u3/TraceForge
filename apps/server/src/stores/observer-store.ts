@@ -2,6 +2,7 @@ import { eq, and, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { observerWarnings } from "../db/schema.js";
 import { type ObserverWarning, ObserverWarningSchema } from "@traceforge/shared";
+import { nextObserverStatus } from "../observer-policy.js";
 
 function rowToWarning(row: typeof observerWarnings.$inferSelect): ObserverWarning {
   return ObserverWarningSchema.parse({
@@ -112,11 +113,7 @@ export class ObserverWarningStore {
     if (current.status === "escalated") return current;
     const occurrenceCount = current.occurrenceCount + 1;
     const lastObservedAt = new Date().toISOString();
-    const status = input.level !== "critical"
-      ? "detected"
-      : current.status === "correcting"
-        ? "escalated"
-        : "correcting";
+    const status = nextObserverStatus(current.status, input.level);
     this.db.update(observerWarnings).set({
       level: input.level,
       status,

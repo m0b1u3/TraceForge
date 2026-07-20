@@ -10,6 +10,7 @@
     "build": "pnpm -r build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "acceptance:observer": "tsx scripts/observer-critical-acceptance.mts",
     "dev:server": "pnpm --filter @traceforge/server dev",
     "dev:web": "pnpm --filter @traceforge/web dev"
   },

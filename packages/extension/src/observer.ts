@@ -54,12 +54,19 @@ const SCHEMA = {
           suggestedGoal: { type: "string" },
           evidence: { type: "string", description: "判定依据，引用具体 Fact/Task/trajectory" },
         },
-        required: ["level", "title", "description", "suggestedAction"],
+        required: ["level", "title", "description", "relatedFacts", "relatedTasks", "suggestedAction", "evidence"],
       },
     },
   },
   required: ["warnings"],
 };
+
+const CRITICAL_REFERENCE_POLICY = [
+  "Critical output contract:",
+  "- A critical warning must cite at least one ID that exists in the current Facts or Tasks list.",
+  "- Put every cited ID in relatedFacts or relatedTasks.",
+  "- If no valid current ID supports the warning, use level=warning instead of critical.",
+].join("\n");
 
 export class Observer {
   constructor(private provider: LlmProvider) {}
@@ -69,7 +76,7 @@ export class Observer {
     const usage: UsageSnapshot = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     try {
       const raw = await this.provider.extractJson({
-        system: SYSTEM,
+        system: `${SYSTEM}\n\n${CRITICAL_REFERENCE_POLICY}`,
         user,
         schema: SCHEMA,
         onUsage: (snapshot) => {
