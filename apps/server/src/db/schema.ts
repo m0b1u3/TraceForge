@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 
 export const cases = sqliteTable("cases", {
   id: text("id").primaryKey(),
@@ -18,6 +18,27 @@ export const identityContexts = sqliteTable("identity_contexts", {
   credentialsJson: text("credentials_json").notNull().default("{}"),
   headersJson: text("headers_json").notNull().default("{}"),
   cookiesJson: text("cookies_json").notNull().default("[]"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const attackPaths = sqliteTable("attack_paths", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  title: text("title").notNull(),
+  objective: text("objective").notNull(),
+  status: text("status").notNull(),
+  confidence: real("confidence").notNull(),
+  sourceRunId: text("source_run_id"),
+  lastRunId: text("last_run_id"),
+  entryIdentityId: text("entry_identity_id"),
+  targetAssetFactId: text("target_asset_fact_id"),
+  findingFactIdsJson: text("finding_fact_ids_json").notNull().default("[]"),
+  hypothesisIdsJson: text("hypothesis_ids_json").notNull().default("[]"),
+  evidenceRefsJson: text("evidence_refs_json").notNull().default("[]"),
+  breakpoint: text("breakpoint"),
+  stepsJson: text("steps_json").notNull(),
+  version: integer("version").notNull().default(1),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

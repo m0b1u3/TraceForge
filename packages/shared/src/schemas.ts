@@ -56,6 +56,45 @@ export const IdentityContextSchema = z.object({
 });
 export type IdentityContext = z.infer<typeof IdentityContextSchema>;
 
+export const AttackPathStepSchema = z.object({
+  id: z.string(),
+  order: z.number().int().nonnegative(),
+  kind: z.enum(["access", "identity_transition", "request", "exploit", "privilege", "pivot", "impact"]),
+  title: z.string().min(1),
+  description: z.string().default(""),
+  status: z.enum(["proposed", "observed", "verified", "blocked", "refuted"]).default("proposed"),
+  identityId: z.string().nullable().default(null),
+  trafficId: z.string().nullable().default(null),
+  factIds: z.array(z.string()).default([]),
+  taskId: z.string().nullable().default(null),
+  actionId: z.string().nullable().default(null),
+  prerequisiteStepIds: z.array(z.string()).default([]),
+  validation: z.string().default(""),
+});
+export type AttackPathStep = z.infer<typeof AttackPathStepSchema>;
+
+export const AttackPathSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  title: z.string().min(1),
+  objective: z.string().min(1),
+  status: z.enum(["exploring", "blocked", "validated", "invalidated"]).default("exploring"),
+  confidence: z.number().min(0).max(1).default(0.5),
+  sourceRunId: z.string().nullable().default(null),
+  lastRunId: z.string().nullable().default(null),
+  entryIdentityId: z.string().nullable().default(null),
+  targetAssetFactId: z.string().nullable().default(null),
+  findingFactIds: z.array(z.string()).default([]),
+  hypothesisIds: z.array(z.string()).default([]),
+  evidenceRefs: z.array(z.string()).default([]),
+  breakpoint: z.string().nullable().default(null),
+  steps: z.array(AttackPathStepSchema).min(1),
+  version: z.number().int().positive().default(1),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type AttackPath = z.infer<typeof AttackPathSchema>;
+
 export const TrafficEntrySchema = z.object({
   id: z.string(),
   caseId: z.string(),

@@ -1,10 +1,12 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, AgentRun, IdentityContext } from "./schemas.js";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, AgentRun, IdentityContext, AttackPath } from "./schemas.js";
 
 export type RuntimeEvent =
   | { type: "case_created"; case: Case }
   | { type: "case_deleted"; caseId: string }
   | { type: "identity_created"; identity: IdentityContext }
   | { type: "identity_updated"; identity: IdentityContext }
+  | { type: "attack_path_created"; attackPath: AttackPath }
+  | { type: "attack_path_updated"; attackPath: AttackPath }
   | { type: "request_captured"; entry: TrafficEntry }
   | { type: "response_captured"; entry: TrafficEntry }
   | { type: "traffic_cleared"; caseId: string }

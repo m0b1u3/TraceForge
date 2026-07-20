@@ -25,6 +25,15 @@ function responseShowsDifference(content: string): boolean {
   }
 }
 
+function recordedAttackPathStatus(content: string): string | null {
+  try {
+    const value = JSON.parse(content) as Record<string, unknown>;
+    return typeof value.status === "string" ? value.status : null;
+  } catch {
+    return null;
+  }
+}
+
 export class ObserverScheduler {
   private pending: EventTrigger | null = null;
   private consecutivePermanentFailures = 0;
@@ -48,6 +57,12 @@ export class ObserverScheduler {
       && responseShowsDifference(report.content)
     ) {
       this.mark("evidence_conflict");
+    }
+
+    if (report.name === "record_attack_path") {
+      const status = recordedAttackPathStatus(report.content);
+      if (status === "invalidated") this.mark("evidence_conflict");
+      else if (status === "validated") this.mark("finding_verification");
     }
 
     if (report.name !== "record_fact") return;

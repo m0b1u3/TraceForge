@@ -16,6 +16,16 @@ export function createDb(path: string) {
       cookies_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_identity_contexts_case ON identity_contexts(case_id);
+    CREATE TABLE IF NOT EXISTS attack_paths (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, objective TEXT NOT NULL,
+      status TEXT NOT NULL, confidence REAL NOT NULL, source_run_id TEXT, last_run_id TEXT,
+      entry_identity_id TEXT, target_asset_fact_id TEXT,
+      finding_fact_ids_json TEXT NOT NULL DEFAULT '[]',
+      hypothesis_ids_json TEXT NOT NULL DEFAULT '[]', evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+      breakpoint TEXT, steps_json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_attack_paths_case ON attack_paths(case_id, updated_at);
     CREATE TABLE IF NOT EXISTS traffic_entries (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, url TEXT NOT NULL, method TEXT NOT NULL,
       run_id TEXT, identity_id TEXT, identity_version INTEGER, attribution_source TEXT, parent_traffic_id TEXT,

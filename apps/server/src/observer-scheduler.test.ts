@@ -54,4 +54,12 @@ describe("ObserverScheduler event policy", () => {
     scheduler.observe({ name: "exec_command", input: {}, content: "done", ok: true, risk: "command" });
     expect(scheduler.consume()).toBe("high_risk");
   });
+
+  it("reviews validated and invalidated attack paths as evidence events", () => {
+    const scheduler = new ObserverScheduler();
+    scheduler.observe({ name: "record_attack_path", input: {}, content: JSON.stringify({ status: "validated" }), ok: true });
+    expect(scheduler.consume()).toBe("finding_verification");
+    scheduler.observe({ name: "record_attack_path", input: {}, content: JSON.stringify({ status: "invalidated" }), ok: true });
+    expect(scheduler.consume()).toBe("evidence_conflict");
+  });
 });

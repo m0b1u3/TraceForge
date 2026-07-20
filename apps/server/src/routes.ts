@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
-import { cases, identityContexts, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries } from "./db/schema.js";
+import { cases, identityContexts, attackPaths, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -24,6 +24,7 @@ import {
   makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools,
   makeReplayTrafficTool, makeExtractApiEndpointsTool,
   makeCompareIdentityTrafficTool, makeListIdentitiesTool, makeRecordIdentityTool, makeUseBrowserIdentityTool,
+  makeListAttackPathsTool, makeRecordAttackPathTool,
   McpManager, mcpToolToDescriptor, Observer, LlmQueryExpander,
   makeReevaluateFactsTool, FailureMemory, makeDownloadTool,
   type AgentRunBudget, type ObserverReviewTrigger,
@@ -45,6 +46,7 @@ import { AgentRunStore } from "./stores/agent-run-store.js";
 import { observerFingerprint, observerIntervention, validatedObserverLevel } from "./observer-policy.js";
 import { HypothesisScheduler } from "./hypothesis-scheduler.js";
 import { IdentityStore } from "./stores/identity-store.js";
+import { AttackPathStore } from "./stores/attack-path-store.js";
 import { ObserverScheduler } from "./observer-scheduler.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
@@ -109,6 +111,7 @@ export function registerRoutes(
   const hypothesisStore = new HypothesisStore(db);
   const hypothesisScheduler = new HypothesisScheduler(hypothesisStore);
   const identityStore = new IdentityStore(db);
+  const attackPathStore = new AttackPathStore(db);
   const contextSummaryStore = new ContextSummaryStore(db);
   const approvals = new ApprovalRegistry();
   const pendingInterventions = new PendingInterventionRegistry();
@@ -203,6 +206,7 @@ export function registerRoutes(
     // Cascade delete all case-associated data
     db.delete(trafficEntries).where(eq(trafficEntries.caseId, id)).run();
     db.delete(identityContexts).where(eq(identityContexts.caseId, id)).run();
+    db.delete(attackPaths).where(eq(attackPaths.caseId, id)).run();
     db.delete(facts).where(eq(facts.caseId, id)).run();
     db.delete(tasks).where(eq(tasks.caseId, id)).run();
     db.delete(timeline).where(eq(timeline.caseId, id)).run();
@@ -374,6 +378,12 @@ export function registerRoutes(
     const { id } = req.params as { id: string };
     if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
     return identityStore.listByCase(id);
+  });
+
+  app.get("/api/cases/:id/attack-paths", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    return attackPathStore.listByCase(id);
   });
 
   app.get("/api/mcp/tools", async () => (mcp ? mcp.listTools() : []));
@@ -637,6 +647,8 @@ export function registerRoutes(
     registry.register(makeRevertDoneTaskTool(id, taskStore, taskStore, factStore, runTimeline, (e) => bus.emit(e)));
     registry.register(makeListIdentitiesTool(id, identityStore));
     registry.register(makeRecordIdentityTool(id, identityStore, runTimeline, (e) => bus.emit(e)));
+    registry.register(makeListAttackPathsTool(id, attackPathStore));
+    registry.register(makeRecordAttackPathTool(id, runId, attackPathStore, runTimeline, (e) => bus.emit(e)));
     const replayIdentityContext = {
       runId,
       resolveIdentity: (identityId: string) => {
@@ -890,7 +902,8 @@ export function registerRoutes(
           "resolve_hypothesis",
           "record_task",
           "record_identity",
-          "compare_identity_traffic",
+        "compare_identity_traffic",
+        "record_attack_path",
           "propose_scope_expansion",
         ]);
         if (report.ok && replanTriggers.has(report.name)) {
