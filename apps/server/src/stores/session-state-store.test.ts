@@ -16,7 +16,7 @@ describe("SessionStateStore", () => {
     const b = store.upsert("c1", { focus: { host: "x.com" } });
     expect(b.currentGoal).toBe("测越权"); // 保留旧值
     expect(b.focus).toEqual({ host: "x.com" });
-    expect(store.get("c1")?.phase).toBe("analyze");
+    expect(store.get("c1")?.phase).toBe("map");
   });
   it("isolates by case", () => {
     store.upsert("c1", { currentGoal: "a" });

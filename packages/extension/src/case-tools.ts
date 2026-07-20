@@ -53,12 +53,12 @@ export interface FactWriter {
   create(caseId: string, input: Omit<Fact, "id" | "caseId" | "createdAt" | "updateCount" | "updatedAt" | "validity"> & Partial<Pick<Fact, "validity">>): Fact;
   listByCase(caseId: string): Fact[];
   getById(id: string): Fact | undefined;
-  update(id: string, patch: Partial<Pick<Fact, "type" | "title" | "value" | "confidence" | "tags" | "validity">>): Fact | undefined;
+  update(id: string, patch: Partial<Pick<Fact, "type" | "title" | "value" | "confidence" | "tags" | "validity" | "findingStatus" | "observations">>): Fact | undefined;
 }
 export interface TaskWriter {
   create(caseId: string, input: Omit<Task, "id" | "caseId" | "createdAt" | "updatedAt" | "updateCount">): Task;
   getById(id: string): Task | undefined;
-  update(id: string, patch: Partial<Pick<Task, "title" | "status" | "reason" | "priority" | "blockedBy" | "triggerWhen" | "relatedFacts">>): Task | undefined;
+  update(id: string, patch: Partial<Pick<Task, "title" | "status" | "reason" | "priority" | "blockedBy" | "triggerWhen" | "relatedFacts" | "hypothesisIds">>): Task | undefined;
 }
 export interface ActionWriter {
   create(a: ActionCard): ActionCard;
@@ -71,7 +71,7 @@ export interface TimelineWriter {
 }
 export type Emit = (e: RuntimeEvent) => void;
 
-export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: TimelineWriter, emit: Emit): ToolDescriptor {
+export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: TimelineWriter, emit: Emit, runId?: string): ToolDescriptor {
   return {
     name: "record_fact",
     description: "把一个发现记录为 Fact。type 用最贴切的英文标识（如 api_endpoint、graphql_endpoint、credential、finding 等，不限于预设）。要更新已有 Fact（如证据增强、置信度变化、标记 validity=superseded）时带上它的 id；新建则不带 id。",
@@ -81,14 +81,15 @@ export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: 
         id: { type: "string" },
         type: { type: "string" }, title: { type: "string" }, value: {},
         confidence: { type: "number" }, tags: { type: "array", items: { type: "string" } },
-        validity: { type: "string", enum: ["valid", "superseded"] },
+        validity: { type: "string", enum: ["valid", "conflicted", "superseded"] },
+        findingStatus: { type: "string", enum: ["candidate", "validating", "verified", "needs_review", "rejected", "stale"] },
       },
       required: ["type", "title"],
     },
     risk: "normal",
     source: "builtin",
     execute: async (input) => {
-      const i = input as { id?: string; type?: string; title?: string; value?: unknown; confidence?: number; tags?: string[]; validity?: string };
+      const i = input as { id?: string; type?: string; title?: string; value?: unknown; confidence?: number; tags?: string[]; validity?: string; findingStatus?: Fact["findingStatus"] };
       if (typeof i.id === "string" && i.id) {
         if (!facts.getById(i.id)) return { ok: false, content: `fact ${i.id} 不存在，新建请去掉 id` };
         const patch: Record<string, unknown> = {};
@@ -97,7 +98,8 @@ export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: 
         if (i.value !== undefined) patch.value = i.value;
         if (typeof i.confidence === "number") patch.confidence = i.confidence;
         if (Array.isArray(i.tags)) patch.tags = i.tags;
-        if (i.validity === "valid" || i.validity === "superseded") patch.validity = i.validity;
+        if (i.validity === "valid" || i.validity === "conflicted" || i.validity === "superseded") patch.validity = i.validity;
+        if (i.findingStatus !== undefined) patch.findingStatus = i.findingStatus;
         const fact = facts.update(i.id, patch as never);
         if (!fact) return { ok: false, content: `更新失败：${i.id}` };
         const entry = timeline.append(caseId, "fact_updated", `Fact 更新: ${fact.title}（第 ${fact.updateCount} 次）`, fact.id);
@@ -108,8 +110,11 @@ export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: 
       const fact = facts.create(caseId, {
         type: i.type ?? "note", title: i.title ?? "", value: i.value ?? {},
         source: { type: "ai", ref: "agent" },
+        sourceRunId: runId ?? null,
         confidence: typeof i.confidence === "number" ? i.confidence : 1,
         tags: Array.isArray(i.tags) ? i.tags : [],
+        findingStatus: i.findingStatus ?? (i.type === "finding" ? "candidate" : null),
+        observations: [],
       });
       const entry = timeline.append(caseId, "fact_created", `Fact (agent): ${fact.title}`, fact.id);
       emit({ type: "fact_created", fact });
@@ -137,7 +142,7 @@ function normalizeStatus(v: unknown): Task["status"] {
   return typeof v === "string" && TASK_STATUSES.has(v as Task["status"]) ? (v as Task["status"]) : "open";
 }
 
-export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: TimelineWriter, emit: Emit): ToolDescriptor {
+export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: TimelineWriter, emit: Emit, runId?: string): ToolDescriptor {
   return {
     name: "record_task",
     description: "记录一个待办/挂起任务。可设 status=blocked + triggerWhen 表示等待某条件（如等凭据）。要更新已有 Task（改状态/标题/原因等）时带上它的 id；新建则不带 id。",
@@ -149,6 +154,7 @@ export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: 
         blockedBy: { type: "array", items: { type: "string" } },
         triggerWhen: { type: "array", items: { type: "string" } },
         relatedFacts: { type: "array", items: { type: "string" } },
+        hypothesisIds: { type: "array", items: { type: "string" } },
         priority: { type: "string" },
       },
       required: ["title"],
@@ -167,6 +173,7 @@ export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: 
         if (Array.isArray(i.blockedBy)) patch.blockedBy = i.blockedBy;
         if (Array.isArray(i.triggerWhen)) patch.triggerWhen = i.triggerWhen;
         if (Array.isArray(i.relatedFacts)) patch.relatedFacts = i.relatedFacts;
+        if (Array.isArray(i.hypothesisIds)) patch.hypothesisIds = i.hypothesisIds;
         const task = tasks.update(i.id, patch as never);
         if (!task) return { ok: false, content: `更新失败：${i.id}` };
         const entry = timeline.append(caseId, "task_updated", `Task 更新: ${task.title}（第 ${task.updateCount} 次）`, task.id);
@@ -175,12 +182,14 @@ export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: 
         return { ok: true, content: `已更新 Task ${task.id}（第 ${task.updateCount} 次）` };
       }
       const task = tasks.create(caseId, {
+        runId: runId ?? null,
         title: String(i.title),
         status: normalizeStatus(i.status),
         reason: typeof i.reason === "string" ? i.reason : "",
         blockedBy: Array.isArray(i.blockedBy) ? (i.blockedBy as string[]) : [],
         triggerWhen: Array.isArray(i.triggerWhen) ? (i.triggerWhen as string[]) : [],
         relatedFacts: Array.isArray(i.relatedFacts) ? (i.relatedFacts as string[]) : [],
+        hypothesisIds: Array.isArray(i.hypothesisIds) ? (i.hypothesisIds as string[]) : [],
         priority: normalizePriority(i.priority),
       });
       const entry = timeline.append(caseId, "task_created", `Task (agent): ${task.title}`, task.id);

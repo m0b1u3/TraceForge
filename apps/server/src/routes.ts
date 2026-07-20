@@ -600,19 +600,23 @@ export function registerRoutes(
       };
 
     const registry = new ToolRegistry();
+    const runTimeline = {
+      append: (caseId: string, eventType: string, detail: string, refId?: string) =>
+        timelineStore.append(caseId, eventType, detail, refId, runId),
+    };
     registry.register(makeListTrafficTool(id, traffic));
     registry.register(makeGetTrafficTool(id, traffic));
-    registry.register(makeRecordFactTool(id, factStore, timelineStore, (e) => bus.emit(e)));
-    registry.register(makeRecordTaskTool(id, taskStore, timelineStore, (e) => bus.emit(e)));
-    registry.register(makeRecordActionTool(id, factStore, actionStore, decisionStore, timelineStore, (e) => bus.emit(e)));
-    registry.register(makeReopenTaskTool(id, taskStore, taskStore, factStore, timelineStore, (e) => bus.emit(e)));
-    registry.register(makeRevertDoneTaskTool(id, taskStore, taskStore, factStore, timelineStore, (e) => bus.emit(e)));
+    registry.register(makeRecordFactTool(id, factStore, runTimeline, (e) => bus.emit(e), runId));
+    registry.register(makeRecordTaskTool(id, taskStore, runTimeline, (e) => bus.emit(e), runId));
+    registry.register(makeRecordActionTool(id, factStore, actionStore, decisionStore, runTimeline, (e) => bus.emit(e)));
+    registry.register(makeReopenTaskTool(id, taskStore, taskStore, factStore, runTimeline, (e) => bus.emit(e)));
+    registry.register(makeRevertDoneTaskTool(id, taskStore, taskStore, factStore, runTimeline, (e) => bus.emit(e)));
     registry.register(makeHttpReplayTool(c.scopeRules, undefined, id, traffic, (e) => bus.emit(e)));
     registry.register(makeReplayTrafficTool(c.scopeRules, traffic, undefined, id, traffic, (e) => bus.emit(e)));
     registry.register(makeExtractApiEndpointsTool(id, c.scopeRules, {
       traffic,
       facts: factStore,
-      timeline: timelineStore,
+      timeline: runTimeline,
       emit: (e) => bus.emit(e),
       analyze: async (text, context) => {
         const res = await llm.extractJson({
@@ -672,8 +676,8 @@ export function registerRoutes(
       pendingInterventions.setScope(id, { host, reason });
       bus.emit({ type: "scope_expansion_proposed", caseId: id, host, reason });
     }));
-    registry.register(makeUpdateSessionStateTool(id, sessionStore));
-    registry.register(makeRecordHypothesisTool(id, hypothesisStore, factStore));
+    registry.register(makeUpdateSessionStateTool(id, sessionStore, runId));
+    registry.register(makeRecordHypothesisTool(id, hypothesisStore, factStore, runId));
     registry.register(makeResolveHypothesisTool(id, hypothesisStore, factStore));
     registry.register(makeSearchFactsTool(id, factStore, { expander: queryExpander }));
     registry.register(makeGetFactDetailTool(id, factStore));

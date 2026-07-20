@@ -8,9 +8,9 @@ type TaskInput = Omit<Task, "id" | "caseId" | "createdAt" | "updatedAt" | "updat
 
 function rowToTask(row: typeof tasks.$inferSelect): Task {
   return TaskSchema.parse({
-    id: row.id, caseId: row.caseId, title: row.title, status: row.status, reason: row.reason,
+    id: row.id, caseId: row.caseId, runId: row.runId, title: row.title, status: row.status, reason: row.reason,
     blockedBy: JSON.parse(row.blockedByJson), triggerWhen: JSON.parse(row.triggerWhenJson),
-    relatedFacts: JSON.parse(row.relatedFactsJson), priority: row.priority,
+    relatedFacts: JSON.parse(row.relatedFactsJson), hypothesisIds: JSON.parse(row.hypothesisIdsJson), priority: row.priority,
     createdAt: row.createdAt, updatedAt: row.updatedAt, updateCount: row.updateCount,
   });
 }
@@ -23,15 +23,15 @@ export class TaskStore {
     const now = new Date().toISOString();
     const t = TaskSchema.parse({ ...input, id, caseId, createdAt: now, updatedAt: now });
     this.db.insert(tasks).values({
-      id, caseId, title: t.title, status: t.status, reason: t.reason,
+      id, caseId, runId: t.runId, title: t.title, status: t.status, reason: t.reason,
       blockedByJson: JSON.stringify(t.blockedBy), triggerWhenJson: JSON.stringify(t.triggerWhen),
-      relatedFactsJson: JSON.stringify(t.relatedFacts), priority: t.priority,
+      relatedFactsJson: JSON.stringify(t.relatedFacts), hypothesisIdsJson: JSON.stringify(t.hypothesisIds ?? []), priority: t.priority,
       createdAt: now, updatedAt: now, updateCount: 0,
     }).run();
     return t;
   }
 
-  update(id: string, patch: Partial<Pick<Task, "title" | "status" | "reason" | "priority" | "blockedBy" | "triggerWhen" | "relatedFacts">>): Task | undefined {
+  update(id: string, patch: Partial<Pick<Task, "title" | "status" | "reason" | "priority" | "blockedBy" | "triggerWhen" | "relatedFacts" | "hypothesisIds">>): Task | undefined {
     const cur = this.getById(id);
     if (!cur) return undefined;
     const updatedAt = new Date().toISOString();
@@ -39,7 +39,8 @@ export class TaskStore {
     this.db.update(tasks).set({
       title: next.title, status: next.status, reason: next.reason, priority: next.priority,
       blockedByJson: JSON.stringify(next.blockedBy), triggerWhenJson: JSON.stringify(next.triggerWhen),
-      relatedFactsJson: JSON.stringify(next.relatedFacts), updateCount: next.updateCount, updatedAt,
+      relatedFactsJson: JSON.stringify(next.relatedFacts), hypothesisIdsJson: JSON.stringify(next.hypothesisIds ?? []),
+      updateCount: next.updateCount, updatedAt,
     }).where(eq(tasks.id, id)).run();
     return next;
   }

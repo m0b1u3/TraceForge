@@ -11,6 +11,9 @@ export const cases = sqliteTable("cases", {
 export const trafficEntries = sqliteTable("traffic_entries", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),
+  runId: text("run_id"),
+  identityId: text("identity_id"),
+  parentTrafficId: text("parent_traffic_id"),
   url: text("url").notNull(),
   method: text("method").notNull(),
   requestHeadersJson: text("request_headers_json").notNull(),
@@ -26,6 +29,7 @@ export const trafficEntries = sqliteTable("traffic_entries", {
 export const facts = sqliteTable("facts", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),
+  sourceRunId: text("source_run_id"),
   type: text("type").notNull(),
   title: text("title").notNull(),
   valueJson: text("value_json").notNull(),
@@ -36,17 +40,21 @@ export const facts = sqliteTable("facts", {
   updateCount: integer("update_count", { mode: "number" }).notNull().default(0),
   updatedAt: text("updated_at").notNull().default(""),
   validity: text("validity").notNull().default("valid"),
+  findingStatus: text("finding_status"),
+  observationsJson: text("observations_json").notNull().default("[]"),
 });
 
 export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),
+  runId: text("run_id"),
   title: text("title").notNull(),
   status: text("status").notNull(),
   reason: text("reason").notNull(),
   blockedByJson: text("blocked_by_json").notNull(),
   triggerWhenJson: text("trigger_when_json").notNull(),
   relatedFactsJson: text("related_facts_json").notNull(),
+  hypothesisIdsJson: text("hypothesis_ids_json").notNull().default("[]"),
   priority: text("priority").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
@@ -56,6 +64,7 @@ export const tasks = sqliteTable("tasks", {
 export const timeline = sqliteTable("timeline", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),
+  runId: text("run_id"),
   eventType: text("event_type").notNull(),
   refId: text("ref_id"),
   detail: text("detail").notNull(),
@@ -127,6 +136,7 @@ export const observerWarnings = sqliteTable("observer_warnings", {
 
 export const sessionState = sqliteTable("session_state", {
   caseId: text("case_id").primaryKey(),
+  runId: text("run_id"),
   currentGoal: text("current_goal").notNull(),
   phase: text("phase").notNull(),
   focusJson: text("focus_json").notNull(),
@@ -137,8 +147,10 @@ export const sessionState = sqliteTable("session_state", {
 export const hypotheses = sqliteTable("hypotheses", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),
+  runId: text("run_id"),
   statement: text("statement").notNull(),
   status: text("status").notNull(),
+  priorityScore: integer("priority_score").notNull().default(50),
   basedOnFactIdsJson: text("based_on_fact_ids_json").notNull(),
   relatedTaskIdsJson: text("related_task_ids_json").notNull(),
   createdAt: text("created_at").notNull(),
@@ -155,11 +167,22 @@ export const contextSummaries = sqliteTable("context_summaries", {
   createdAt: text("created_at").notNull(),
 });
 
+export const runCognitiveState = sqliteTable("run_cognitive_state", {
+  runId: text("run_id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  currentGoal: text("current_goal").notNull(),
+  phase: text("phase").notNull(),
+  focusJson: text("focus_json").notNull(),
+  activeHypothesisIdsJson: text("active_hypothesis_ids_json").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const agentRuns = sqliteTable("agent_runs", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),
   goal: text("goal").notNull(),
   status: text("status").notNull(),
+  priorityScore: integer("priority_score").notNull().default(50),
   createdAt: text("created_at").notNull(),
   startedAt: text("started_at"),
   finishedAt: text("finished_at"),

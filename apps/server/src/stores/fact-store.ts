@@ -8,10 +8,11 @@ type FactInput = Omit<Fact, "id" | "caseId" | "createdAt" | "updateCount" | "upd
 
 function rowToFact(row: typeof facts.$inferSelect): Fact {
   return FactSchema.parse({
-    id: row.id, caseId: row.caseId, type: row.type, title: row.title,
+    id: row.id, caseId: row.caseId, sourceRunId: row.sourceRunId, type: row.type, title: row.title,
     value: JSON.parse(row.valueJson), source: JSON.parse(row.sourceJson),
     confidence: row.confidence, tags: JSON.parse(row.tagsJson), createdAt: row.createdAt,
     updateCount: row.updateCount, updatedAt: row.updatedAt, validity: row.validity,
+    findingStatus: row.findingStatus, observations: JSON.parse(row.observationsJson),
   });
 }
 
@@ -23,10 +24,11 @@ export class FactStore {
     const createdAt = new Date().toISOString();
     const f = FactSchema.parse({ ...input, id, caseId, createdAt, updateCount: 0, updatedAt: createdAt });
     this.db.insert(facts).values({
-      id, caseId, type: f.type, title: f.title,
+      id, caseId, sourceRunId: f.sourceRunId, type: f.type, title: f.title,
       valueJson: JSON.stringify(f.value), sourceJson: JSON.stringify(f.source),
       confidence: f.confidence, tagsJson: JSON.stringify(f.tags), createdAt,
       updateCount: 0, updatedAt: createdAt, validity: f.validity,
+      findingStatus: f.findingStatus ?? null, observationsJson: JSON.stringify(f.observations ?? []),
     }).run();
     return f;
   }
@@ -36,7 +38,7 @@ export class FactStore {
     return row ? rowToFact(row) : undefined;
   }
 
-  update(id: string, patch: Partial<Pick<Fact, "type" | "title" | "value" | "confidence" | "tags" | "validity">>): Fact | undefined {
+  update(id: string, patch: Partial<Pick<Fact, "type" | "title" | "value" | "confidence" | "tags" | "validity" | "findingStatus" | "observations">>): Fact | undefined {
     const cur = this.getById(id);
     if (!cur) return undefined;
     const updatedAt = new Date().toISOString();
@@ -45,6 +47,7 @@ export class FactStore {
       type: next.type, title: next.title,
       valueJson: JSON.stringify(next.value), confidence: next.confidence,
       tagsJson: JSON.stringify(next.tags), validity: next.validity,
+      findingStatus: next.findingStatus ?? null, observationsJson: JSON.stringify(next.observations ?? []),
       updateCount: next.updateCount, updatedAt,
     }).where(eq(facts.id, id)).run();
     return next;

@@ -4,7 +4,7 @@ import { SessionStateSchema, HypothesisSchema, ContextSummarySchema } from "./sc
 describe("SessionStateSchema", () => {
   it("parses with defaults and closed phase enum", () => {
     const s = SessionStateSchema.parse({ caseId: "c1", updatedAt: "t" });
-    expect(s.phase).toBe("recon");
+    expect(s.phase).toBe("discover");
     expect(s.currentGoal).toBe("");
     expect(s.focus).toEqual({});
     expect(s.activeHypothesisIds).toEqual([]);
@@ -17,7 +17,7 @@ describe("SessionStateSchema", () => {
 describe("HypothesisSchema", () => {
   it("parses with defaults", () => {
     const h = HypothesisSchema.parse({ id: "h1", caseId: "c1", statement: "可能越权", basedOnFactIds: ["f1"], createdAt: "t", updatedAt: "t" });
-    expect(h.status).toBe("open");
+    expect(h.status).toBe("candidate");
     expect(h.relatedTaskIds).toEqual([]);
     expect(h.updateCount).toBe(0);
   });

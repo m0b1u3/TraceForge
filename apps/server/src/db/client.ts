@@ -11,6 +11,7 @@ export function createDb(path: string) {
     );
     CREATE TABLE IF NOT EXISTS traffic_entries (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, url TEXT NOT NULL, method TEXT NOT NULL,
+      run_id TEXT, identity_id TEXT, parent_traffic_id TEXT,
       request_headers_json TEXT NOT NULL, request_body TEXT, response_status INTEGER,
       response_headers_json TEXT, response_size INTEGER, content_type TEXT, response_body TEXT,
       created_at TEXT NOT NULL
@@ -18,22 +19,25 @@ export function createDb(path: string) {
     CREATE INDEX IF NOT EXISTS idx_traffic_case ON traffic_entries(case_id);
     CREATE TABLE IF NOT EXISTS facts (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL,
+      source_run_id TEXT,
       value_json TEXT NOT NULL, source_json TEXT NOT NULL, confidence REAL NOT NULL,
       tags_json TEXT NOT NULL, created_at TEXT NOT NULL,
-      update_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '', validity TEXT NOT NULL DEFAULT 'valid'
+      update_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '', validity TEXT NOT NULL DEFAULT 'valid',
+      finding_status TEXT, observations_json TEXT NOT NULL DEFAULT '[]'
     );
     CREATE INDEX IF NOT EXISTS idx_facts_case ON facts(case_id);
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
+      run_id TEXT,
       reason TEXT NOT NULL, blocked_by_json TEXT NOT NULL, trigger_when_json TEXT NOT NULL,
-      related_facts_json TEXT NOT NULL, priority TEXT NOT NULL,
+      related_facts_json TEXT NOT NULL, hypothesis_ids_json TEXT NOT NULL DEFAULT '[]', priority TEXT NOT NULL,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       update_count INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_tasks_case ON tasks(case_id);
     CREATE TABLE IF NOT EXISTS timeline (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, event_type TEXT NOT NULL,
-      ref_id TEXT, detail TEXT NOT NULL, created_at TEXT NOT NULL
+      run_id TEXT, ref_id TEXT, detail TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_timeline_case ON timeline(case_id);
     CREATE TABLE IF NOT EXISTS action_cards (
@@ -72,13 +76,14 @@ export function createDb(path: string) {
     CREATE INDEX IF NOT EXISTS idx_agent_events_case ON agent_events(case_id);
     CREATE TABLE IF NOT EXISTS session_state (
       case_id TEXT PRIMARY KEY,
+      run_id TEXT,
       current_goal TEXT NOT NULL, phase TEXT NOT NULL,
       focus_json TEXT NOT NULL, active_hypothesis_ids_json TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS hypotheses (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, statement TEXT NOT NULL,
-      status TEXT NOT NULL, based_on_fact_ids_json TEXT NOT NULL,
+      run_id TEXT, status TEXT NOT NULL, priority_score INTEGER NOT NULL DEFAULT 50, based_on_fact_ids_json TEXT NOT NULL,
       related_task_ids_json TEXT NOT NULL, created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL, update_count INTEGER NOT NULL
     );
@@ -97,6 +102,13 @@ export function createDb(path: string) {
       completion_tokens INTEGER NOT NULL DEFAULT 0,
       total_tokens INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS run_cognitive_state (
+      run_id TEXT PRIMARY KEY, case_id TEXT NOT NULL,
+      current_goal TEXT NOT NULL, phase TEXT NOT NULL,
+      focus_json TEXT NOT NULL, active_hypothesis_ids_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_run_cognitive_state_case ON run_cognitive_state(case_id);
     CREATE INDEX IF NOT EXISTS idx_agent_runs_case ON agent_runs(case_id, created_at);
     CREATE TABLE IF NOT EXISTS agent_run_usage (
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL, case_id TEXT NOT NULL, turn INTEGER NOT NULL,
@@ -125,6 +137,30 @@ export function createDb(path: string) {
   if (!trafficColumns.some((c) => c.name === "response_headers_json")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN response_headers_json TEXT");
   if (!trafficColumns.some((c) => c.name === "response_size")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN response_size INTEGER");
   if (!trafficColumns.some((c) => c.name === "content_type")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN content_type TEXT");
+  if (!trafficColumns.some((c) => c.name === "run_id")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN run_id TEXT");
+  if (!trafficColumns.some((c) => c.name === "identity_id")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN identity_id TEXT");
+  if (!trafficColumns.some((c) => c.name === "parent_traffic_id")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN parent_traffic_id TEXT");
+  const ensureColumns = (table: string, columns: Array<{ name: string; definition: string }>) => {
+    const existing = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    for (const column of columns) {
+      if (!existing.some((item) => item.name === column.name)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column.name} ${column.definition}`);
+    }
+  };
+  ensureColumns("facts", [
+    { name: "source_run_id", definition: "TEXT" },
+    { name: "finding_status", definition: "TEXT" },
+    { name: "observations_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
+  ]);
+  ensureColumns("tasks", [
+    { name: "run_id", definition: "TEXT" },
+    { name: "hypothesis_ids_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
+  ]);
+  ensureColumns("timeline", [{ name: "run_id", definition: "TEXT" }]);
+  ensureColumns("session_state", [{ name: "run_id", definition: "TEXT" }]);
+  ensureColumns("hypotheses", [
+    { name: "run_id", definition: "TEXT" },
+    { name: "priority_score", definition: "INTEGER NOT NULL DEFAULT 50" },
+  ]);
   const usageColumns = sqlite.prepare("PRAGMA table_info(agent_run_usage)").all() as Array<{ name: string }>;
   const hasUsageColumn = (name: string) => usageColumns.some((column) => column.name === name);
   if (!hasUsageColumn("currency")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN currency TEXT");

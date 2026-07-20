@@ -34,6 +34,9 @@ export type CaseSummary = z.infer<typeof CaseSummarySchema>;
 export const TrafficEntrySchema = z.object({
   id: z.string(),
   caseId: z.string(),
+  runId: z.string().nullable().optional(),
+  identityId: z.string().nullable().optional(),
+  parentTrafficId: z.string().nullable().optional(),
   url: z.string(),
   method: z.string(),
   requestHeaders: z.record(z.string()).default({}),
@@ -65,6 +68,7 @@ export const COMMON_FACT_SOURCES = [
 export const FactSchema = z.object({
   id: z.string(),
   caseId: z.string(),
+  sourceRunId: z.string().nullable().optional(),
   // 开放字符串：非空即可，类型由 LLM 决定，TS 不限制可选值
   type: z.string().min(1),
   title: z.string(),
@@ -80,13 +84,25 @@ export const FactSchema = z.object({
   createdAt: z.string(),
   updateCount: z.number().default(0),
   updatedAt: z.string().default(""),
-  validity: z.enum(["valid", "superseded"]).default("valid"),
+  validity: z.enum(["valid", "conflicted", "superseded"]).default("valid"),
+  findingStatus: z.enum(["candidate", "validating", "verified", "needs_review", "rejected", "stale"]).nullable().optional(),
+  observations: z.array(z.object({
+    id: z.string(),
+    sourceType: z.string().min(1),
+    sourceRef: z.string().min(1),
+    runId: z.string().nullable().optional(),
+    identityId: z.string().nullable().optional(),
+    condition: z.string().default(""),
+    summary: z.string(),
+    observedAt: z.string(),
+  })).optional(),
 });
 export type Fact = z.infer<typeof FactSchema>;
 
 export const TaskSchema = z.object({
   id: z.string(),
   caseId: z.string(),
+  runId: z.string().nullable().optional(),
   title: z.string(),
   status: z.enum([
     "open", "blocked", "recheck_candidate", "approved", "running",
@@ -96,6 +112,7 @@ export const TaskSchema = z.object({
   blockedBy: z.array(z.string()).default([]),
   triggerWhen: z.array(z.string()).default([]),
   relatedFacts: z.array(z.string()).default([]),
+  hypothesisIds: z.array(z.string()).optional(),
   priority: z.enum(["low", "medium", "high"]).default("medium"),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -106,6 +123,7 @@ export type Task = z.infer<typeof TaskSchema>;
 export const TimelineEntrySchema = z.object({
   id: z.string(),
   caseId: z.string(),
+  runId: z.string().nullable().optional(),
   eventType: z.string(),
   refId: z.string().nullable().default(null),
   detail: z.string(),
@@ -205,8 +223,9 @@ export type AgentEvent = z.infer<typeof AgentEventSchema>;
 
 export const SessionStateSchema = z.object({
   caseId: z.string(),
+  runId: z.string().nullable().optional(),
   currentGoal: z.string().default(""),
-  phase: z.enum(["recon", "analyze", "exploit", "report"]).default("recon"),
+  phase: z.enum(["scope", "discover", "map", "test", "validate", "chain", "report", "recon", "analyze", "exploit"]).default("discover"),
   focus: z.object({
     host: z.string().optional(),
     url: z.string().optional(),
@@ -220,8 +239,10 @@ export type SessionState = z.infer<typeof SessionStateSchema>;
 export const HypothesisSchema = z.object({
   id: z.string(),
   caseId: z.string(),
+  runId: z.string().nullable().optional(),
   statement: z.string().min(1),
-  status: z.enum(["open", "confirmed", "refuted"]).default("open"),
+  status: z.enum(["open", "candidate", "active", "confirmed", "refuted", "archived"]).default("candidate"),
+  priorityScore: z.number().min(0).max(100).optional(),
   basedOnFactIds: z.array(z.string()),
   relatedTaskIds: z.array(z.string()).default([]),
   createdAt: z.string(),

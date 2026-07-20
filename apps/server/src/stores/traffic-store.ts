@@ -9,7 +9,8 @@ export class TrafficStore {
   add(entry: TrafficEntry): void {
     const e = TrafficEntrySchema.parse(entry);
     this.db.insert(trafficEntries).values({
-      id: e.id, caseId: e.caseId, url: e.url, method: e.method,
+      id: e.id, caseId: e.caseId, runId: e.runId, identityId: e.identityId,
+      parentTrafficId: e.parentTrafficId, url: e.url, method: e.method,
       requestHeadersJson: JSON.stringify(e.requestHeaders),
       requestBody: e.requestBody,
       responseStatus: e.responseStatus,
@@ -39,7 +40,8 @@ export class TrafficStore {
         .limit(options.limit).offset(options.offset ?? 0).all().reverse();
     return rows.map((row) =>
         TrafficEntrySchema.parse({
-          id: row.id, caseId: row.caseId, url: row.url, method: row.method,
+          id: row.id, caseId: row.caseId, runId: row.runId, identityId: row.identityId,
+          parentTrafficId: row.parentTrafficId, url: row.url, method: row.method,
           requestHeaders: JSON.parse(row.requestHeadersJson),
           requestBody: row.requestBody,
           responseStatus: row.responseStatus,

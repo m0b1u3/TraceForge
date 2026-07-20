@@ -7,12 +7,12 @@ import { type TimelineEntry, TimelineEntrySchema } from "@traceforge/shared";
 export class TimelineStore {
   constructor(private db: Db) {}
 
-  append(caseId: string, eventType: string, detail: string, refId?: string): TimelineEntry {
+  append(caseId: string, eventType: string, detail: string, refId?: string, runId?: string | null): TimelineEntry {
     const id = `tl_${randomUUID()}`;
     const createdAt = new Date().toISOString();
-    const e = TimelineEntrySchema.parse({ id, caseId, eventType, refId: refId ?? null, detail, createdAt });
+    const e = TimelineEntrySchema.parse({ id, caseId, runId: runId ?? null, eventType, refId: refId ?? null, detail, createdAt });
     this.db.insert(timeline).values({
-      id, caseId, eventType, refId: e.refId, detail, createdAt,
+      id, caseId, runId: e.runId, eventType, refId: e.refId, detail, createdAt,
     }).run();
     return e;
   }
@@ -27,7 +27,7 @@ export class TimelineStore {
         .limit(options.limit).offset(options.offset ?? 0).all().reverse();
     return rows.map((row) =>
         TimelineEntrySchema.parse({
-          id: row.id, caseId: row.caseId, eventType: row.eventType,
+          id: row.id, caseId: row.caseId, runId: row.runId, eventType: row.eventType,
           refId: row.refId, detail: row.detail, createdAt: row.createdAt,
         }),
       );
