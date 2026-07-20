@@ -31,7 +31,9 @@ export function createDb(path: string) {
       executive_summary TEXT NOT NULL, scope TEXT NOT NULL, methodology TEXT NOT NULL,
       limitations_json TEXT NOT NULL DEFAULT '[]', finding_fact_ids_json TEXT NOT NULL,
       attack_path_ids_json TEXT NOT NULL DEFAULT '[]', evidence_refs_json TEXT NOT NULL,
-      source_run_ids_json TEXT NOT NULL DEFAULT '[]', version INTEGER NOT NULL DEFAULT 1,
+      source_run_ids_json TEXT NOT NULL DEFAULT '[]', review_status TEXT NOT NULL DEFAULT 'current',
+      review_reasons_json TEXT NOT NULL DEFAULT '[]', dependency_versions_json TEXT NOT NULL DEFAULT '{}',
+      version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_security_reports_case ON security_reports(case_id, updated_at);
@@ -180,6 +182,11 @@ export function createDb(path: string) {
     { name: "action_ids_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
     { name: "verification_summary", definition: "TEXT" },
     { name: "observations_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
+  ]);
+  ensureColumns("security_reports", [
+    { name: "review_status", definition: "TEXT NOT NULL DEFAULT 'current'" },
+    { name: "review_reasons_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
+    { name: "dependency_versions_json", definition: "TEXT NOT NULL DEFAULT '{}'" },
   ]);
   ensureColumns("tasks", [
     { name: "run_id", definition: "TEXT" },

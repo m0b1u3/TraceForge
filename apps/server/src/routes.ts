@@ -49,6 +49,7 @@ import { HypothesisScheduler } from "./hypothesis-scheduler.js";
 import { IdentityStore } from "./stores/identity-store.js";
 import { AttackPathStore } from "./stores/attack-path-store.js";
 import { SecurityReportStore } from "./stores/security-report-store.js";
+import { securityReportExport, securityReportMarkdown } from "./security-report-export.js";
 import { ObserverScheduler } from "./observer-scheduler.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
@@ -115,6 +116,17 @@ export function registerRoutes(
   const identityStore = new IdentityStore(db);
   const attackPathStore = new AttackPathStore(db);
   const securityReportStore = new SecurityReportStore(db);
+  bus.subscribe((event) => {
+    const dependency = event.type === "fact_updated"
+      ? { caseId: event.fact.caseId, id: event.fact.id }
+      : event.type === "attack_path_updated"
+        ? { caseId: event.attackPath.caseId, id: event.attackPath.id }
+        : null;
+    if (!dependency) return;
+    for (const report of securityReportStore.refreshAffected(dependency.caseId, dependency.id)) {
+      bus.emit({ type: "security_report_updated", report });
+    }
+  });
   const contextSummaryStore = new ContextSummaryStore(db);
   const approvals = new ApprovalRegistry();
   const pendingInterventions = new PendingInterventionRegistry();
@@ -459,6 +471,21 @@ export function registerRoutes(
     const { id } = req.params as { id: string };
     if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
     return securityReportStore.listByCase(id);
+  });
+
+  app.get("/api/cases/:id/security-reports/:reportId/export", async (req, reply) => {
+    const { id, reportId } = req.params as { id: string; reportId: string };
+    const { format = "markdown" } = req.query as { format?: string };
+    const document = securityReportExport(db, reportId);
+    if (!document || document.report.caseId !== id) return reply.code(404).send({ error: "security report not found" });
+    const safeName = document.report.title.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || "security-report";
+    if (format === "json") {
+      return reply.header("content-disposition", `attachment; filename="${safeName}.json"`)
+        .type("application/json").send(document);
+    }
+    if (format !== "markdown") return reply.code(400).send({ error: "format must be markdown or json" });
+    return reply.header("content-disposition", `attachment; filename="${safeName}.md"`)
+      .type("text/markdown; charset=utf-8").send(securityReportMarkdown(document));
   });
 
   app.post("/api/cases/:id/scope/reject", async (req, reply) => {

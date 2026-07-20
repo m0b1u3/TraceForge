@@ -4,8 +4,9 @@ import { SecurityReportSchema, type SecurityReport } from "@traceforge/shared";
 import type { Db } from "../db/client.js";
 import { attackPaths, facts, securityReports } from "../db/schema.js";
 
-export type SecurityReportInput = Omit<SecurityReport, "id" | "caseId" | "version" | "createdAt" | "updatedAt">;
-export type SecurityReportPatch = Partial<Omit<SecurityReportInput, "sourceRunIds">> & { sourceRunIds?: string[] };
+type ManagedFields = "id" | "caseId" | "reviewStatus" | "reviewReasons" | "dependencyVersions" | "version" | "createdAt" | "updatedAt";
+export type SecurityReportInput = Omit<SecurityReport, ManagedFields>;
+export type SecurityReportPatch = Partial<SecurityReportInput>;
 
 function hydrate(row: typeof securityReports.$inferSelect): SecurityReport {
   return SecurityReportSchema.parse({
@@ -21,6 +22,9 @@ function hydrate(row: typeof securityReports.$inferSelect): SecurityReport {
     attackPathIds: JSON.parse(row.attackPathIdsJson),
     evidenceRefs: JSON.parse(row.evidenceRefsJson),
     sourceRunIds: JSON.parse(row.sourceRunIdsJson),
+    reviewStatus: row.reviewStatus,
+    reviewReasons: JSON.parse(row.reviewReasonsJson),
+    dependencyVersions: JSON.parse(row.dependencyVersionsJson),
     version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -34,6 +38,9 @@ export class SecurityReportStore {
     const now = new Date().toISOString();
     const report = SecurityReportSchema.parse({
       ...input,
+      reviewStatus: "current",
+      reviewReasons: [],
+      dependencyVersions: this.dependencyVersions(caseId, input.findingFactIds, input.evidenceRefs, input.attackPathIds),
       id: `report_${randomUUID()}`,
       caseId,
       version: 1,
@@ -51,6 +58,14 @@ export class SecurityReportStore {
     const next = SecurityReportSchema.parse({
       ...current,
       ...patch,
+      reviewStatus: "current",
+      reviewReasons: [],
+      dependencyVersions: this.dependencyVersions(
+        current.caseId,
+        patch.findingFactIds ?? current.findingFactIds,
+        patch.evidenceRefs ?? current.evidenceRefs,
+        patch.attackPathIds ?? current.attackPathIds,
+      ),
       id: current.id,
       caseId: current.caseId,
       version: current.version + 1,
@@ -70,6 +85,27 @@ export class SecurityReportStore {
   listByCase(caseId: string): SecurityReport[] {
     return this.db.select().from(securityReports).where(eq(securityReports.caseId, caseId))
       .orderBy(desc(securityReports.updatedAt)).all().map(hydrate);
+  }
+
+  refreshAffected(caseId: string, dependencyId: string): SecurityReport[] {
+    const affected = this.listByCase(caseId).filter((report) =>
+      report.findingFactIds.includes(dependencyId)
+      || report.evidenceRefs.includes(dependencyId)
+      || report.attackPathIds.includes(dependencyId));
+    return affected.flatMap((report) => {
+      const reasons = this.reviewReasons(report);
+      const reviewStatus = reasons.length ? "needs_review" as const : "current" as const;
+      if (report.reviewStatus === reviewStatus && JSON.stringify(report.reviewReasons) === JSON.stringify(reasons)) return [];
+      const updated = SecurityReportSchema.parse({
+        ...report,
+        reviewStatus,
+        reviewReasons: reasons,
+        version: report.version + 1,
+        updatedAt: new Date().toISOString(),
+      });
+      this.db.update(securityReports).set(this.values(updated)).where(eq(securityReports.id, report.id)).run();
+      return [updated];
+    });
   }
 
   private validate(report: SecurityReport): void {
@@ -133,9 +169,57 @@ export class SecurityReportStore {
       attackPathIdsJson: JSON.stringify(report.attackPathIds),
       evidenceRefsJson: JSON.stringify(report.evidenceRefs),
       sourceRunIdsJson: JSON.stringify(report.sourceRunIds),
+      reviewStatus: report.reviewStatus,
+      reviewReasonsJson: JSON.stringify(report.reviewReasons),
+      dependencyVersionsJson: JSON.stringify(report.dependencyVersions),
       version: report.version,
       createdAt: report.createdAt,
       updatedAt: report.updatedAt,
     };
+  }
+
+  private dependencyVersions(caseId: string, findingIds: string[], evidenceIds: string[], pathIds: string[]): Record<string, number> {
+    const factIds = new Set([...findingIds, ...evidenceIds]);
+    const factVersions = this.db.select({ id: facts.id, version: facts.updateCount }).from(facts)
+      .where(eq(facts.caseId, caseId)).all()
+      .filter((fact) => factIds.has(fact.id));
+    const pathVersions = this.db.select({ id: attackPaths.id, version: attackPaths.version }).from(attackPaths)
+      .where(eq(attackPaths.caseId, caseId)).all()
+      .filter((path) => pathIds.includes(path.id));
+    return Object.fromEntries([...factVersions, ...pathVersions].map((item) => [item.id, item.version]));
+  }
+
+  private reviewReasons(report: SecurityReport): string[] {
+    const reasons: string[] = [];
+    const factIds = new Set([...report.findingFactIds, ...report.evidenceRefs]);
+    const factRows = this.db.select({
+      id: facts.id, version: facts.updateCount, validity: facts.validity,
+      type: facts.type, status: facts.findingStatus,
+    }).from(facts).where(eq(facts.caseId, report.caseId)).all()
+      .filter((fact) => factIds.has(fact.id));
+    const factsById = new Map(factRows.map((fact) => [fact.id, fact]));
+    for (const id of factIds) {
+      const fact = factsById.get(id);
+      if (!fact) reasons.push(`Referenced Fact ${id} is no longer available.`);
+      else if (fact.version !== report.dependencyVersions[id]) reasons.push(`Fact ${id} changed after this report was generated.`);
+      if (fact && fact.validity !== "valid") reasons.push(`Fact ${id} is ${fact.validity}.`);
+    }
+    for (const id of report.findingFactIds) {
+      const finding = factsById.get(id);
+      if (finding && (finding.type !== "finding" || finding.status !== "verified")) reasons.push(`Finding ${id} is no longer verified.`);
+    }
+    const paths = this.db.select({ id: attackPaths.id, version: attackPaths.version, status: attackPaths.status })
+      .from(attackPaths).where(eq(attackPaths.caseId, report.caseId)).all()
+      .filter((path) => report.attackPathIds.includes(path.id));
+    const pathsById = new Map(paths.map((path) => [path.id, path]));
+    for (const id of report.attackPathIds) {
+      const path = pathsById.get(id);
+      if (!path) reasons.push(`Attack path ${id} is no longer available.`);
+      else {
+        if (path.version !== report.dependencyVersions[id]) reasons.push(`Attack path ${id} changed after this report was generated.`);
+        if (path.status !== "validated") reasons.push(`Attack path ${id} is no longer validated.`);
+      }
+    }
+    return [...new Set(reasons)];
   }
 }

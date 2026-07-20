@@ -5,6 +5,11 @@ import { FactStore } from "./stores/fact-store.js";
 import { HypothesisStore } from "./stores/hypothesis-store.js";
 import { SecurityReportStore } from "./stores/security-report-store.js";
 import { TaskStore } from "./stores/task-store.js";
+import { securityReportExport, securityReportMarkdown } from "./security-report-export.js";
+import Fastify from "fastify";
+import { EventBus } from "./event-bus.js";
+import { registerRoutes } from "./routes.js";
+import { CaseStore } from "./stores/case-store.js";
 
 function verifiedFinding(db: ReturnType<typeof createDb>, caseId: string) {
   const facts = new FactStore(db);
@@ -78,5 +83,56 @@ describe("SecurityReportStore real SQLite lifecycle", () => {
     expect(() => reports.create("case_1", { ...base, evidenceRefs: [foreign.evidence.id] })).toThrow(/missing or belong/);
     expect(() => reports.create("case_1", { ...base, evidenceRefs: [finding.id] })).toThrow(/omits Finding evidence/);
     expect(() => reports.create("case_1", { ...base, sourceRunIds: [] })).toThrow(/run provenance/);
+  });
+
+  it("marks reports for review when evidence changes and exports persisted content deterministically", () => {
+    const db = createDb(":memory:");
+    const { evidence, finding } = verifiedFinding(db, "case_1");
+    const reports = new SecurityReportStore(db);
+    const report = reports.create("case_1", {
+      title: "Authorization review", status: "final", executiveSummary: "Verified IDOR.",
+      scope: "Order API", methodology: "Controlled replay", limitations: ["Read-only validation."],
+      findingFactIds: [finding.id], attackPathIds: [], evidenceRefs: [evidence.id], sourceRunIds: ["run_1"],
+    });
+    new FactStore(db).update(evidence.id, { title: "Cross-identity response re-evaluated" });
+    const [stale] = reports.refreshAffected("case_1", evidence.id);
+    expect(stale).toMatchObject({ reviewStatus: "needs_review", version: 2 });
+    expect(stale.reviewReasons.join(" ")).toContain(evidence.id);
+
+    const document = securityReportExport(db, report.id, "2026-07-20T03:00:00.000Z");
+    expect(document).toMatchObject({ schemaVersion: 1, exportedAt: "2026-07-20T03:00:00.000Z" });
+    const markdown = securityReportMarkdown(document!);
+    expect(markdown).toContain("# Authorization review");
+    expect(markdown).toContain("## Review required");
+    expect(markdown).toContain("Read-only validation.");
+  });
+
+  it("serves Markdown and JSON exports from the real HTTP route", async () => {
+    const db = createDb(":memory:");
+    const caseId = new CaseStore(db).create("Export route", []).id;
+    const { evidence, finding } = verifiedFinding(db, caseId);
+    const report = new SecurityReportStore(db).create(caseId, {
+      title: "Order API review", status: "final", executiveSummary: "Verified IDOR.",
+      scope: "Order API", methodology: "Controlled replay", limitations: [],
+      findingFactIds: [finding.id], attackPathIds: [], evidenceRefs: [evidence.id], sourceRunIds: ["run_1"],
+    });
+    const app = Fastify();
+    const bus = new EventBus();
+    registerRoutes(app, db, bus);
+    await app.ready();
+    const changedEvidence = new FactStore(db).update(evidence.id, { title: "Re-evaluated response" });
+    if (!changedEvidence) throw new Error("evidence update failed");
+    bus.emit({ type: "fact_updated", fact: changedEvidence });
+    const reports = await app.inject({ url: `/api/cases/${caseId}/security-reports` });
+    expect(reports.json()[0]).toMatchObject({ id: report.id, reviewStatus: "needs_review" });
+    const markdown = await app.inject({ url: `/api/cases/${caseId}/security-reports/${report.id}/export?format=markdown` });
+    expect(markdown.statusCode).toBe(200);
+    expect(markdown.headers["content-type"]).toContain("text/markdown");
+    expect(markdown.headers["content-disposition"]).toContain(".md");
+    expect(markdown.body).toContain("# Order API review");
+    const json = await app.inject({ url: `/api/cases/${caseId}/security-reports/${report.id}/export?format=json` });
+    expect(json.statusCode).toBe(200);
+    expect(json.json()).toMatchObject({ schemaVersion: 1, report: { id: report.id } });
+    await app.close();
   });
 });

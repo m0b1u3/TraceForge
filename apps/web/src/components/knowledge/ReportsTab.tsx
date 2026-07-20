@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { CheckCircle, FileText, GitBranch, ShieldCheck } from "@phosphor-icons/react";
+import { CheckCircle, DownloadSimple, FileText, GitBranch, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
 import { useStore } from "../../store.js";
+import { downloadSecurityReport } from "../../api.js";
+import { Button } from "../ui/button.js";
 
 export function ReportsTab() {
   const reports = useStore((state) => state.securityReports);
   const facts = useStore((state) => state.facts);
   const paths = useStore((state) => state.attackPaths);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<"markdown" | "json" | null>(null);
   const selected = reports.find((report) => report.id === selectedId) ?? reports[0];
 
   if (!selected) {
@@ -28,6 +31,14 @@ export function ReportsTab() {
     const path = paths.find((item) => item.id === id);
     return path ? [path] : [];
   });
+  const exportReport = async (format: "markdown" | "json") => {
+    setExporting(format);
+    try {
+      await downloadSecurityReport(selected.caseId, selected.id, format);
+    } finally {
+      setExporting(null);
+    }
+  };
 
   return (
     <div className="report-workbench">
@@ -43,8 +54,25 @@ export function ReportsTab() {
       <article>
         <header>
           <div><span className="section-kicker">Security report</span><h3>{selected.title}</h3></div>
-          <span className="report-status" data-status={selected.status}><ShieldCheck size={14} weight="fill" />{selected.status}</span>
+          <div className="report-actions">
+            <span className="report-status" data-status={selected.reviewStatus === "needs_review" ? "needs_review" : selected.status}>
+              {selected.reviewStatus === "needs_review" ? <WarningCircle size={14} weight="fill" /> : <ShieldCheck size={14} weight="fill" />}
+              {selected.reviewStatus === "needs_review" ? "review required" : selected.status}
+            </span>
+            <Button type="button" variant="ghost" size="sm" disabled={exporting !== null} onClick={() => void exportReport("markdown")} aria-label="Export report as Markdown">
+              <DownloadSimple size={13} />{exporting === "markdown" ? "Exporting" : "MD"}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" disabled={exporting !== null} onClick={() => void exportReport("json")} aria-label="Export report as JSON">
+              <DownloadSimple size={13} />{exporting === "json" ? "Exporting" : "JSON"}
+            </Button>
+          </div>
         </header>
+        {selected.reviewReasons.length > 0 && (
+          <aside className="report-review-warning" aria-label="Report requires review">
+            <WarningCircle size={16} weight="fill" />
+            <div><strong>Dependencies changed after generation</strong>{selected.reviewReasons.map((reason) => <p key={reason}>{reason}</p>)}</div>
+          </aside>
+        )}
         <section>
           <h4>Executive summary</h4>
           <p>{selected.executiveSummary}</p>

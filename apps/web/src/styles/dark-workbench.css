@@ -1814,6 +1814,23 @@ textarea:focus-visible,
   text-transform: uppercase;
 }
 .report-status[data-status="final"] { color: var(--success); }
+.report-status[data-status="needs_review"] { color: var(--warning); }
+.report-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+.report-actions .report-status { margin-right: 2px; }
+.report-review-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--warning);
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 7%, transparent);
+}
+.report-review-warning > svg { flex: 0 0 auto; margin-top: 2px; }
+.report-review-warning div { display: grid; gap: 3px; }
+.report-review-warning strong { color: var(--foreground); font-size: var(--type-control); }
+.report-review-warning p { margin: 0; color: var(--foreground-secondary); font-size: var(--type-meta); line-height: 1.45; }
 .report-workbench section { padding: 16px 0; border-bottom: 1px solid var(--border-subtle); }
 .report-workbench section h4 {
   margin: 0 0 8px;

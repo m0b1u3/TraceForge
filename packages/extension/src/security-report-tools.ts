@@ -2,8 +2,8 @@ import type { RuntimeEvent, SecurityReport } from "@traceforge/shared";
 import type { ToolDescriptor } from "./tool.js";
 
 export interface SecurityReportWriter {
-  create(caseId: string, input: Omit<SecurityReport, "id" | "caseId" | "version" | "createdAt" | "updatedAt">): SecurityReport;
-  update(id: string, patch: Partial<Omit<SecurityReport, "id" | "caseId" | "version" | "createdAt" | "updatedAt">>): SecurityReport | undefined;
+  create(caseId: string, input: Omit<SecurityReport, "id" | "caseId" | "reviewStatus" | "reviewReasons" | "dependencyVersions" | "version" | "createdAt" | "updatedAt">): SecurityReport;
+  update(id: string, patch: Partial<Omit<SecurityReport, "id" | "caseId" | "reviewStatus" | "reviewReasons" | "dependencyVersions" | "version" | "createdAt" | "updatedAt">>): SecurityReport | undefined;
   listByCase(caseId: string): SecurityReport[];
 }
 

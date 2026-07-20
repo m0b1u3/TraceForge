@@ -115,6 +115,21 @@ export async function listSecurityReports(caseId: string): Promise<SecurityRepor
   return response.json();
 }
 
+export async function downloadSecurityReport(caseId: string, reportId: string, format: "markdown" | "json"): Promise<void> {
+  const response = await ensureOk(
+    await fetch(`/api/cases/${caseId}/security-reports/${reportId}/export?format=${format}`),
+    "Export security report",
+  );
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? `security-report.${format === "json" ? "json" : "md"}`;
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function clearTraffic(caseId: string): Promise<{ deleted: number }> {
   const response = await ensureOk(await fetch(`/api/cases/${caseId}/traffic`, { method: "DELETE" }), "Clear traffic");
   return response.json() as Promise<{ deleted: number }>;

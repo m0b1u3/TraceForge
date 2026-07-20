@@ -44,6 +44,7 @@ describe("store security reports", () => {
       executiveSummary: "Verified finding", scope: "API", methodology: "Replay",
       limitations: [], findingFactIds: ["finding_1"], attackPathIds: [],
       evidenceRefs: ["evidence_1"], sourceRunIds: ["run_1"], version: 1,
+      reviewStatus: "current" as const, reviewReasons: [], dependencyVersions: { finding_1: 0, evidence_1: 0 },
       createdAt: "now", updatedAt: "now",
     };
     useStore.getState().handleRuntimeEvent({ type: "security_report_created", report });
