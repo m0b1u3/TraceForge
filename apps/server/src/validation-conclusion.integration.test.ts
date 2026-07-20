@@ -62,7 +62,7 @@ describe("validation conclusion lifecycle with real SQLite", () => {
     }
     const events: string[] = [];
     const tool = makeRecordValidationConclusionTool({
-      caseId: "case_1", runId: "run_2", facts, traffic, conclusions, consensus, timeline,
+      caseId: "case_1", runId: "run_2", facts, traffic, conclusions, consensus, timeline, tasks,
       emit: (event) => events.push(event.type),
     });
 
@@ -94,7 +94,20 @@ describe("validation conclusion lifecycle with real SQLite", () => {
     expect(facts.getById(finding.id)?.findingStatus).toBe("needs_review");
     expect(conclusions.listByCase("case_1").map((item) => item.verdict)).toEqual(["supports", "refutes"]);
     expect(consensus.listByCase("case_1")[0].status).toBe("conflicted");
+    const repeated = await tool.execute({
+      findingId: finding.id,
+      gapId: `gap:${finding.id}:recheck`,
+      baselineTrafficId: "baseline",
+      variantTrafficId: "denied",
+      protectedFields: ["order.secret"],
+      identityId: "bob",
+    });
+    expect(repeated.ok).toBe(true);
+    const followups = tasks.listByCase("case_1").filter((item) => item.title.startsWith(`[Consensus:${finding.id}:`));
+    expect(followups).toHaveLength(2);
+    expect(followups.filter((item) => item.status === "open")).toHaveLength(1);
+    expect(followups.find((item) => item.status === "open")?.title).toContain("conflicted");
     expect(events).toContain("fact_updated");
-    expect(timeline.listByCase("case_1").filter((item) => item.eventType === "validation_conclusion_recorded")).toHaveLength(2);
+    expect(timeline.listByCase("case_1").filter((item) => item.eventType === "validation_conclusion_recorded")).toHaveLength(3);
   });
 });

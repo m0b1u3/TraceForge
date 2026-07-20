@@ -750,6 +750,7 @@ export function registerRoutes(
       conclusions: validationConclusionStore,
       consensus: validationConsensusStore,
       timeline: timelineStore,
+      tasks: taskStore,
       emit: (event) => bus.emit(event),
     }));
     registry.register(makeExtractApiEndpointsTool(id, c.scopeRules, {
@@ -1094,7 +1095,8 @@ export function registerRoutes(
           "record_task",
           "record_identity",
         "compare_identity_traffic",
-        "record_attack_path",
+          "record_attack_path",
+          "record_validation_conclusion",
           "propose_scope_expansion",
         ]);
         if (report.ok && replanTriggers.has(report.name)) {

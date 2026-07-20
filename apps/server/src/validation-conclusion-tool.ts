@@ -9,6 +9,8 @@ import type { TrafficStore } from "./stores/traffic-store.js";
 import type { ValidationConclusionStore } from "./stores/validation-conclusion-store.js";
 import type { ValidationConsensusStore } from "./stores/validation-consensus-store.js";
 import { evaluateValidationConsensus } from "./validation-consensus.js";
+import type { TaskStore } from "./stores/task-store.js";
+import { planValidationFollowup } from "./validation-followup.js";
 
 export function makeRecordValidationConclusionTool(input: {
   caseId: string;
@@ -18,6 +20,7 @@ export function makeRecordValidationConclusionTool(input: {
   conclusions: ValidationConclusionStore;
   consensus: ValidationConsensusStore;
   timeline: TimelineStore;
+  tasks: TaskStore;
   emit: (event: RuntimeEvent) => void;
 }): ToolDescriptor {
   return {
@@ -107,6 +110,42 @@ export function makeRecordValidationConclusionTool(input: {
         updatedFinding = input.facts.update(finding.id, { findingStatus: "needs_review" }) ?? updatedFinding;
       }
 
+      const followup = planValidationFollowup(updatedFinding, consensus);
+      const priorFollowups = input.tasks.listByCase(input.caseId).filter((task) =>
+        task.runId === input.runId &&
+        task.title.startsWith(`[Consensus:${finding.id}:`) &&
+        ["open", "blocked", "recheck_candidate", "approved", "running"].includes(task.status));
+      for (const task of priorFollowups.filter((item) => !item.title.startsWith(followup.key))) {
+        const superseded = input.tasks.update(task.id, {
+          status: "rejected",
+          reason: `Superseded by validation consensus ${consensus.status}.`,
+        });
+        if (superseded) input.emit({ type: "task_updated", task: superseded });
+      }
+      let followupTask = priorFollowups.find((task) => task.title.startsWith(followup.key));
+      if (!followupTask) {
+        followupTask = input.tasks.create(input.caseId, {
+          runId: input.runId,
+          title: followup.title,
+          status: "open",
+          reason: followup.reason,
+          blockedBy: [],
+          triggerWhen: followup.triggerWhen,
+          relatedFacts: [...new Set([finding.id, ...(finding.evidenceRefs ?? [])])],
+          hypothesisIds: finding.hypothesisIds ?? [],
+          priority: followup.priority,
+        });
+        input.emit({ type: "task_created", task: followupTask });
+        const taskEntry = input.timeline.append(
+          input.caseId,
+          "validation_followup_created",
+          `${followupTask.title}; ${followupTask.reason}`,
+          followupTask.id,
+          input.runId,
+        );
+        input.emit({ type: "timeline_appended", entry: taskEntry });
+      }
+
       if (updatedFinding.updateCount !== finding.updateCount) input.emit({ type: "fact_updated", fact: updatedFinding });
       const entry = input.timeline.append(
         input.caseId,
@@ -124,7 +163,12 @@ export function makeRecordValidationConclusionTool(input: {
         input.runId,
       );
       input.emit({ type: "timeline_appended", entry: consensusEntry });
-      return { ok: true, content: JSON.stringify({ conclusion, consensus, findingStatus: updatedFinding.findingStatus }, null, 2) };
+      return { ok: true, content: JSON.stringify({
+        conclusion,
+        consensus,
+        findingStatus: updatedFinding.findingStatus,
+        followupTask,
+      }, null, 2) };
     },
   };
 }
