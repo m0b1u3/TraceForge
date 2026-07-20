@@ -4,7 +4,15 @@ export interface SessionStateWriter {
   upsert(caseId: string, patch: { currentGoal?: string; phase?: string; focus?: { host?: string; url?: string; note?: string }; activeHypothesisIds?: string[] }, runId: string): { phase: string };
 }
 export interface HypothesisWriter {
-  create(caseId: string, input: { statement: string; basedOnFactIds: string[]; relatedTaskIds?: string[]; runId?: string | null; priorityScore?: number; status?: "candidate" | "active" }): { id: string; status?: string };
+  create(caseId: string, input: {
+    statement: string; basedOnFactIds: string[]; relatedTaskIds?: string[]; runId?: string | null;
+    priorityScore?: number;
+    scoreFactors?: {
+      impact: number; evidenceStrength: number; verificationCost: number;
+      operationRisk: number; pathRelevance: number; freshness: number;
+    };
+    status?: "candidate" | "active";
+  }): { id: string; status?: string };
   getById(id: string): { id: string; status: string } | undefined;
   update(id: string, patch: { status?: string; relatedTaskIds?: string[]; statement?: string }): { id: string; status: string } | undefined;
 }
@@ -54,18 +62,40 @@ export function makeRecordHypothesisTool(caseId: string, hyp: HypothesisWriter, 
         relatedTaskIds: { type: "array", items: { type: "string" } },
         activate: { type: "boolean" },
         priorityScore: { type: "number", minimum: 0, maximum: 100 },
+        scoreFactors: {
+          type: "object",
+          properties: {
+            impact: { type: "number", minimum: 0, maximum: 100 },
+            evidenceStrength: { type: "number", minimum: 0, maximum: 100 },
+            verificationCost: { type: "number", minimum: 0, maximum: 100 },
+            operationRisk: { type: "number", minimum: 0, maximum: 100 },
+            pathRelevance: { type: "number", minimum: 0, maximum: 100 },
+            freshness: { type: "number", minimum: 0, maximum: 100 },
+          },
+          required: ["impact", "evidenceStrength", "verificationCost", "operationRisk", "pathRelevance", "freshness"],
+        },
       },
       required: ["statement", "basedOnFactIds"],
     },
     risk: "normal",
     source: "builtin",
     execute: async (input) => {
-      const { statement, basedOnFactIds, relatedTaskIds, activate, priorityScore } = (input ?? {}) as { statement?: string; basedOnFactIds?: string[]; relatedTaskIds?: string[]; activate?: boolean; priorityScore?: number };
+      const { statement, basedOnFactIds, relatedTaskIds, activate, priorityScore, scoreFactors } = (input ?? {}) as {
+        statement?: string; basedOnFactIds?: string[]; relatedTaskIds?: string[];
+        activate?: boolean; priorityScore?: number;
+        scoreFactors?: {
+          impact: number; evidenceStrength: number; verificationCost: number;
+          operationRisk: number; pathRelevance: number; freshness: number;
+        };
+      };
       if (!statement) return { ok: false, content: "缺少 statement" };
       if (!basedOnFactIds || basedOnFactIds.length === 0) return { ok: false, content: "假设必须基于已记录的 Fact：basedOnFactIds 不能为空。" };
       const missing = basedOnFactIds.filter((id) => !facts.getById(id));
       if (missing.length > 0) return { ok: false, content: `basedOnFactIds 引用了不存在的 Fact：${missing.join(", ")}` };
-      const h = hyp.create(caseId, { statement, basedOnFactIds, relatedTaskIds, runId: runId ?? null, priorityScore, status: activate ? "active" : "candidate" });
+      const h = hyp.create(caseId, {
+        statement, basedOnFactIds, relatedTaskIds, runId: runId ?? null,
+        priorityScore, scoreFactors, status: activate ? "active" : "candidate",
+      });
       return { ok: true, content: `已记录假设 ${h.id}：${statement}` };
     },
   };

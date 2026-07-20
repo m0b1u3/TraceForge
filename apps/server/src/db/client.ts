@@ -76,7 +76,8 @@ export function createDb(path: string) {
     CREATE INDEX IF NOT EXISTS idx_agent_events_case ON agent_events(case_id);
     CREATE TABLE IF NOT EXISTS hypotheses (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, statement TEXT NOT NULL,
-      run_id TEXT, status TEXT NOT NULL, priority_score INTEGER NOT NULL DEFAULT 50, based_on_fact_ids_json TEXT NOT NULL,
+      run_id TEXT, status TEXT NOT NULL, priority_score INTEGER NOT NULL DEFAULT 50,
+      score_factors_json TEXT NOT NULL DEFAULT '{}', based_on_fact_ids_json TEXT NOT NULL,
       related_task_ids_json TEXT NOT NULL, created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL, update_count INTEGER NOT NULL
     );
@@ -152,6 +153,7 @@ export function createDb(path: string) {
   ensureColumns("hypotheses", [
     { name: "run_id", definition: "TEXT" },
     { name: "priority_score", definition: "INTEGER NOT NULL DEFAULT 50" },
+    { name: "score_factors_json", definition: "TEXT NOT NULL DEFAULT '{}'" },
   ]);
   const usageColumns = sqlite.prepare("PRAGMA table_info(agent_run_usage)").all() as Array<{ name: string }>;
   const hasUsageColumn = (name: string) => usageColumns.some((column) => column.name === name);

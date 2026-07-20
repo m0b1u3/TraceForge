@@ -5,6 +5,11 @@ import { hypotheses } from "../db/schema.js";
 import { type Hypothesis, HypothesisSchema } from "@traceforge/shared";
 
 function rowToH(row: typeof hypotheses.$inferSelect): Hypothesis {
+  const parsedFactors = JSON.parse(row.scoreFactorsJson) as Record<string, unknown>;
+  const scoreFactors = ["impact", "evidenceStrength", "verificationCost", "operationRisk", "pathRelevance", "freshness"]
+    .every((key) => typeof parsedFactors[key] === "number")
+    ? parsedFactors
+    : undefined;
   return HypothesisSchema.parse({
     id: row.id,
     caseId: row.caseId,
@@ -12,6 +17,7 @@ function rowToH(row: typeof hypotheses.$inferSelect): Hypothesis {
     statement: row.statement,
     status: row.status,
     priorityScore: row.priorityScore,
+    scoreFactors,
     basedOnFactIds: JSON.parse(row.basedOnFactIdsJson),
     relatedTaskIds: JSON.parse(row.relatedTaskIdsJson),
     createdAt: row.createdAt,
@@ -25,21 +31,26 @@ export class HypothesisStore {
 
   create(
     caseId: string,
-    input: { statement: string; basedOnFactIds: string[]; relatedTaskIds?: string[]; runId?: string | null; priorityScore?: number; status?: "candidate" | "active" },
+    input: {
+      statement: string; basedOnFactIds: string[]; relatedTaskIds?: string[]; runId?: string | null;
+      priorityScore?: number; scoreFactors?: Hypothesis["scoreFactors"]; status?: "candidate" | "active";
+    },
   ): Hypothesis {
     const runHypotheses = this.listByCase(caseId).filter((item) => (item.runId ?? null) === (input.runId ?? null));
     if (runHypotheses.length >= 30) throw new Error("hypothesis pool limit reached (30)");
-    if (input.status === "active" && runHypotheses.filter((item) => item.status === "active").length >= 5) {
-      throw new Error("active hypothesis limit reached (5)");
-    }
+    const requestedStatus = input.status === "active"
+      && runHypotheses.filter((item) => item.status === "active").length >= 5
+      ? "candidate"
+      : input.status ?? "candidate";
     const now = new Date().toISOString();
     const h = HypothesisSchema.parse({
       id: `hyp_${randomUUID()}`,
       caseId,
       statement: input.statement,
       runId: input.runId ?? null,
-      status: input.status ?? "candidate",
+      status: requestedStatus,
       priorityScore: input.priorityScore ?? 50,
+      scoreFactors: input.scoreFactors,
       basedOnFactIds: input.basedOnFactIds,
       relatedTaskIds: input.relatedTaskIds ?? [],
       createdAt: now,
@@ -55,6 +66,7 @@ export class HypothesisStore {
         runId: h.runId,
         status: h.status,
         priorityScore: h.priorityScore,
+        scoreFactorsJson: JSON.stringify(h.scoreFactors ?? {}),
         basedOnFactIdsJson: JSON.stringify(h.basedOnFactIds),
         relatedTaskIdsJson: JSON.stringify(h.relatedTaskIds),
         createdAt: now,
@@ -72,7 +84,7 @@ export class HypothesisStore {
 
   update(
     id: string,
-    patch: Partial<Pick<Hypothesis, "status" | "relatedTaskIds" | "statement" | "priorityScore">>,
+    patch: Partial<Pick<Hypothesis, "status" | "relatedTaskIds" | "statement" | "priorityScore" | "scoreFactors">>,
   ): Hypothesis | undefined {
     const cur = this.getById(id);
     if (!cur) return undefined;
@@ -81,6 +93,7 @@ export class HypothesisStore {
       statement: patch.statement ?? cur.statement,
       status: patch.status ?? cur.status,
       priorityScore: patch.priorityScore ?? cur.priorityScore ?? 50,
+      scoreFactors: patch.scoreFactors ?? cur.scoreFactors,
       relatedTaskIds: patch.relatedTaskIds ?? cur.relatedTaskIds,
       updatedAt: new Date().toISOString(),
       updateCount: cur.updateCount + 1,
@@ -91,6 +104,7 @@ export class HypothesisStore {
         statement: next.statement,
         status: next.status,
         priorityScore: next.priorityScore,
+        scoreFactorsJson: JSON.stringify(next.scoreFactors ?? {}),
         relatedTaskIdsJson: JSON.stringify(next.relatedTaskIds),
         updatedAt: next.updatedAt,
         updateCount: next.updateCount,

@@ -71,7 +71,7 @@ describe("run-scoped cognitive model with real SQLite", () => {
     expect(sessions.get("case_1", "run_2")?.phase).toBe("map");
   });
 
-  it("caps a run at five active hypotheses while retaining candidates", () => {
+  it("places overflow active hypotheses into the candidate pool", () => {
     const db = createDb(":memory:");
     const hypotheses = new HypothesisStore(db);
 
@@ -90,12 +90,14 @@ describe("run-scoped cognitive model with real SQLite", () => {
       status: "candidate",
     });
 
-    expect(() => hypotheses.create("case_1", {
+    const overflow = hypotheses.create("case_1", {
       runId: "run_1",
       statement: "Sixth active hypothesis",
       basedOnFactIds: [],
       status: "active",
-    })).toThrow("active hypothesis limit reached");
-    expect(hypotheses.listByCase("case_1").filter((item) => item.status === "candidate")).toHaveLength(1);
+    });
+    expect(overflow.status).toBe("candidate");
+    expect(hypotheses.listByCase("case_1").filter((item) => item.status === "active")).toHaveLength(5);
+    expect(hypotheses.listByCase("case_1").filter((item) => item.status === "candidate")).toHaveLength(2);
   });
 });

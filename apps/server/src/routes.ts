@@ -42,6 +42,7 @@ import { calculateUsageCost } from "./llm-cost.js";
 import { PendingInterventionRegistry } from "./pending-interventions.js";
 import { AgentRunStore } from "./stores/agent-run-store.js";
 import { observerFingerprint, observerIntervention, validatedObserverLevel } from "./observer-policy.js";
+import { HypothesisScheduler } from "./hypothesis-scheduler.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -103,6 +104,7 @@ export function registerRoutes(
   const agentEventStore = new AgentEventStore(db);
   const sessionStore = new SessionStateStore(db);
   const hypothesisStore = new HypothesisStore(db);
+  const hypothesisScheduler = new HypothesisScheduler(hypothesisStore);
   const contextSummaryStore = new ContextSummaryStore(db);
   const approvals = new ApprovalRegistry();
   const pendingInterventions = new PendingInterventionRegistry();
@@ -838,6 +840,46 @@ export function registerRoutes(
         if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });
       }
     }, { signal: running.abortController.signal, runId, budget, reviewIntervalTurns: 3, getSteeringMessages: () => runs.consumeSteering(runId), onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger), failureMemory, onToolExecuted: (report) => {
+      const replanTriggers = new Set([
+        "record_fact",
+        "record_hypothesis",
+        "resolve_hypothesis",
+        "record_task",
+        "propose_scope_expansion",
+      ]);
+      if (report.ok && replanTriggers.has(report.name)) {
+        try {
+          const rebalanced = hypothesisScheduler.rebalance(id, runId);
+          sessionStore.upsert(id, { activeHypothesisIds: rebalanced.active.map((item) => item.id) }, runId);
+          const activeSummary = rebalanced.active
+            .map((item) => `${item.id}(${item.priorityScore ?? 0})`)
+            .join(", ") || "none";
+          const entry = timelineStore.append(
+            id,
+            "investigation_replan_requested",
+            `Trigger=${report.name}; active hypotheses=${activeSummary}`,
+            undefined,
+            runId,
+          );
+          bus.emit({ type: "timeline_appended", entry });
+          runs.addSteering(runId, [
+            "[Investigation replan]",
+            `Important state changed after ${report.name}.`,
+            `Active hypotheses by priority: ${activeSummary}.`,
+            "Re-evaluate the current task against this ranked set. Continue the current task when it still serves a leading hypothesis; otherwise explain the pivot before selecting the next verification task.",
+          ].join("\n"));
+        } catch (error) {
+          const entry = timelineStore.append(
+            id,
+            "investigation_replan_failed",
+            `Trigger=${report.name}; error=${(error as Error).message}`,
+            undefined,
+            runId,
+          );
+          bus.emit({ type: "timeline_appended", entry });
+        }
+        return;
+      }
       if (report.ok) return;
       if (report.rejected) return;
       if (report.blocked) return;
