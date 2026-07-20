@@ -244,7 +244,7 @@ describe("store context inspector", () => {
       type: "observer_review_completed",
       caseId: "case_1",
       runId: "run_1",
-      trigger: "checkpoint",
+      trigger: "interval",
       warningCount: 1,
       correctionCount: 1,
       durationMs: 42,

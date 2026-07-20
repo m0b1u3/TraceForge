@@ -14,6 +14,7 @@ export {
   type AgentRunOptions,
   type ToolExecutionReport,
 } from "./agent-runtime.js";
+export type { ObserverReviewTrigger } from "./agent-runtime.js";
 export { compareTrafficResponses, makeCompareIdentityTrafficTool, makeHttpReplayTool, makeProposeScopeExpansionTool, makeReplayTrafficTool } from "./builtin-tools.js";
 export { makeListIdentitiesTool, makeRecordIdentityTool, makeUseBrowserIdentityTool } from "./identity-tools.js";
 export type { IdentityWriter, BrowserIdentityController } from "./identity-tools.js";

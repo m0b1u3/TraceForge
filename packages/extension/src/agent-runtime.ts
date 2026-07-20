@@ -32,6 +32,7 @@ export interface ToolExecutionReport {
   input: unknown;
   content: string;
   ok: boolean;
+  risk?: "normal" | "command";
   rejected?: boolean;
   blocked?: boolean;
   transient?: boolean;
@@ -45,6 +46,7 @@ export interface AgentRunOptions {
   budget?: Partial<AgentRunBudget>;
   onTurnComplete?: (summary: TurnSummary) => Promise<ObserverReviewDecision>;
   reviewIntervalTurns?: number;
+  getObserverReviewTrigger?: () => ObserverReviewTrigger | null;
   toolTimeoutMs?: number;
   failureMemory?: FailureMemory;
   onToolExecuted?: (report: ToolExecutionReport) => void | Promise<void>;
@@ -54,8 +56,16 @@ export interface TurnSummary {
   runId: string;
   turnCount: number;
   trajectory: string;
-  trigger: "checkpoint" | "final";
+  trigger: ObserverReviewTrigger;
 }
+
+export type ObserverReviewTrigger =
+  | "interval"
+  | "final"
+  | "repeated_failure"
+  | "high_risk"
+  | "evidence_conflict"
+  | "finding_verification";
 
 export const DEFAULT_RUN_BUDGET: AgentRunBudget = {
   maxTurns: Infinity,
@@ -90,7 +100,7 @@ export interface ObserverReviewDecision {
   steering?: string[];
 }
 
-export function shouldReviewAtCheckpoint(turnCount: number, intervalTurns = 3): boolean {
+export function shouldReviewAtCheckpoint(turnCount: number, intervalTurns = 6): boolean {
   const interval = Math.max(1, Math.floor(intervalTurns));
   return turnCount > 0 && turnCount % interval === 0;
 }
@@ -225,7 +235,7 @@ export class AgentRuntime {
     let cumulativeTotalTokens = 0;
     let lastReviewedMessageIndex = 0;
     const budgetFinite = Number.isFinite(budget.maxTurns);
-    const reviewIntervalTurns = Math.max(1, Math.floor(options.reviewIntervalTurns ?? 3));
+    const reviewIntervalTurns = Math.max(1, Math.floor(options.reviewIntervalTurns ?? 6));
 
     const review = async (trigger: TurnSummary["trigger"], count: number, extra?: TurnMessage) => {
       if (!options.onTurnComplete || !options.runId) return { action: "continue" as const };
@@ -372,8 +382,9 @@ export class AgentRuntime {
       }
 
       turnCount += 1;
-      if (shouldReviewAtCheckpoint(turnCount, reviewIntervalTurns)) {
-        const decision = await review("checkpoint", turnCount);
+      const eventTrigger = options.getObserverReviewTrigger?.() ?? null;
+      if (eventTrigger || shouldReviewAtCheckpoint(turnCount, reviewIntervalTurns)) {
+        const decision = await review(eventTrigger ?? "interval", turnCount);
         if (decision?.action === "pause") {
           onEvent({ type: "interrupted", content: decision.reason ?? "paused by observer" });
           return;
@@ -448,7 +459,7 @@ export class AgentRuntime {
       onEvent({ type: "tool_blocked", name: call.name, input: JSON.stringify(call.input), content });
       const result = { content, ok: false };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, blocked: true });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, blocked: true, risk: tool.risk });
       }
       return result;
     }
@@ -461,7 +472,7 @@ export class AgentRuntime {
       onEvent({ type: "tool_rejected", name: call.name, content });
       const result = { content, ok: false };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, rejected: true });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, rejected: true, risk: tool.risk });
       }
       return result;
     }
@@ -479,7 +490,7 @@ export class AgentRuntime {
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: res.content });
       const result = { content: res.content, ok: res.ok };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, transient, failureClass });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, transient, failureClass, risk: tool.risk });
       }
       return result;
     } catch (error) {
@@ -488,7 +499,7 @@ export class AgentRuntime {
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content });
       const result = { content, ok: false };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, risk: tool.risk });
       }
       return result;
     }

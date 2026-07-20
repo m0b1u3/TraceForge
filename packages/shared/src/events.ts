@@ -49,6 +49,15 @@ export type RuntimeEvent =
   | { type: "browser_navigated"; caseId: string; url: string }
   | { type: "observer_warning"; warning: ObserverWarning }
   | { type: "observer_warning_updated"; warning: ObserverWarning }
-  | { type: "observer_review_completed"; caseId: string; runId: string; trigger: "checkpoint" | "final"; warningCount: number; correctionCount: number; durationMs: number; totalTokens: number }
+  | {
+      type: "observer_review_completed";
+      caseId: string;
+      runId: string;
+      trigger: "interval" | "final" | "repeated_failure" | "high_risk" | "evidence_conflict" | "finding_verification";
+      warningCount: number;
+      correctionCount: number;
+      durationMs: number;
+      totalTokens: number;
+    }
   | { type: "observer_review_failed"; caseId: string; runId: string | null; error: string }
   | { type: "scope_updated"; caseId: string; allowHosts: string[] };

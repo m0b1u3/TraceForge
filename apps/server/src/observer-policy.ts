@@ -38,11 +38,15 @@ export function nextObserverStatus(
 
 export function observerIntervention(
   warning: Pick<ObserverWarning, "status" | "title" | "suggestedGoal" | "suggestedAction">,
+  options: { allowPause?: boolean } = {},
 ): { steering?: string; pauseReason?: string } {
   if (warning.status === "correcting") {
     return { steering: warning.suggestedGoal || warning.suggestedAction };
   }
   if (warning.status === "escalated") {
+    if (options.allowPause === false) {
+      return { steering: warning.suggestedGoal || warning.suggestedAction };
+    }
     return { pauseReason: `escalated observer warning: ${warning.title}` };
   }
   return {};

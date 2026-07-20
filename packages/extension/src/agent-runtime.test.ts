@@ -13,8 +13,8 @@ describe("AgentRuntime failure classification", () => {
 });
 
 describe("Observer checkpoint scheduling", () => {
-  it("reviews every third completed tool turn", () => {
-    expect([1, 2, 3, 4, 5, 6].filter((turn) => shouldReviewAtCheckpoint(turn, 3))).toEqual([3, 6]);
+  it("uses a low-frequency six-turn fallback by default", () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 12].filter((turn) => shouldReviewAtCheckpoint(turn))).toEqual([6, 12]);
   });
 
   it("sends only messages added after the previous review", () => {

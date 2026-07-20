@@ -26,7 +26,7 @@ import {
   makeCompareIdentityTrafficTool, makeListIdentitiesTool, makeRecordIdentityTool, makeUseBrowserIdentityTool,
   McpManager, mcpToolToDescriptor, Observer, LlmQueryExpander,
   makeReevaluateFactsTool, FailureMemory, makeDownloadTool,
-  type AgentRunBudget,
+  type AgentRunBudget, type ObserverReviewTrigger,
 } from "@traceforge/extension";
 import { BrowserSession } from "./browser-session.js";
 import { ObserverWarningStore } from "./stores/observer-store.js";
@@ -45,6 +45,7 @@ import { AgentRunStore } from "./stores/agent-run-store.js";
 import { observerFingerprint, observerIntervention, validatedObserverLevel } from "./observer-policy.js";
 import { HypothesisScheduler } from "./hypothesis-scheduler.js";
 import { IdentityStore } from "./stores/identity-store.js";
+import { ObserverScheduler } from "./observer-scheduler.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -509,7 +510,7 @@ export function registerRoutes(
       const runObserverReviewUnsafe = async (
         reviewRunId: string,
         reviewTrajectory: string,
-        trigger: "checkpoint" | "final",
+        trigger: ObserverReviewTrigger,
       ): Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> => {
         const startedAt = Date.now();
         const factsSummary = factStore.listByCase(id).map((f) => `${f.id} [${f.type}] ${f.title}`).join("\n") || "(无)";
@@ -540,7 +541,9 @@ export function registerRoutes(
             });
             if (!warning) continue;
             bus.emit({ type: "observer_warning_updated", warning });
-            const intervention = observerIntervention(warning);
+            const intervention = observerIntervention(warning, {
+              allowPause: trigger === "high_risk" || trigger === "evidence_conflict",
+            });
             if (intervention.pauseReason && !pauseReason) {
               pauseReason = intervention.pauseReason;
               bus.emit({ type: "agent_run_needs_confirmation", caseId: id, runId: reviewRunId, warning });
@@ -589,7 +592,7 @@ export function registerRoutes(
       const runObserverReview = async (
         reviewRunId: string,
         reviewTrajectory: string,
-        trigger: "checkpoint" | "final",
+        trigger: ObserverReviewTrigger,
       ): Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> => {
         const normalizedTrajectory = reviewTrajectory.trim();
         if (!normalizedTrajectory) return { action: "continue" };
@@ -811,6 +814,7 @@ export function registerRoutes(
 
     agentEventStore.append(id, "user", goal); // 存用户这句目标，刷新/切 Case 后历史可见完整双边对话
     agentEventStore.append(id, "started", `Started: ${goal}`);
+    const observerScheduler = new ObserverScheduler();
     await new AgentRuntime(llm, registry, gate).run(system, built.messages, (e) => {
       if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
       else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined); trajectory.push(`[result] ${e.name} → ${e.content}`); }
@@ -869,66 +873,77 @@ export function registerRoutes(
         const interrupted = runs.markInterrupted(runId, running.run.interruptReason ?? e.content);
         if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });
       }
-    }, { signal: running.abortController.signal, runId, budget, reviewIntervalTurns: 3, getSteeringMessages: () => runs.consumeSteering(runId), onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger), failureMemory, onToolExecuted: (report) => {
-      const replanTriggers = new Set([
-        "record_fact",
-        "record_hypothesis",
-        "resolve_hypothesis",
-        "record_task",
-        "record_identity",
-        "compare_identity_traffic",
-        "propose_scope_expansion",
-      ]);
-      if (report.ok && replanTriggers.has(report.name)) {
-        try {
-          const rebalanced = hypothesisScheduler.rebalance(id, runId);
-          sessionStore.upsert(id, { activeHypothesisIds: rebalanced.active.map((item) => item.id) }, runId);
-          const activeSummary = rebalanced.active
-            .map((item) => `${item.id}(${item.priorityScore ?? 0})`)
-            .join(", ") || "none";
-          const entry = timelineStore.append(
-            id,
-            "investigation_replan_requested",
-            `Trigger=${report.name}; active hypotheses=${activeSummary}`,
-            undefined,
-            runId,
-          );
-          bus.emit({ type: "timeline_appended", entry });
-          runs.addSteering(runId, [
-            "[Investigation replan]",
-            `Important state changed after ${report.name}.`,
-            `Active hypotheses by priority: ${activeSummary}.`,
-            "Re-evaluate the current task against this ranked set. Continue the current task when it still serves a leading hypothesis; otherwise explain the pivot before selecting the next verification task.",
-          ].join("\n"));
-        } catch (error) {
-          const entry = timelineStore.append(
-            id,
-            "investigation_replan_failed",
-            `Trigger=${report.name}; error=${(error as Error).message}`,
-            undefined,
-            runId,
-          );
-          bus.emit({ type: "timeline_appended", entry });
+    }, {
+      signal: running.abortController.signal,
+      runId,
+      budget,
+      reviewIntervalTurns: 6,
+      getObserverReviewTrigger: () => observerScheduler.consume(),
+      getSteeringMessages: () => runs.consumeSteering(runId),
+      onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger),
+      failureMemory,
+      onToolExecuted: (report) => {
+        observerScheduler.observe(report);
+        const replanTriggers = new Set([
+          "record_fact",
+          "record_hypothesis",
+          "resolve_hypothesis",
+          "record_task",
+          "record_identity",
+          "compare_identity_traffic",
+          "propose_scope_expansion",
+        ]);
+        if (report.ok && replanTriggers.has(report.name)) {
+          try {
+            const rebalanced = hypothesisScheduler.rebalance(id, runId);
+            sessionStore.upsert(id, { activeHypothesisIds: rebalanced.active.map((item) => item.id) }, runId);
+            const activeSummary = rebalanced.active
+              .map((item) => `${item.id}(${item.priorityScore ?? 0})`)
+              .join(", ") || "none";
+            const entry = timelineStore.append(
+              id,
+              "investigation_replan_requested",
+              `Trigger=${report.name}; active hypotheses=${activeSummary}`,
+              undefined,
+              runId,
+            );
+            bus.emit({ type: "timeline_appended", entry });
+            runs.addSteering(runId, [
+              "[Investigation replan]",
+              `Important state changed after ${report.name}.`,
+              `Active hypotheses by priority: ${activeSummary}.`,
+              "Re-evaluate the current task against this ranked set. Continue the current task when it still serves a leading hypothesis; otherwise explain the pivot before selecting the next verification task.",
+            ].join("\n"));
+          } catch (error) {
+            const entry = timelineStore.append(
+              id,
+              "investigation_replan_failed",
+              `Trigger=${report.name}; error=${(error as Error).message}`,
+              undefined,
+              runId,
+            );
+            bus.emit({ type: "timeline_appended", entry });
+          }
+          return;
         }
-        return;
-      }
-      if (report.ok) return;
-      if (report.rejected) return;
-      if (report.blocked) return;
-      if (report.transient) return;
-      if (report.failureClass && report.failureClass !== "permanent") return;
-      const fact = factStore.create(id, {
-        type: "failed_attempt",
-        title: `Failed attempt: ${report.name}`,
-        value: { tool: report.name, input: report.input, reason: report.content },
-        source: { type: "agent", ref: runId },
-        confidence: 1,
-        tags: ["failure-memory"],
-      });
-      const entry = timelineStore.append(id, "fact_created", `Failed attempt: ${report.name}`, fact.id);
-      bus.emit({ type: "fact_created", fact });
-      bus.emit({ type: "timeline_appended", entry });
-    } });
+        if (report.ok) return;
+        if (report.rejected) return;
+        if (report.blocked) return;
+        if (report.transient) return;
+        if (report.failureClass && report.failureClass !== "permanent") return;
+        const fact = factStore.create(id, {
+          type: "failed_attempt",
+          title: `Failed attempt: ${report.name}`,
+          value: { tool: report.name, input: report.input, reason: report.content },
+          source: { type: "agent", ref: runId },
+          confidence: 1,
+          tags: ["failure-memory"],
+        });
+        const entry = timelineStore.append(id, "fact_created", `Failed attempt: ${report.name}`, fact.id);
+        bus.emit({ type: "fact_created", fact });
+        bus.emit({ type: "timeline_appended", entry });
+      },
+    });
 
     const afterRun = runs.get(runId)?.run;
     if (afterRun && afterRun.status === "running") {
