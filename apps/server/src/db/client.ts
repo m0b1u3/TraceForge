@@ -23,7 +23,10 @@ export function createDb(path: string) {
       value_json TEXT NOT NULL, source_json TEXT NOT NULL, confidence REAL NOT NULL,
       tags_json TEXT NOT NULL, created_at TEXT NOT NULL,
       update_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '', validity TEXT NOT NULL DEFAULT 'valid',
-      finding_status TEXT, observations_json TEXT NOT NULL DEFAULT '[]'
+      finding_status TEXT, evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+      hypothesis_ids_json TEXT NOT NULL DEFAULT '[]', task_ids_json TEXT NOT NULL DEFAULT '[]',
+      action_ids_json TEXT NOT NULL DEFAULT '[]', verification_summary TEXT,
+      observations_json TEXT NOT NULL DEFAULT '[]'
     );
     CREATE INDEX IF NOT EXISTS idx_facts_case ON facts(case_id);
     CREATE TABLE IF NOT EXISTS tasks (
@@ -143,6 +146,11 @@ export function createDb(path: string) {
   ensureColumns("facts", [
     { name: "source_run_id", definition: "TEXT" },
     { name: "finding_status", definition: "TEXT" },
+    { name: "evidence_refs_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
+    { name: "hypothesis_ids_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
+    { name: "task_ids_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
+    { name: "action_ids_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
+    { name: "verification_summary", definition: "TEXT" },
     { name: "observations_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
   ]);
   ensureColumns("tasks", [

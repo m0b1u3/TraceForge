@@ -609,8 +609,16 @@ export function registerRoutes(
     registry.register(makeListTrafficTool(id, traffic));
     registry.register(makeGetTrafficTool(id, traffic));
     registry.register(makeRecordFactTool(id, factStore, runTimeline, (e) => bus.emit(e), runId));
-    registry.register(makeRecordTaskTool(id, taskStore, runTimeline, (e) => bus.emit(e), runId));
-    registry.register(makeRecordActionTool(id, factStore, actionStore, decisionStore, runTimeline, (e) => bus.emit(e)));
+    registry.register(makeRecordTaskTool(id, taskStore, runTimeline, (e) => bus.emit(e), runId, hypothesisStore));
+    registry.register(makeRecordActionTool(
+      id,
+      factStore,
+      actionStore,
+      decisionStore,
+      runTimeline,
+      (e) => bus.emit(e),
+      { hypotheses: hypothesisStore, tasks: taskStore },
+    ));
     registry.register(makeReopenTaskTool(id, taskStore, taskStore, factStore, runTimeline, (e) => bus.emit(e)));
     registry.register(makeRevertDoneTaskTool(id, taskStore, taskStore, factStore, runTimeline, (e) => bus.emit(e)));
     registry.register(makeHttpReplayTool(c.scopeRules, undefined, id, traffic, (e) => bus.emit(e)));

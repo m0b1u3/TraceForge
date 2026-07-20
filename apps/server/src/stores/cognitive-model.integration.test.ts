@@ -15,13 +15,12 @@ describe("run-scoped cognitive model with real SQLite", () => {
 
     const fact = facts.create("case_1", {
       sourceRunId: "run_1",
-      type: "finding",
+      type: "security_signal",
       title: "Object ownership check is missing",
       value: { endpoint: "/api/orders/42" },
       source: { type: "traffic", ref: "traffic_1" },
       confidence: 0.8,
       tags: ["idor"],
-      findingStatus: "validating",
       observations: [{
         id: "obs_1",
         sourceType: "traffic",

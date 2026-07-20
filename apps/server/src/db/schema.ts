@@ -41,6 +41,11 @@ export const facts = sqliteTable("facts", {
   updatedAt: text("updated_at").notNull().default(""),
   validity: text("validity").notNull().default("valid"),
   findingStatus: text("finding_status"),
+  evidenceRefsJson: text("evidence_refs_json").notNull().default("[]"),
+  hypothesisIdsJson: text("hypothesis_ids_json").notNull().default("[]"),
+  taskIdsJson: text("task_ids_json").notNull().default("[]"),
+  actionIdsJson: text("action_ids_json").notNull().default("[]"),
+  verificationSummary: text("verification_summary"),
   observationsJson: text("observations_json").notNull().default("[]"),
 });
 

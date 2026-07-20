@@ -86,6 +86,11 @@ export const FactSchema = z.object({
   updatedAt: z.string().default(""),
   validity: z.enum(["valid", "conflicted", "superseded"]).default("valid"),
   findingStatus: z.enum(["candidate", "validating", "verified", "needs_review", "rejected", "stale"]).nullable().optional(),
+  evidenceRefs: z.array(z.string()).optional(),
+  hypothesisIds: z.array(z.string()).optional(),
+  taskIds: z.array(z.string()).optional(),
+  actionIds: z.array(z.string()).optional(),
+  verificationSummary: z.string().nullable().optional(),
   observations: z.array(z.object({
     id: z.string(),
     sourceType: z.string().min(1),

@@ -53,7 +53,7 @@ export interface FactWriter {
   create(caseId: string, input: Omit<Fact, "id" | "caseId" | "createdAt" | "updateCount" | "updatedAt" | "validity"> & Partial<Pick<Fact, "validity">>): Fact;
   listByCase(caseId: string): Fact[];
   getById(id: string): Fact | undefined;
-  update(id: string, patch: Partial<Pick<Fact, "type" | "title" | "value" | "confidence" | "tags" | "validity" | "findingStatus" | "observations">>): Fact | undefined;
+  update(id: string, patch: Partial<Pick<Fact, "type" | "title" | "value" | "confidence" | "tags" | "validity" | "findingStatus" | "evidenceRefs" | "hypothesisIds" | "taskIds" | "actionIds" | "verificationSummary" | "observations">>): Fact | undefined;
 }
 export interface TaskWriter {
   create(caseId: string, input: Omit<Task, "id" | "caseId" | "createdAt" | "updatedAt" | "updateCount">): Task;
@@ -71,6 +71,10 @@ export interface TimelineWriter {
 }
 export type Emit = (e: RuntimeEvent) => void;
 
+export interface ReferenceReader {
+  getById(id: string): { id: string; caseId?: string } | undefined;
+}
+
 export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: TimelineWriter, emit: Emit, runId?: string): ToolDescriptor {
   return {
     name: "record_fact",
@@ -83,13 +87,34 @@ export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: 
         confidence: { type: "number" }, tags: { type: "array", items: { type: "string" } },
         validity: { type: "string", enum: ["valid", "conflicted", "superseded"] },
         findingStatus: { type: "string", enum: ["candidate", "validating", "verified", "needs_review", "rejected", "stale"] },
+        evidenceRefs: { type: "array", items: { type: "string" } },
+        hypothesisIds: { type: "array", items: { type: "string" } },
+        taskIds: { type: "array", items: { type: "string" } },
+        actionIds: { type: "array", items: { type: "string" } },
+        verificationSummary: { type: "string" },
+        observation: {
+          type: "object",
+          properties: {
+            sourceType: { type: "string" },
+            sourceRef: { type: "string" },
+            identityId: { type: "string" },
+            condition: { type: "string" },
+            summary: { type: "string" },
+          },
+          required: ["sourceType", "sourceRef", "summary"],
+        },
       },
       required: ["type", "title"],
     },
     risk: "normal",
     source: "builtin",
     execute: async (input) => {
-      const i = input as { id?: string; type?: string; title?: string; value?: unknown; confidence?: number; tags?: string[]; validity?: string; findingStatus?: Fact["findingStatus"] };
+      const i = input as {
+        id?: string; type?: string; title?: string; value?: unknown; confidence?: number; tags?: string[];
+        validity?: string; findingStatus?: Fact["findingStatus"]; evidenceRefs?: string[];
+        hypothesisIds?: string[]; taskIds?: string[]; actionIds?: string[]; verificationSummary?: string;
+        observation?: { sourceType: string; sourceRef: string; identityId?: string; condition?: string; summary: string };
+      };
       if (typeof i.id === "string" && i.id) {
         if (!facts.getById(i.id)) return { ok: false, content: `fact ${i.id} 不存在，新建请去掉 id` };
         const patch: Record<string, unknown> = {};
@@ -100,22 +125,64 @@ export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: 
         if (Array.isArray(i.tags)) patch.tags = i.tags;
         if (i.validity === "valid" || i.validity === "conflicted" || i.validity === "superseded") patch.validity = i.validity;
         if (i.findingStatus !== undefined) patch.findingStatus = i.findingStatus;
-        const fact = facts.update(i.id, patch as never);
+        if (Array.isArray(i.evidenceRefs)) patch.evidenceRefs = i.evidenceRefs;
+        if (Array.isArray(i.hypothesisIds)) patch.hypothesisIds = i.hypothesisIds;
+        if (Array.isArray(i.taskIds)) patch.taskIds = i.taskIds;
+        if (Array.isArray(i.actionIds)) patch.actionIds = i.actionIds;
+        if (typeof i.verificationSummary === "string") patch.verificationSummary = i.verificationSummary;
+        if (i.observation) {
+          const current = facts.getById(i.id);
+          patch.observations = [...(current?.observations ?? []), {
+            id: `obs_${randomUUID()}`,
+            sourceType: i.observation.sourceType,
+            sourceRef: i.observation.sourceRef,
+            runId: runId ?? null,
+            identityId: i.observation.identityId ?? null,
+            condition: i.observation.condition ?? "",
+            summary: i.observation.summary,
+            observedAt: new Date().toISOString(),
+          }];
+        }
+        let fact: Fact | undefined;
+        try {
+          fact = facts.update(i.id, patch as never);
+        } catch (error) {
+          return { ok: false, content: (error as Error).message };
+        }
         if (!fact) return { ok: false, content: `更新失败：${i.id}` };
         const entry = timeline.append(caseId, "fact_updated", `Fact 更新: ${fact.title}（第 ${fact.updateCount} 次）`, fact.id);
         emit({ type: "fact_updated", fact });
         emit({ type: "timeline_appended", entry });
         return { ok: true, content: `已更新 Fact ${fact.id}（第 ${fact.updateCount} 次）` };
       }
-      const fact = facts.create(caseId, {
-        type: i.type ?? "note", title: i.title ?? "", value: i.value ?? {},
-        source: { type: "ai", ref: "agent" },
-        sourceRunId: runId ?? null,
-        confidence: typeof i.confidence === "number" ? i.confidence : 1,
-        tags: Array.isArray(i.tags) ? i.tags : [],
-        findingStatus: i.findingStatus ?? (i.type === "finding" ? "candidate" : null),
-        observations: [],
-      });
+      let fact: Fact;
+      try {
+        fact = facts.create(caseId, {
+          type: i.type ?? "note", title: i.title ?? "", value: i.value ?? {},
+          source: { type: "ai", ref: "agent" },
+          sourceRunId: runId ?? null,
+          confidence: typeof i.confidence === "number" ? i.confidence : 1,
+          tags: Array.isArray(i.tags) ? i.tags : [],
+          findingStatus: i.findingStatus ?? (i.type === "finding" ? "candidate" : null),
+          evidenceRefs: i.evidenceRefs ?? [],
+          hypothesisIds: i.hypothesisIds ?? [],
+          taskIds: i.taskIds ?? [],
+          actionIds: i.actionIds ?? [],
+          verificationSummary: i.verificationSummary ?? null,
+          observations: i.observation ? [{
+            id: `obs_${randomUUID()}`,
+            sourceType: i.observation.sourceType,
+            sourceRef: i.observation.sourceRef,
+            runId: runId ?? null,
+            identityId: i.observation.identityId ?? null,
+            condition: i.observation.condition ?? "",
+            summary: i.observation.summary,
+            observedAt: new Date().toISOString(),
+          }] : [],
+        });
+      } catch (error) {
+        return { ok: false, content: (error as Error).message };
+      }
       const entry = timeline.append(caseId, "fact_created", `Fact (agent): ${fact.title}`, fact.id);
       emit({ type: "fact_created", fact });
       emit({ type: "timeline_appended", entry });
@@ -142,7 +209,7 @@ function normalizeStatus(v: unknown): Task["status"] {
   return typeof v === "string" && TASK_STATUSES.has(v as Task["status"]) ? (v as Task["status"]) : "open";
 }
 
-export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: TimelineWriter, emit: Emit, runId?: string): ToolDescriptor {
+export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: TimelineWriter, emit: Emit, runId?: string, hypotheses?: ReferenceReader): ToolDescriptor {
   return {
     name: "record_task",
     description: "记录一个待办/挂起任务。可设 status=blocked + triggerWhen 表示等待某条件（如等凭据）。要更新已有 Task（改状态/标题/原因等）时带上它的 id；新建则不带 id。",
@@ -163,6 +230,18 @@ export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: 
     source: "builtin",
     execute: async (input) => {
       const i = input as Record<string, unknown>;
+      const hypothesisIds = Array.isArray(i.hypothesisIds)
+        ? i.hypothesisIds.filter((value): value is string => typeof value === "string")
+        : [];
+      if (typeof i.id !== "string" && hypothesisIds.length === 0) {
+        return { ok: false, content: "new Task requires at least one hypothesisIds reference" };
+      }
+      if (hypotheses && hypothesisIds.some((id) => {
+        const hypothesis = hypotheses.getById(id);
+        return !hypothesis || (hypothesis.caseId !== undefined && hypothesis.caseId !== caseId);
+      })) {
+        return { ok: false, content: "hypothesisIds contains an unknown Hypothesis" };
+      }
       if (typeof i.id === "string" && i.id) {
         if (!tasks.getById(i.id)) return { ok: false, content: `task ${i.id} 不存在，新建请去掉 id` };
         const patch: Record<string, unknown> = {};
@@ -203,6 +282,7 @@ export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: 
 export function makeRecordActionTool(
   caseId: string, facts: FactWriter, actions: ActionWriter, decisions: DecisionWriter,
   timeline: TimelineWriter, emit: Emit,
+  references?: { hypotheses: ReferenceReader; tasks: ReferenceReader },
 ): ToolDescriptor {
   return {
     name: "record_action",
@@ -212,26 +292,45 @@ export function makeRecordActionTool(
       properties: {
         title: { type: "string" }, goal: { type: "string" },
         evidenceRefs: { type: "array", items: { type: "string" } },
+        hypothesisRefs: { type: "array", items: { type: "string" } },
+        taskRefs: { type: "array", items: { type: "string" } },
         reasoning: { type: "string" }, steps: { type: "array", items: { type: "string" } },
         expectedResults: { type: "array", items: { type: "string" } },
         riskNotes: { type: "array", items: { type: "string" } },
         tool: { type: "string" }, priority: { type: "string" },
       },
-      required: ["title", "goal", "evidenceRefs", "reasoning", "steps", "tool"],
+      required: ["title", "goal", "evidenceRefs", "hypothesisRefs", "taskRefs", "reasoning", "steps", "tool"],
     },
     risk: "normal",
     source: "builtin",
     execute: async (input) => {
       const i = input as Record<string, unknown>;
       const refs = Array.isArray(i.evidenceRefs) ? (i.evidenceRefs as unknown[]).filter((r): r is string => typeof r === "string") : [];
+      const hypothesisRefs = Array.isArray(i.hypothesisRefs) ? i.hypothesisRefs.filter((r): r is string => typeof r === "string") : [];
+      const taskRefs = Array.isArray(i.taskRefs) ? i.taskRefs.filter((r): r is string => typeof r === "string") : [];
       const knownIds = new Set(facts.listByCase(caseId).map((f) => f.id));
       if (refs.length === 0 || !refs.every((r) => knownIds.has(r))) {
         return { ok: false, content: "evidenceRefs 必须非空且都引用已记录的 Fact id；请先 record_fact 再记录动作。" };
       }
+      if (hypothesisRefs.length === 0 || taskRefs.length === 0) {
+        return { ok: false, content: "Action requires both hypothesisRefs and taskRefs" };
+      }
+      if (references && (
+        hypothesisRefs.some((ref) => {
+          const hypothesis = references.hypotheses.getById(ref);
+          return !hypothesis || (hypothesis.caseId !== undefined && hypothesis.caseId !== caseId);
+        })
+        || taskRefs.some((ref) => {
+          const task = references.tasks.getById(ref);
+          return !task || (task.caseId !== undefined && task.caseId !== caseId);
+        })
+      )) {
+        return { ok: false, content: "Action contains an unknown Hypothesis or Task reference" };
+      }
       const now = new Date().toISOString();
       const parsed = ActionCardSchema.safeParse({
         id: `action_${randomUUID()}`, caseId, title: i.title, goal: i.goal,
-        evidenceRefs: refs, reasoning: i.reasoning,
+        evidenceRefs: refs, hypothesisRefs, taskRefs, reasoning: i.reasoning,
         steps: Array.isArray(i.steps) ? i.steps : [],
         expectedResults: Array.isArray(i.expectedResults) ? i.expectedResults : [],
         riskNotes: Array.isArray(i.riskNotes) ? i.riskNotes : [],

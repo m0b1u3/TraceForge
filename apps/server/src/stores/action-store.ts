@@ -23,6 +23,23 @@ export class ActionCardStore {
     return card;
   }
 
+  getById(id: string): ActionCard | undefined {
+    const row = this.db.select().from(actionCards).where(eq(actionCards.id, id)).get();
+    if (!row) return undefined;
+    return ActionCardSchema.parse({
+      id: row.id, caseId: row.caseId, title: row.title, goal: row.goal,
+      evidenceRefs: JSON.parse(row.evidenceRefsJson),
+      hypothesisRefs: JSON.parse(row.hypothesisRefsJson),
+      taskRefs: JSON.parse(row.taskRefsJson),
+      reasoning: row.reasoning, steps: JSON.parse(row.stepsJson),
+      expectedResults: JSON.parse(row.expectedResultsJson),
+      riskNotes: JSON.parse(row.riskNotesJson),
+      tool: row.tool, priority: row.priority,
+      requiresHumanApproval: row.requiresHumanApproval === 1,
+      status: row.status, createdAt: row.createdAt, updatedAt: row.updatedAt,
+    });
+  }
+
   listByCase(caseId: string): ActionCard[] {
     return this.db.select().from(actionCards).where(eq(actionCards.caseId, caseId)).all().map((row) =>
       ActionCardSchema.parse({
