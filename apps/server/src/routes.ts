@@ -57,6 +57,7 @@ import { KnowledgeOutcomeTracker } from "./knowledge-outcome.js";
 import { buildExplorationAdvisory } from "./exploration-advisor.js";
 import { formatAttackPathPlan, rankAttackPathBreakpoints } from "./attack-path-planner.js";
 import { formatEvidenceGapPlan, mapEvidenceGaps } from "./evidence-gap-planner.js";
+import { buildValidationMatrices, formatValidationMatrices } from "./validation-matrix.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -821,9 +822,15 @@ export function registerRoutes(
       tasks: taskStore.listByCase(id).filter((item) => item.runId === runId),
       goal: sessionStore.get(id, runId)?.currentGoal || goal,
     }));
-    const getEvidenceGapPlan = () => formatEvidenceGapPlan(mapEvidenceGaps({
+    const getEvidenceGaps = () => mapEvidenceGaps({
       facts: factStore.listByCase(id),
       paths: attackPathStore.listByCase(id),
+      traffic: traffic.listByCase(id),
+      identities: identityStore.listByCase(id),
+    });
+    const getEvidenceGapPlan = () => formatEvidenceGapPlan(getEvidenceGaps());
+    const getValidationMatrixPlan = () => formatValidationMatrices(buildValidationMatrices({
+      gaps: getEvidenceGaps(),
       traffic: traffic.listByCase(id),
       identities: identityStore.listByCase(id),
     }));
@@ -927,7 +934,7 @@ export function registerRoutes(
     agentEventStore.append(id, "started", `Started: ${goal}`);
     const observerScheduler = new ObserverScheduler();
     await new AgentRuntime(llm, registry, gate).run(
-      `${system}\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}`,
+      `${system}\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}\n\n${getValidationMatrixPlan()}`,
       built.messages,
       (e) => {
       if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
@@ -1070,10 +1077,11 @@ export function registerRoutes(
               .join(", ") || "none";
             const pathPlan = getAttackPathPlan();
             const evidenceGapPlan = getEvidenceGapPlan();
+            const validationMatrixPlan = getValidationMatrixPlan();
             const entry = timelineStore.append(
               id,
               "investigation_replan_requested",
-              `Trigger=${report.name}; active hypotheses=${activeSummary}; ${pathPlan.replace(/\n/g, " | ")}; ${evidenceGapPlan.replace(/\n/g, " | ")}`,
+              `Trigger=${report.name}; active hypotheses=${activeSummary}; ${pathPlan.replace(/\n/g, " | ")}; ${evidenceGapPlan.replace(/\n/g, " | ")}; ${validationMatrixPlan.replace(/\n/g, " | ")}`,
               undefined,
               runId,
             );
@@ -1084,6 +1092,7 @@ export function registerRoutes(
               `Active hypotheses by priority: ${activeSummary}.`,
               pathPlan,
               evidenceGapPlan,
+              validationMatrixPlan,
               "Re-evaluate the current task against both the ranked hypotheses and path breakpoints. Continue when it advances a leading breakpoint; otherwise explain the evidence-backed pivot before selecting the next verification task.",
             ].join("\n"));
           } catch (error) {
