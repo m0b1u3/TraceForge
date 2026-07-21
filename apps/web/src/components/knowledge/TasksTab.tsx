@@ -5,6 +5,7 @@ import { useStore } from "../../store.js";
 import { patchTask } from "../../api.js";
 import { FeedbackState } from "../ui/feedback-state.js";
 import { KnowledgeWindowFooter, useKnowledgeWindow } from "./knowledge-window.js";
+import { ValidationWorkflow } from "./ValidationWorkflow.js";
 
 // Human-editable target statuses (status is a closed state machine; these are the most common wrap-up/reopen actions)
 const HUMAN_ACTIONS: { status: Task["status"]; label: string }[] = [
@@ -60,9 +61,10 @@ function TaskRow({ t }: { t: Task }) {
 export function TasksTab() {
   const tasks = useStore((s) => s.tasks);
   const window = useKnowledgeWindow(tasks.length);
-  if (tasks.length === 0) return <FeedbackState title="No tasks yet" description="Agent todos and blocked work will appear here. New evidence can reopen completed tasks." />;
   return (
     <>
+      <ValidationWorkflow />
+      {tasks.length === 0 && <FeedbackState title="No tasks yet" description="Agent todos and blocked work will appear here. New evidence can reopen completed tasks." />}
       {tasks.slice(0, window.count).map((t) => <TaskRow t={t} key={t.id} />)}
       <KnowledgeWindowFooter visible={window.count} total={tasks.length} onShowMore={window.showMore} />
     </>
