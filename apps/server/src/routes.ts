@@ -67,6 +67,7 @@ import { resumePendingValidations } from "./validation-resume.js";
 import { formatValidationTaskPriorities, rankValidationTasks } from "./validation-task-priority.js";
 import { decideValidationPriorityShift, validationPriorityLeader } from "./validation-priority-hysteresis.js";
 import { advanceExplorationBoundary, applyValidationExplorationPolicy, initialValidationExplorationState } from "./validation-exploration-policy.js";
+import { appendValidationFeedback, observeValidationOutcome, recoverValidationFeedback, summarizeValidationFeedbackHistory, type ValidationOutcomeSnapshot } from "./validation-task-feedback.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -974,15 +975,34 @@ export function registerRoutes(
       contextWindowTokens: llmConfig?.contextWindowTokens,
       maxOutputTokens: llmConfig?.maxOutputTokens,
     });
+    let validationFeedback = recoverValidationFeedback(timelineStore.listByCase(id));
+    const captureValidationOutcome = (): ValidationOutcomeSnapshot => {
+      const evidenceFacts = factStore.listByCase(id).filter((fact) => fact.type !== "failed_attempt");
+      const evidenceTraffic = traffic.listByCase(id);
+      return {
+      evidenceCount: evidenceFacts.length + evidenceTraffic.length,
+      evidenceSignature: JSON.stringify({
+        facts: evidenceFacts.map((fact) => ({ id: fact.id, updateCount: fact.updateCount, validity: fact.validity, observations: fact.observations?.length ?? 0 })),
+        traffic: evidenceTraffic.map((entry) => ({ id: entry.id, status: entry.responseStatus, size: entry.responseSize })),
+      }),
+      consensusSignature: JSON.stringify(validationConsensusStore.listByCase(id)),
+      attackPathSignature: JSON.stringify(attackPathStore.listByCase(id).map((path) => ({
+        id: path.id, status: path.status, version: path.version, evidenceRefs: path.evidenceRefs,
+      }))),
+    };
+    };
     const rankedTasks = rankValidationTasks({
       tasks: taskStore.listByCase(id).filter((task) =>
         task.runId === runId && ["open", "blocked", "running", "recheck_candidate"].includes(task.status)),
       facts: factStore.listByCase(id),
       consensus: validationConsensusStore.listByCase(id),
       paths: attackPathStore.listByCase(id),
+      feedback: summarizeValidationFeedbackHistory(validationFeedback),
     });
     let currentValidationPriority = validationPriorityLeader(rankedTasks);
     let validationExplorationState = initialValidationExplorationState();
+    let executingValidationTask: { taskId: string; findingId: string } | undefined;
+    let validationOutcomeBefore: ValidationOutcomeSnapshot | undefined;
     const priorityDetail = formatValidationTaskPriorities(rankedTasks);
     if (priorityDetail) {
       const entry = timelineStore.append(id, "validation_tasks_prioritized", priorityDetail, undefined, runId);
@@ -1084,6 +1104,7 @@ export function registerRoutes(
       onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger),
       failureMemory,
       onBeforeToolExecute: (call) => {
+        validationOutcomeBefore = executingValidationTask ? captureValidationOutcome() : undefined;
         const serialized = JSON.stringify(call.input);
         const referencedKnowledge = [...availableKnowledge.values()].filter((ref) => serialized.includes(ref.id));
         const alternatives = [
@@ -1102,6 +1123,36 @@ export function registerRoutes(
         });
       },
       onToolExecuted: (report) => {
+        if (executingValidationTask && validationOutcomeBefore && report.name !== "record_task") {
+          const observation = observeValidationOutcome({
+            ...executingValidationTask,
+            tool: report.name,
+            ok: report.ok,
+            before: validationOutcomeBefore,
+            after: captureValidationOutcome(),
+          });
+          validationFeedback = appendValidationFeedback(validationFeedback, observation);
+          const feedbackEntry = timelineStore.append(
+            id,
+            "validation_feedback_recorded",
+            JSON.stringify(observation),
+            executingValidationTask.taskId,
+            runId,
+          );
+          bus.emit({ type: "timeline_appended", entry: feedbackEntry });
+        }
+        validationOutcomeBefore = undefined;
+        if (report.ok && report.name === "record_task") {
+          const reportInput = report.input as Record<string, unknown>;
+          const taskId = typeof reportInput.id === "string" ? reportInput.id : undefined;
+          const task = taskId ? taskStore.getById(taskId) : undefined;
+          const match = task ? /^\[Consensus:([^:\]]+):/.exec(task.title) : undefined;
+          if (task && match && task.status === "running") {
+            executingValidationTask = { taskId: task.id, findingId: match[1] };
+          } else if (taskId && executingValidationTask?.taskId === taskId) {
+            executingValidationTask = undefined;
+          }
+        }
         const referencedKnowledge = knowledgeUsageStore.markReferenced(
           id,
           runId,
@@ -1160,6 +1211,7 @@ export function registerRoutes(
               facts: factStore.listByCase(id),
               consensus: validationConsensusStore.listByCase(id),
               paths: attackPathStore.listByCase(id),
+              feedback: summarizeValidationFeedbackHistory(validationFeedback),
             });
             const priorityShift = decideValidationPriorityShift({
               previous: currentValidationPriority,

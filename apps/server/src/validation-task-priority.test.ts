@@ -46,4 +46,25 @@ describe("validation task priority", () => {
     expect(ranked[0].task.id).toBe("linked");
     expect(ranked[0].reasons).toContain("attack-path:validated");
   });
+
+  it("uses persisted outcome feedback to prefer productive validation over repeated work", () => {
+    const productive = finding("fact_productive", "high");
+    const repeated = finding("fact_repeated", "high");
+    const ranked = rankValidationTasks({
+      tasks: [
+        task("repeated", `[Consensus:${repeated.id}:insufficient] collect evidence`, "high"),
+        task("productive", `[Consensus:${productive.id}:insufficient] collect evidence`, "high"),
+      ],
+      facts: [productive, repeated],
+      consensus: [consensus(productive.id, "insufficient"), consensus(repeated.id, "insufficient")],
+      paths: [],
+      feedback: {
+        [productive.id]: { toolBoundaries: 2, evidenceProduced: 1, consensusAdvances: 1, attackPathAdvances: 0, failures: 0, noProgress: 0, scoreAdjustment: 9 },
+        [repeated.id]: { toolBoundaries: 6, evidenceProduced: 0, consensusAdvances: 0, attackPathAdvances: 0, failures: 1, noProgress: 5, scoreAdjustment: -12 },
+      },
+    });
+    expect(ranked[0].task.id).toBe("productive");
+    expect(ranked[0].reasons).toContain("outcome-feedback:+9");
+    expect(ranked[1].reasons).toContain("outcome-feedback:-12");
+  });
 });

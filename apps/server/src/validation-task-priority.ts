@@ -1,5 +1,6 @@
 import type { AttackPath, Fact, Task } from "@traceforge/shared";
 import type { ValidationConsensusResult } from "./validation-consensus.js";
+import type { ValidationFeedbackSummary } from "./validation-task-feedback.js";
 
 const CONSENSUS_KEY = /^\[Consensus:([^:\]]+):(insufficient|supported|conflicted|refuted)\]/;
 const PRIORITY_SCORE: Record<Task["priority"], number> = { high: 25, medium: 15, low: 5 };
@@ -26,6 +27,7 @@ export function rankValidationTasks(input: {
   facts: Fact[];
   consensus: ValidationConsensusResult[];
   paths: AttackPath[];
+  feedback?: Record<string, ValidationFeedbackSummary>;
 }): RankedValidationTask[] {
   return input.tasks.map((task): RankedValidationTask => {
     const match = CONSENSUS_KEY.exec(task.title);
@@ -46,8 +48,10 @@ export function rankValidationTasks(input: {
       ? (strongestPath.status === "validated" ? 15 : strongestPath.status === "exploring" ? 10 : 6) + Math.round(strongestPath.confidence * 5)
       : 0;
     const cost = VERIFICATION_COST[state.status] + Math.min(6, task.triggerWhen.length * 2);
+    const feedback = input.feedback?.[finding.id];
+    const feedbackAdjustment = feedback?.scoreAdjustment ?? 0;
     const score = Math.max(0, Math.min(100, Math.round(
-      PRIORITY_SCORE[task.priority] + 20 + SEVERITY_SCORE[severity] + CONSENSUS_SCORE[state.status] + gaps * 4 + pathScore - cost,
+      PRIORITY_SCORE[task.priority] + 20 + SEVERITY_SCORE[severity] + CONSENSUS_SCORE[state.status] + gaps * 4 + pathScore - cost + feedbackAdjustment,
     )));
     const reasons = [
       `severity:${severity}`,
@@ -55,6 +59,7 @@ export function rankValidationTasks(input: {
       `evidence-gaps:${gaps}`,
       strongestPath ? `attack-path:${strongestPath.status}` : "attack-path:none",
       `verification-cost:${cost}`,
+      `outcome-feedback:${feedbackAdjustment >= 0 ? "+" : ""}${feedbackAdjustment}`,
     ];
     return { task, score, reasons, validation: true };
   }).sort((left, right) => right.score - left.score || left.task.createdAt.localeCompare(right.task.createdAt) || left.task.id.localeCompare(right.task.id));
