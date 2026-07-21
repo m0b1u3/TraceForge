@@ -3,6 +3,7 @@ import type { TimelineEntry } from "./schemas.js";
 export interface ValidationConsoleEvent {
   label: "Validation lease" | "Priority shift" | "Evidence gate" | "Exploration window";
   text: string;
+  target?: { kind: "task" | "finding"; id: string };
 }
 
 function fields(detail: string): Record<string, string> {
@@ -12,25 +13,30 @@ function fields(detail: string): Record<string, string> {
   }));
 }
 
+function reference(kind: "task" | "finding", value?: string): ValidationConsoleEvent["target"] {
+  const id = value?.split(":", 1)[0]?.trim();
+  return id ? { kind, id } : undefined;
+}
+
 export function validationTimelineConsoleEvent(entry: Pick<TimelineEntry, "eventType" | "detail">): ValidationConsoleEvent | null {
   const value = fields(entry.detail);
   if (entry.eventType === "validation_task_claimed") {
-    return { label: "Validation lease", text: `Claimed ${value.Task || "validation task"}${value.consensus ? ` · consensus ${value.consensus}` : ""}` };
+    return { label: "Validation lease", text: `Claimed ${value.Task || "validation task"}${value.consensus ? ` · consensus ${value.consensus}` : ""}`, target: reference("task", value.Task) };
   }
   if (entry.eventType === "validation_task_released" || entry.eventType === "validation_task_lease_released") {
-    return { label: "Validation lease", text: `Released ${value.Task || "validation task"}${value.reason ? ` · ${value.reason}` : ""}` };
+    return { label: "Validation lease", text: `Released ${value.Task || "validation task"}${value.reason ? ` · ${value.reason}` : ""}`, target: reference("task", value.Task) };
   }
   if (entry.eventType === "validation_task_completed") {
-    return { label: "Evidence gate", text: `Completed ${value.Task || "validation task"} · required evidence satisfied` };
+    return { label: "Evidence gate", text: `Completed ${value.Task || "validation task"} · required evidence satisfied`, target: reference("finding", value.Finding) ?? reference("task", value.Task) };
   }
   if (entry.eventType === "validation_task_completion_blocked") {
-    return { label: "Evidence gate", text: `Blocked ${value.Task || "validation task"}${value.missing && value.missing !== "none" ? ` · missing ${value.missing}` : ""}` };
+    return { label: "Evidence gate", text: `Blocked ${value.Task || "validation task"}${value.missing && value.missing !== "none" ? ` · missing ${value.missing}` : ""}`, target: reference("finding", value.Finding) ?? reference("task", value.Task) };
   }
   if (entry.eventType === "validation_priority_shifted") {
-    return { label: "Priority shift", text: `Leader ${value.previous || "none"} → ${value.next || "none"}${value.reason ? ` · ${value.reason.replaceAll("_", " ")}` : ""}` };
+    return { label: "Priority shift", text: `Leader ${value.previous || "none"} → ${value.next || "none"}${value.reason ? ` · ${value.reason.replaceAll("_", " ")}` : ""}`, target: reference("task", value.next) };
   }
   if (entry.eventType === "validation_priority_deferred") {
-    return { label: "Exploration window", text: `Validation ${value.validation || "pending"} deferred for exploration ${value.exploration || "work"}${value.boundaries ? ` · ${value.boundaries} tool boundaries` : ""}` };
+    return { label: "Exploration window", text: `Validation ${value.validation || "pending"} deferred for exploration ${value.exploration || "work"}${value.boundaries ? ` · ${value.boundaries} tool boundaries` : ""}`, target: reference("task", value.validation) };
   }
   return null;
 }

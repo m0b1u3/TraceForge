@@ -11,6 +11,7 @@ export type AgentConversationEventItem = {
   label: string;
   text: string;
   summary: string;
+  target?: { kind: "task" | "finding"; id: string };
 };
 
 export type AgentConversationItem =
@@ -69,7 +70,7 @@ function formatAgentEvent(event: AgentUiEvent): Omit<AgentConversationEventItem,
   if (event.kind === "validation") {
     const validation = validationTimelineConsoleEvent({ eventType: event.tool ?? "", detail: text });
     if (!validation) return null;
-    return { kind: event.kind, label: validation.label, text: validation.text, summary: validation.text };
+    return { kind: event.kind, label: validation.label, text: validation.text, summary: validation.text, target: validation.target };
   }
   if (event.kind === "done") return { kind: event.kind, label: "Complete", text, summary: text };
   if (event.kind === "reasoning") return { kind: event.kind, label: "Reasoning", text, summary: compactText(text, 140) };

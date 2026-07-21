@@ -234,6 +234,9 @@ interface State {
   validationWorkflow: ValidationWorkflowSnapshot | null;
   validationWorkflowDelta: ValidationWorkflowDelta | null;
   validationSyncStatus: ValidationSyncStatus;
+  knowledgeTarget: { kind: "task" | "finding"; id: string; requestId: number } | null;
+  navigateToKnowledge: (target: { kind: "task" | "finding"; id: string }) => void;
+  clearKnowledgeTarget: (requestId: number) => void;
   refreshValidationWorkflow: () => Promise<void>;
   llmConfig: LlmConfig | null;
   settingsModalOpen: boolean;
@@ -331,6 +334,26 @@ export const useStore = create<State>((set, get) => ({
   validationWorkflow: null,
   validationWorkflowDelta: null,
   validationSyncStatus: "stale",
+  knowledgeTarget: null,
+  navigateToKnowledge: (target) => {
+    const available = target.kind === "task"
+      ? get().tasks.some((task) => task.id === target.id)
+      : get().facts.some((fact) => fact.id === target.id);
+    if (!available) {
+      get().showToast(`Related ${target.kind} is no longer available.`, "info");
+      return;
+    }
+    set((state) => ({
+      activeTab: target.kind === "task" ? "tasks" : "facts",
+      knowledgeTarget: target.kind === "task" ? { ...target, requestId: (state.knowledgeTarget?.requestId ?? 0) + 1 } : null,
+      selectedFactId: target.kind === "finding" ? target.id : null,
+      selectedTrafficId: null,
+      selectedTrafficSnapshot: null,
+      selectedAgentEvent: null,
+      inspectorMode: target.kind === "finding" ? "finding" : "overview",
+    }));
+  },
+  clearKnowledgeTarget: (requestId) => set((state) => state.knowledgeTarget?.requestId === requestId ? { knowledgeTarget: null } : {}),
   refreshValidationWorkflow: async () => {
     const caseId = get().caseId;
     if (!caseId) return;
@@ -400,7 +423,7 @@ export const useStore = create<State>((set, get) => ({
   )),
   setCase: (id) => {
     cancelPendingStreamDeltas();
-    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationWorkflowDelta: null, validationSyncStatus: id ? "recovering" : "stale", pendingScope: null, pendingConfirmation: null });
+    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationWorkflowDelta: null, validationSyncStatus: id ? "recovering" : "stale", knowledgeTarget: null, pendingScope: null, pendingConfirmation: null });
   },
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),

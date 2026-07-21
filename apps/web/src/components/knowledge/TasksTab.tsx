@@ -38,10 +38,11 @@ function TaskRow({ t, focused, onFocusHandled }: { t: Task; focused: boolean; on
     if (!focused) return;
     setOpen(true);
     rowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    rowRef.current?.focus({ preventScroll: true });
     onFocusHandled();
   }, [focused, onFocusHandled]);
   return (
-    <article ref={rowRef} className={`tf-row tf-row-expandable knowledge-row${focused ? " is-targeted" : ""}`}>
+    <article ref={rowRef} tabIndex={-1} className={`tf-row tf-row-expandable knowledge-row${focused ? " is-targeted" : ""}`}>
       <button className="tf-row-head" type="button" aria-expanded={open} aria-controls={detailId} onClick={() => setOpen((v) => !v)}>
         <span className={`tf-tag tf-status-${t.status}`}>{t.status}</span>
         <span className="tf-row-title">{t.title}</span>
@@ -68,6 +69,8 @@ function TaskRow({ t, focused, onFocusHandled }: { t: Task; focused: boolean; on
 export function TasksTab() {
   const tasks = useStore((s) => s.tasks);
   const selectFact = useStore((s) => s.selectFact);
+  const knowledgeTarget = useStore((s) => s.knowledgeTarget);
+  const clearKnowledgeTarget = useStore((s) => s.clearKnowledgeTarget);
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   const window = useKnowledgeWindow(tasks.length);
   const navigate = (target: ValidationNavigationTarget) => {
@@ -78,6 +81,15 @@ export function TasksTab() {
       setFocusedTaskId(target.id);
     }
   };
+  useEffect(() => {
+    if (knowledgeTarget?.kind !== "task") return;
+    const targetIndex = tasks.findIndex((task) => task.id === knowledgeTarget.id);
+    if (targetIndex >= 0) {
+      window.reveal(targetIndex);
+      setFocusedTaskId(knowledgeTarget.id);
+    }
+    clearKnowledgeTarget(knowledgeTarget.requestId);
+  }, [clearKnowledgeTarget, knowledgeTarget, tasks, window]);
   return (
     <>
       <ValidationWorkflow onNavigate={navigate} />

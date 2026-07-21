@@ -812,6 +812,7 @@ textarea:focus-visible,
 .validation-audit-list button:hover { background: color-mix(in srgb, var(--danger) 9%, transparent); }
 .validation-audit-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .knowledge-row.is-targeted { animation: validation-target 520ms ease-out; }
+.knowledge-row:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 68%, transparent); outline-offset: -2px; }
 @keyframes validation-target { 0% { background: color-mix(in srgb, var(--primary) 14%, transparent); } 100% { background: transparent; } }
 @keyframes validation-change-enter { from { opacity: 0; transform: translateY(-2px); } }
 @keyframes validation-item-change { 0% { background: color-mix(in srgb, var(--information) 12%, transparent); } 100% { background: transparent; } }

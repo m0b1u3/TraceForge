@@ -1,5 +1,5 @@
 import { memo, useState, type ReactNode } from "react";
-import { Brain, CaretDown, Check, CheckCircle, Copy, MagnifyingGlass, Robot, ShieldCheck, TerminalWindow, User, Warning } from "@phosphor-icons/react";
+import { ArrowSquareOut, Brain, CaretDown, Check, CheckCircle, Copy, MagnifyingGlass, Robot, ShieldCheck, TerminalWindow, User, Warning } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -13,6 +13,7 @@ export const AgentEventRow = memo(function AgentEventRow({ item }: { item: Agent
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const selectAgentEvent = useStore((state) => state.selectAgentEvent);
+  const navigateToKnowledge = useStore((state) => state.navigateToKnowledge);
   const isReasoning = item.kind === "reasoning";
   const isTool = item.kind === "tool_call" || item.kind === "tool_result";
   const canExpand = isReasoning || (isTool && item.summary !== item.text);
@@ -44,11 +45,11 @@ export const AgentEventRow = memo(function AgentEventRow({ item }: { item: Agent
 
   return (
     <article className={`agent-event ${eventClassName(item.kind)}`}>
-      <EventHeader item={item}><EventActions text={item.text} copied={copied} onCopiedChange={setCopied} onInspect={inspect} /></EventHeader>
+      <EventHeader item={item}><EventActions text={item.text} copied={copied} onCopiedChange={setCopied} onInspect={inspect} onLocate={item.target ? () => navigateToKnowledge(item.target) : undefined} /></EventHeader>
       <p className="agent-event-content">{item.text}</p>
     </article>
   );
-}, (previous, next) => previous.item.key === next.item.key && previous.item.kind === next.item.kind && previous.item.label === next.item.label && previous.item.text === next.item.text && previous.item.summary === next.item.summary);
+}, (previous, next) => previous.item.key === next.item.key && previous.item.kind === next.item.kind && previous.item.label === next.item.label && previous.item.text === next.item.text && previous.item.summary === next.item.summary && previous.item.target?.kind === next.item.target?.kind && previous.item.target?.id === next.item.target?.id);
 
 function EventActions({
   text,
@@ -56,12 +57,14 @@ function EventActions({
   onCopiedChange,
   children,
   onInspect,
+  onLocate,
 }: {
   text: string;
   copied: boolean;
   onCopiedChange: (copied: boolean) => void;
   children?: ReactNode;
   onInspect?: () => void;
+  onLocate?: () => void;
 }) {
   const copy = async () => {
     await navigator.clipboard.writeText(text);
@@ -70,6 +73,7 @@ function EventActions({
   };
   return (
     <span className="agent-event-actions">
+      {onLocate && <Button type="button" variant="ghost" size="icon-xs" aria-label="Locate related knowledge" title="Locate in Knowledge" onClick={onLocate}><ArrowSquareOut size={13} /></Button>}
       {onInspect && <Button type="button" variant="ghost" size="icon-xs" aria-label="Inspect event" title="Inspect" onClick={onInspect}><MagnifyingGlass size={13} /></Button>}
       <Button type="button" variant="ghost" size="icon-xs" aria-label="Copy event" title="Copy" onClick={() => void copy()}>
         {copied ? <Check size={13} /> : <Copy size={13} />}
