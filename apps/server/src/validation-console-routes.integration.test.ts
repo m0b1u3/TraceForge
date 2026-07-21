@@ -13,9 +13,10 @@ describe("validation console history with real SQLite", () => {
     await app.ready();
     const created = await app.inject({ method: "POST", url: "/api/cases", payload: { name: "Console", allowHosts: [] } });
     const caseId = created.json().id as string;
+    const occurredAt = "2026-07-21T08:15:30.000Z";
     bus.emit({
       type: "timeline_appended",
-      entry: { id: "timeline_1", caseId, runId: "run_1", eventType: "validation_task_claimed", refId: "task_1", detail: "Task=task_1; consensus=insufficient", createdAt: new Date().toISOString() },
+      entry: { id: "timeline_1", caseId, runId: "run_1", eventType: "validation_task_claimed", refId: "task_1", detail: "Task=task_1; consensus=insufficient", createdAt: occurredAt },
     });
     bus.emit({
       type: "timeline_appended",
@@ -23,7 +24,7 @@ describe("validation console history with real SQLite", () => {
     });
     const response = await app.inject({ url: `/api/cases/${caseId}/agent/events` });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual([expect.objectContaining({ kind: "validation", tool: "validation_task_claimed", text: "Task=task_1; consensus=insufficient" })]);
+    expect(response.json()).toEqual([expect.objectContaining({ kind: "validation", tool: "validation_task_claimed", text: "Task=task_1; consensus=insufficient", createdAt: occurredAt })]);
     await app.close();
   });
 });

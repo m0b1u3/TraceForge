@@ -94,7 +94,7 @@ export function AgentPanel() {
     pageSize: AGENT_HISTORY_PAGE_SIZE,
     loadPage: (id, limit, offset) => listAgentEvents(id, { limit, offset }),
   });
-  const allAgentEvents = useMemo(() => history.items.map(({ kind, text, tool }) => ({ kind, text, tool })), [history.items]);
+  const allAgentEvents = useMemo(() => history.items.map(({ kind, text, tool, createdAt }) => ({ kind, text, tool, createdAt })), [history.items]);
   const { start: pageStart, end: pageEnd, latest: latestPage } = getAgentEventPage(allAgentEvents.length, eventPageEnd);
   const pageEvents = useMemo(() => allAgentEvents.slice(pageStart, pageEnd), [allAgentEvents, pageEnd, pageStart]);
   const conversationItems = useMemo(() => buildAgentConversationItems({

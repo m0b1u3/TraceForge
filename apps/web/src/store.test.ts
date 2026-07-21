@@ -86,7 +86,7 @@ describe("validation workflow realtime state", () => {
     const entry = { id: "timeline_1", caseId: "case_1", runId: "run_1", refId: "task_1", createdAt: "now" };
     useStore.getState().handleRuntimeEvent({ type: "timeline_appended", entry: { ...entry, eventType: "validation_task_claimed", detail: "Task=task_1; consensus=insufficient" } });
     useStore.getState().handleRuntimeEvent({ type: "timeline_appended", entry: { ...entry, id: "timeline_2", eventType: "validation_feedback_recorded", detail: "{}" } });
-    expect(useStore.getState().agentEvents).toEqual([{ kind: "validation", text: "Task=task_1; consensus=insufficient", tool: "validation_task_claimed" }]);
+    expect(useStore.getState().agentEvents).toEqual([{ kind: "validation", text: "Task=task_1; consensus=insufficient", tool: "validation_task_claimed", createdAt: "now" }]);
   });
 });
 

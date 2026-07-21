@@ -9,6 +9,7 @@ export interface AgentUiEvent {
   kind: "user" | "text" | "reasoning" | "tool_call" | "tool_result" | "validation" | "done" | "error" | "started";
   text: string;
   tool?: string | null;
+  createdAt?: string;
 }
 
 export interface TokenUsage {
@@ -449,7 +450,7 @@ export const useStore = create<State>((set, get) => ({
       timeline: takeRecent(timeline, CLIENT_TIMELINE_LIMIT),
       mcpTools,
       warnings,
-      agentEvents: takeRecent(agentEvents.map((e) => ({ kind: e.kind, text: e.text, tool: e.tool })), CLIENT_AGENT_EVENT_LIMIT),
+      agentEvents: takeRecent(agentEvents.map((e) => ({ kind: e.kind, text: e.text, tool: e.tool, createdAt: e.createdAt })), CLIENT_AGENT_EVENT_LIMIT),
       activeRun,
       continuationRun: latestRun?.status === "needs_continuation" ? latestRun : null,
       agentBusy: isRunBusy(activeRun),
@@ -666,7 +667,7 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "task_updated" && event.task.caseId === cid) get().upsertTask(event.task);
     else if (event.type === "timeline_appended" && event.entry.caseId === cid) {
       get().addTimeline(event.entry);
-      if (validationTimelineConsoleEvent(event.entry)) get().addAgentEvent({ kind: "validation", text: event.entry.detail, tool: event.entry.eventType });
+      if (validationTimelineConsoleEvent(event.entry)) get().addAgentEvent({ kind: "validation", text: event.entry.detail, tool: event.entry.eventType, createdAt: event.entry.createdAt });
     }
     else if (event.type === "validation_workflow_updated" && event.snapshot.caseId === cid) set((state) => {
       const merged = mergeValidationWorkflow(state.validationWorkflow, event.snapshot);

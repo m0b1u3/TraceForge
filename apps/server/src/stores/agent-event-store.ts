@@ -7,9 +7,9 @@ import { type AgentEvent, AgentEventSchema } from "@traceforge/shared";
 export class AgentEventStore {
   constructor(private db: Db) {}
 
-  append(caseId: string, kind: AgentEvent["kind"], text: string, tool?: string): AgentEvent {
+  append(caseId: string, kind: AgentEvent["kind"], text: string, tool?: string, occurredAt?: string): AgentEvent {
     const id = `ae_${randomUUID()}`;
-    const createdAt = new Date().toISOString();
+    const createdAt = occurredAt ?? new Date().toISOString();
     const e = AgentEventSchema.parse({ id, caseId, kind, text, tool: tool ?? null, createdAt });
     this.db.insert(agentEvents).values({
       id, caseId, kind, text, tool: e.tool, createdAt,

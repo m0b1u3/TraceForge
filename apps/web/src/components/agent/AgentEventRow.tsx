@@ -8,16 +8,36 @@ import {
 } from "@/components/ui/collapsible";
 import type { AgentConversationEventItem } from "./agent-conversation.js";
 import { useStore } from "../../store.js";
+import type { Fact, Task, ValidationWorkflowSnapshot } from "@traceforge/shared";
+
+type ValidationState = { label: "Active" | "Current" | "Blocked" | "Resolved" | "Satisfied" | "Released" | "Deferred" | "Recorded" | "Superseded" | "Unavailable"; tone: "active" | "warning" | "muted" };
+
+export function validationEventState(eventType: string | undefined, target: AgentConversationEventItem["target"], workflow: ValidationWorkflowSnapshot | null, task: Task | null, fact: Fact | null): ValidationState {
+  if (!target || (!task && !fact)) return { label: "Unavailable", tone: "muted" };
+  const item = workflow?.items.find((entry) => entry.taskId === target.id || entry.findingId === target.id);
+  if (eventType === "validation_task_claimed") return workflow?.runningLease === target.id ? { label: "Active", tone: "active" } : { label: "Superseded", tone: "muted" };
+  if (eventType === "validation_task_released" || eventType === "validation_task_lease_released") return { label: "Released", tone: "muted" };
+  if (eventType === "validation_priority_shifted") return workflow?.leader?.taskId === target.id ? { label: "Current", tone: "active" } : { label: "Superseded", tone: "muted" };
+  if (eventType === "validation_task_completion_blocked") return item && !item.completionReady ? { label: "Blocked", tone: "warning" } : { label: "Resolved", tone: "active" };
+  if (eventType === "validation_task_completed") return item?.completionReady || fact?.findingStatus === "verified" ? { label: "Satisfied", tone: "active" } : { label: "Recorded", tone: "muted" };
+  if (eventType === "validation_priority_deferred") return (workflow?.exploration.explorationBoundariesRemaining ?? 0) > 0 ? { label: "Deferred", tone: "warning" } : { label: "Recorded", tone: "muted" };
+  return { label: "Recorded", tone: "muted" };
+}
 
 export const AgentEventRow = memo(function AgentEventRow({ item }: { item: AgentConversationEventItem }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const selectAgentEvent = useStore((state) => state.selectAgentEvent);
   const navigateToKnowledge = useStore((state) => state.navigateToKnowledge);
+  const workflow = useStore((state) => state.validationWorkflow);
+  const targetTask = useStore((state) => item.target?.kind === "task" ? state.tasks.find((task) => task.id === item.target?.id) ?? null : null);
+  const targetFact = useStore((state) => item.target?.kind === "finding" ? state.facts.find((fact) => fact.id === item.target?.id) ?? null : null);
   const isReasoning = item.kind === "reasoning";
   const isTool = item.kind === "tool_call" || item.kind === "tool_result";
   const canExpand = isReasoning || (isTool && item.summary !== item.text);
   const inspect = isTool ? () => selectAgentEvent({ kind: item.kind, label: item.label, text: item.text }) : undefined;
+  const validationState = item.kind === "validation" ? validationEventState(item.eventType, item.target, workflow, targetTask, targetFact) : null;
+  const targetTitle = targetTask?.title ?? targetFact?.title;
 
   if (canExpand) {
     return (
@@ -45,11 +65,11 @@ export const AgentEventRow = memo(function AgentEventRow({ item }: { item: Agent
 
   return (
     <article className={`agent-event ${eventClassName(item.kind)}`}>
-      <EventHeader item={item}><EventActions text={item.text} copied={copied} onCopiedChange={setCopied} onInspect={inspect} onLocate={item.target ? () => navigateToKnowledge(item.target) : undefined} /></EventHeader>
+      <EventHeader item={item} validationState={validationState} targetTitle={targetTitle}><EventActions text={item.text} copied={copied} onCopiedChange={setCopied} onInspect={inspect} onLocate={item.target ? () => navigateToKnowledge(item.target) : undefined} /></EventHeader>
       <p className="agent-event-content">{item.text}</p>
     </article>
   );
-}, (previous, next) => previous.item.key === next.item.key && previous.item.kind === next.item.kind && previous.item.label === next.item.label && previous.item.text === next.item.text && previous.item.summary === next.item.summary && previous.item.target?.kind === next.item.target?.kind && previous.item.target?.id === next.item.target?.id);
+}, (previous, next) => previous.item.key === next.item.key && previous.item.kind === next.item.kind && previous.item.label === next.item.label && previous.item.text === next.item.text && previous.item.summary === next.item.summary && previous.item.target?.kind === next.item.target?.kind && previous.item.target?.id === next.item.target?.id && previous.item.eventType === next.item.eventType && previous.item.createdAt === next.item.createdAt);
 
 function EventActions({
   text,
@@ -83,11 +103,14 @@ function EventActions({
   );
 }
 
-function EventHeader({ item, children }: { item: AgentConversationEventItem; children?: ReactNode }) {
+function EventHeader({ item, children, validationState, targetTitle }: { item: AgentConversationEventItem; children?: ReactNode; validationState?: ValidationState | null; targetTitle?: string }) {
   return (
     <div className="agent-event-header">
       <span className="agent-event-icon" aria-hidden="true">{eventIcon(item.kind)}</span>
       <span className="agent-event-label">{item.label}</span>
+      {validationState && <span className={`agent-event-state is-${validationState.tone}`}><span aria-hidden="true" />{validationState.label}</span>}
+      {targetTitle && <span className="agent-event-target" title={targetTitle}>{targetTitle}</span>}
+      {item.createdAt && <time className="agent-event-time" dateTime={item.createdAt} title={new Date(item.createdAt).toLocaleString()}>{new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>}
       {children}
     </div>
   );

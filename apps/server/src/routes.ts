@@ -135,7 +135,7 @@ export function registerRoutes(
   bus.subscribe((event) => {
     if (event.type !== "timeline_appended") return;
     if (!validationTimelineConsoleEvent(event.entry)) return;
-    agentEventStore.append(event.entry.caseId, "validation", event.entry.detail, event.entry.eventType);
+    agentEventStore.append(event.entry.caseId, "validation", event.entry.detail, event.entry.eventType, event.entry.createdAt);
   });
   const sessionStore = new SessionStateStore(db);
   const hypothesisStore = new HypothesisStore(db);
