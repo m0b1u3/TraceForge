@@ -70,6 +70,7 @@ import { advanceExplorationBoundary, applyValidationExplorationPolicy, initialVa
 import { appendValidationFeedback, observeValidationOutcome, recoverValidationFeedback, summarizeValidationFeedbackHistory, type ValidationOutcomeSnapshot } from "./validation-task-feedback.js";
 import { evaluateValidationTaskExecutionTransition, isConsensusValidationTask, validationFindingId } from "./validation-task-execution.js";
 import { releaseValidationTaskLeases } from "./validation-task-lease.js";
+import { makeManageValidationTaskTool } from "./validation-task-control-tool.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -763,6 +764,16 @@ export function registerRoutes(
         tasks: taskStore.listByCase(id),
       }),
     ));
+    registry.register(makeManageValidationTaskTool({
+      caseId: id,
+      runId,
+      facts: factStore,
+      hypotheses: hypothesisStore,
+      tasks: taskStore,
+      consensus: validationConsensusStore,
+      timeline: timelineStore,
+      emit: (event) => bus.emit(event),
+    }));
     registry.register(makeRecordActionTool(
       id,
       factStore,
@@ -1051,7 +1062,7 @@ export function registerRoutes(
     agentEventStore.append(id, "started", `Started: ${goal}`);
     const observerScheduler = new ObserverScheduler();
     await new AgentRuntime(llm, registry, gate).run(
-      `${system}\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}\n\n${getValidationMatrixPlan()}`,
+      `${system}\n\nValidation task protocol: use manage_validation_task to claim a consensus validation task before executing it, release it before pivoting, and complete it only after recording the required evidence. Do not manually change consensus validation status with record_task.\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}\n\n${getValidationMatrixPlan()}`,
       built.messages,
       (e) => {
       if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
@@ -1150,7 +1161,7 @@ export function registerRoutes(
         });
       },
       onToolExecuted: (report) => {
-        if (executingValidationTask && validationOutcomeBefore && report.name !== "record_task") {
+        if (executingValidationTask && validationOutcomeBefore && !["record_task", "manage_validation_task"].includes(report.name)) {
           const observation = observeValidationOutcome({
             ...executingValidationTask,
             tool: report.name,
@@ -1169,9 +1180,10 @@ export function registerRoutes(
           bus.emit({ type: "timeline_appended", entry: feedbackEntry });
         }
         validationOutcomeBefore = undefined;
-        if (report.ok && report.name === "record_task") {
+        if (report.ok && ["record_task", "manage_validation_task"].includes(report.name)) {
           const reportInput = report.input as Record<string, unknown>;
-          const taskId = typeof reportInput.id === "string" ? reportInput.id : undefined;
+          const candidateTaskId = report.name === "manage_validation_task" ? reportInput.taskId : reportInput.id;
+          const taskId = typeof candidateTaskId === "string" ? candidateTaskId : undefined;
           const task = taskId ? taskStore.getById(taskId) : undefined;
           const findingId = task && isConsensusValidationTask(task) ? validationFindingId(task) : undefined;
           if (task && findingId && task.status === "running") {
@@ -1216,6 +1228,7 @@ export function registerRoutes(
           "record_hypothesis",
           "resolve_hypothesis",
           "record_task",
+          "manage_validation_task",
           "record_identity",
         "compare_identity_traffic",
           "record_attack_path",
