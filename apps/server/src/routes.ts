@@ -63,6 +63,7 @@ import { ValidationConclusionStore } from "./stores/validation-conclusion-store.
 import { makeRecordValidationConclusionTool } from "./validation-conclusion-tool.js";
 import { ValidationConsensusStore } from "./stores/validation-consensus-store.js";
 import { evaluateValidationTaskCompletion } from "./validation-task-gate.js";
+import { resumePendingValidations } from "./validation-resume.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -565,6 +566,17 @@ export function registerRoutes(
     for (const warning of observerStore.resolveActiveFromOtherRuns(id, active.run.id)) {
       bus.emit({ type: "observer_warning_updated", warning });
     }
+    const resumedValidations = resumePendingValidations({
+      caseId: id,
+      runId: active.run.id,
+      facts: factStore,
+      hypotheses: hypothesisStore,
+      tasks: taskStore,
+      consensus: validationConsensusStore,
+      timeline: timelineStore,
+    });
+    for (const task of resumedValidations.tasks) bus.emit({ type: "task_created", task });
+    for (const entry of resumedValidations.timelineEntries) bus.emit({ type: "timeline_appended", entry });
 
     const runAgentInBackground = async (runId: string) => {
       const running = runs.get(runId);

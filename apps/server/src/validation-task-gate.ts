@@ -5,7 +5,7 @@ import type { ValidationConsensusResult } from "./validation-consensus.js";
 const KEY = /^\[Consensus:([^:\]]+):(insufficient|supported|conflicted|refuted)\]/;
 
 export function evaluateValidationTaskCompletion(input: {
-  task: Task;
+  task: Pick<Task, "title">;
   facts: Fact[];
   consensus: ValidationConsensusResult[];
   hypotheses: Hypothesis[];
