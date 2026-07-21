@@ -64,6 +64,7 @@ import { makeRecordValidationConclusionTool } from "./validation-conclusion-tool
 import { ValidationConsensusStore } from "./stores/validation-consensus-store.js";
 import { evaluateValidationTaskCompletion } from "./validation-task-gate.js";
 import { resumePendingValidations } from "./validation-resume.js";
+import { formatValidationTaskPriorities, rankValidationTasks } from "./validation-task-priority.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -971,6 +972,18 @@ export function registerRoutes(
       contextWindowTokens: llmConfig?.contextWindowTokens,
       maxOutputTokens: llmConfig?.maxOutputTokens,
     });
+    const rankedTasks = rankValidationTasks({
+      tasks: taskStore.listByCase(id).filter((task) =>
+        task.runId === runId && ["open", "blocked", "running", "recheck_candidate"].includes(task.status)),
+      facts: factStore.listByCase(id),
+      consensus: validationConsensusStore.listByCase(id),
+      paths: attackPathStore.listByCase(id),
+    });
+    const priorityDetail = formatValidationTaskPriorities(rankedTasks);
+    if (priorityDetail) {
+      const entry = timelineStore.append(id, "validation_tasks_prioritized", priorityDetail, undefined, runId);
+      bus.emit({ type: "timeline_appended", entry });
+    }
     const built = buildContext({
       goal,
       state: sessionStore.get(id, runId),
@@ -979,7 +992,8 @@ export function registerRoutes(
       trafficCount: traffic.listByCase(id).length,
       summaryCount: contextSummaryStore.latest(id) ? 1 : 0,
       activeHypotheses: hypothesisStore.listByCase(id).filter((h) => h.runId === runId && h.status === "active"),
-      activeTasks: taskStore.listByCase(id).filter((t) => t.runId === runId && ["open", "blocked", "running", "recheck_candidate"].includes(t.status)),
+      activeTasks: rankedTasks.map((item) => item.task),
+      taskPriorities: Object.fromEntries(rankedTasks.map((item) => [item.task.id, { score: item.score, reasons: item.reasons }])),
       doneTaskSummaries: taskStore.listByCase(id).filter((t) => t.runId === runId && t.status === "done").map((t) => `${t.title}：${t.reason || "完成"}`),
       farSummary: contextSummaryStore.latest(id)?.content,
       scopeHosts: c.scopeRules.flatMap((r) => r.allowHosts),
