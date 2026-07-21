@@ -28,6 +28,7 @@ export interface ValidationWorkflowItem {
 export interface ValidationWorkflowSnapshot {
   caseId: string;
   runId: string | null;
+  revision: number;
   generatedAt: string;
   runningLease: string | null;
   leader: { taskId: string; score: number } | null;

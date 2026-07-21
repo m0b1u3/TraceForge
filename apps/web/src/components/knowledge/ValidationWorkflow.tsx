@@ -3,12 +3,19 @@ import { ArrowsClockwise, ArrowSquareOut, CheckCircle, Flask, ShieldCheck, Warni
 import { useShallow } from "zustand/react/shallow";
 import type { ValidationWorkflowItem, ValidationWorkflowSnapshot } from "@traceforge/shared";
 import { useStore } from "../../store.js";
+import type { ValidationSyncStatus } from "../../store.js";
 
 export function validationWorkflowTone(snapshot: ValidationWorkflowSnapshot): "danger" | "warning" | "active" | "quiet" {
   if (snapshot.auditIssues.length > 0) return "danger";
   if (snapshot.items.some((item) => item.missingEvidence.length > 0)) return "warning";
   if (snapshot.runningLease) return "active";
   return "quiet";
+}
+
+export function validationSyncLabel(status: ValidationSyncStatus): "Live" | "Recovering" | "Stale" {
+  if (status === "live") return "Live";
+  if (status === "recovering") return "Recovering";
+  return "Stale";
 }
 
 export type ValidationNavigationTarget = { kind: "finding" | "task"; id: string };
@@ -45,9 +52,10 @@ function ValidationItem({ item, leaderId, onNavigate }: { item: ValidationWorkfl
 }
 
 export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: ValidationNavigationTarget) => void }) {
-  const { caseId, snapshot, refreshValidationWorkflow } = useStore(useShallow((state) => ({
+  const { caseId, snapshot, syncStatus, refreshValidationWorkflow } = useStore(useShallow((state) => ({
     caseId: state.caseId,
     snapshot: state.validationWorkflow,
+    syncStatus: state.validationSyncStatus,
     refreshValidationWorkflow: state.refreshValidationWorkflow,
   })));
   const [loading, setLoading] = useState(false);
@@ -76,9 +84,14 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
           <ShieldCheck size={15} weight="duotone" />
           <div><span>Validation control</span><strong>{snapshot?.runningLease ? "Evidence work in progress" : snapshot?.items.length ? "Verification queue" : "No findings awaiting validation"}</strong></div>
         </div>
-        <button type="button" className="tf-btn tf-btn-ghost tf-btn-icon" onClick={() => void load()} disabled={loading} aria-label="Refresh validation workflow" title="Refresh validation workflow">
-          <ArrowsClockwise size={14} className={loading ? "tf-spin" : ""} />
-        </button>
+        <div className="validation-workflow-actions">
+          <span className={`validation-sync is-${syncStatus}`} role="status" aria-live="polite" title={snapshot ? `Workflow revision ${snapshot.revision}` : "Workflow snapshot unavailable"}>
+            <i aria-hidden="true" />{validationSyncLabel(syncStatus)}
+          </span>
+          <button type="button" className="tf-btn tf-btn-ghost tf-btn-icon" onClick={() => void load()} disabled={loading} aria-label="Refresh validation workflow" title="Refresh validation workflow">
+            <ArrowsClockwise size={14} className={loading ? "tf-spin" : ""} />
+          </button>
+        </div>
       </div>
       {error && <div className="validation-workflow-error"><WarningCircle size={14} />{error}</div>}
       {snapshot && snapshot.items.length > 0 && (

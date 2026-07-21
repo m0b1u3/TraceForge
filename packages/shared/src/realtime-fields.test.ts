@@ -35,7 +35,7 @@ describe("realtime entity fields", () => {
     const event: RuntimeEvent = {
       type: "validation_workflow_updated",
       snapshot: {
-        caseId: "c", runId: "r", generatedAt: "now", runningLease: null, leader: null,
+        caseId: "c", runId: "r", revision: 1, generatedAt: "now", runningLease: null, leader: null,
         exploration: { consecutiveValidationShifts: 0, explorationBoundariesRemaining: 0 }, items: [], auditIssues: [],
       },
     };

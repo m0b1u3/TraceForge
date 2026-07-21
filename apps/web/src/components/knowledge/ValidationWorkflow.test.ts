@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ValidationWorkflowSnapshot } from "@traceforge/shared";
-import { validationNavigationTarget, validationWorkflowTone } from "./ValidationWorkflow.js";
+import { validationNavigationTarget, validationSyncLabel, validationWorkflowTone } from "./ValidationWorkflow.js";
 
 const snapshot = (patch: Partial<ValidationWorkflowSnapshot> = {}): ValidationWorkflowSnapshot => ({
-  caseId: "case-1", runId: null, generatedAt: "2026-07-21T00:00:00.000Z", runningLease: null, leader: null,
+  caseId: "case-1", runId: null, revision: 0, generatedAt: "2026-07-21T00:00:00.000Z", runningLease: null, leader: null,
   exploration: { consecutiveValidationShifts: 0, explorationBoundariesRemaining: 0 }, items: [], auditIssues: [], ...patch,
 });
 
@@ -23,5 +23,9 @@ describe("validation workflow presentation", () => {
   it("resolves finding navigation without inventing missing task ids", () => {
     expect(validationNavigationTarget({ findingId: "finding-1", taskId: "task-1" }, "finding")).toEqual({ kind: "finding", id: "finding-1" });
     expect(validationNavigationTarget({ findingId: "finding-1", taskId: null }, "task")).toBeNull();
+  });
+
+  it("uses explicit transport trust labels", () => {
+    expect([validationSyncLabel("live"), validationSyncLabel("recovering"), validationSyncLabel("stale")]).toEqual(["Live", "Recovering", "Stale"]);
   });
 });

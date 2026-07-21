@@ -157,11 +157,22 @@ export function registerRoutes(
   const pendingInterventions = new PendingInterventionRegistry();
   const runs = new AgentRunRegistry(new AgentRunStore(db));
   const validationRuntimeByRun = new Map<string, ValidationRuntimeSnapshot>();
+  const validationRevisionByCase = new Map<string, number>();
+  const currentValidationRevision = (caseId: string) => {
+    const existing = validationRevisionByCase.get(caseId);
+    if (existing !== undefined) return existing;
+    const initial = Date.now() * 1000;
+    validationRevisionByCase.set(caseId, initial);
+    return initial;
+  };
   const emitValidationWorkflow = (caseId: string, requestedRunId?: string) => {
     const runId = requestedRunId || runs.getActiveByCase(caseId)?.run.id || runs.getLatestByCase(caseId)?.run.id;
+    const revision = Math.max(currentValidationRevision(caseId) + 1, Date.now() * 1000);
+    validationRevisionByCase.set(caseId, revision);
     const snapshot = buildValidationWorkflowSnapshot({
       caseId,
       runId,
+      revision,
       facts: factStore,
       hypotheses: hypothesisStore,
       tasks: taskStore,
@@ -473,7 +484,7 @@ export function registerRoutes(
     const query = (req.query ?? {}) as { runId?: string };
     const runId = query.runId || runs.getActiveByCase(id)?.run.id || runs.getLatestByCase(id)?.run.id;
     return buildValidationWorkflowSnapshot({
-      caseId: id, runId, facts: factStore, hypotheses: hypothesisStore, tasks: taskStore,
+      caseId: id, runId, revision: currentValidationRevision(id), facts: factStore, hypotheses: hypothesisStore, tasks: taskStore,
       consensus: validationConsensusStore, paths: attackPathStore, timeline: timelineStore,
       runtime: runId ? validationRuntimeByRun.get(runId) : undefined,
     });
@@ -822,7 +833,7 @@ export function registerRoutes(
       emit: (event) => bus.emit(event),
     }));
     registry.register(makeGetValidationWorkflowStateTool(() => buildValidationWorkflowSnapshot({
-      caseId: id, runId, facts: factStore, hypotheses: hypothesisStore, tasks: taskStore,
+      caseId: id, runId, revision: currentValidationRevision(id), facts: factStore, hypotheses: hypothesisStore, tasks: taskStore,
       consensus: validationConsensusStore, paths: attackPathStore, timeline: timelineStore,
       runtime: validationRuntimeByRun.get(runId),
     })));

@@ -60,6 +60,13 @@ export function observerTelemetryFromHistory(
 
 export type ToastTone = "info" | "success" | "error";
 export type ConnectionStatus = "online" | "reconnecting" | "offline";
+export type ValidationSyncStatus = "live" | "recovering" | "stale";
+
+export function mergeValidationWorkflow(current: ValidationWorkflowSnapshot | null, incoming: ValidationWorkflowSnapshot): ValidationWorkflowSnapshot {
+  if (!current || current.caseId !== incoming.caseId) return incoming;
+  if (incoming.revision !== current.revision) return incoming.revision > current.revision ? incoming : current;
+  return incoming.generatedAt > current.generatedAt ? incoming : current;
+}
 export interface ToastNotice {
   id: number;
   message: string;
@@ -178,6 +185,7 @@ interface State {
   warnings: ObserverWarning[];
   observerTelemetry: ObserverTelemetry;
   validationWorkflow: ValidationWorkflowSnapshot | null;
+  validationSyncStatus: ValidationSyncStatus;
   refreshValidationWorkflow: () => Promise<void>;
   llmConfig: LlmConfig | null;
   settingsModalOpen: boolean;
@@ -273,12 +281,19 @@ export const useStore = create<State>((set, get) => ({
   warnings: [],
   observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY },
   validationWorkflow: null,
+  validationSyncStatus: "stale",
   refreshValidationWorkflow: async () => {
     const caseId = get().caseId;
     if (!caseId) return;
     const runId = get().activeRun?.id;
-    const snapshot = await getValidationWorkflow(caseId, runId);
-    if (get().caseId === caseId) set({ validationWorkflow: snapshot });
+    set({ validationSyncStatus: "recovering" });
+    try {
+      const snapshot = await getValidationWorkflow(caseId, runId);
+      if (get().caseId === caseId) set((state) => ({ validationWorkflow: mergeValidationWorkflow(state.validationWorkflow, snapshot), validationSyncStatus: "live" }));
+    } catch (error) {
+      if (get().caseId === caseId) set({ validationSyncStatus: "stale" });
+      throw error;
+    }
   },
   llmConfig: null,
   settingsModalOpen: false,
@@ -336,7 +351,7 @@ export const useStore = create<State>((set, get) => ({
   )),
   setCase: (id) => {
     cancelPendingStreamDeltas();
-    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, pendingScope: null, pendingConfirmation: null });
+    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationSyncStatus: id ? "recovering" : "stale", pendingScope: null, pendingConfirmation: null });
   },
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
@@ -370,6 +385,7 @@ export const useStore = create<State>((set, get) => ({
       tokenUsageHistory,
       observerTelemetry: observerTelemetryFromHistory(tokenUsageHistory, warnings),
       validationWorkflow,
+      validationSyncStatus: "live",
       pendingApproval: pendingInterventions.approval,
       pendingScope: pendingInterventions.scope,
       browserController: browserState.controller,
@@ -514,7 +530,7 @@ export const useStore = create<State>((set, get) => ({
       socket = null;
       if (current && current.readyState < WebSocket.CLOSING) current.close();
       if (disconnectActiveWebSocket === disconnect) disconnectActiveWebSocket = null;
-      set({ connectionStatus: "offline" });
+      set({ connectionStatus: "offline", validationSyncStatus: "stale" });
     };
 
     const open = () => {
@@ -523,7 +539,7 @@ export const useStore = create<State>((set, get) => ({
       socket = ws;
       ws.onopen = () => {
         retry = 0;
-        set({ connectionStatus: "online" });
+        set({ connectionStatus: "online", validationSyncStatus: "recovering" });
         const caseId = get().caseId;
         if (!caseId) return;
         void Promise.all([listTraffic(caseId, { limit: CLIENT_TRAFFIC_LIMIT }), getBrowserState(caseId), getValidationWorkflow(caseId, get().activeRun?.id)])
@@ -534,7 +550,8 @@ export const useStore = create<State>((set, get) => ({
               traffic: clientTraffic,
               browserController: browserState.controller,
               browserUrl: browserState.url ?? "",
-              validationWorkflow,
+              validationWorkflow: mergeValidationWorkflow(state.validationWorkflow, validationWorkflow),
+              validationSyncStatus: "live",
               ...(!state.selectedTrafficId || clientTraffic.some((entry) => entry.id === state.selectedTrafficId)
                 ? {}
                 : { selectedTrafficId: null, selectedTrafficSnapshot: null, inspectorMode: "overview" as const }),
@@ -546,7 +563,7 @@ export const useStore = create<State>((set, get) => ({
       };
       ws.onclose = () => {
         if (disposed || socket !== ws) return;
-        set({ connectionStatus: globalThis.navigator?.onLine === false ? "offline" : "reconnecting" });
+        set({ connectionStatus: globalThis.navigator?.onLine === false ? "offline" : "reconnecting", validationSyncStatus: globalThis.navigator?.onLine === false ? "stale" : "recovering" });
         const delay = Math.min(1000 * 2 ** retry, 10000);
         retry += 1;
         reconnectTimer = setTimeout(open, delay);
@@ -576,7 +593,7 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "task_created" && event.task.caseId === cid) get().upsertTask(event.task);
     else if (event.type === "task_updated" && event.task.caseId === cid) get().upsertTask(event.task);
     else if (event.type === "timeline_appended" && event.entry.caseId === cid) get().addTimeline(event.entry);
-    else if (event.type === "validation_workflow_updated" && event.snapshot.caseId === cid) set({ validationWorkflow: event.snapshot });
+    else if (event.type === "validation_workflow_updated" && event.snapshot.caseId === cid) set((state) => ({ validationWorkflow: mergeValidationWorkflow(state.validationWorkflow, event.snapshot), validationSyncStatus: "live" }));
     else if (event.type === "action_recorded" && event.action.caseId === cid) get().addAction(event.action);
     else if (event.type === "decision_recorded" && event.decision.caseId === cid) get().addDecision(event.decision);
     else if (event.type === "agent_run_started" && event.run.caseId === cid) {

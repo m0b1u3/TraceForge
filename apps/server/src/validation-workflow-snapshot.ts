@@ -22,6 +22,7 @@ export interface ValidationRuntimeSnapshot {
 export function buildValidationWorkflowSnapshot(input: {
   caseId: string;
   runId?: string;
+  revision?: number;
   facts: FactStore;
   hypotheses: HypothesisStore;
   tasks: TaskStore;
@@ -49,6 +50,7 @@ export function buildValidationWorkflowSnapshot(input: {
   return {
     caseId: input.caseId,
     runId: input.runId ?? null,
+    revision: input.revision ?? 0,
     generatedAt: new Date().toISOString(),
     runningLease: activeTasks.find((task) => task.status === "running" && task.title.startsWith("[Consensus:"))?.id ?? null,
     leader: input.runtime?.leader ?? null,

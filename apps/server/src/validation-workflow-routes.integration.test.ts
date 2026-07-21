@@ -27,6 +27,9 @@ describe("validation workflow routes with real SQLite", () => {
     expect(denied.statusCode).toBe(409);
     expect(denied.json().error).toContain("manage_validation_task");
     expect(tasks.getById(task.id)?.status).toBe("open");
+    const baseline = await app.inject({ url: `/api/cases/${caseId}/validation/workflow?runId=run_1` });
+    const baselineRevision = baseline.json().revision as number;
+    expect(Number.isSafeInteger(baselineRevision)).toBe(true);
 
     const ordinary = tasks.create(caseId, {
       runId: "run_1", title: "Review endpoint", status: "open", reason: "",
@@ -34,11 +37,12 @@ describe("validation workflow routes with real SQLite", () => {
     });
     const updated = await app.inject({ method: "PATCH", url: `/api/tasks/${ordinary.id}`, payload: { status: "done" } });
     expect(updated.statusCode).toBe(200);
-    expect(events.some((event) => event.type === "validation_workflow_updated" && event.snapshot.caseId === caseId)).toBe(true);
+    const realtime = events.find((event): event is Extract<RuntimeEvent, { type: "validation_workflow_updated" }> => event.type === "validation_workflow_updated" && event.snapshot.caseId === caseId);
+    expect(realtime?.snapshot.revision).toBeGreaterThan(baselineRevision);
 
     const snapshot = await app.inject({ url: `/api/cases/${caseId}/validation/workflow?runId=run_1` });
     expect(snapshot.statusCode).toBe(200);
-    expect(snapshot.json()).toEqual(expect.objectContaining({ caseId, runId: "run_1", runningLease: null }));
+    expect(snapshot.json()).toEqual(expect.objectContaining({ caseId, runId: "run_1", revision: realtime?.snapshot.revision, runningLease: null }));
     await app.close();
   });
 });

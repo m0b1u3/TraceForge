@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { CLIENT_AGENT_EVENT_LIMIT, observerTelemetryFromHistory, takeRecent, useStore } from "./store.js";
+import { CLIENT_AGENT_EVENT_LIMIT, mergeValidationWorkflow, observerTelemetryFromHistory, takeRecent, useStore } from "./store.js";
 
 function resetStore() {
   useStore.setState({
@@ -26,6 +26,7 @@ function resetStore() {
     warnings: [],
     observerTelemetry: { reviewCount: 0, correctionCount: 0, failureCount: 0, totalTokens: 0, lastTrigger: null, lastDurationMs: null },
     validationWorkflow: null,
+    validationSyncStatus: "stale",
     pendingApproval: null,
     pendingScope: null,
     browserController: null,
@@ -41,13 +42,23 @@ describe("validation workflow realtime state", () => {
 
   it("accepts a workflow snapshot for the active case and ignores another case", () => {
     const snapshot = {
-      caseId: "case_1", runId: "run_1", generatedAt: "now", runningLease: null, leader: null,
+      caseId: "case_1", runId: "run_1", revision: 1, generatedAt: "now", runningLease: null, leader: null,
       exploration: { consecutiveValidationShifts: 0, explorationBoundariesRemaining: 0 }, items: [], auditIssues: [],
     };
     useStore.getState().handleRuntimeEvent({ type: "validation_workflow_updated", snapshot: { ...snapshot, caseId: "case_2" } });
     expect(useStore.getState().validationWorkflow).toBeNull();
     useStore.getState().handleRuntimeEvent({ type: "validation_workflow_updated", snapshot });
     expect(useStore.getState().validationWorkflow).toEqual(snapshot);
+  });
+
+  it("rejects an older recovery snapshot after a newer realtime event", () => {
+    const base = {
+      caseId: "case_1", runId: "run_1", generatedAt: "2026-07-21T00:00:00.000Z", runningLease: null, leader: null,
+      exploration: { consecutiveValidationShifts: 0, explorationBoundariesRemaining: 0 }, items: [], auditIssues: [],
+    };
+    const realtime = { ...base, revision: 8, runningLease: "task-live" };
+    const delayedRecovery = { ...base, revision: 7, generatedAt: "2026-07-21T00:00:01.000Z" };
+    expect(mergeValidationWorkflow(realtime, delayedRecovery)).toBe(realtime);
   });
 });
 
