@@ -66,6 +66,7 @@ import { evaluateValidationTaskCompletion } from "./validation-task-gate.js";
 import { resumePendingValidations } from "./validation-resume.js";
 import { formatValidationTaskPriorities, rankValidationTasks } from "./validation-task-priority.js";
 import { decideValidationPriorityShift, validationPriorityLeader } from "./validation-priority-hysteresis.js";
+import { advanceExplorationBoundary, applyValidationExplorationPolicy, initialValidationExplorationState } from "./validation-exploration-policy.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -981,6 +982,7 @@ export function registerRoutes(
       paths: attackPathStore.listByCase(id),
     });
     let currentValidationPriority = validationPriorityLeader(rankedTasks);
+    let validationExplorationState = initialValidationExplorationState();
     const priorityDetail = formatValidationTaskPriorities(rankedTasks);
     if (priorityDetail) {
       const entry = timelineStore.append(id, "validation_tasks_prioritized", priorityDetail, undefined, runId);
@@ -1130,6 +1132,7 @@ export function registerRoutes(
           bus.emit({ type: "timeline_appended", entry });
         }
         observerScheduler.observe(report);
+        if (report.ok) validationExplorationState = advanceExplorationBoundary(validationExplorationState);
         const replanTriggers = new Set([
           "record_fact",
           "record_hypothesis",
@@ -1162,12 +1165,19 @@ export function registerRoutes(
               previous: currentValidationPriority,
               ranked: rerankedTasks,
             });
-            if (priorityShift.shifted && priorityShift.next) {
+            let explorationWindowTaskId = validationExplorationState.explorationBoundariesRemaining > 0
+              ? rerankedTasks.find((item) => !item.validation)?.task.id
+              : undefined;
+            const explorationDecision = priorityShift.shifted
+              ? applyValidationExplorationPolicy({ state: validationExplorationState, shift: priorityShift, ranked: rerankedTasks })
+              : undefined;
+            if (explorationDecision) validationExplorationState = explorationDecision.state;
+            if (priorityShift.shifted && priorityShift.next && explorationDecision?.allowValidationShift) {
               const prioritized = rerankedTasks.find((item) => item.task.id === priorityShift.next?.taskId);
               const priorityEntry = timelineStore.append(
                 id,
                 "validation_priority_shifted",
-                `Trigger=${report.name}; reason=${priorityShift.reason}; previous=${priorityShift.previous?.taskId ?? "none"}:${priorityShift.previous?.score ?? 0}; next=${priorityShift.next.taskId}:${priorityShift.next.score}; factors=${prioritized?.reasons.join(", ") ?? "none"}`,
+                `Trigger=${report.name}; reason=${priorityShift.reason}; policy=${explorationDecision.reason}; previous=${priorityShift.previous?.taskId ?? "none"}:${priorityShift.previous?.score ?? 0}; next=${priorityShift.next.taskId}:${priorityShift.next.score}; factors=${prioritized?.reasons.join(", ") ?? "none"}`,
                 priorityShift.next.taskId,
                 runId,
               );
@@ -1179,6 +1189,24 @@ export function registerRoutes(
                 "Do not interrupt or repeat the tool that just completed. At the next decision point, finish recording its evidence, then switch only if the new task remains actionable.",
               ].join("\n"));
               currentValidationPriority = priorityShift.next;
+            } else if (priorityShift.shifted && explorationDecision && !explorationDecision.allowValidationShift) {
+              explorationWindowTaskId = explorationDecision.explorationTaskId;
+              if (explorationDecision.notifyExplorationWindow && explorationWindowTaskId) {
+                const explorationTask = rerankedTasks.find((item) => item.task.id === explorationWindowTaskId)?.task;
+                const deferredEntry = timelineStore.append(
+                  id,
+                  "validation_priority_deferred",
+                  `Trigger=${report.name}; validation=${priorityShift.next?.taskId ?? "none"}; exploration=${explorationWindowTaskId}; boundaries=${validationExplorationState.explorationBoundariesRemaining}`,
+                  explorationWindowTaskId,
+                  runId,
+                );
+                bus.emit({ type: "timeline_appended", entry: deferredEntry });
+                runs.addSteering(runId, [
+                  "[Exploration window]",
+                  `Validation switching is temporarily deferred after repeated validation preemption. Preserve up to ${validationExplorationState.explorationBoundariesRemaining} completed tool boundaries for exploration task ${explorationWindowTaskId}: ${explorationTask?.title ?? "open exploration"}.`,
+                  "Use this as an opportunity, not a forced tool call. Record any useful evidence or hypothesis; Critical findings and validated attack paths may still preempt immediately.",
+                ].join("\n"));
+              }
             } else if (currentValidationPriority) {
               const retained = rerankedTasks.find((item) => item.task.id === currentValidationPriority?.taskId);
               currentValidationPriority = retained
@@ -1200,7 +1228,9 @@ export function registerRoutes(
               pathPlan,
               evidenceGapPlan,
               validationMatrixPlan,
-              "Re-evaluate the current task against both the ranked hypotheses and path breakpoints. Continue when it advances a leading breakpoint; otherwise explain the evidence-backed pivot before selecting the next verification task.",
+              explorationWindowTaskId
+                ? `Preserve the active exploration window for task ${explorationWindowTaskId}; do not switch to routine validation yet.`
+                : "Re-evaluate the current task against both the ranked hypotheses and path breakpoints. Continue when it advances a leading breakpoint; otherwise explain the evidence-backed pivot before selecting the next verification task.",
             ].join("\n"));
           } catch (error) {
             const entry = timelineStore.append(
