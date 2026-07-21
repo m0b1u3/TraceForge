@@ -71,6 +71,7 @@ import { appendValidationFeedback, observeValidationOutcome, recoverValidationFe
 import { evaluateRecordTaskValidationStatusTransition, isConsensusValidationTask, validationFindingId } from "./validation-task-execution.js";
 import { releaseValidationTaskLeases } from "./validation-task-lease.js";
 import { makeManageValidationTaskTool } from "./validation-task-control-tool.js";
+import { auditValidationWorkflow } from "./validation-workflow-audit.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -160,11 +161,25 @@ export function registerRoutes(
     for (const entry of released.timelineEntries) bus.emit({ type: "timeline_appended", entry });
     return released;
   };
+  const emitValidationWorkflowAudit = (caseId: string) => {
+    const audited = auditValidationWorkflow({
+      caseId,
+      facts: factStore,
+      hypotheses: hypothesisStore,
+      tasks: taskStore,
+      consensus: validationConsensusStore,
+      timeline: timelineStore,
+    });
+    for (const task of audited.tasks) bus.emit({ type: "task_updated", task });
+    for (const entry of audited.timelineEntries) bus.emit({ type: "timeline_appended", entry });
+    return audited;
+  };
   for (const entry of cases.list()) {
     const staleRunIds = new Set(taskStore.listByCase(entry.id)
       .filter((task) => task.status === "running" && isConsensusValidationTask(task) && task.runId)
       .map((task) => task.runId as string));
     for (const runId of staleRunIds) emitReleasedValidationLeases(entry.id, runId, "server startup recovered an orphaned validation lease");
+    emitValidationWorkflowAudit(entry.id);
   }
 
   app.post("/api/cases", async (req) => {
@@ -585,6 +600,7 @@ export function registerRoutes(
     for (const warning of observerStore.resolveActiveFromOtherRuns(id, active.run.id)) {
       bus.emit({ type: "observer_warning_updated", warning });
     }
+    emitValidationWorkflowAudit(id);
     const resumedValidations = resumePendingValidations({
       caseId: id,
       runId: active.run.id,
