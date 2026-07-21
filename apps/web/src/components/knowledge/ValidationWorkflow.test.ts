@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ValidationWorkflowItem, ValidationWorkflowSnapshot } from "@traceforge/shared";
-import { groupValidationWorkflowItems, validationNavigationTarget, validationSyncLabel, validationWorkflowTone } from "./ValidationWorkflow.js";
+import { groupValidationWorkflowItems, validationNavigationTarget, validationSyncLabel, validationWorkflowTone, visibleValidationGroupItems } from "./ValidationWorkflow.js";
 
 const snapshot = (patch: Partial<ValidationWorkflowSnapshot> = {}): ValidationWorkflowSnapshot => ({
   caseId: "case-1", runId: null, revision: 0, generatedAt: "2026-07-21T00:00:00.000Z", runningLease: null, leader: null,
@@ -49,5 +49,12 @@ describe("validation workflow presentation", () => {
     const after = groupValidationWorkflowItems([item("b", { confidence: 0.99 }), item("a", { confidence: 0.1 })], null)[0].items.map((entry) => entry.findingId);
     expect(after).toEqual(before);
     expect(after).toEqual(["a", "b"]);
+  });
+
+  it("never hides active work and preserves changed findings in collapsed groups", () => {
+    const items = [item("a"), item("b"), item("c")];
+    expect(visibleValidationGroupItems("running", items, { collapsed: true, limit: 1, changedFindingIds: [] })).toEqual(items);
+    expect(visibleValidationGroupItems("monitoring", items, { collapsed: true, limit: 1, changedFindingIds: ["c"] }).map((entry) => entry.findingId)).toEqual(["c"]);
+    expect(visibleValidationGroupItems("evidence", items, { collapsed: false, limit: 1, changedFindingIds: ["c"] }).map((entry) => entry.findingId)).toEqual(["a", "c"]);
   });
 });

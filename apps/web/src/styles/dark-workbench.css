@@ -754,11 +754,23 @@ textarea:focus-visible,
 .validation-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--foreground-muted); }
 .tone-active .validation-pulse { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 13%, transparent); }
 .validation-list { display: grid; }
-.validation-group > h3 { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0; padding: 7px 14px 5px; border-top: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent); color: var(--foreground-muted); font: 8px/1.2 var(--mono); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
-.validation-group > h3 span { color: color-mix(in srgb, var(--foreground-muted) 72%, transparent); font-size: 8px; }
+.validation-group > h3 { margin: 0; border-top: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent); color: var(--foreground-muted); font: 8px/1.2 var(--mono); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.validation-group > h3.validation-group-static { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 14px 5px; }
+.validation-group > h3.validation-group-static span { color: color-mix(in srgb, var(--foreground-muted) 72%, transparent); font-size: 8px; }
+.validation-group > h3 > button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 7px 14px 5px; border: 0; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
+.validation-group > h3 > button:hover { background: color-mix(in srgb, var(--surface-hover) 58%, transparent); }
+.validation-group > h3 > button:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent); outline-offset: -2px; }
+.validation-group > h3 > button > span { display: inline-flex; align-items: center; gap: 6px; }
+.validation-group > h3 > button small { color: color-mix(in srgb, var(--foreground-muted) 72%, transparent); font: inherit; }
+.validation-group > h3 > button svg { transition: transform 140ms ease; }
+.validation-group > h3 > button svg.is-open { transform: rotate(180deg); }
 .validation-group.is-running > h3 { color: var(--success); }
 .validation-group.is-leader > h3 { color: var(--primary); }
 .validation-group > ol { display: grid; margin: 0; padding: 0; list-style: none; }
+.validation-show-more { width: 100%; padding: 7px 14px; border: 0; border-top: 1px solid color-mix(in srgb, var(--border-subtle) 42%, transparent); background: transparent; color: var(--foreground-muted); font: 9px var(--mono); text-align: left; cursor: pointer; }
+.validation-show-more:hover { color: var(--foreground-secondary); background: color-mix(in srgb, var(--surface-hover) 52%, transparent); }
+.validation-show-more span { margin-left: 4px; color: var(--information); }
+.validation-show-more:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .validation-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

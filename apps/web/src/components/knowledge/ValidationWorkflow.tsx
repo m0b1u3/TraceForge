@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { ArrowsClockwise, ArrowSquareOut, CheckCircle, Flask, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowsClockwise, ArrowSquareOut, CaretDown, CheckCircle, Flask, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
 import { useShallow } from "zustand/react/shallow";
 import type { ValidationWorkflowItem, ValidationWorkflowSnapshot } from "@traceforge/shared";
 import { useStore } from "../../store.js";
@@ -53,6 +53,19 @@ export function groupValidationWorkflowItems(items: ValidationWorkflowItem[], ru
   });
 }
 
+export const VALIDATION_GROUP_PAGE_SIZE = 4;
+
+export function visibleValidationGroupItems(
+  group: ValidationItemGroup,
+  items: ValidationWorkflowItem[],
+  options: { collapsed: boolean; limit: number; changedFindingIds: string[] },
+): ValidationWorkflowItem[] {
+  if (group === "running" || group === "leader") return items;
+  const changed = new Set(options.changedFindingIds);
+  if (options.collapsed) return items.filter((item) => changed.has(item.findingId));
+  return items.filter((item, index) => index < options.limit || changed.has(item.findingId));
+}
+
 function ValidationItem({ item, leaderId, changed, onNavigate }: { item: ValidationWorkflowItem; leaderId?: string; changed: boolean; onNavigate: (target: ValidationNavigationTarget) => void }) {
   const isLeader = Boolean(item.taskId && item.taskId === leaderId);
   const findingTarget = validationNavigationTarget(item, "finding");
@@ -89,6 +102,13 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
   })));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<ValidationItemGroup>>(() => new Set(["monitoring"]));
+  const [groupLimits, setGroupLimits] = useState<Partial<Record<ValidationItemGroup, number>>>({});
+
+  useEffect(() => {
+    setCollapsedGroups(new Set(["monitoring"]));
+    setGroupLimits({});
+  }, [caseId]);
 
   const load = async () => {
     if (!caseId) return;
@@ -138,17 +158,39 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
             </div>
           )}
           <div className="validation-list">
-            {groups.map((group) => (
-              <section className={`validation-group is-${group.key}`} key={group.key} aria-labelledby={`validation-group-${group.key}`}>
-                <h3 id={`validation-group-${group.key}`}>{group.label}<span>{group.items.length}</span></h3>
-                <ol>
-                  {group.items.map((item) => {
+            {groups.map((group) => {
+              const collapsed = collapsedGroups.has(group.key);
+              const limit = groupLimits[group.key] ?? VALIDATION_GROUP_PAGE_SIZE;
+              const changedFindingIds = delta?.revision === snapshot.revision ? delta.changedFindingIds : [];
+              const visibleItems = visibleValidationGroupItems(group.key, group.items, { collapsed, limit, changedFindingIds });
+              const hiddenCount = group.items.length - visibleItems.length;
+              return <section className={`validation-group is-${group.key}`} key={group.key} aria-labelledby={`validation-group-${group.key}`}>
+                {group.key === "running" || group.key === "leader" ? (
+                  <h3 className="validation-group-static" id={`validation-group-${group.key}`}>{group.label}<span>{group.items.length}</span></h3>
+                ) : (
+                  <h3 id={`validation-group-${group.key}`}>
+                    <button type="button" aria-expanded={!collapsed} aria-controls={`validation-items-${group.key}`} onClick={() => setCollapsedGroups((current) => {
+                      const next = new Set(current);
+                      if (next.has(group.key)) next.delete(group.key); else next.add(group.key);
+                      return next;
+                    })}>
+                      <span>{group.label}<small>{group.items.length}</small></span><CaretDown size={12} className={collapsed ? "" : "is-open"} />
+                    </button>
+                  </h3>
+                )}
+                <ol id={`validation-items-${group.key}`}>
+                  {visibleItems.map((item) => {
                     const changed = delta?.revision === snapshot.revision && delta.changedFindingIds.includes(item.findingId);
                     return <ValidationItem key={`${item.findingId}:${changed ? delta?.revision ?? 0 : 0}`} item={item} leaderId={snapshot.leader?.taskId} changed={Boolean(changed)} onNavigate={onNavigate} />;
                   })}
                 </ol>
-              </section>
-            ))}
+                {!collapsed && group.key !== "running" && group.key !== "leader" && hiddenCount > 0 && (
+                  <button type="button" className="validation-show-more" onClick={() => setGroupLimits((current) => ({ ...current, [group.key]: (current[group.key] ?? VALIDATION_GROUP_PAGE_SIZE) + VALIDATION_GROUP_PAGE_SIZE }))}>
+                    Show more <span>{Math.min(VALIDATION_GROUP_PAGE_SIZE, hiddenCount)}</span>
+                  </button>
+                )}
+              </section>;
+            })}
           </div>
           {snapshot.auditIssues.length > 0 && (
             <div className="validation-audit-list" aria-label="Consistency audit issues">
