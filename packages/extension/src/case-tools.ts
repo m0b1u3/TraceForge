@@ -216,6 +216,13 @@ export interface TaskCompletionGateResult {
 
 export type TaskCompletionGate = (task: Task) => TaskCompletionGateResult;
 
+export interface TaskStatusGateResult {
+  allowed: boolean;
+  message?: string;
+}
+
+export type TaskStatusGate = (current: Task, requestedStatus: Task["status"]) => TaskStatusGateResult;
+
 export function makeRecordTaskTool(
   caseId: string,
   tasks: TaskWriter,
@@ -224,6 +231,7 @@ export function makeRecordTaskTool(
   runId?: string,
   hypotheses?: ReferenceReader,
   completionGate?: TaskCompletionGate,
+  statusGate?: TaskStatusGate,
 ): ToolDescriptor {
   return {
     name: "record_task",
@@ -258,7 +266,8 @@ export function makeRecordTaskTool(
         return { ok: false, content: "hypothesisIds contains an unknown Hypothesis" };
       }
       if (typeof i.id === "string" && i.id) {
-        if (!tasks.getById(i.id)) return { ok: false, content: `task ${i.id} 不存在，新建请去掉 id` };
+        const currentTask = tasks.getById(i.id);
+        if (!currentTask) return { ok: false, content: `task ${i.id} 不存在，新建请去掉 id` };
         const patch: Record<string, unknown> = {};
         if (typeof i.title === "string") patch.title = i.title;
         if (typeof i.status === "string") patch.status = normalizeStatus(i.status);
@@ -268,9 +277,13 @@ export function makeRecordTaskTool(
         if (Array.isArray(i.triggerWhen)) patch.triggerWhen = i.triggerWhen;
         if (Array.isArray(i.relatedFacts)) patch.relatedFacts = i.relatedFacts;
         if (Array.isArray(i.hypothesisIds)) patch.hypothesisIds = i.hypothesisIds;
+        if (patch.status && statusGate) {
+          const transition = statusGate(currentTask, patch.status as Task["status"]);
+          if (!transition.allowed) return { ok: false, content: transition.message ?? "Task status transition denied" };
+        }
         let completionBlocked: TaskCompletionGateResult | undefined;
         if (patch.status === "done" && completionGate) {
-          const result = completionGate({ ...(tasks.getById(i.id) as Task), ...patch } as Task);
+          const result = completionGate({ ...currentTask, ...patch } as Task);
           if (!result.allowed) {
             completionBlocked = result;
             patch.status = "blocked";

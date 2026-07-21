@@ -68,6 +68,7 @@ import { formatValidationTaskPriorities, rankValidationTasks } from "./validatio
 import { decideValidationPriorityShift, validationPriorityLeader } from "./validation-priority-hysteresis.js";
 import { advanceExplorationBoundary, applyValidationExplorationPolicy, initialValidationExplorationState } from "./validation-exploration-policy.js";
 import { appendValidationFeedback, observeValidationOutcome, recoverValidationFeedback, summarizeValidationFeedbackHistory, type ValidationOutcomeSnapshot } from "./validation-task-feedback.js";
+import { evaluateValidationTaskExecutionTransition, isConsensusValidationTask, validationFindingId } from "./validation-task-execution.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -743,6 +744,11 @@ export function registerRoutes(
         consensus: validationConsensusStore.listByCase(id),
         hypotheses: hypothesisStore.listByCase(id),
       }),
+      (current, requestedStatus) => evaluateValidationTaskExecutionTransition({
+        current,
+        requestedStatus,
+        tasks: taskStore.listByCase(id),
+      }),
     ));
     registry.register(makeRecordActionTool(
       id,
@@ -1001,7 +1007,11 @@ export function registerRoutes(
     });
     let currentValidationPriority = validationPriorityLeader(rankedTasks);
     let validationExplorationState = initialValidationExplorationState();
-    let executingValidationTask: { taskId: string; findingId: string } | undefined;
+    const initiallyRunningValidation = rankedTasks.find((item) => item.validation && item.task.status === "running")?.task;
+    const initiallyRunningFindingId = initiallyRunningValidation ? validationFindingId(initiallyRunningValidation) : undefined;
+    let executingValidationTask = initiallyRunningValidation && initiallyRunningFindingId
+      ? { taskId: initiallyRunningValidation.id, findingId: initiallyRunningFindingId }
+      : undefined;
     let validationOutcomeBefore: ValidationOutcomeSnapshot | undefined;
     const priorityDetail = formatValidationTaskPriorities(rankedTasks);
     if (priorityDetail) {
@@ -1146,9 +1156,9 @@ export function registerRoutes(
           const reportInput = report.input as Record<string, unknown>;
           const taskId = typeof reportInput.id === "string" ? reportInput.id : undefined;
           const task = taskId ? taskStore.getById(taskId) : undefined;
-          const match = task ? /^\[Consensus:([^:\]]+):/.exec(task.title) : undefined;
-          if (task && match && task.status === "running") {
-            executingValidationTask = { taskId: task.id, findingId: match[1] };
+          const findingId = task && isConsensusValidationTask(task) ? validationFindingId(task) : undefined;
+          if (task && findingId && task.status === "running") {
+            executingValidationTask = { taskId: task.id, findingId };
           } else if (taskId && executingValidationTask?.taskId === taskId) {
             executingValidationTask = undefined;
           }
