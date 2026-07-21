@@ -25,6 +25,34 @@ export function validationNavigationTarget(item: Pick<ValidationWorkflowItem, "f
   return id ? { kind, id } : null;
 }
 
+export type ValidationItemGroup = "running" | "leader" | "evidence" | "ready" | "monitoring";
+const VALIDATION_GROUP_ORDER: ValidationItemGroup[] = ["running", "leader", "evidence", "ready", "monitoring"];
+const VALIDATION_GROUP_LABEL: Record<ValidationItemGroup, string> = {
+  running: "In progress",
+  leader: "Priority",
+  evidence: "Needs evidence",
+  ready: "Completion ready",
+  monitoring: "Monitoring",
+};
+
+export function validationItemGroup(item: ValidationWorkflowItem, runningLease: string | null, leaderTaskId?: string): ValidationItemGroup {
+  if (item.taskId && (item.taskId === runningLease || item.taskStatus === "running")) return "running";
+  if (item.taskId && item.taskId === leaderTaskId) return "leader";
+  if (item.missingEvidence.length > 0) return "evidence";
+  if (item.completionReady) return "ready";
+  return "monitoring";
+}
+
+export function groupValidationWorkflowItems(items: ValidationWorkflowItem[], runningLease: string | null, leaderTaskId?: string) {
+  const grouped = new Map<ValidationItemGroup, ValidationWorkflowItem[]>(VALIDATION_GROUP_ORDER.map((group) => [group, []]));
+  for (const item of items) grouped.get(validationItemGroup(item, runningLease, leaderTaskId))?.push(item);
+  return VALIDATION_GROUP_ORDER.flatMap((group) => {
+    const groupItems = grouped.get(group) ?? [];
+    groupItems.sort((left, right) => (right.priorityScore ?? -Infinity) - (left.priorityScore ?? -Infinity) || left.findingId.localeCompare(right.findingId));
+    return groupItems.length ? [{ key: group, label: VALIDATION_GROUP_LABEL[group], items: groupItems }] : [];
+  });
+}
+
 function ValidationItem({ item, leaderId, changed, onNavigate }: { item: ValidationWorkflowItem; leaderId?: string; changed: boolean; onNavigate: (target: ValidationNavigationTarget) => void }) {
   const isLeader = Boolean(item.taskId && item.taskId === leaderId);
   const findingTarget = validationNavigationTarget(item, "finding");
@@ -76,6 +104,7 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
   };
 
   const tone = useMemo(() => snapshot ? validationWorkflowTone(snapshot) : "quiet", [snapshot]);
+  const groups = useMemo(() => snapshot ? groupValidationWorkflowItems(snapshot.items, snapshot.runningLease, snapshot.leader?.taskId) : [], [snapshot]);
   if (!caseId) return null;
 
   return (
@@ -108,12 +137,19 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
               {delta.summary.length > 2 && <small>+{delta.summary.length - 2}</small>}
             </div>
           )}
-          <ol className="validation-list">
-            {snapshot.items.map((item) => {
-              const changed = delta?.revision === snapshot.revision && delta.changedFindingIds.includes(item.findingId);
-              return <ValidationItem key={`${item.findingId}:${changed ? delta?.revision ?? 0 : 0}`} item={item} leaderId={snapshot.leader?.taskId} changed={Boolean(changed)} onNavigate={onNavigate} />;
-            })}
-          </ol>
+          <div className="validation-list">
+            {groups.map((group) => (
+              <section className={`validation-group is-${group.key}`} key={group.key} aria-labelledby={`validation-group-${group.key}`}>
+                <h3 id={`validation-group-${group.key}`}>{group.label}<span>{group.items.length}</span></h3>
+                <ol>
+                  {group.items.map((item) => {
+                    const changed = delta?.revision === snapshot.revision && delta.changedFindingIds.includes(item.findingId);
+                    return <ValidationItem key={`${item.findingId}:${changed ? delta?.revision ?? 0 : 0}`} item={item} leaderId={snapshot.leader?.taskId} changed={Boolean(changed)} onNavigate={onNavigate} />;
+                  })}
+                </ol>
+              </section>
+            ))}
+          </div>
           {snapshot.auditIssues.length > 0 && (
             <div className="validation-audit-list" aria-label="Consistency audit issues">
               {snapshot.auditIssues.map((issue) => (

@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { ValidationWorkflowSnapshot } from "@traceforge/shared";
-import { validationNavigationTarget, validationSyncLabel, validationWorkflowTone } from "./ValidationWorkflow.js";
+import type { ValidationWorkflowItem, ValidationWorkflowSnapshot } from "@traceforge/shared";
+import { groupValidationWorkflowItems, validationNavigationTarget, validationSyncLabel, validationWorkflowTone } from "./ValidationWorkflow.js";
 
 const snapshot = (patch: Partial<ValidationWorkflowSnapshot> = {}): ValidationWorkflowSnapshot => ({
   caseId: "case-1", runId: null, revision: 0, generatedAt: "2026-07-21T00:00:00.000Z", runningLease: null, leader: null,
   exploration: { consecutiveValidationShifts: 0, explorationBoundariesRemaining: 0 }, items: [], auditIssues: [], ...patch,
+});
+const item = (findingId: string, patch: Partial<ValidationWorkflowItem> = {}): ValidationWorkflowItem => ({
+  findingId, findingTitle: findingId, findingStatus: "candidate", consensusStatus: "insufficient", confidence: 0.5,
+  taskId: `task-${findingId}`, taskStatus: "open", priorityScore: 50, priorityReasons: [], completionReady: false,
+  missingEvidence: [], feedback: null, ...patch,
 });
 
 describe("validation workflow presentation", () => {
@@ -27,5 +32,22 @@ describe("validation workflow presentation", () => {
 
   it("uses explicit transport trust labels", () => {
     expect([validationSyncLabel("live"), validationSyncLabel("recovering"), validationSyncLabel("stale")]).toEqual(["Live", "Recovering", "Stale"]);
+  });
+
+  it("groups operational states before evidence and completion work", () => {
+    const groups = groupValidationWorkflowItems([
+      item("ready", { completionReady: true }),
+      item("gap", { missingEvidence: ["reproduction"] }),
+      item("lead", { priorityScore: 90 }),
+      item("run", { taskStatus: "running" }),
+    ], "task-run", "task-lead");
+    expect(groups.map((group) => group.key)).toEqual(["running", "leader", "evidence", "ready"]);
+  });
+
+  it("keeps equal-priority items stable when confidence changes", () => {
+    const before = groupValidationWorkflowItems([item("b", { confidence: 0.2 }), item("a", { confidence: 0.8 })], null)[0].items.map((entry) => entry.findingId);
+    const after = groupValidationWorkflowItems([item("b", { confidence: 0.99 }), item("a", { confidence: 0.1 })], null)[0].items.map((entry) => entry.findingId);
+    expect(after).toEqual(before);
+    expect(after).toEqual(["a", "b"]);
   });
 });
