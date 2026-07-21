@@ -69,6 +69,7 @@ import { decideValidationPriorityShift, validationPriorityLeader } from "./valid
 import { advanceExplorationBoundary, applyValidationExplorationPolicy, initialValidationExplorationState } from "./validation-exploration-policy.js";
 import { appendValidationFeedback, observeValidationOutcome, recoverValidationFeedback, summarizeValidationFeedbackHistory, type ValidationOutcomeSnapshot } from "./validation-task-feedback.js";
 import { evaluateValidationTaskExecutionTransition, isConsensusValidationTask, validationFindingId } from "./validation-task-execution.js";
+import { releaseValidationTaskLeases } from "./validation-task-lease.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -152,6 +153,18 @@ export function registerRoutes(
   const approvals = new ApprovalRegistry();
   const pendingInterventions = new PendingInterventionRegistry();
   const runs = new AgentRunRegistry(new AgentRunStore(db));
+  const emitReleasedValidationLeases = (caseId: string, runId: string, reason: string) => {
+    const released = releaseValidationTaskLeases({ caseId, runId, reason, tasks: taskStore, timeline: timelineStore });
+    for (const task of released.tasks) bus.emit({ type: "task_updated", task });
+    for (const entry of released.timelineEntries) bus.emit({ type: "timeline_appended", entry });
+    return released;
+  };
+  for (const entry of cases.list()) {
+    const staleRunIds = new Set(taskStore.listByCase(entry.id)
+      .filter((task) => task.status === "running" && isConsensusValidationTask(task) && task.runId)
+      .map((task) => task.runId as string));
+    for (const runId of staleRunIds) emitReleasedValidationLeases(entry.id, runId, "server startup recovered an orphaned validation lease");
+  }
 
   app.post("/api/cases", async (req) => {
     const body = req.body as { name: string; allowHosts: string[]; denyHosts?: string[] };
@@ -1075,6 +1088,7 @@ export function registerRoutes(
       else if (e.type === "budget_exhausted") {
         const run = runs.needsContinuation(runId, e.content);
         if (run) {
+          emitReleasedValidationLeases(id, runId, `Run needs continuation: ${e.content}`);
           agentEventStore.append(id, "done", "Agent 已到达本次运行预算，需要继续运行。");
           bus.emit({ type: "agent_run_needs_continuation", run, reason: e.content });
           trajectory.push(`[budget_exhausted] ${e.content}`);
@@ -1102,7 +1116,10 @@ export function registerRoutes(
       }
       else if (e.type === "interrupted") {
         const interrupted = runs.markInterrupted(runId, running.run.interruptReason ?? e.content);
-        if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });
+        if (interrupted) {
+          emitReleasedValidationLeases(id, runId, `Run interrupted: ${interrupted.interruptReason ?? e.content}`);
+          bus.emit({ type: "agent_run_interrupted", run: interrupted });
+        }
       }
     }, {
       signal: running.abortController.signal,
@@ -1328,7 +1345,10 @@ export function registerRoutes(
     const afterRun = runs.get(runId)?.run;
     if (afterRun && afterRun.status === "running") {
       const completed = runs.complete(runId, trajectory.at(-1) ?? "completed");
-      if (completed) bus.emit({ type: "agent_run_completed", run: completed, content: trajectory.at(-1) ?? "" });
+      if (completed) {
+        emitReleasedValidationLeases(id, runId, `Run completed: ${completed.completionReason ?? "completed"}`);
+        bus.emit({ type: "agent_run_completed", run: completed, content: trajectory.at(-1) ?? "" });
+      }
     }
 
     timelineStore.append(id, "context_built", `Injected ${built.injectedFactIds.length} facts, ~${built.estimatedTokens} tokens, degraded:${built.degraded.join(",") || "none"}`);
@@ -1370,10 +1390,14 @@ export function registerRoutes(
         const current = runs.get(active.run.id);
         if (current?.run.status === "interrupting") {
           const interrupted = runs.markInterrupted(active.run.id, current.run.interruptReason ?? (err as Error).message);
-          if (interrupted) bus.emit({ type: "agent_run_interrupted", run: interrupted });
+          if (interrupted) {
+            emitReleasedValidationLeases(id, active.run.id, `Run interrupted: ${interrupted.interruptReason ?? (err as Error).message}`);
+            bus.emit({ type: "agent_run_interrupted", run: interrupted });
+          }
         } else {
           const failed = runs.fail(active.run.id, (err as Error).message);
           if (failed) {
+          emitReleasedValidationLeases(id, active.run.id, `Run failed: ${(err as Error).message}`);
           bus.emit({ type: "agent_run_failed", run: failed, error: (err as Error).message });
           bus.emit({ type: "agent_error", caseId: id, content: (err as Error).message });
           agentEventStore.append(id, "error", (err as Error).message);
@@ -1400,6 +1424,7 @@ export function registerRoutes(
     const { reason } = (req.body ?? {}) as { reason?: string };
     const run = runs.interrupt(runId, reason);
     if (!run) return reply.code(404).send({ error: "run not found" });
+    emitReleasedValidationLeases(run.caseId, runId, `Run interruption requested: ${reason ?? "user interrupted"}`);
     const pendingApproval = pendingInterventions.get(run.caseId).approval;
     if (pendingApproval) pendingInterventions.clearApproval(run.caseId, pendingApproval.approvalId);
     return { run };
