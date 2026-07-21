@@ -62,6 +62,7 @@ import { buildValidationMatrices, formatValidationMatrices } from "./validation-
 import { ValidationConclusionStore } from "./stores/validation-conclusion-store.js";
 import { makeRecordValidationConclusionTool } from "./validation-conclusion-tool.js";
 import { ValidationConsensusStore } from "./stores/validation-consensus-store.js";
+import { evaluateValidationTaskCompletion } from "./validation-task-gate.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -713,7 +714,20 @@ export function registerRoutes(
     registry.register(makeListTrafficTool(id, traffic));
     registry.register(makeGetTrafficTool(id, traffic));
     registry.register(makeRecordFactTool(id, factStore, runTimeline, (e) => bus.emit(e), runId));
-    registry.register(makeRecordTaskTool(id, taskStore, runTimeline, (e) => bus.emit(e), runId, hypothesisStore));
+    registry.register(makeRecordTaskTool(
+      id,
+      taskStore,
+      runTimeline,
+      (e) => bus.emit(e),
+      runId,
+      hypothesisStore,
+      (task) => evaluateValidationTaskCompletion({
+        task,
+        facts: factStore.listByCase(id),
+        consensus: validationConsensusStore.listByCase(id),
+        hypotheses: hypothesisStore.listByCase(id),
+      }),
+    ));
     registry.register(makeRecordActionTool(
       id,
       factStore,

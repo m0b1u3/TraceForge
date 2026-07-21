@@ -39,6 +39,7 @@ export {
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
   makeReopenTaskTool, makeRevertDoneTaskTool, makeExtractApiEndpointsTool,
   type TaskStatusReader, type StatusWriter,
+  type TaskCompletionGate, type TaskCompletionGateResult,
   type FactWriter, type TaskWriter, type ActionWriter, type DecisionWriter, type TimelineWriter, type Emit,
   type EndpointExtractorDeps, type EndpointAnalyzer, type LlmEndpointCandidate, type EndpointParameter,
 } from "./case-tools.js";

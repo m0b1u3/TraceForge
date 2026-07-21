@@ -209,7 +209,22 @@ function normalizeStatus(v: unknown): Task["status"] {
   return typeof v === "string" && TASK_STATUSES.has(v as Task["status"]) ? (v as Task["status"]) : "open";
 }
 
-export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: TimelineWriter, emit: Emit, runId?: string, hypotheses?: ReferenceReader): ToolDescriptor {
+export interface TaskCompletionGateResult {
+  allowed: boolean;
+  missing: string[];
+}
+
+export type TaskCompletionGate = (task: Task) => TaskCompletionGateResult;
+
+export function makeRecordTaskTool(
+  caseId: string,
+  tasks: TaskWriter,
+  timeline: TimelineWriter,
+  emit: Emit,
+  runId?: string,
+  hypotheses?: ReferenceReader,
+  completionGate?: TaskCompletionGate,
+): ToolDescriptor {
   return {
     name: "record_task",
     description: "记录一个待办/挂起任务。可设 status=blocked + triggerWhen 表示等待某条件（如等凭据）。要更新已有 Task（改状态/标题/原因等）时带上它的 id；新建则不带 id。",
@@ -253,11 +268,24 @@ export function makeRecordTaskTool(caseId: string, tasks: TaskWriter, timeline: 
         if (Array.isArray(i.triggerWhen)) patch.triggerWhen = i.triggerWhen;
         if (Array.isArray(i.relatedFacts)) patch.relatedFacts = i.relatedFacts;
         if (Array.isArray(i.hypothesisIds)) patch.hypothesisIds = i.hypothesisIds;
+        let completionBlocked: TaskCompletionGateResult | undefined;
+        if (patch.status === "done" && completionGate) {
+          const result = completionGate({ ...(tasks.getById(i.id) as Task), ...patch } as Task);
+          if (!result.allowed) {
+            completionBlocked = result;
+            patch.status = "blocked";
+            patch.reason = `[Completion gate] ${result.missing.join("; ")}`;
+            patch.triggerWhen = result.missing;
+          }
+        }
         const task = tasks.update(i.id, patch as never);
         if (!task) return { ok: false, content: `更新失败：${i.id}` };
         const entry = timeline.append(caseId, "task_updated", `Task 更新: ${task.title}（第 ${task.updateCount} 次）`, task.id);
         emit({ type: "task_updated", task });
         emit({ type: "timeline_appended", entry });
+        if (completionBlocked) {
+          return { ok: true, content: `Task ${task.id} remains blocked. Missing completion evidence: ${completionBlocked.missing.join("; ")}` };
+        }
         return { ok: true, content: `已更新 Task ${task.id}（第 ${task.updateCount} 次）` };
       }
       const task = tasks.create(caseId, {
