@@ -72,6 +72,7 @@ import { evaluateRecordTaskValidationStatusTransition, isConsensusValidationTask
 import { releaseValidationTaskLeases } from "./validation-task-lease.js";
 import { makeManageValidationTaskTool } from "./validation-task-control-tool.js";
 import { auditValidationWorkflow } from "./validation-workflow-audit.js";
+import { buildValidationWorkflowSnapshot, makeGetValidationWorkflowStateTool, type ValidationRuntimeSnapshot } from "./validation-workflow-snapshot.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -155,6 +156,7 @@ export function registerRoutes(
   const approvals = new ApprovalRegistry();
   const pendingInterventions = new PendingInterventionRegistry();
   const runs = new AgentRunRegistry(new AgentRunStore(db));
+  const validationRuntimeByRun = new Map<string, ValidationRuntimeSnapshot>();
   const emitReleasedValidationLeases = (caseId: string, runId: string, reason: string) => {
     const released = releaseValidationTaskLeases({ caseId, runId, reason, tasks: taskStore, timeline: timelineStore });
     for (const task of released.tasks) bus.emit({ type: "task_updated", task });
@@ -416,6 +418,10 @@ export function registerRoutes(
   app.patch("/api/tasks/:taskId", async (req, reply) => {
     const { taskId } = req.params as { taskId: string };
     const { status, reason } = req.body as { status: Task["status"]; reason?: string };
+    const current = taskStore.getById(taskId);
+    if (!current) return reply.code(404).send({ error: "task not found" });
+    const transition = evaluateRecordTaskValidationStatusTransition({ current, requestedStatus: status, patch: { status } });
+    if (!transition.allowed) return reply.code(409).send({ error: transition.message });
     const task = taskStore.updateStatus(taskId, status, reason);
     if (!task) return reply.code(404).send({ error: "task not found" });
     const entry = timelineStore.append(task.caseId, "task_updated", `Task ${task.title} → ${status}`, task.id);
@@ -442,6 +448,18 @@ export function registerRoutes(
   app.get("/api/cases/:id/agent/events", async (req) => {
     const { id } = req.params as { id: string };
     return agentEventStore.listByCase(id, historyPageOptions(req.query));
+  });
+
+  app.get("/api/cases/:id/validation/workflow", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    const query = (req.query ?? {}) as { runId?: string };
+    const runId = query.runId || runs.getActiveByCase(id)?.run.id || runs.getLatestByCase(id)?.run.id;
+    return buildValidationWorkflowSnapshot({
+      caseId: id, runId, facts: factStore, hypotheses: hypothesisStore, tasks: taskStore,
+      consensus: validationConsensusStore, paths: attackPathStore, timeline: timelineStore,
+      runtime: runId ? validationRuntimeByRun.get(runId) : undefined,
+    });
   });
 
   app.get("/api/cases/:id/validation-conclusions", async (req) => {
@@ -786,6 +804,11 @@ export function registerRoutes(
       timeline: timelineStore,
       emit: (event) => bus.emit(event),
     }));
+    registry.register(makeGetValidationWorkflowStateTool(() => buildValidationWorkflowSnapshot({
+      caseId: id, runId, facts: factStore, hypotheses: hypothesisStore, tasks: taskStore,
+      consensus: validationConsensusStore, paths: attackPathStore, timeline: timelineStore,
+      runtime: validationRuntimeByRun.get(runId),
+    })));
     registry.register(makeRecordActionTool(
       id,
       factStore,
@@ -1043,6 +1066,11 @@ export function registerRoutes(
     });
     let currentValidationPriority = validationPriorityLeader(rankedTasks);
     let validationExplorationState = initialValidationExplorationState();
+    const syncValidationRuntime = () => validationRuntimeByRun.set(runId, {
+      leader: currentValidationPriority,
+      exploration: validationExplorationState,
+    });
+    syncValidationRuntime();
     const initiallyRunningValidation = rankedTasks.find((item) => item.validation && item.task.status === "running")?.task;
     const initiallyRunningFindingId = initiallyRunningValidation ? validationFindingId(initiallyRunningValidation) : undefined;
     let executingValidationTask = initiallyRunningValidation && initiallyRunningFindingId
@@ -1234,7 +1262,10 @@ export function registerRoutes(
           bus.emit({ type: "timeline_appended", entry });
         }
         observerScheduler.observe(report);
-        if (report.ok) validationExplorationState = advanceExplorationBoundary(validationExplorationState);
+        if (report.ok) {
+          validationExplorationState = advanceExplorationBoundary(validationExplorationState);
+          syncValidationRuntime();
+        }
         const replanTriggers = new Set([
           "record_fact",
           "record_hypothesis",
@@ -1317,6 +1348,7 @@ export function registerRoutes(
                 ? { taskId: retained.task.id, score: retained.score }
                 : undefined;
             }
+            syncValidationRuntime();
             const entry = timelineStore.append(
               id,
               "investigation_replan_requested",
