@@ -65,6 +65,7 @@ import { ValidationConsensusStore } from "./stores/validation-consensus-store.js
 import { evaluateValidationTaskCompletion } from "./validation-task-gate.js";
 import { resumePendingValidations } from "./validation-resume.js";
 import { formatValidationTaskPriorities, rankValidationTasks } from "./validation-task-priority.js";
+import { decideValidationPriorityShift, validationPriorityLeader } from "./validation-priority-hysteresis.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -979,6 +980,7 @@ export function registerRoutes(
       consensus: validationConsensusStore.listByCase(id),
       paths: attackPathStore.listByCase(id),
     });
+    let currentValidationPriority = validationPriorityLeader(rankedTasks);
     const priorityDetail = formatValidationTaskPriorities(rankedTasks);
     if (priorityDetail) {
       const entry = timelineStore.append(id, "validation_tasks_prioritized", priorityDetail, undefined, runId);
@@ -1149,6 +1151,40 @@ export function registerRoutes(
             const pathPlan = getAttackPathPlan();
             const evidenceGapPlan = getEvidenceGapPlan();
             const validationMatrixPlan = getValidationMatrixPlan();
+            const rerankedTasks = rankValidationTasks({
+              tasks: taskStore.listByCase(id).filter((task) =>
+                task.runId === runId && ["open", "blocked", "running", "recheck_candidate"].includes(task.status)),
+              facts: factStore.listByCase(id),
+              consensus: validationConsensusStore.listByCase(id),
+              paths: attackPathStore.listByCase(id),
+            });
+            const priorityShift = decideValidationPriorityShift({
+              previous: currentValidationPriority,
+              ranked: rerankedTasks,
+            });
+            if (priorityShift.shifted && priorityShift.next) {
+              const prioritized = rerankedTasks.find((item) => item.task.id === priorityShift.next?.taskId);
+              const priorityEntry = timelineStore.append(
+                id,
+                "validation_priority_shifted",
+                `Trigger=${report.name}; reason=${priorityShift.reason}; previous=${priorityShift.previous?.taskId ?? "none"}:${priorityShift.previous?.score ?? 0}; next=${priorityShift.next.taskId}:${priorityShift.next.score}; factors=${prioritized?.reasons.join(", ") ?? "none"}`,
+                priorityShift.next.taskId,
+                runId,
+              );
+              bus.emit({ type: "timeline_appended", entry: priorityEntry });
+              runs.addSteering(runId, [
+                "[Validation priority shift]",
+                `At the completed tool boundary, validation task ${priorityShift.next.taskId} became the clear priority (${priorityShift.next.score}).`,
+                `Reason: ${priorityShift.reason}; factors: ${prioritized?.reasons.join(", ") ?? "none"}.`,
+                "Do not interrupt or repeat the tool that just completed. At the next decision point, finish recording its evidence, then switch only if the new task remains actionable.",
+              ].join("\n"));
+              currentValidationPriority = priorityShift.next;
+            } else if (currentValidationPriority) {
+              const retained = rerankedTasks.find((item) => item.task.id === currentValidationPriority?.taskId);
+              currentValidationPriority = retained
+                ? { taskId: retained.task.id, score: retained.score }
+                : undefined;
+            }
             const entry = timelineStore.append(
               id,
               "investigation_replan_requested",
