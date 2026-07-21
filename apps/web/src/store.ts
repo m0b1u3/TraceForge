@@ -61,11 +61,56 @@ export function observerTelemetryFromHistory(
 export type ToastTone = "info" | "success" | "error";
 export type ConnectionStatus = "online" | "reconnecting" | "offline";
 export type ValidationSyncStatus = "live" | "recovering" | "stale";
+export interface ValidationWorkflowDelta {
+  revision: number;
+  changedFindingIds: string[];
+  leaseChanged: boolean;
+  leaderChanged: boolean;
+  summary: string[];
+}
 
 export function mergeValidationWorkflow(current: ValidationWorkflowSnapshot | null, incoming: ValidationWorkflowSnapshot): ValidationWorkflowSnapshot {
   if (!current || current.caseId !== incoming.caseId) return incoming;
   if (incoming.revision !== current.revision) return incoming.revision > current.revision ? incoming : current;
   return incoming.generatedAt > current.generatedAt ? incoming : current;
+}
+
+export function diffValidationWorkflow(previous: ValidationWorkflowSnapshot | null, next: ValidationWorkflowSnapshot): ValidationWorkflowDelta | null {
+  if (!previous || previous.caseId !== next.caseId) return null;
+  const changedFindingIds = new Set<string>();
+  const summary: string[] = [];
+  const previousItems = new Map(previous.items.map((item) => [item.findingId, item]));
+  const nextItems = new Map(next.items.map((item) => [item.findingId, item]));
+  for (const item of next.items) {
+    const before = previousItems.get(item.findingId);
+    const label = item.findingTitle || item.findingId;
+    if (!before) {
+      changedFindingIds.add(item.findingId);
+      summary.push(`${label} entered validation`);
+      continue;
+    }
+    if (before.consensusStatus !== item.consensusStatus) summary.push(`${label}: ${before.consensusStatus} → ${item.consensusStatus}`);
+    else if (before.findingStatus !== item.findingStatus) summary.push(`${label}: finding ${before.findingStatus ?? "unknown"} → ${item.findingStatus ?? "unknown"}`);
+    else if (before.completionReady !== item.completionReady) summary.push(`${label}: evidence gate ${item.completionReady ? "satisfied" : "reopened"}`);
+    else if (before.missingEvidence.join("\u0000") !== item.missingEvidence.join("\u0000")) summary.push(`${label}: evidence gaps ${before.missingEvidence.length} → ${item.missingEvidence.length}`);
+    else if (before.priorityScore !== item.priorityScore) summary.push(`${label}: priority ${before.priorityScore ?? "—"} → ${item.priorityScore ?? "—"}`);
+    else if (before.taskStatus !== item.taskStatus) summary.push(`${label}: task ${before.taskStatus ?? "none"} → ${item.taskStatus ?? "none"}`);
+    else if (before.confidence !== item.confidence) summary.push(`${label}: confidence ${Math.round(before.confidence * 100)}% → ${Math.round(item.confidence * 100)}%`);
+    else continue;
+    changedFindingIds.add(item.findingId);
+  }
+  for (const item of previous.items) {
+    if (!nextItems.has(item.findingId)) {
+      changedFindingIds.add(item.findingId);
+      summary.push(`${item.findingTitle || item.findingId} left validation`);
+    }
+  }
+  const leaseChanged = previous.runningLease !== next.runningLease;
+  const leaderChanged = previous.leader?.taskId !== next.leader?.taskId || previous.leader?.score !== next.leader?.score;
+  if (leaderChanged) summary.unshift(next.leader ? `Priority leader changed · score ${next.leader.score}` : "Priority leader cleared");
+  if (leaseChanged) summary.unshift(next.runningLease ? "Validation lease claimed" : "Validation lease released");
+  if (!leaseChanged && !leaderChanged && changedFindingIds.size === 0) return null;
+  return { revision: next.revision, changedFindingIds: [...changedFindingIds], leaseChanged, leaderChanged, summary };
 }
 export interface ToastNotice {
   id: number;
@@ -185,6 +230,7 @@ interface State {
   warnings: ObserverWarning[];
   observerTelemetry: ObserverTelemetry;
   validationWorkflow: ValidationWorkflowSnapshot | null;
+  validationWorkflowDelta: ValidationWorkflowDelta | null;
   validationSyncStatus: ValidationSyncStatus;
   refreshValidationWorkflow: () => Promise<void>;
   llmConfig: LlmConfig | null;
@@ -281,6 +327,7 @@ export const useStore = create<State>((set, get) => ({
   warnings: [],
   observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY },
   validationWorkflow: null,
+  validationWorkflowDelta: null,
   validationSyncStatus: "stale",
   refreshValidationWorkflow: async () => {
     const caseId = get().caseId;
@@ -351,7 +398,7 @@ export const useStore = create<State>((set, get) => ({
   )),
   setCase: (id) => {
     cancelPendingStreamDeltas();
-    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationSyncStatus: id ? "recovering" : "stale", pendingScope: null, pendingConfirmation: null });
+    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationWorkflowDelta: null, validationSyncStatus: id ? "recovering" : "stale", pendingScope: null, pendingConfirmation: null });
   },
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
@@ -593,7 +640,14 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "task_created" && event.task.caseId === cid) get().upsertTask(event.task);
     else if (event.type === "task_updated" && event.task.caseId === cid) get().upsertTask(event.task);
     else if (event.type === "timeline_appended" && event.entry.caseId === cid) get().addTimeline(event.entry);
-    else if (event.type === "validation_workflow_updated" && event.snapshot.caseId === cid) set((state) => ({ validationWorkflow: mergeValidationWorkflow(state.validationWorkflow, event.snapshot), validationSyncStatus: "live" }));
+    else if (event.type === "validation_workflow_updated" && event.snapshot.caseId === cid) set((state) => {
+      const merged = mergeValidationWorkflow(state.validationWorkflow, event.snapshot);
+      return {
+        validationWorkflow: merged,
+        validationWorkflowDelta: merged === event.snapshot ? diffValidationWorkflow(state.validationWorkflow, event.snapshot) : state.validationWorkflowDelta,
+        validationSyncStatus: "live",
+      };
+    });
     else if (event.type === "action_recorded" && event.action.caseId === cid) get().addAction(event.action);
     else if (event.type === "decision_recorded" && event.decision.caseId === cid) get().addDecision(event.decision);
     else if (event.type === "agent_run_started" && event.run.caseId === cid) {

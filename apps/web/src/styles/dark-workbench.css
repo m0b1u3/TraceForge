@@ -747,6 +747,10 @@ textarea:focus-visible,
 }
 .validation-metrics > span { display: inline-flex; align-items: center; gap: 5px; }
 .validation-metrics .is-danger { color: var(--danger); }
+.validation-change-feed { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 28px; padding: 6px 14px; border-top: 1px solid color-mix(in srgb, var(--information) 18%, var(--border-subtle)); color: var(--information); font: 9px/1.35 var(--mono); animation: validation-change-enter 180ms ease-out; }
+.validation-change-feed i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.validation-change-feed span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.validation-change-feed small { color: var(--foreground-muted); font: inherit; }
 .validation-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--foreground-muted); }
 .tone-active .validation-pulse { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 13%, transparent); }
 .validation-list { display: grid; margin: 0; padding: 0; list-style: none; }
@@ -758,6 +762,7 @@ textarea:focus-visible,
   border-top: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
 }
 .validation-item.is-leader { box-shadow: inset 2px 0 var(--primary); }
+.validation-item.is-changed { animation: validation-item-change 520ms ease-out; }
 .validation-item-main { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .validation-item-main > div { display: grid; gap: 2px; min-width: 0; }
 .validation-item-main > svg { flex: 0 0 auto; margin: 2px 0 0 auto; color: var(--foreground-muted); opacity: 0; transition: opacity 140ms ease, color 140ms ease; }
@@ -783,6 +788,8 @@ textarea:focus-visible,
 .validation-audit-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .knowledge-row.is-targeted { animation: validation-target 520ms ease-out; }
 @keyframes validation-target { 0% { background: color-mix(in srgb, var(--primary) 14%, transparent); } 100% { background: transparent; } }
+@keyframes validation-change-enter { from { opacity: 0; transform: translateY(-2px); } }
+@keyframes validation-item-change { 0% { background: color-mix(in srgb, var(--information) 12%, transparent); } 100% { background: transparent; } }
 .validation-item-main:focus-visible,
 .validation-item-score:focus-visible,
 .validation-audit-list button:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent); outline-offset: -2px; }

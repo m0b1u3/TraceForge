@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { CLIENT_AGENT_EVENT_LIMIT, mergeValidationWorkflow, observerTelemetryFromHistory, takeRecent, useStore } from "./store.js";
+import type { ValidationWorkflowSnapshot } from "@traceforge/shared";
+import { CLIENT_AGENT_EVENT_LIMIT, diffValidationWorkflow, mergeValidationWorkflow, observerTelemetryFromHistory, takeRecent, useStore } from "./store.js";
 
 function resetStore() {
   useStore.setState({
@@ -26,6 +27,7 @@ function resetStore() {
     warnings: [],
     observerTelemetry: { reviewCount: 0, correctionCount: 0, failureCount: 0, totalTokens: 0, lastTrigger: null, lastDurationMs: null },
     validationWorkflow: null,
+    validationWorkflowDelta: null,
     validationSyncStatus: "stale",
     pendingApproval: null,
     pendingScope: null,
@@ -59,6 +61,25 @@ describe("validation workflow realtime state", () => {
     const realtime = { ...base, revision: 8, runningLease: "task-live" };
     const delayedRecovery = { ...base, revision: 7, generatedAt: "2026-07-21T00:00:01.000Z" };
     expect(mergeValidationWorkflow(realtime, delayedRecovery)).toBe(realtime);
+  });
+
+  it("describes only findings and control state that actually changed", () => {
+    const item = {
+      findingId: "finding_1", findingTitle: "SQL injection", findingStatus: "candidate", consensusStatus: "insufficient",
+      confidence: 0.6, taskId: "task_1", taskStatus: "open" as const, priorityScore: 70, priorityReasons: [], completionReady: false,
+      missingEvidence: ["reproduction"], feedback: null,
+    };
+    const previous: ValidationWorkflowSnapshot = {
+      caseId: "case_1", runId: "run_1", revision: 1, generatedAt: "a", runningLease: null, leader: null,
+      exploration: { consecutiveValidationShifts: 0, explorationBoundariesRemaining: 0 }, items: [item], auditIssues: [],
+    };
+    const next: ValidationWorkflowSnapshot = {
+      ...previous, revision: 2, generatedAt: "b", runningLease: "task_1", leader: { taskId: "task_1", score: 82 },
+      items: [{ ...item, consensusStatus: "verified", confidence: 0.93, completionReady: true, missingEvidence: [] }],
+    };
+    const delta = diffValidationWorkflow(previous, next);
+    expect(delta).toEqual(expect.objectContaining({ changedFindingIds: ["finding_1"], leaseChanged: true, leaderChanged: true }));
+    expect(delta?.summary.join(" ")).toContain("SQL injection: insufficient → verified");
   });
 });
 

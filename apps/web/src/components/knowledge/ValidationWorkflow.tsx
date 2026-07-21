@@ -25,12 +25,12 @@ export function validationNavigationTarget(item: Pick<ValidationWorkflowItem, "f
   return id ? { kind, id } : null;
 }
 
-function ValidationItem({ item, leaderId, onNavigate }: { item: ValidationWorkflowItem; leaderId?: string; onNavigate: (target: ValidationNavigationTarget) => void }) {
+function ValidationItem({ item, leaderId, changed, onNavigate }: { item: ValidationWorkflowItem; leaderId?: string; changed: boolean; onNavigate: (target: ValidationNavigationTarget) => void }) {
   const isLeader = Boolean(item.taskId && item.taskId === leaderId);
   const findingTarget = validationNavigationTarget(item, "finding");
   const taskTarget = validationNavigationTarget(item, "task");
   return (
-    <li className={`validation-item${isLeader ? " is-leader" : ""}`}>
+    <li className={`validation-item${isLeader ? " is-leader" : ""}${changed ? " is-changed" : ""}`}>
       <button type="button" className="validation-item-main" onClick={() => findingTarget && onNavigate(findingTarget)}>
         <span className={`validation-state-dot${item.completionReady ? " is-ready" : ""}`} aria-hidden="true" />
         <div>
@@ -52,9 +52,10 @@ function ValidationItem({ item, leaderId, onNavigate }: { item: ValidationWorkfl
 }
 
 export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: ValidationNavigationTarget) => void }) {
-  const { caseId, snapshot, syncStatus, refreshValidationWorkflow } = useStore(useShallow((state) => ({
+  const { caseId, snapshot, delta, syncStatus, refreshValidationWorkflow } = useStore(useShallow((state) => ({
     caseId: state.caseId,
     snapshot: state.validationWorkflow,
+    delta: state.validationWorkflowDelta,
     syncStatus: state.validationSyncStatus,
     refreshValidationWorkflow: state.refreshValidationWorkflow,
   })));
@@ -101,8 +102,17 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
             <span><Flask size={13} />{snapshot.exploration.explorationBoundariesRemaining > 0 ? `${snapshot.exploration.explorationBoundariesRemaining} exploration steps` : "Evidence priority"}</span>
             <span className={snapshot.auditIssues.length ? "is-danger" : ""}>{snapshot.auditIssues.length ? `${snapshot.auditIssues.length} audit issue${snapshot.auditIssues.length === 1 ? "" : "s"}` : "Consistent"}</span>
           </div>
+          {delta && delta.revision === snapshot.revision && delta.summary.length > 0 && (
+            <div className="validation-change-feed" key={delta.revision} role="status" aria-live="polite">
+              <i aria-hidden="true" /><span>{delta.summary.slice(0, 2).join(" · ")}</span>
+              {delta.summary.length > 2 && <small>+{delta.summary.length - 2}</small>}
+            </div>
+          )}
           <ol className="validation-list">
-            {snapshot.items.map((item) => <ValidationItem key={item.findingId} item={item} leaderId={snapshot.leader?.taskId} onNavigate={onNavigate} />)}
+            {snapshot.items.map((item) => {
+              const changed = delta?.revision === snapshot.revision && delta.changedFindingIds.includes(item.findingId);
+              return <ValidationItem key={`${item.findingId}:${changed ? delta?.revision ?? 0 : 0}`} item={item} leaderId={snapshot.leader?.taskId} changed={Boolean(changed)} onNavigate={onNavigate} />;
+            })}
           </ol>
           {snapshot.auditIssues.length > 0 && (
             <div className="validation-audit-list" aria-label="Consistency audit issues">
