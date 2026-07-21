@@ -68,7 +68,7 @@ import { formatValidationTaskPriorities, rankValidationTasks } from "./validatio
 import { decideValidationPriorityShift, validationPriorityLeader } from "./validation-priority-hysteresis.js";
 import { advanceExplorationBoundary, applyValidationExplorationPolicy, initialValidationExplorationState } from "./validation-exploration-policy.js";
 import { appendValidationFeedback, observeValidationOutcome, recoverValidationFeedback, summarizeValidationFeedbackHistory, type ValidationOutcomeSnapshot } from "./validation-task-feedback.js";
-import { evaluateValidationTaskExecutionTransition, isConsensusValidationTask, validationFindingId } from "./validation-task-execution.js";
+import { evaluateRecordTaskValidationStatusTransition, isConsensusValidationTask, validationFindingId } from "./validation-task-execution.js";
 import { releaseValidationTaskLeases } from "./validation-task-lease.js";
 import { makeManageValidationTaskTool } from "./validation-task-control-tool.js";
 
@@ -758,11 +758,7 @@ export function registerRoutes(
         consensus: validationConsensusStore.listByCase(id),
         hypotheses: hypothesisStore.listByCase(id),
       }),
-      (current, requestedStatus) => evaluateValidationTaskExecutionTransition({
-        current,
-        requestedStatus,
-        tasks: taskStore.listByCase(id),
-      }),
+      (current, requestedStatus, patch) => evaluateRecordTaskValidationStatusTransition({ current, requestedStatus, patch }),
     ));
     registry.register(makeManageValidationTaskTool({
       caseId: id,

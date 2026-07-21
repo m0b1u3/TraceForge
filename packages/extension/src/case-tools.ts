@@ -221,7 +221,7 @@ export interface TaskStatusGateResult {
   message?: string;
 }
 
-export type TaskStatusGate = (current: Task, requestedStatus: Task["status"]) => TaskStatusGateResult;
+export type TaskStatusGate = (current: Task, requestedStatus: Task["status"], patch: Partial<Task>) => TaskStatusGateResult;
 
 export function makeRecordTaskTool(
   caseId: string,
@@ -277,8 +277,8 @@ export function makeRecordTaskTool(
         if (Array.isArray(i.triggerWhen)) patch.triggerWhen = i.triggerWhen;
         if (Array.isArray(i.relatedFacts)) patch.relatedFacts = i.relatedFacts;
         if (Array.isArray(i.hypothesisIds)) patch.hypothesisIds = i.hypothesisIds;
-        if (patch.status && statusGate) {
-          const transition = statusGate(currentTask, patch.status as Task["status"]);
+        if (statusGate) {
+          const transition = statusGate(currentTask, (patch.status as Task["status"] | undefined) ?? currentTask.status, patch as Partial<Task>);
           if (!transition.allowed) return { ok: false, content: transition.message ?? "Task status transition denied" };
         }
         let completionBlocked: TaskCompletionGateResult | undefined;

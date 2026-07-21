@@ -9,8 +9,7 @@ import { TrafficStore } from "./stores/traffic-store.js";
 import { ValidationConclusionStore } from "./stores/validation-conclusion-store.js";
 import { ValidationConsensusStore } from "./stores/validation-consensus-store.js";
 import { makeRecordValidationConclusionTool } from "./validation-conclusion-tool.js";
-import { makeRecordTaskTool } from "@traceforge/extension";
-import { evaluateValidationTaskCompletion } from "./validation-task-gate.js";
+import { makeManageValidationTaskTool } from "./validation-task-control-tool.js";
 
 describe("validation conclusion lifecycle with real SQLite", () => {
   it("persists every verdict, advances supported candidates, and reopens refuted verified findings", async () => {
@@ -81,25 +80,12 @@ describe("validation conclusion lifecycle with real SQLite", () => {
     expect(facts.getById(finding.id)?.observations).toHaveLength(1);
     const insufficientTask = tasks.listByCase("case_1").find((item) => item.title.includes(":insufficient]"));
     expect(insufficientTask).toBeDefined();
-    const recordTask = makeRecordTaskTool(
-      "case_1",
-      tasks,
-      timeline,
-      (event) => events.push(event.type),
-      "run_2",
-      hypotheses,
-      (candidate) => evaluateValidationTaskCompletion({
-        task: candidate,
-        facts: facts.listByCase("case_1"),
-        consensus: consensus.listByCase("case_1"),
-        hypotheses: hypotheses.listByCase("case_1"),
-      }),
-    );
-    const premature = await recordTask.execute({
-      id: insufficientTask?.id,
-      title: insufficientTask?.title,
-      status: "done",
+    const validationTask = makeManageValidationTaskTool({
+      caseId: "case_1", runId: "run_2", facts, hypotheses, tasks, consensus, timeline,
+      emit: (event) => events.push(event.type),
     });
+    expect((await validationTask.execute({ taskId: insufficientTask?.id, action: "claim" })).ok).toBe(true);
+    const premature = await validationTask.execute({ taskId: insufficientTask?.id, action: "complete" });
     expect(premature.ok).toBe(true);
     expect(premature.content).toContain("remains blocked");
     expect(tasks.getById(insufficientTask!.id)?.status).toBe("blocked");

@@ -25,3 +25,17 @@ export function evaluateValidationTaskExecutionTransition(input: {
     message: `Validation task ${active.id} is already running in Run ${input.current.runId ?? "unassigned"}. Release or finish it before starting ${input.current.id}.`,
   };
 }
+
+export function evaluateRecordTaskValidationStatusTransition(input: {
+  current: Task;
+  requestedStatus: Task["status"];
+  patch?: Partial<Task>;
+}): TaskStatusGateResult {
+  if (!isConsensusValidationTask(input.current)) return { allowed: true };
+  const titleChanged = input.patch?.title !== undefined && input.patch.title !== input.current.title;
+  if (!titleChanged && input.requestedStatus === input.current.status) return { allowed: true };
+  return {
+    allowed: false,
+    message: `Consensus validation task ${input.current.id} title and status are controlled by manage_validation_task and the consensus workflow. Use claim, release, or complete instead of record_task.`,
+  };
+}
