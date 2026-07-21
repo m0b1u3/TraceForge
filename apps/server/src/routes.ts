@@ -11,7 +11,7 @@ import { FactStore } from "./stores/fact-store.js";
 import { TaskStore } from "./stores/task-store.js";
 import { TimelineStore } from "./stores/timeline-store.js";
 import { EventBus } from "./event-bus.js";
-import type { Task, ObserverWarning, CaseSummary, Fact } from "@traceforge/shared";
+import { validationTimelineConsoleEvent, type Task, type ObserverWarning, type CaseSummary, type Fact } from "@traceforge/shared";
 import type { LlmProvider } from "@traceforge/llm";
 import { loadLlmConfig, createProviderFromConfig } from "@traceforge/llm";
 import { ActionCardStore } from "./stores/action-store.js";
@@ -132,6 +132,11 @@ export function registerRoutes(
   const decisionStore = new DecisionStore(db);
   const observerStore = new ObserverWarningStore(db);
   const agentEventStore = new AgentEventStore(db);
+  bus.subscribe((event) => {
+    if (event.type !== "timeline_appended") return;
+    if (!validationTimelineConsoleEvent(event.entry)) return;
+    agentEventStore.append(event.entry.caseId, "validation", event.entry.detail, event.entry.eventType);
+  });
   const sessionStore = new SessionStateStore(db);
   const hypothesisStore = new HypothesisStore(db);
   const hypothesisScheduler = new HypothesisScheduler(hypothesisStore);

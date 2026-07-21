@@ -81,6 +81,13 @@ describe("validation workflow realtime state", () => {
     expect(delta).toEqual(expect.objectContaining({ changedFindingIds: ["finding_1"], leaseChanged: true, leaderChanged: true }));
     expect(delta?.summary.join(" ")).toContain("SQL injection: insufficient → verified");
   });
+
+  it("adds only selected validation timeline events to the live Agent console", () => {
+    const entry = { id: "timeline_1", caseId: "case_1", runId: "run_1", refId: "task_1", createdAt: "now" };
+    useStore.getState().handleRuntimeEvent({ type: "timeline_appended", entry: { ...entry, eventType: "validation_task_claimed", detail: "Task=task_1; consensus=insufficient" } });
+    useStore.getState().handleRuntimeEvent({ type: "timeline_appended", entry: { ...entry, id: "timeline_2", eventType: "validation_feedback_recorded", detail: "{}" } });
+    expect(useStore.getState().agentEvents).toEqual([{ kind: "validation", text: "Task=task_1; consensus=insufficient", tool: "validation_task_claimed" }]);
+  });
 });
 
 describe("store security reports", () => {

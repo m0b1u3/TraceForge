@@ -771,6 +771,14 @@ textarea:focus-visible,
 .validation-show-more:hover { color: var(--foreground-secondary); background: color-mix(in srgb, var(--surface-hover) 52%, transparent); }
 .validation-show-more span { margin-left: 4px; color: var(--information); }
 .validation-show-more:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+/* Validation control events stay compact inside the primary run timeline. */
+.agent-event.is-validation { min-height: 58px; padding-block: 12px 13px; background: color-mix(in srgb, var(--information) 3%, transparent); }
+.agent-event.is-validation .agent-event-icon { top: 16px; background: var(--primary); box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 48%, transparent); }
+.agent-event.is-validation .agent-event-label { color: var(--primary); }
+.agent-event.is-validation .agent-event-content { max-width: 96ch; margin-top: 6px; color: var(--foreground-secondary); font-family: var(--mono); font-size: 10.5px; line-height: 1.5; }
+[data-theme="light"] .agent-event.is-validation { background: color-mix(in srgb, var(--information) 4%, transparent); }
+[data-theme="light"] .agent-event.is-validation .agent-event-content { color: #405159; }
 .validation-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

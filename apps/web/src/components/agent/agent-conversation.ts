@@ -1,4 +1,5 @@
 import type { AgentUiEvent } from "../../store.js";
+import { validationTimelineConsoleEvent } from "@traceforge/shared";
 
 type PendingApproval = { approvalId: string; tool: string; input: string };
 type PendingScope = { host: string; reason: string };
@@ -65,6 +66,11 @@ function formatAgentEvent(event: AgentUiEvent): Omit<AgentConversationEventItem,
   if (event.kind === "error") return { kind: event.kind, label: "Error", text, summary: text };
   if (event.kind === "tool_call") return { kind: event.kind, label: "Tool call", text, summary: compactToolText(text) };
   if (event.kind === "tool_result") return { kind: event.kind, label: "Tool result", text, summary: compactToolText(text) };
+  if (event.kind === "validation") {
+    const validation = validationTimelineConsoleEvent({ eventType: event.tool ?? "", detail: text });
+    if (!validation) return null;
+    return { kind: event.kind, label: validation.label, text: validation.text, summary: validation.text };
+  }
   if (event.kind === "done") return { kind: event.kind, label: "Complete", text, summary: text };
   if (event.kind === "reasoning") return { kind: event.kind, label: "Reasoning", text, summary: compactText(text, 140) };
   return { kind: event.kind, label: "Agent", text, summary: text };

@@ -1,5 +1,5 @@
 import { memo, useState, type ReactNode } from "react";
-import { Brain, CaretDown, Check, CheckCircle, Copy, MagnifyingGlass, Robot, TerminalWindow, User, Warning } from "@phosphor-icons/react";
+import { Brain, CaretDown, Check, CheckCircle, Copy, MagnifyingGlass, Robot, ShieldCheck, TerminalWindow, User, Warning } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -94,6 +94,7 @@ function eventClassName(kind: AgentConversationEventItem["kind"]): string {
   if (kind === "error") return "is-error";
   if (kind === "reasoning") return "is-reasoning";
   if (kind === "tool_call" || kind === "tool_result") return "is-tool";
+  if (kind === "validation") return "is-validation";
   if (kind === "done") return "is-complete";
   return "is-agent";
 }
@@ -104,6 +105,7 @@ function eventIcon(kind: AgentConversationEventItem["kind"]) {
   if (kind === "reasoning") return <Brain size={17} weight="duotone" />;
   if (kind === "tool_call") return <TerminalWindow size={17} weight="duotone" />;
   if (kind === "tool_result") return <CheckCircle size={17} weight="duotone" />;
+  if (kind === "validation") return <ShieldCheck size={17} weight="duotone" />;
   if (kind === "done") return <CheckCircle size={17} weight="fill" />;
   return <Robot size={17} weight="duotone" />;
 }
