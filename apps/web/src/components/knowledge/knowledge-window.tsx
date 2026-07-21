@@ -15,6 +15,7 @@ export function useKnowledgeWindow(total: number) {
     count,
     hasMore: count < total,
     showMore: () => setVisibleCount((current) => Math.min(total, current + KNOWLEDGE_WINDOW_SIZE)),
+    reveal: (index: number) => setVisibleCount((current) => Math.min(total, Math.max(current, index + 1))),
   };
 }
 

@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CaretDown, CircleNotch } from "@phosphor-icons/react";
 import type { Task } from "@traceforge/shared";
 import { useStore } from "../../store.js";
 import { patchTask } from "../../api.js";
 import { FeedbackState } from "../ui/feedback-state.js";
 import { KnowledgeWindowFooter, useKnowledgeWindow } from "./knowledge-window.js";
-import { ValidationWorkflow } from "./ValidationWorkflow.js";
+import { ValidationWorkflow, type ValidationNavigationTarget } from "./ValidationWorkflow.js";
 
 // Human-editable target statuses (status is a closed state machine; these are the most common wrap-up/reopen actions)
 const HUMAN_ACTIONS: { status: Task["status"]; label: string }[] = [
@@ -15,8 +15,9 @@ const HUMAN_ACTIONS: { status: Task["status"]; label: string }[] = [
   { status: "out_of_scope", label: "Out of scope" },
 ];
 
-function TaskRow({ t }: { t: Task }) {
+function TaskRow({ t, focused, onFocusHandled }: { t: Task; focused: boolean; onFocusHandled: () => void }) {
   const [open, setOpen] = useState(false);
+  const rowRef = useRef<HTMLElement>(null);
   const [busy, setBusy] = useState<Task["status"] | null>(null);
   const showToast = useStore((s) => s.showToast);
   const upsertTask = useStore((s) => s.upsertTask);
@@ -33,8 +34,14 @@ function TaskRow({ t }: { t: Task }) {
     }
   };
   const detailId = `task-detail-${t.id}`;
+  useEffect(() => {
+    if (!focused) return;
+    setOpen(true);
+    rowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    onFocusHandled();
+  }, [focused, onFocusHandled]);
   return (
-    <article className="tf-row tf-row-expandable knowledge-row">
+    <article ref={rowRef} className={`tf-row tf-row-expandable knowledge-row${focused ? " is-targeted" : ""}`}>
       <button className="tf-row-head" type="button" aria-expanded={open} aria-controls={detailId} onClick={() => setOpen((v) => !v)}>
         <span className={`tf-tag tf-status-${t.status}`}>{t.status}</span>
         <span className="tf-row-title">{t.title}</span>
@@ -60,12 +67,22 @@ function TaskRow({ t }: { t: Task }) {
 
 export function TasksTab() {
   const tasks = useStore((s) => s.tasks);
+  const selectFact = useStore((s) => s.selectFact);
+  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   const window = useKnowledgeWindow(tasks.length);
+  const navigate = (target: ValidationNavigationTarget) => {
+    if (target.kind === "finding") selectFact(target.id);
+    else {
+      const targetIndex = tasks.findIndex((task) => task.id === target.id);
+      if (targetIndex >= 0) window.reveal(targetIndex);
+      setFocusedTaskId(target.id);
+    }
+  };
   return (
     <>
-      <ValidationWorkflow />
+      <ValidationWorkflow onNavigate={navigate} />
       {tasks.length === 0 && <FeedbackState title="No tasks yet" description="Agent todos and blocked work will appear here. New evidence can reopen completed tasks." />}
-      {tasks.slice(0, window.count).map((t) => <TaskRow t={t} key={t.id} />)}
+      {tasks.slice(0, window.count).map((t) => <TaskRow t={t} key={t.id} focused={focusedTaskId === t.id} onFocusHandled={() => setFocusedTaskId(null)} />)}
       <KnowledgeWindowFooter visible={window.count} total={tasks.length} onShowMore={window.showMore} />
     </>
   );

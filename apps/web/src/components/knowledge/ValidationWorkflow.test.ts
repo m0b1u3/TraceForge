@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ValidationWorkflowSnapshot } from "../../api.js";
-import { validationWorkflowTone } from "./ValidationWorkflow.js";
+import { validationNavigationTarget, validationWorkflowTone } from "./ValidationWorkflow.js";
 
 const snapshot = (patch: Partial<ValidationWorkflowSnapshot> = {}): ValidationWorkflowSnapshot => ({
   caseId: "case-1", runId: null, generatedAt: "2026-07-21T00:00:00.000Z", runningLease: null, leader: null,
@@ -18,5 +18,10 @@ describe("validation workflow presentation", () => {
       confidence: 0.7, taskId: "task-1", taskStatus: "running", priorityScore: 82, priorityReasons: [], completionReady: false,
       missingEvidence: ["independent reproduction"], feedback: null,
     }] }))).toBe("warning");
+  });
+
+  it("resolves finding navigation without inventing missing task ids", () => {
+    expect(validationNavigationTarget({ findingId: "finding-1", taskId: "task-1" }, "finding")).toEqual({ kind: "finding", id: "finding-1" });
+    expect(validationNavigationTarget({ findingId: "finding-1", taskId: null }, "task")).toBeNull();
   });
 });
