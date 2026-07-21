@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { ArrowsClockwise, ArrowSquareOut, CheckCircle, Flask, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
 import { useShallow } from "zustand/react/shallow";
-import { getValidationWorkflow, type ValidationWorkflowItem, type ValidationWorkflowSnapshot } from "../../api.js";
+import type { ValidationWorkflowItem, ValidationWorkflowSnapshot } from "@traceforge/shared";
 import { useStore } from "../../store.js";
 
 export function validationWorkflowTone(snapshot: ValidationWorkflowSnapshot): "danger" | "warning" | "active" | "quiet" {
@@ -45,13 +45,11 @@ function ValidationItem({ item, leaderId, onNavigate }: { item: ValidationWorkfl
 }
 
 export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: ValidationNavigationTarget) => void }) {
-  const { caseId, runId, tasksVersion, timelineVersion } = useStore(useShallow((state) => ({
+  const { caseId, snapshot, refreshValidationWorkflow } = useStore(useShallow((state) => ({
     caseId: state.caseId,
-    runId: state.activeRun?.id,
-    tasksVersion: state.tasks.map((task) => `${task.id}:${task.status}:${task.updatedAt}`).join("|"),
-    timelineVersion: state.timeline.at(-1)?.id ?? "",
+    snapshot: state.validationWorkflow,
+    refreshValidationWorkflow: state.refreshValidationWorkflow,
   })));
-  const [snapshot, setSnapshot] = useState<ValidationWorkflowSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -60,7 +58,7 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
     setLoading(true);
     setError("");
     try {
-      setSnapshot(await getValidationWorkflow(caseId, runId));
+      await refreshValidationWorkflow();
     } catch (reason) {
       setError((reason as Error).message);
     } finally {
@@ -68,7 +66,6 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
     }
   };
 
-  useEffect(() => { void load(); }, [caseId, runId, tasksVersion, timelineVersion]);
   const tone = useMemo(() => snapshot ? validationWorkflowTone(snapshot) : "quiet", [snapshot]);
   if (!caseId) return null;
 

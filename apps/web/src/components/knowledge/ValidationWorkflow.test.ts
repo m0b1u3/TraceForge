@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ValidationWorkflowSnapshot } from "../../api.js";
+import type { ValidationWorkflowSnapshot } from "@traceforge/shared";
 import { validationNavigationTarget, validationWorkflowTone } from "./ValidationWorkflow.js";
 
 const snapshot = (patch: Partial<ValidationWorkflowSnapshot> = {}): ValidationWorkflowSnapshot => ({

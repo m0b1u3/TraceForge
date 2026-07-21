@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport } from "@traceforge/shared";
+import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, ValidationWorkflowSnapshot } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities, listSecurityReports } from "./api.js";
+import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities, listSecurityReports, getValidationWorkflow } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 
 export interface AgentUiEvent {
@@ -177,6 +177,8 @@ interface State {
   mcpTools: McpToolHandle[];
   warnings: ObserverWarning[];
   observerTelemetry: ObserverTelemetry;
+  validationWorkflow: ValidationWorkflowSnapshot | null;
+  refreshValidationWorkflow: () => Promise<void>;
   llmConfig: LlmConfig | null;
   settingsModalOpen: boolean;
   setLlmConfig: (cfg: LlmConfig | null) => void;
@@ -270,6 +272,14 @@ export const useStore = create<State>((set, get) => ({
   mcpTools: [],
   warnings: [],
   observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY },
+  validationWorkflow: null,
+  refreshValidationWorkflow: async () => {
+    const caseId = get().caseId;
+    if (!caseId) return;
+    const runId = get().activeRun?.id;
+    const snapshot = await getValidationWorkflow(caseId, runId);
+    if (get().caseId === caseId) set({ validationWorkflow: snapshot });
+  },
   llmConfig: null,
   settingsModalOpen: false,
   setLlmConfig: (cfg) => set({ llmConfig: cfg }),
@@ -326,18 +336,18 @@ export const useStore = create<State>((set, get) => ({
   )),
   setCase: (id) => {
     cancelPendingStreamDeltas();
-    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, pendingScope: null, pendingConfirmation: null });
+    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, pendingScope: null, pendingConfirmation: null });
   },
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
   enterCase: async (id) => {
     get().setCase(id);
-    const [traffic, identities, attackPaths, securityReports, facts, tasks, timeline, mcpTools, warnings, agentEvents, activeRun, pendingInterventions, browserState] = await Promise.all([
+    const [traffic, identities, attackPaths, securityReports, facts, tasks, timeline, mcpTools, warnings, agentEvents, activeRun, pendingInterventions, browserState, validationWorkflow] = await Promise.all([
       listTraffic(id, { limit: CLIENT_TRAFFIC_LIMIT }), listIdentities(id), listAttackPaths(id), listSecurityReports(id), listFacts(id), listTasks(id),
       listTimeline(id, { limit: CLIENT_TIMELINE_LIMIT }), listMcpTools(), listWarnings(id),
       listAgentEvents(id, { limit: CLIENT_AGENT_EVENT_LIMIT }), getActiveAgentRun(id),
-      getPendingInterventions(id), getBrowserState(id),
+      getPendingInterventions(id), getBrowserState(id), getValidationWorkflow(id),
     ]);
     const latestRun = activeRun ?? await getLatestAgentRun(id);
     const tokenUsageHistory = latestRun ? await getAgentRunUsage(latestRun.id) : [];
@@ -359,6 +369,7 @@ export const useStore = create<State>((set, get) => ({
       tokenUsage: latestRun ? runTokenUsage(latestRun) : { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       tokenUsageHistory,
       observerTelemetry: observerTelemetryFromHistory(tokenUsageHistory, warnings),
+      validationWorkflow,
       pendingApproval: pendingInterventions.approval,
       pendingScope: pendingInterventions.scope,
       browserController: browserState.controller,
@@ -515,14 +526,15 @@ export const useStore = create<State>((set, get) => ({
         set({ connectionStatus: "online" });
         const caseId = get().caseId;
         if (!caseId) return;
-        void Promise.all([listTraffic(caseId, { limit: CLIENT_TRAFFIC_LIMIT }), getBrowserState(caseId)])
-          .then(([traffic, browserState]) => {
+        void Promise.all([listTraffic(caseId, { limit: CLIENT_TRAFFIC_LIMIT }), getBrowserState(caseId), getValidationWorkflow(caseId, get().activeRun?.id)])
+          .then(([traffic, browserState, validationWorkflow]) => {
             if (disposed || socket !== ws || get().caseId !== caseId) return;
             const clientTraffic = takeRecent(traffic, CLIENT_TRAFFIC_LIMIT);
             set((state) => ({
               traffic: clientTraffic,
               browserController: browserState.controller,
               browserUrl: browserState.url ?? "",
+              validationWorkflow,
               ...(!state.selectedTrafficId || clientTraffic.some((entry) => entry.id === state.selectedTrafficId)
                 ? {}
                 : { selectedTrafficId: null, selectedTrafficSnapshot: null, inspectorMode: "overview" as const }),
@@ -564,6 +576,7 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "task_created" && event.task.caseId === cid) get().upsertTask(event.task);
     else if (event.type === "task_updated" && event.task.caseId === cid) get().upsertTask(event.task);
     else if (event.type === "timeline_appended" && event.entry.caseId === cid) get().addTimeline(event.entry);
+    else if (event.type === "validation_workflow_updated" && event.snapshot.caseId === cid) set({ validationWorkflow: event.snapshot });
     else if (event.type === "action_recorded" && event.action.caseId === cid) get().addAction(event.action);
     else if (event.type === "decision_recorded" && event.decision.caseId === cid) get().addDecision(event.decision);
     else if (event.type === "agent_run_started" && event.run.caseId === cid) {

@@ -1,4 +1,4 @@
-import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision } from "@traceforge/shared";
+import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision, ValidationWorkflowSnapshot } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 export interface LlmConfig {
@@ -185,40 +185,6 @@ export async function createTask(
 
 export async function listTasks(caseId: string): Promise<Task[]> {
   return (await fetch(`/api/cases/${caseId}/tasks`)).json();
-}
-
-export interface ValidationWorkflowItem {
-  findingId: string;
-  findingTitle: string | null;
-  findingStatus: string | null;
-  consensusStatus: string;
-  confidence: number;
-  taskId: string | null;
-  taskStatus: Task["status"] | null;
-  priorityScore: number | null;
-  priorityReasons: string[];
-  completionReady: boolean;
-  missingEvidence: string[];
-  feedback: {
-    toolBoundaries: number;
-    evidenceProduced: number;
-    consensusAdvances: number;
-    attackPathAdvances: number;
-    failures: number;
-    noProgress: number;
-    scoreAdjustment: number;
-  } | null;
-}
-
-export interface ValidationWorkflowSnapshot {
-  caseId: string;
-  runId: string | null;
-  generatedAt: string;
-  runningLease: string | null;
-  leader: { taskId: string; score: number } | null;
-  exploration: { consecutiveValidationShifts: number; explorationBoundariesRemaining: number };
-  items: ValidationWorkflowItem[];
-  auditIssues: Array<{ taskId: string; status: Task["status"]; issue: string }>;
 }
 
 export async function getValidationWorkflow(caseId: string, runId?: string): Promise<ValidationWorkflowSnapshot> {

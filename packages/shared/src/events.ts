@@ -1,4 +1,5 @@
 import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, AgentRun, IdentityContext, AttackPath, SecurityReport } from "./schemas.js";
+import type { ValidationWorkflowSnapshot } from "./validation-workflow.js";
 
 export type RuntimeEvent =
   | { type: "case_created"; case: Case }
@@ -18,6 +19,7 @@ export type RuntimeEvent =
   | { type: "task_created"; task: Task }
   | { type: "task_updated"; task: Task }
   | { type: "timeline_appended"; entry: TimelineEntry }
+  | { type: "validation_workflow_updated"; snapshot: ValidationWorkflowSnapshot }
   | { type: "candidates_extracted"; caseId: string; candidates: CandidateFact[] }
   | { type: "action_candidates_generated"; caseId: string; candidates: ActionCard[] }
   | { type: "action_approved"; action: ActionCard }

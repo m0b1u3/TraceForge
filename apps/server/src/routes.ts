@@ -157,6 +157,22 @@ export function registerRoutes(
   const pendingInterventions = new PendingInterventionRegistry();
   const runs = new AgentRunRegistry(new AgentRunStore(db));
   const validationRuntimeByRun = new Map<string, ValidationRuntimeSnapshot>();
+  const emitValidationWorkflow = (caseId: string, requestedRunId?: string) => {
+    const runId = requestedRunId || runs.getActiveByCase(caseId)?.run.id || runs.getLatestByCase(caseId)?.run.id;
+    const snapshot = buildValidationWorkflowSnapshot({
+      caseId,
+      runId,
+      facts: factStore,
+      hypotheses: hypothesisStore,
+      tasks: taskStore,
+      consensus: validationConsensusStore,
+      paths: attackPathStore,
+      timeline: timelineStore,
+      runtime: runId ? validationRuntimeByRun.get(runId) : undefined,
+    });
+    bus.emit({ type: "validation_workflow_updated", snapshot });
+    return snapshot;
+  };
   const emitReleasedValidationLeases = (caseId: string, runId: string, reason: string) => {
     const released = releaseValidationTaskLeases({ caseId, runId, reason, tasks: taskStore, timeline: timelineStore });
     for (const task of released.tasks) bus.emit({ type: "task_updated", task });
@@ -427,6 +443,7 @@ export function registerRoutes(
     const entry = timelineStore.append(task.caseId, "task_updated", `Task ${task.title} → ${status}`, task.id);
     bus.emit({ type: "task_updated", task });
     bus.emit({ type: "timeline_appended", entry });
+    emitValidationWorkflow(task.caseId, task.runId ?? undefined);
     return task;
   });
 
@@ -1066,10 +1083,13 @@ export function registerRoutes(
     });
     let currentValidationPriority = validationPriorityLeader(rankedTasks);
     let validationExplorationState = initialValidationExplorationState();
-    const syncValidationRuntime = () => validationRuntimeByRun.set(runId, {
-      leader: currentValidationPriority,
-      exploration: validationExplorationState,
-    });
+    const syncValidationRuntime = () => {
+      validationRuntimeByRun.set(runId, {
+        leader: currentValidationPriority,
+        exploration: validationExplorationState,
+      });
+      emitValidationWorkflow(id, runId);
+    };
     syncValidationRuntime();
     const initiallyRunningValidation = rankedTasks.find((item) => item.validation && item.task.status === "running")?.task;
     const initiallyRunningFindingId = initiallyRunningValidation ? validationFindingId(initiallyRunningValidation) : undefined;

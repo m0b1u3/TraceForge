@@ -30,4 +30,15 @@ describe("realtime entity fields", () => {
     const e: RuntimeEvent = { type: "fact_updated", fact: f };
     expect(e.type).toBe("fact_updated");
   });
+
+  it("accepts a validation workflow snapshot event", () => {
+    const event: RuntimeEvent = {
+      type: "validation_workflow_updated",
+      snapshot: {
+        caseId: "c", runId: "r", generatedAt: "now", runningLease: null, leader: null,
+        exploration: { consecutiveValidationShifts: 0, explorationBoundariesRemaining: 0 }, items: [], auditIssues: [],
+      },
+    };
+    expect(event.snapshot.caseId).toBe("c");
+  });
 });

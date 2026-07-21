@@ -25,6 +25,7 @@ function resetStore() {
     toast: null,
     warnings: [],
     observerTelemetry: { reviewCount: 0, correctionCount: 0, failureCount: 0, totalTokens: 0, lastTrigger: null, lastDurationMs: null },
+    validationWorkflow: null,
     pendingApproval: null,
     pendingScope: null,
     browserController: null,
@@ -34,6 +35,21 @@ function resetStore() {
     connectionStatus: "offline",
   });
 }
+
+describe("validation workflow realtime state", () => {
+  beforeEach(() => resetStore());
+
+  it("accepts a workflow snapshot for the active case and ignores another case", () => {
+    const snapshot = {
+      caseId: "case_1", runId: "run_1", generatedAt: "now", runningLease: null, leader: null,
+      exploration: { consecutiveValidationShifts: 0, explorationBoundariesRemaining: 0 }, items: [], auditIssues: [],
+    };
+    useStore.getState().handleRuntimeEvent({ type: "validation_workflow_updated", snapshot: { ...snapshot, caseId: "case_2" } });
+    expect(useStore.getState().validationWorkflow).toBeNull();
+    useStore.getState().handleRuntimeEvent({ type: "validation_workflow_updated", snapshot });
+    expect(useStore.getState().validationWorkflow).toEqual(snapshot);
+  });
+});
 
 describe("store security reports", () => {
   beforeEach(() => resetStore());

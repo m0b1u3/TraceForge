@@ -3,3 +3,4 @@ export * from "./events.js";
 export * from "./graph.js";
 export * from "./finding-lifecycle.js";
 export * from "./proxy.js";
+export * from "./validation-workflow.js";

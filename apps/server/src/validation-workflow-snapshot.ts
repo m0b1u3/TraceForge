@@ -1,4 +1,4 @@
-import type { Task } from "@traceforge/shared";
+import type { Task, ValidationWorkflowSnapshot } from "@traceforge/shared";
 import type { ToolDescriptor } from "@traceforge/extension";
 import type { AttackPathStore } from "./stores/attack-path-store.js";
 import type { FactStore } from "./stores/fact-store.js";
@@ -29,7 +29,7 @@ export function buildValidationWorkflowSnapshot(input: {
   paths: AttackPathStore;
   timeline: TimelineStore;
   runtime?: ValidationRuntimeSnapshot;
-}) {
+}): ValidationWorkflowSnapshot {
   const facts = input.facts.listByCase(input.caseId);
   const hypotheses = input.hypotheses.listByCase(input.caseId);
   const consensus = input.consensus.listByCase(input.caseId);
