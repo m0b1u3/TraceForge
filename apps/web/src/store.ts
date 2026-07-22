@@ -1,8 +1,8 @@
 import { create } from "zustand";
-import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, ValidationWorkflowSnapshot } from "@traceforge/shared";
+import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, ValidationWorkflowSnapshot, Hypothesis } from "@traceforge/shared";
 import { validationTimelineConsoleEvent } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities, listSecurityReports, getValidationWorkflow } from "./api.js";
+import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listHypotheses, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities, listSecurityReports, getValidationWorkflow } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 import type { ValidationSyncState } from "./lib/validation-presentation.js";
 import { unavailableKnowledgeTarget } from "./lib/validation-feedback.js";
@@ -202,6 +202,7 @@ interface State {
   securityReports: SecurityReport[];
   facts: Fact[];
   tasks: Task[];
+  hypotheses: Hypothesis[];
   timeline: TimelineEntry[];
   actions: ActionCard[];
   decisions: Decision[];
@@ -229,7 +230,7 @@ interface State {
   selectedAgentEvent: { kind: "tool_call" | "tool_result"; label: string; text: string } | null;
   inspectorMode: "overview" | "traffic" | "finding";
   cases: Case[];
-  activeTab: "facts" | "tasks" | "timeline" | "mcp" | "graph" | "observer" | "reports";
+  activeTab: "facts" | "hypotheses" | "tasks" | "timeline" | "mcp" | "graph" | "observer" | "reports";
   graphModalOpen: boolean;
   mcpTools: McpToolHandle[];
   warnings: ObserverWarning[];
@@ -296,6 +297,7 @@ export const useStore = create<State>((set, get) => ({
   securityReports: [],
   facts: [],
   tasks: [],
+  hypotheses: [],
   timeline: [],
   actions: [],
   decisions: [],
@@ -430,15 +432,15 @@ export const useStore = create<State>((set, get) => ({
   )),
   setCase: (id) => {
     cancelPendingStreamDeltas();
-    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationWorkflowDelta: null, validationSyncStatus: id ? "recovering" : "stale", knowledgeTarget: null, workspacePanelRequest: null, pendingScope: null, pendingConfirmation: null });
+    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], hypotheses: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationWorkflowDelta: null, validationSyncStatus: id ? "recovering" : "stale", knowledgeTarget: null, workspacePanelRequest: null, pendingScope: null, pendingConfirmation: null });
   },
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
   enterCase: async (id) => {
     get().setCase(id);
-    const [traffic, identities, attackPaths, securityReports, facts, tasks, timeline, mcpTools, warnings, agentEvents, activeRun, pendingInterventions, browserState, validationWorkflow] = await Promise.all([
-      listTraffic(id, { limit: CLIENT_TRAFFIC_LIMIT }), listIdentities(id), listAttackPaths(id), listSecurityReports(id), listFacts(id), listTasks(id),
+    const [traffic, identities, attackPaths, securityReports, facts, tasks, hypotheses, timeline, mcpTools, warnings, agentEvents, activeRun, pendingInterventions, browserState, validationWorkflow] = await Promise.all([
+      listTraffic(id, { limit: CLIENT_TRAFFIC_LIMIT }), listIdentities(id), listAttackPaths(id), listSecurityReports(id), listFacts(id), listTasks(id), listHypotheses(id),
       listTimeline(id, { limit: CLIENT_TIMELINE_LIMIT }), listMcpTools(), listWarnings(id),
       listAgentEvents(id, { limit: CLIENT_AGENT_EVENT_LIMIT }), getActiveAgentRun(id),
       getPendingInterventions(id), getBrowserState(id), getValidationWorkflow(id),
@@ -453,6 +455,7 @@ export const useStore = create<State>((set, get) => ({
       securityReports,
       facts,
       tasks,
+      hypotheses,
       timeline: takeRecent(timeline, CLIENT_TIMELINE_LIMIT),
       mcpTools,
       warnings,
@@ -485,6 +488,7 @@ export const useStore = create<State>((set, get) => ({
             securityReports: [],
             facts: [],
             tasks: [],
+            hypotheses: [],
             timeline: [],
             actions: [],
             decisions: [],
@@ -806,7 +810,14 @@ export const useStore = create<State>((set, get) => ({
       if (!(last?.kind === "reasoning" && last.text === event.content)) get().addAgentEvent({ kind: "reasoning", text: event.content });
     }
     else if (event.type === "agent_tool_call" && event.caseId === cid) get().addAgentEvent({ kind: "tool_call", text: `${event.tool}(${event.input})` });
-    else if (event.type === "agent_tool_result" && event.caseId === cid) get().addAgentEvent({ kind: "tool_result", text: `${event.tool} → ${event.content}` });
+    else if (event.type === "agent_tool_result" && event.caseId === cid) {
+      get().addAgentEvent({ kind: "tool_result", text: `${event.tool} → ${event.content}` });
+      if (event.tool === "record_hypothesis" || event.tool === "resolve_hypothesis") {
+        void listHypotheses(cid).then((hypotheses) => {
+          if (get().caseId === cid) set({ hypotheses });
+        }).catch(() => undefined);
+      }
+    }
     else if (event.type === "agent_tool_blocked" && event.caseId === cid) get().addAgentEvent({ kind: "tool_result", text: `${event.tool} blocked → ${event.reason}\n${event.input}` });
     else if (event.type === "agent_done" && event.caseId === cid) { get().setAgentBusy(false); get().addAgentEvent({ kind: "done", text: event.content }); }
     else if (event.type === "agent_error" && event.caseId === cid) { get().setAgentBusy(false); get().addAgentEvent({ kind: "error", text: event.content }); }

@@ -483,6 +483,12 @@ export function registerRoutes(
     return agentEventStore.listByCase(id, historyPageOptions(req.query));
   });
 
+  app.get("/api/cases/:id/hypotheses", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    return hypothesisStore.listByCase(id);
+  });
+
   app.get("/api/cases/:id/validation/workflow", async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });

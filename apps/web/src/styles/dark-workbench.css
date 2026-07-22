@@ -875,6 +875,52 @@ textarea:focus-visible,
 [data-theme="light"] .validation-workflow { background: #f4f7f6; }
 [data-theme="light"] .validation-item.is-leader { background: #f8fbfa; }
 
+/* Core-managed hypothesis pool: compact ranked instrument, not another card grid. */
+.hypothesis-pool-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-elevated) 48%, transparent);
+}
+.hypothesis-pool-summary > span { display: flex; align-items: baseline; gap: 4px; padding: 9px 12px; color: var(--foreground-secondary); font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
+.hypothesis-pool-summary > span + span { border-left: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent); }
+.hypothesis-pool-summary strong { color: var(--foreground); font: 600 14px var(--mono); }
+.hypothesis-pool-summary small { color: var(--foreground-muted); font: 8px var(--mono); }
+.hypothesis-row .tf-row-head { grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; }
+.hypothesis-row.is-active { box-shadow: inset 2px 0 var(--primary); background: color-mix(in srgb, var(--primary) 3%, transparent); }
+.hypothesis-state-icon { display: grid; place-items: center; width: 23px; height: 23px; border-radius: var(--radius-sm); background: var(--surface-elevated); color: var(--foreground-muted); }
+.hypothesis-row.is-active .hypothesis-state-icon { background: color-mix(in srgb, var(--primary) 13%, transparent); color: var(--primary); }
+.hypothesis-row.is-confirmed .hypothesis-state-icon { color: var(--success); }
+.hypothesis-row.is-refuted .hypothesis-state-icon { color: var(--danger); }
+.hypothesis-row-copy { display: grid; gap: 5px; min-width: 0; }
+.hypothesis-row-copy > strong { overflow: hidden; color: var(--foreground); font-size: 11.5px; font-weight: 580; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.hypothesis-row-copy > small { display: flex; align-items: center; gap: 7px; color: var(--foreground-muted); font: 8.5px var(--mono); }
+.hypothesis-row-copy .tf-tag { padding: 2px 5px; }
+.hypothesis-status-active { color: var(--primary); }
+.hypothesis-status-confirmed { color: var(--success); }
+.hypothesis-status-refuted { color: var(--danger); }
+.hypothesis-status-archived { color: var(--foreground-muted); }
+.hypothesis-score { display: grid; justify-items: end; min-width: 34px; }
+.hypothesis-score strong { color: var(--foreground); font: 600 13px var(--mono); }
+.hypothesis-score small { color: var(--foreground-muted); font: 7px var(--mono); text-transform: uppercase; }
+.hypothesis-detail { gap: 12px; padding: 12px 14px 13px 45px; }
+.hypothesis-factors { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px 12px; }
+.hypothesis-factors > span { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
+.hypothesis-factors small { color: var(--foreground-muted); font-size: 8px; text-transform: uppercase; letter-spacing: .04em; }
+.hypothesis-factors strong { color: var(--foreground-secondary); font: 9px var(--mono); }
+.hypothesis-factors i { grid-column: 1 / -1; position: relative; height: 2px; overflow: hidden; background: var(--surface-hover); }
+.hypothesis-factors i::after { position: absolute; inset: 0 auto 0 0; width: var(--factor-value); background: color-mix(in srgb, var(--information) 75%, var(--primary)); content: ""; }
+.hypothesis-links { display: grid; gap: 7px; }
+.hypothesis-links > div { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.hypothesis-links > div > span { width: 52px; flex: 0 0 auto; color: var(--foreground-muted); font-size: 8px; text-transform: uppercase; }
+.hypothesis-links button { display: inline-flex; align-items: center; gap: 3px; min-width: 0; padding: 3px 6px; border: 0; border-radius: var(--radius-sm); background: var(--surface-elevated); color: var(--information); font: 8.5px var(--mono); cursor: pointer; }
+.hypothesis-links button:hover { background: var(--surface-hover); color: var(--foreground); }
+.hypothesis-links button:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent); outline-offset: 1px; }
+.hypothesis-links em { color: var(--foreground-muted); font-size: 9px; font-style: normal; }
+.hypothesis-detail footer { display: flex; justify-content: space-between; gap: 8px; color: var(--foreground-muted); font: 8px var(--mono); }
+.hypothesis-detail footer code { overflow: hidden; text-overflow: ellipsis; }
+[data-theme="light"] .hypothesis-row.is-active { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+
 /* Product reference pass — continuous desktop instrument, not a dashboard. */
 
 .app-shell { grid-template-rows: 66px minmax(0, 1fr); }
@@ -1143,20 +1189,18 @@ textarea:focus-visible,
 
 .knowledge-panel .panel-header { padding-inline: 22px; }
 .knowledge-tab-list {
-  display: grid;
-  grid-template-columns: .82fr .82fr 1.24fr .72fr 1.2fr;
+  display: flex;
   gap: 0;
   width: 100%;
-  padding: 0 18px;
-  overflow: hidden;
+  padding: 0 14px;
+  overflow-x: auto;
 }
 .knowledge-tab-list [data-slot="tabs-trigger"] {
   justify-content: center;
-  min-width: 0;
-  padding: 0 3px;
-  overflow: hidden;
+  flex: 0 0 auto;
+  min-width: max-content;
+  padding: 0 7px;
   font-size: 10px;
-  text-overflow: clip;
   white-space: nowrap;
 }
 .knowledge-tab-count { margin-left: 2px; font-size: 8px; }

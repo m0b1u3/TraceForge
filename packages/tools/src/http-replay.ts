@@ -19,7 +19,7 @@ export type Fetcher = (req: ReplayRequest) => Promise<ReplayResponse>;
 // 与 LLM 调用同一套代理检测逻辑，DRY）。无代理 env 时直连。
 const defaultFetcher: Fetcher = async (req) => {
   const { fetch: undiciFetch } = await import("undici");
-  const { proxyDispatcher } = await import("@traceforge/shared");
+  const { proxyDispatcher } = await import("@traceforge/shared/proxy");
   const dispatcher = proxyDispatcher();
   const res = await undiciFetch(req.url, {
     method: req.method,

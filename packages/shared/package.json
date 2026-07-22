@@ -6,7 +6,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./graph": "./src/graph.ts"
+    "./graph": "./src/graph.ts",
+    "./proxy": "./src/proxy.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"

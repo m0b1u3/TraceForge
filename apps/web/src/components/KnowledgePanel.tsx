@@ -5,6 +5,7 @@ import { TimelineTab } from "./knowledge/TimelineTab.js";
 import { McpTab } from "./knowledge/McpTab.js";
 import { ObserverTab } from "./knowledge/ObserverTab.js";
 import { ReportsTab } from "./knowledge/ReportsTab.js";
+import { HypothesesTab } from "./knowledge/HypothesesTab.js";
 import { Database, GitBranch } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { TrafficInspector } from "./inspector/TrafficInspector.js";
@@ -19,6 +20,7 @@ import { useShallow } from "zustand/react/shallow";
 
 const TABS = [
   { key: "facts", label: "Facts" },
+  { key: "hypotheses", label: "Ideas" },
   { key: "tasks", label: "Tasks" },
   { key: "timeline", label: "Timeline" },
   { key: "mcp", label: "MCP" },
@@ -30,6 +32,7 @@ type TabKey = (typeof TABS)[number]["key"];
 
 const TAB_TITLE: Record<TabKey, string> = {
   facts: "Facts",
+  hypotheses: "Hypotheses",
   tasks: "Tasks",
   timeline: "Timeline",
   mcp: "MCP",
@@ -39,6 +42,7 @@ const TAB_TITLE: Record<TabKey, string> = {
 
 function TabPanel({ tab }: { tab: TabKey }) {
   if (tab === "facts") return <FactsTab />;
+  if (tab === "hypotheses") return <HypothesesTab />;
   if (tab === "tasks") return <TasksTab />;
   if (tab === "timeline") return <TimelineTab />;
   if (tab === "mcp") return <McpTab />;
@@ -68,6 +72,7 @@ function KnowledgeInspector() {
 function KnowledgeTabCounts() {
   const counts = useStore(useShallow((state) => ({
     facts: state.facts.length,
+    hypotheses: state.hypotheses.length,
     tasks: state.tasks.length,
     timeline: state.timeline.length,
     mcp: state.mcpTools.length,

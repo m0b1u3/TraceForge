@@ -1,4 +1,4 @@
-import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision, ValidationWorkflowSnapshot } from "@traceforge/shared";
+import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision, ValidationWorkflowSnapshot, Hypothesis } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 export interface LlmConfig {
@@ -185,6 +185,11 @@ export async function createTask(
 
 export async function listTasks(caseId: string): Promise<Task[]> {
   return (await fetch(`/api/cases/${caseId}/tasks`)).json();
+}
+
+export async function listHypotheses(caseId: string): Promise<Hypothesis[]> {
+  const response = await ensureOk(await fetch(`/api/cases/${caseId}/hypotheses`), "List hypotheses");
+  return response.json();
 }
 
 export async function getValidationWorkflow(caseId: string, runId?: string): Promise<ValidationWorkflowSnapshot> {

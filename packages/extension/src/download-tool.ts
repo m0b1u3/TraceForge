@@ -1,6 +1,6 @@
 import { mkdir, writeFile, chmod } from "node:fs/promises";
 import { resolve, sep, normalize } from "node:path";
-import { proxyDispatcher } from "@traceforge/shared";
+import { proxyDispatcher } from "@traceforge/shared/proxy";
 import type { ToolDescriptor } from "./tool.js";
 
 export interface DownloadFetcherResponse {
