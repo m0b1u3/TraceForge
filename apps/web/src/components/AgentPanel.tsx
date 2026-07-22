@@ -5,6 +5,7 @@ import type { AgentEvent, AgentRun } from "@traceforge/shared";
 import { runAgent, resolveApproval, approveScope, rejectScope, steerAgentRun, interruptAgentRun, listAgentEvents } from "../api.js";
 import { AgentEventRow } from "./agent/AgentEventRow.js";
 import { ValidationEventGroup } from "./agent/ValidationEventGroup.js";
+import { ValidationRunSummary } from "./agent/ValidationRunSummary.js";
 import { buildAgentConversationItems } from "./agent/agent-conversation.js";
 import {
   ApprovalInterventionCard,
@@ -301,6 +302,7 @@ export function AgentPanel() {
           )}
         </div>
       </div>
+      <ValidationRunSummary />
       <section
         className="messages"
         role="log"
