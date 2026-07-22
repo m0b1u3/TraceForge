@@ -47,6 +47,7 @@ import { PendingInterventionRegistry } from "./pending-interventions.js";
 import { AgentRunStore } from "./stores/agent-run-store.js";
 import { observerFingerprint, observerIntervention, validatedObserverLevel } from "./observer-policy.js";
 import { HypothesisScheduler } from "./hypothesis-scheduler.js";
+import { HypothesisFeedbackCoordinator } from "./hypothesis-feedback.js";
 import { IdentityStore } from "./stores/identity-store.js";
 import { AttackPathStore } from "./stores/attack-path-store.js";
 import { SecurityReportStore } from "./stores/security-report-store.js";
@@ -146,6 +147,28 @@ export function registerRoutes(
   const knowledgeUsageStore = new KnowledgeUsageStore(db);
   const validationConclusionStore = new ValidationConclusionStore(db);
   const validationConsensusStore = new ValidationConsensusStore(db);
+  const hypothesisFeedback = new HypothesisFeedbackCoordinator(hypothesisStore, factStore, taskStore, attackPathStore, validationConsensusStore);
+  bus.subscribe((event) => {
+    const caseId = event.type === "fact_created" || event.type === "fact_updated"
+      ? event.fact.caseId
+      : event.type === "task_created" || event.type === "task_updated"
+        ? event.task.caseId
+        : event.type === "attack_path_created" || event.type === "attack_path_updated"
+          ? event.attackPath.caseId
+          : event.type === "timeline_appended" && event.entry.eventType === "validation_feedback_recorded"
+            ? event.entry.caseId
+            : null;
+    if (!caseId) return;
+    const feedback = summarizeValidationFeedbackHistory(recoverValidationFeedback(timelineStore.listByCase(caseId)));
+    const runIds = new Set(hypothesisStore.listByCase(caseId)
+      .filter((item) => item.runId && (item.status === "candidate" || item.status === "active"))
+      .map((item) => item.runId as string));
+    for (const affectedRunId of runIds) {
+      hypothesisFeedback.reconcile(caseId, affectedRunId, feedback);
+      const rebalanced = hypothesisScheduler.rebalance(caseId, affectedRunId);
+      sessionStore.upsert(caseId, { activeHypothesisIds: rebalanced.active.map((item) => item.id) }, affectedRunId);
+    }
+  });
   bus.subscribe((event) => {
     const dependency = event.type === "fact_updated"
       ? { caseId: event.fact.caseId, id: event.fact.id }
@@ -1322,6 +1345,7 @@ export function registerRoutes(
         ]);
         if (report.ok && replanTriggers.has(report.name)) {
           try {
+            hypothesisFeedback.reconcile(id, runId, summarizeValidationFeedbackHistory(validationFeedback));
             const rebalanced = hypothesisScheduler.rebalance(id, runId);
             sessionStore.upsert(id, { activeHypothesisIds: rebalanced.active.map((item) => item.id) }, runId);
             const activeSummary = rebalanced.active
