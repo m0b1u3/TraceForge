@@ -3,20 +3,7 @@ import { ArrowsClockwise, ArrowSquareOut, CaretDown, CheckCircle, Flask, ShieldC
 import { useShallow } from "zustand/react/shallow";
 import type { ValidationWorkflowItem, ValidationWorkflowSnapshot } from "@traceforge/shared";
 import { useStore } from "../../store.js";
-import type { ValidationSyncStatus } from "../../store.js";
-
-export function validationWorkflowTone(snapshot: ValidationWorkflowSnapshot): "danger" | "warning" | "active" | "quiet" {
-  if (snapshot.auditIssues.length > 0) return "danger";
-  if (snapshot.items.some((item) => item.missingEvidence.length > 0)) return "warning";
-  if (snapshot.runningLease) return "active";
-  return "quiet";
-}
-
-export function validationSyncLabel(status: ValidationSyncStatus): "Live" | "Recovering" | "Stale" {
-  if (status === "live") return "Live";
-  if (status === "recovering") return "Recovering";
-  return "Stale";
-}
+import { deriveValidationPresentation, validationSyncLabel } from "../../lib/validation-presentation.js";
 
 export type ValidationNavigationTarget = { kind: "finding" | "task"; id: string };
 
@@ -93,9 +80,10 @@ function ValidationItem({ item, leaderId, changed, onNavigate }: { item: Validat
 }
 
 export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: ValidationNavigationTarget) => void }) {
-  const { caseId, snapshot, delta, syncStatus, refreshValidationWorkflow } = useStore(useShallow((state) => ({
+  const { caseId, snapshot, tasks, delta, syncStatus, refreshValidationWorkflow } = useStore(useShallow((state) => ({
     caseId: state.caseId,
     snapshot: state.validationWorkflow,
+    tasks: state.tasks,
     delta: state.validationWorkflowDelta,
     syncStatus: state.validationSyncStatus,
     refreshValidationWorkflow: state.refreshValidationWorkflow,
@@ -123,7 +111,8 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
     }
   };
 
-  const tone = useMemo(() => snapshot ? validationWorkflowTone(snapshot) : "quiet", [snapshot]);
+  const presentation = useMemo(() => snapshot ? deriveValidationPresentation(snapshot, tasks, syncStatus) : null, [snapshot, syncStatus, tasks]);
+  const tone = presentation?.tone ?? "quiet";
   const groups = useMemo(() => snapshot ? groupValidationWorkflowItems(snapshot.items, snapshot.runningLease, snapshot.leader?.taskId) : [], [snapshot]);
   if (!caseId) return null;
 
@@ -149,7 +138,7 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
           <div className="validation-metrics">
             <span><i className="validation-pulse" />{snapshot.runningLease ? "Lease active" : "Queue idle"}</span>
             <span><Flask size={13} />{snapshot.exploration.explorationBoundariesRemaining > 0 ? `${snapshot.exploration.explorationBoundariesRemaining} exploration steps` : "Evidence priority"}</span>
-            <span className={snapshot.auditIssues.length ? "is-danger" : ""}>{snapshot.auditIssues.length ? `${snapshot.auditIssues.length} audit issue${snapshot.auditIssues.length === 1 ? "" : "s"}` : "Consistent"}</span>
+            <span className={presentation?.auditCount ? "is-danger" : ""}>{presentation?.auditCount ? `${presentation.auditCount} audit issue${presentation.auditCount === 1 ? "" : "s"}` : "Consistent"}</span>
           </div>
           {delta && delta.revision === snapshot.revision && delta.summary.length > 0 && (
             <div className="validation-change-feed" key={delta.revision} role="status" aria-live="polite">

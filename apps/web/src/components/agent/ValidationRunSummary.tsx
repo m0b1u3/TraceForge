@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 import type { Task, ValidationWorkflowSnapshot } from "@traceforge/shared";
 import { useShallow } from "zustand/react/shallow";
 import { useStore, type ValidationSyncStatus } from "../../store.js";
+import { deriveValidationPresentation, type ValidationDiagnostic } from "../../lib/validation-presentation.js";
 
 export interface ValidationRunSummaryModel {
   lease: { id: string; label: string } | null;
@@ -10,38 +11,21 @@ export interface ValidationRunSummaryModel {
   evidence: { ready: number; total: number; missing: number };
   explorationBoundaries: number;
   syncStatus: ValidationSyncStatus;
-  diagnostic: { kind: "stale" | "recovering" | "lease_missing" | "leader_missing" | "audit"; label: string; detail: string; taskId?: string } | null;
+  diagnostic: ValidationDiagnostic | null;
 }
 
 export function validationRunSummaryModel(snapshot: ValidationWorkflowSnapshot | null, tasks: Task[], syncStatus: ValidationSyncStatus): ValidationRunSummaryModel | null {
   if (!snapshot || (!snapshot.runningLease && !snapshot.leader && snapshot.items.length === 0)) return null;
   const taskTitle = (id: string) => tasks.find((task) => task.id === id)?.title ?? id;
   const leaderItem = snapshot.items.find((item) => item.taskId === snapshot.leader?.taskId);
-  const leaseExists = !snapshot.runningLease || tasks.some((task) => task.id === snapshot.runningLease);
-  const leaderExists = !snapshot.leader || tasks.some((task) => task.id === snapshot.leader?.taskId);
-  const firstAudit = snapshot.auditIssues[0];
-  const diagnostic: ValidationRunSummaryModel["diagnostic"] = syncStatus === "stale"
-    ? { kind: "stale", label: "Snapshot stale", detail: "Refresh validation state" }
-    : syncStatus === "recovering"
-      ? { kind: "recovering", label: "Recovering", detail: "Synchronizing validation state" }
-      : !leaseExists
-        ? { kind: "lease_missing", label: "Lease missing", detail: snapshot.runningLease ?? "Unknown task" }
-        : !leaderExists
-          ? { kind: "leader_missing", label: "Leader missing", detail: snapshot.leader?.taskId ?? "Unknown task" }
-          : firstAudit
-            ? { kind: "audit", label: `${snapshot.auditIssues.length} audit issue${snapshot.auditIssues.length === 1 ? "" : "s"}`, detail: firstAudit.issue.replace("[Consistency audit]", "").trim(), taskId: firstAudit.taskId }
-            : null;
+  const presentation = deriveValidationPresentation(snapshot, tasks, syncStatus);
   return {
     lease: snapshot.runningLease ? { id: snapshot.runningLease, label: taskTitle(snapshot.runningLease) } : null,
     leader: snapshot.leader ? { id: snapshot.leader.taskId, label: leaderItem?.findingTitle ?? taskTitle(snapshot.leader.taskId), score: snapshot.leader.score } : null,
-    evidence: {
-      ready: snapshot.items.filter((item) => item.completionReady).length,
-      total: snapshot.items.length,
-      missing: snapshot.items.reduce((count, item) => count + item.missingEvidence.length, 0),
-    },
+    evidence: presentation.evidence,
     explorationBoundaries: snapshot.exploration.explorationBoundariesRemaining,
     syncStatus,
-    diagnostic,
+    diagnostic: presentation.diagnostic,
   };
 }
 

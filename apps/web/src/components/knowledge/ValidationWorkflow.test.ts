@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { ValidationWorkflowItem, ValidationWorkflowSnapshot } from "@traceforge/shared";
-import { groupValidationWorkflowItems, validationNavigationTarget, validationSyncLabel, validationWorkflowTone, visibleValidationGroupItems } from "./ValidationWorkflow.js";
+import type { Task, ValidationWorkflowItem, ValidationWorkflowSnapshot } from "@traceforge/shared";
+import { groupValidationWorkflowItems, validationNavigationTarget, visibleValidationGroupItems } from "./ValidationWorkflow.js";
+import { deriveValidationPresentation, validationSyncLabel } from "../../lib/validation-presentation.js";
 
 const snapshot = (patch: Partial<ValidationWorkflowSnapshot> = {}): ValidationWorkflowSnapshot => ({
   caseId: "case-1", runId: null, revision: 0, generatedAt: "2026-07-21T00:00:00.000Z", runningLease: null, leader: null,
@@ -11,18 +12,19 @@ const item = (findingId: string, patch: Partial<ValidationWorkflowItem> = {}): V
   taskId: `task-${findingId}`, taskStatus: "open", priorityScore: 50, priorityReasons: [], completionReady: false,
   missingEvidence: [], feedback: null, ...patch,
 });
+const task = (id: string): Task => ({ id, caseId: "case-1", title: id, status: "open", reason: "", blockedBy: [], triggerWhen: [], relatedFacts: [], priority: "medium", createdAt: "now", updatedAt: "now", updateCount: 0 });
 
 describe("validation workflow presentation", () => {
   it("prioritizes consistency issues over other workflow signals", () => {
-    expect(validationWorkflowTone(snapshot({ runningLease: "task-1", auditIssues: [{ taskId: "task-2", status: "open", issue: "inconsistent" }] }))).toBe("danger");
+    expect(deriveValidationPresentation(snapshot({ runningLease: "task-1", auditIssues: [{ taskId: "task-2", status: "open", issue: "inconsistent" }] }), [task("task-1")], "live").tone).toBe("danger");
   });
 
   it("surfaces missing evidence before an active lease", () => {
-    expect(validationWorkflowTone(snapshot({ runningLease: "task-1", items: [{
+    expect(deriveValidationPresentation(snapshot({ runningLease: "task-1", items: [{
       findingId: "finding-1", findingTitle: "SQL injection", findingStatus: "candidate", consensusStatus: "contested",
       confidence: 0.7, taskId: "task-1", taskStatus: "running", priorityScore: 82, priorityReasons: [], completionReady: false,
       missingEvidence: ["independent reproduction"], feedback: null,
-    }] }))).toBe("warning");
+    }] }), [task("task-1")], "live").tone).toBe("warning");
   });
 
   it("resolves finding navigation without inventing missing task ids", () => {

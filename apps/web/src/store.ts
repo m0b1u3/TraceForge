@@ -4,6 +4,7 @@ import { validationTimelineConsoleEvent } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities, listSecurityReports, getValidationWorkflow } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
+import type { ValidationSyncState } from "./lib/validation-presentation.js";
 
 export interface AgentUiEvent {
   kind: "user" | "text" | "reasoning" | "tool_call" | "tool_result" | "validation" | "done" | "error" | "started";
@@ -63,7 +64,7 @@ export function observerTelemetryFromHistory(
 
 export type ToastTone = "info" | "success" | "error";
 export type ConnectionStatus = "online" | "reconnecting" | "offline";
-export type ValidationSyncStatus = "live" | "recovering" | "stale";
+export type ValidationSyncStatus = ValidationSyncState;
 export interface ValidationWorkflowDelta {
   revision: number;
   changedFindingIds: string[];
