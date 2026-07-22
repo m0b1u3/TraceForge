@@ -27,8 +27,16 @@ describe("ValidationRunSummary", () => {
       evidence: { ready: 0, total: 1, missing: 1 },
       explorationBoundaries: 3,
       syncStatus: "live",
+      diagnostic: null,
     });
     expect(validationRunSummaryModel(null, [task], "stale")).toBeNull();
+  });
+
+  it("prioritizes sync and referential integrity diagnostics", () => {
+    expect(validationRunSummaryModel(snapshot, [task], "stale")?.diagnostic).toEqual(expect.objectContaining({ kind: "stale", label: "Snapshot stale" }));
+    expect(validationRunSummaryModel(snapshot, [], "live")?.diagnostic).toEqual(expect.objectContaining({ kind: "lease_missing", detail: "task_1" }));
+    const audited = { ...snapshot, auditIssues: [{ taskId: "task_1", status: "running" as const, issue: "[Consistency audit] Lease conflicts with task state" }] };
+    expect(validationRunSummaryModel(audited, [task], "live")?.diagnostic).toEqual(expect.objectContaining({ kind: "audit", taskId: "task_1", label: "1 audit issue" }));
   });
 
   it("exposes progress semantics and locates the active lease", async () => {

@@ -809,6 +809,17 @@ textarea:focus-visible,
 .validation-run-metric.is-action { cursor: pointer; }
 .validation-run-metric.is-action:hover { background: var(--surface-hover); color: var(--primary); }
 .validation-run-metric.is-action:focus-visible { z-index: 1; outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent); outline-offset: -2px; }
+.validation-run-diagnostic { color: var(--warning); cursor: pointer; }
+.validation-run-diagnostic strong { color: var(--warning); }
+.validation-run-diagnostic:hover:not(:disabled) { background: color-mix(in srgb, var(--warning) 8%, transparent); }
+.validation-run-diagnostic:focus-visible { z-index: 1; outline: 2px solid color-mix(in srgb, var(--warning) 72%, transparent); outline-offset: -2px; }
+.validation-run-diagnostic.is-audit,
+.validation-run-diagnostic.is-lease_missing,
+.validation-run-diagnostic.is-leader_missing { color: var(--danger); }
+.validation-run-diagnostic.is-audit strong,
+.validation-run-diagnostic.is-lease_missing strong,
+.validation-run-diagnostic.is-leader_missing strong { color: var(--danger); }
+.validation-run-diagnostic:disabled { cursor: wait; opacity: .8; }
 .validation-run-metric > i { position: absolute; right: 10px; bottom: 4px; left: 10px; height: 1px; overflow: hidden; background: var(--border-subtle); }
 .validation-run-metric > i::after { position: absolute; inset: 0 auto 0 0; width: var(--validation-progress); background: var(--success); content: ""; }
 .chat-panel { grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
