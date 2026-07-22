@@ -19,7 +19,7 @@ describe("browser control routes (no real browser)", () => {
   it("reports an inactive browser session for an existing case", async () => {
     const res = await app.inject({ method: "GET", url: `/api/cases/${caseId}/browser` });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true, controller: null, url: "" });
+    expect(res.json()).toEqual({ ok: true, controller: null, url: "", identity: null });
   });
   it("takeover returns 404 when no session started", async () => {
     const res = await app.inject({ method: "POST", url: `/api/cases/${caseId}/browser/takeover` });

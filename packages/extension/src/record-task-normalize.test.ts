@@ -24,7 +24,7 @@ describe("makeRecordTaskTool normalization", () => {
   it("maps an out-of-enum priority (critical) to high instead of crashing", async () => {
     const tk = mkTasks();
     const tool = makeRecordTaskTool("c", tk.writer, timeline, noop);
-    const res = await tool.execute({ title: "urgent task", priority: "critical" });
+    const res = await tool.execute({ title: "urgent task", priority: "critical", hypothesisIds: ["hyp_1"] });
     expect(res.ok).toBe(true);
     expect(tk.created[0].priority).toBe("high");
   });
@@ -32,7 +32,7 @@ describe("makeRecordTaskTool normalization", () => {
   it("maps an out-of-enum status to open instead of crashing", async () => {
     const tk = mkTasks();
     const tool = makeRecordTaskTool("c", tk.writer, timeline, noop);
-    const res = await tool.execute({ title: "weird status", status: "maybe" });
+    const res = await tool.execute({ title: "weird status", status: "maybe", hypothesisIds: ["hyp_1"] });
     expect(res.ok).toBe(true);
     expect(tk.created[0].status).toBe("open");
   });
@@ -40,7 +40,7 @@ describe("makeRecordTaskTool normalization", () => {
   it("keeps a valid priority/status as-is", async () => {
     const tk = mkTasks();
     const tool = makeRecordTaskTool("c", tk.writer, timeline, noop);
-    await tool.execute({ title: "t", priority: "low", status: "blocked" });
+    await tool.execute({ title: "t", priority: "low", status: "blocked", hypothesisIds: ["hyp_1"] });
     expect(tk.created[0].priority).toBe("low");
     expect(tk.created[0].status).toBe("blocked");
   });

@@ -77,7 +77,7 @@ describe("makeRecordTaskTool upsert", () => {
   it("with known id → update + task_updated", async () => {
     const tx = mkTasks(); const evs: RuntimeEvent[] = [];
     const tool = makeRecordTaskTool("c", tx.writer, timeline, (e) => evs.push(e));
-    await tool.execute({ title: "a" });
+    await tool.execute({ title: "a", hypothesisIds: ["hyp_1"] });
     const id = [...tx.map.keys()][0];
     const res = await tool.execute({ id, title: "a2", status: "blocked" });
     expect(res.ok).toBe(true);

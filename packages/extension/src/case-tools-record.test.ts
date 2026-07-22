@@ -61,7 +61,7 @@ describe("makeRecordActionTool", () => {
     expect(res.content).toMatch(/evidence/i);
   });
 
-  it("records an action when evidenceRefs are valid known facts", async () => {
+  it("records an action when evidence and cognitive references are present", async () => {
     const facts = memFacts();
     const f = facts.create("c", { type: "api_endpoint", title: "api", value: {}, source: { type: "ai", ref: "r" }, confidence: 1, tags: [] });
     const stored: ActionCard[] = [];
@@ -70,7 +70,16 @@ describe("makeRecordActionTool", () => {
     const decisions = { create: () => { decisionMade = true; return {}; } };
     const events: RuntimeEvent[] = [];
     const tool = makeRecordActionTool("c", facts, actions, decisions, makeTimeline(), (e) => events.push(e));
-    const res = await tool.execute({ title: "probe", goal: "g", evidenceRefs: [f.id], reasoning: "r", steps: ["s"], tool: "http_replay" });
+    const res = await tool.execute({
+      title: "probe",
+      goal: "g",
+      evidenceRefs: [f.id],
+      hypothesisRefs: ["hyp_1"],
+      taskRefs: ["task_1"],
+      reasoning: "r",
+      steps: ["s"],
+      tool: "http_replay",
+    });
     expect(res.ok).toBe(true);
     expect(stored).toHaveLength(1);
     expect(decisionMade).toBe(true);
