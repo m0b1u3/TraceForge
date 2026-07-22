@@ -4,6 +4,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { ValidationWorkflowItem, ValidationWorkflowSnapshot } from "@traceforge/shared";
 import { useStore } from "../../store.js";
 import { deriveValidationPresentation, validationSyncLabel } from "../../lib/validation-presentation.js";
+import { VALIDATION_STATE_RESTORED, validationRefreshFailed } from "../../lib/validation-feedback.js";
 
 export type ValidationNavigationTarget = { kind: "finding" | "task"; id: string };
 
@@ -80,16 +81,16 @@ function ValidationItem({ item, leaderId, changed, onNavigate }: { item: Validat
 }
 
 export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: ValidationNavigationTarget) => void }) {
-  const { caseId, snapshot, tasks, delta, syncStatus, refreshValidationWorkflow } = useStore(useShallow((state) => ({
+  const { caseId, snapshot, tasks, delta, syncStatus, refreshValidationWorkflow, showToast } = useStore(useShallow((state) => ({
     caseId: state.caseId,
     snapshot: state.validationWorkflow,
     tasks: state.tasks,
     delta: state.validationWorkflowDelta,
     syncStatus: state.validationSyncStatus,
     refreshValidationWorkflow: state.refreshValidationWorkflow,
+    showToast: state.showToast,
   })));
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<ValidationItemGroup>>(() => new Set(["monitoring"]));
   const [groupLimits, setGroupLimits] = useState<Partial<Record<ValidationItemGroup, number>>>({});
 
@@ -101,11 +102,13 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
   const load = async () => {
     if (!caseId) return;
     setLoading(true);
-    setError("");
+    const restoring = syncStatus !== "live";
     try {
       await refreshValidationWorkflow();
+      if (restoring) showToast(VALIDATION_STATE_RESTORED.message, VALIDATION_STATE_RESTORED.tone);
     } catch (reason) {
-      setError((reason as Error).message);
+      const feedback = validationRefreshFailed(reason);
+      showToast(feedback.message, feedback.tone);
     } finally {
       setLoading(false);
     }
@@ -132,7 +135,6 @@ export function ValidationWorkflow({ onNavigate }: { onNavigate: (target: Valida
           </button>
         </div>
       </div>
-      {error && <div className="validation-workflow-error"><WarningCircle size={14} />{error}</div>}
       {snapshot && snapshot.items.length > 0 && (
         <>
           <div className="validation-metrics">

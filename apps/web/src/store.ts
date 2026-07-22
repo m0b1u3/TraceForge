@@ -5,6 +5,7 @@ import type { McpToolHandle } from "@traceforge/extension";
 import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities, listSecurityReports, getValidationWorkflow } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 import type { ValidationSyncState } from "./lib/validation-presentation.js";
+import { unavailableKnowledgeTarget } from "./lib/validation-feedback.js";
 
 export interface AgentUiEvent {
   kind: "user" | "text" | "reasoning" | "tool_call" | "tool_result" | "validation" | "done" | "error" | "started";
@@ -344,12 +345,13 @@ export const useStore = create<State>((set, get) => ({
       ? get().tasks.some((task) => task.id === target.id)
       : get().facts.some((fact) => fact.id === target.id);
     if (!available) {
-      get().showToast(`Related ${target.kind} is no longer available.`, "info");
+      const feedback = unavailableKnowledgeTarget(target.kind);
+      get().showToast(feedback.message, feedback.tone);
       return;
     }
     set((state) => ({
       activeTab: target.kind === "task" ? "tasks" : "facts",
-      knowledgeTarget: target.kind === "task" ? { ...target, requestId: (state.knowledgeTarget?.requestId ?? 0) + 1 } : null,
+      knowledgeTarget: { ...target, requestId: (state.knowledgeTarget?.requestId ?? 0) + 1 },
       workspacePanelRequest: { panel: "knowledge", requestId: (state.workspacePanelRequest?.requestId ?? 0) + 1 },
       selectedFactId: target.kind === "finding" ? target.id : null,
       selectedTrafficId: null,

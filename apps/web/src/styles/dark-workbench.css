@@ -858,13 +858,14 @@ textarea:focus-visible,
 .validation-evidence-ready { color: var(--success); }
 .validation-evidence-gap svg,
 .validation-evidence-ready svg { flex: 0 0 auto; margin-top: 1px; }
-.validation-workflow-error { display: flex; gap: 7px; padding: 8px 14px; color: var(--danger); font-size: 10px; }
 .validation-audit-list { display: grid; border-top: 1px solid color-mix(in srgb, var(--danger) 24%, var(--border-subtle)); }
 .validation-audit-list button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 8px 14px; border: 0; background: color-mix(in srgb, var(--danger) 5%, transparent); color: var(--danger); font-size: 10px; text-align: left; cursor: pointer; }
 .validation-audit-list button:hover { background: color-mix(in srgb, var(--danger) 9%, transparent); }
 .validation-audit-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.knowledge-row.is-targeted { animation: validation-target 520ms ease-out; }
-.knowledge-row:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 68%, transparent); outline-offset: -2px; }
+.knowledge-row.is-targeted,
+.context-inspector.is-targeted { animation: validation-target 720ms ease-out; }
+.knowledge-row:focus-visible,
+.context-inspector:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 68%, transparent); outline-offset: -2px; }
 @keyframes validation-target { 0% { background: color-mix(in srgb, var(--primary) 14%, transparent); } 100% { background: transparent; } }
 @keyframes validation-change-enter { from { opacity: 0; transform: translateY(-2px); } }
 @keyframes validation-item-change { 0% { background: color-mix(in srgb, var(--information) 12%, transparent); } 100% { background: transparent; } }

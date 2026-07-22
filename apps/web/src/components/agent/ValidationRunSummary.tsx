@@ -4,6 +4,7 @@ import type { Task, ValidationWorkflowSnapshot } from "@traceforge/shared";
 import { useShallow } from "zustand/react/shallow";
 import { useStore, type ValidationSyncStatus } from "../../store.js";
 import { deriveValidationPresentation, type ValidationDiagnostic } from "../../lib/validation-presentation.js";
+import { VALIDATION_STATE_RESTORED, validationRefreshFailed } from "../../lib/validation-feedback.js";
 
 export interface ValidationRunSummaryModel {
   lease: { id: string; label: string } | null;
@@ -58,7 +59,12 @@ export function ValidationRunSummary() {
           title={diagnostic.detail}
           aria-label={`${diagnostic.label}. ${diagnostic.detail}`}
           onClick={() => {
-            if (diagnostic.kind === "stale") void refresh().catch((error) => showToast(`Failed to refresh validation state: ${(error as Error).message}`, "error"));
+            if (diagnostic.kind === "stale") void refresh()
+              .then(() => showToast(VALIDATION_STATE_RESTORED.message, VALIDATION_STATE_RESTORED.tone))
+              .catch((error) => {
+                const feedback = validationRefreshFailed(error);
+                showToast(feedback.message, feedback.tone);
+              });
             else if (diagnostic.taskId) navigate({ kind: "task", id: diagnostic.taskId });
           }}
         >

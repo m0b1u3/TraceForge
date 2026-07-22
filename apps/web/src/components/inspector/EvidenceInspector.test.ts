@@ -28,11 +28,11 @@ const fact: Fact = {
   validity: "valid",
 };
 
-async function renderInspector(): Promise<HTMLDivElement> {
+async function renderInspector(props: { targetRequestId?: number; onTargetHandled?: (requestId: number) => void } = {}): Promise<HTMLDivElement> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  await act(async () => root?.render(createElement(FindingInspector, { fact })));
+  await act(async () => root?.render(createElement(FindingInspector, { fact, ...props })));
   return container;
 }
 
@@ -56,5 +56,13 @@ describe("FindingInspector", () => {
     await act(async () => reveal?.click());
     expect(inspector.textContent).toContain("correct-horse");
     expect(inspector.textContent).toContain("token-value");
+  });
+
+  it("focuses and identifies a finding reached through validation navigation", async () => {
+    const inspector = await renderInspector({ targetRequestId: 7 });
+    const target = inspector.querySelector<HTMLElement>('.context-inspector');
+    expect(target?.classList.contains("is-targeted")).toBe(true);
+    expect(target?.getAttribute("aria-current")).toBe("location");
+    expect(document.activeElement).toBe(target);
   });
 });

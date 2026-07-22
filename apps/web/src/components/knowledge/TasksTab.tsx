@@ -15,7 +15,9 @@ const HUMAN_ACTIONS: { status: Task["status"]; label: string }[] = [
   { status: "out_of_scope", label: "Out of scope" },
 ];
 
-function TaskRow({ t, focused, onFocusHandled }: { t: Task; focused: boolean; onFocusHandled: () => void }) {
+const TARGET_FEEDBACK_MS = 900;
+
+function TaskRow({ t, targetRequestId, onFocusHandled }: { t: Task; targetRequestId: number | null; onFocusHandled: (requestId: number) => void }) {
   const [open, setOpen] = useState(false);
   const rowRef = useRef<HTMLElement>(null);
   const [busy, setBusy] = useState<Task["status"] | null>(null);
@@ -35,14 +37,16 @@ function TaskRow({ t, focused, onFocusHandled }: { t: Task; focused: boolean; on
   };
   const detailId = `task-detail-${t.id}`;
   useEffect(() => {
-    if (!focused) return;
+    if (targetRequestId === null) return;
     setOpen(true);
     rowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
     rowRef.current?.focus({ preventScroll: true });
-    onFocusHandled();
-  }, [focused, onFocusHandled]);
+    const timer = globalThis.setTimeout(() => onFocusHandled(targetRequestId), TARGET_FEEDBACK_MS);
+    return () => globalThis.clearTimeout(timer);
+  }, [onFocusHandled, targetRequestId]);
+  const focused = targetRequestId !== null;
   return (
-    <article ref={rowRef} tabIndex={-1} className={`tf-row tf-row-expandable knowledge-row${focused ? " is-targeted" : ""}`}>
+    <article ref={rowRef} tabIndex={-1} aria-current={focused ? "location" : undefined} className={`tf-row tf-row-expandable knowledge-row${focused ? " is-targeted" : ""}`}>
       <button className="tf-row-head" type="button" aria-expanded={open} aria-controls={detailId} onClick={() => setOpen((v) => !v)}>
         <span className={`tf-tag tf-status-${t.status}`}>{t.status}</span>
         <span className="tf-row-title">{t.title}</span>
@@ -71,22 +75,17 @@ export function TasksTab() {
   const navigateToKnowledge = useStore((s) => s.navigateToKnowledge);
   const knowledgeTarget = useStore((s) => s.knowledgeTarget);
   const clearKnowledgeTarget = useStore((s) => s.clearKnowledgeTarget);
-  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   const window = useKnowledgeWindow(tasks.length);
   useEffect(() => {
     if (knowledgeTarget?.kind !== "task") return;
     const targetIndex = tasks.findIndex((task) => task.id === knowledgeTarget.id);
-    if (targetIndex >= 0) {
-      window.reveal(targetIndex);
-      setFocusedTaskId(knowledgeTarget.id);
-    }
-    clearKnowledgeTarget(knowledgeTarget.requestId);
-  }, [clearKnowledgeTarget, knowledgeTarget, tasks, window]);
+    if (targetIndex >= 0) window.reveal(targetIndex);
+  }, [knowledgeTarget, tasks, window]);
   return (
     <>
       <ValidationWorkflow onNavigate={navigateToKnowledge} />
       {tasks.length === 0 && <FeedbackState title="No tasks yet" description="Agent todos and blocked work will appear here. New evidence can reopen completed tasks." />}
-      {tasks.slice(0, window.count).map((t) => <TaskRow t={t} key={t.id} focused={focusedTaskId === t.id} onFocusHandled={() => setFocusedTaskId(null)} />)}
+      {tasks.slice(0, window.count).map((t) => <TaskRow t={t} key={t.id} targetRequestId={knowledgeTarget?.kind === "task" && knowledgeTarget.id === t.id ? knowledgeTarget.requestId : null} onFocusHandled={clearKnowledgeTarget} />)}
       <KnowledgeWindowFooter visible={window.count} total={tasks.length} onShowMore={window.showMore} />
     </>
   );

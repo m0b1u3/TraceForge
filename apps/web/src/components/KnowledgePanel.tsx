@@ -47,7 +47,7 @@ function TabPanel({ tab }: { tab: TabKey }) {
 }
 
 function KnowledgeInspector() {
-  const { selectedTraffic, selectedFact, selectedAgentEvent } = useStore(useShallow((state) => ({
+  const { selectedTraffic, selectedFact, selectedAgentEvent, knowledgeTarget, clearKnowledgeTarget } = useStore(useShallow((state) => ({
     selectedTraffic: state.selectedTrafficId
       ? state.traffic.find((entry) => entry.id === state.selectedTrafficId)
         ?? (state.selectedTrafficSnapshot?.id === state.selectedTrafficId ? state.selectedTrafficSnapshot : null)
@@ -56,9 +56,11 @@ function KnowledgeInspector() {
       ? state.facts.find((fact) => fact.id === state.selectedFactId) ?? null
       : null,
     selectedAgentEvent: state.selectedAgentEvent,
+    knowledgeTarget: state.knowledgeTarget,
+    clearKnowledgeTarget: state.clearKnowledgeTarget,
   })));
   if (selectedTraffic) return <TrafficInspector entry={selectedTraffic} />;
-  if (selectedFact) return <FindingInspector fact={selectedFact} />;
+  if (selectedFact) return <FindingInspector fact={selectedFact} targetRequestId={knowledgeTarget?.kind === "finding" && knowledgeTarget.id === selectedFact.id ? knowledgeTarget.requestId : null} onTargetHandled={clearKnowledgeTarget} />;
   if (selectedAgentEvent) return <ToolEventInspector event={selectedAgentEvent} />;
   return null;
 }
