@@ -785,6 +785,16 @@ textarea:focus-visible,
 .agent-event-target::before { content: "/"; margin-right: 7px; color: var(--border-strong); }
 .agent-event-time { margin-left: auto; color: var(--foreground-muted); font: 9px/1 var(--mono); font-variant-numeric: tabular-nums; }
 .agent-event-time + .agent-event-actions { margin-left: 2px; }
+.validation-event-group { position: relative; }
+.validation-event-group-control { display: flex; align-items: center; justify-content: space-between; min-height: 25px; margin: 2px 0 -2px -4px; color: var(--foreground-muted); }
+.validation-event-group-control [data-slot="button"] { height: 24px; gap: 5px; padding-inline: 4px 7px; color: var(--foreground-muted); font: 500 9px/1 var(--mono); }
+.validation-event-group-control [data-slot="button"]:hover { background: var(--surface-hover); color: var(--foreground-secondary); }
+.validation-event-group-control svg { transition: transform 150ms ease; }
+.validation-event-group-control svg.is-open { transform: rotate(180deg); }
+.validation-event-group-control > span { overflow: hidden; max-width: 34ch; font: 9px/1 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.validation-event-group-history { opacity: .78; }
+.validation-event-group-history .agent-event.is-validation { min-height: 48px; padding-block: 9px 10px; }
+.validation-event-group-history .agent-event.is-validation .agent-event-icon { top: 13px; }
 [data-theme="light"] .agent-event.is-validation { background: color-mix(in srgb, var(--information) 4%, transparent); }
 [data-theme="light"] .agent-event.is-validation .agent-event-content { color: #405159; }
 .validation-item {

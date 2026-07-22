@@ -18,6 +18,7 @@ export type AgentConversationEventItem = {
 
 export type AgentConversationItem =
   | AgentConversationEventItem
+  | { type: "validation_group"; key: string; target: NonNullable<AgentConversationEventItem["target"]>; events: AgentConversationEventItem[] }
   | { type: "approval"; key: string }
   | { type: "scope"; key: string }
   | { type: "busy"; key: string };
@@ -42,7 +43,15 @@ export function buildAgentConversationItems({
     if (!display) return;
     if (lastVisible?.kind === display.kind && lastVisible.text === display.text) return;
     if (display.kind === "done" && lastVisible?.kind === "text" && lastVisible.text === display.text) return;
-    items.push({ type: "event", key: `event-${index}`, ...display });
+    const nextItem: AgentConversationEventItem = { type: "event", key: `event-${index}`, ...display };
+    const previous = items.at(-1);
+    if (nextItem.kind === "validation" && nextItem.target && previous?.type === "event" && previous.kind === "validation" && sameTarget(previous.target, nextItem.target)) {
+      items[items.length - 1] = { type: "validation_group", key: `validation-group-${previous.key}`, target: nextItem.target, events: [previous, nextItem] };
+    } else if (nextItem.kind === "validation" && nextItem.target && previous?.type === "validation_group" && sameTarget(previous.target, nextItem.target)) {
+      previous.events.push(nextItem);
+    } else {
+      items.push(nextItem);
+    }
     lastVisible = { kind: display.kind, text: display.text };
   });
 
@@ -50,6 +59,10 @@ export function buildAgentConversationItems({
   if (pendingScope) items.push({ type: "scope", key: `scope-${pendingScope.host}` });
   if (agentBusy) items.push({ type: "busy", key: "agent-busy" });
   return items;
+}
+
+function sameTarget(left: AgentConversationEventItem["target"], right: AgentConversationEventItem["target"]): boolean {
+  return Boolean(left && right && left.kind === right.kind && left.id === right.id);
 }
 
 function isNoisyAgentEvent(event: AgentUiEvent): boolean {
