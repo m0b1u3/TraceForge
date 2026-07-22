@@ -19,9 +19,9 @@ export function deriveValidationPresentation(snapshot: ValidationWorkflowSnapsho
     : syncStatus === "recovering"
       ? { kind: "recovering", label: "Recovering", detail: "Synchronizing validation state" }
       : !leaseExists
-        ? { kind: "lease_missing", label: "Lease missing", detail: snapshot.runningLease ?? "Unknown task" }
+        ? { kind: "lease_missing", label: "Lease missing", detail: snapshot.runningLease ?? "Unknown task", taskId: snapshot.runningLease ?? undefined }
         : !leaderExists
-          ? { kind: "leader_missing", label: "Leader missing", detail: snapshot.leader?.taskId ?? "Unknown task" }
+          ? { kind: "leader_missing", label: "Leader missing", detail: snapshot.leader?.taskId ?? "Unknown task", taskId: snapshot.leader?.taskId }
           : firstAudit
             ? { kind: "audit", label: `${snapshot.auditIssues.length} audit issue${snapshot.auditIssues.length === 1 ? "" : "s"}`, detail: firstAudit.issue.replace("[Consistency audit]", "").trim(), taskId: firstAudit.taskId }
             : null;

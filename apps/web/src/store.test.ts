@@ -29,6 +29,8 @@ function resetStore() {
     validationWorkflow: null,
     validationWorkflowDelta: null,
     validationSyncStatus: "stale",
+    knowledgeTarget: null,
+    workspacePanelRequest: null,
     pendingApproval: null,
     pendingScope: null,
     browserController: null,
@@ -87,6 +89,25 @@ describe("validation workflow realtime state", () => {
     useStore.getState().handleRuntimeEvent({ type: "timeline_appended", entry: { ...entry, eventType: "validation_task_claimed", detail: "Task=task_1; consensus=insufficient" } });
     useStore.getState().handleRuntimeEvent({ type: "timeline_appended", entry: { ...entry, id: "timeline_2", eventType: "validation_feedback_recorded", detail: "{}" } });
     expect(useStore.getState().agentEvents).toEqual([{ kind: "validation", text: "Task=task_1; consensus=insufficient", tool: "validation_task_claimed", createdAt: "now" }]);
+  });
+
+  it("uses one knowledge navigation action for panel requests, inspector cleanup, and stale targets", () => {
+    useStore.setState({
+      tasks: [{ id: "task_1", caseId: "case_1", title: "Validate IDOR", status: "open", reason: "", blockedBy: [], triggerWhen: [], relatedFacts: [], priority: "high", createdAt: "now", updatedAt: "now", updateCount: 0 }],
+      selectedFactId: "fact_old",
+      inspectorMode: "finding",
+    });
+    useStore.getState().navigateToKnowledge({ kind: "task", id: "task_1" });
+    expect(useStore.getState()).toEqual(expect.objectContaining({
+      activeTab: "tasks",
+      selectedFactId: null,
+      inspectorMode: "overview",
+      knowledgeTarget: expect.objectContaining({ kind: "task", id: "task_1" }),
+      workspacePanelRequest: expect.objectContaining({ panel: "knowledge" }),
+    }));
+
+    useStore.getState().navigateToKnowledge({ kind: "task", id: "task_deleted" });
+    expect(useStore.getState().toast?.message).toBe("Related task is no longer available.");
   });
 });
 

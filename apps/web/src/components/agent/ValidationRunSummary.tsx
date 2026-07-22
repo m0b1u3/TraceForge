@@ -30,13 +30,12 @@ export function validationRunSummaryModel(snapshot: ValidationWorkflowSnapshot |
 }
 
 export function ValidationRunSummary() {
-  const { snapshot, tasks, syncStatus, navigate, refresh, setActiveTab, showToast } = useStore(useShallow((state) => ({
+  const { snapshot, tasks, syncStatus, navigate, refresh, showToast } = useStore(useShallow((state) => ({
     snapshot: state.validationWorkflow,
     tasks: state.tasks,
     syncStatus: state.validationSyncStatus,
     navigate: state.navigateToKnowledge,
     refresh: state.refreshValidationWorkflow,
-    setActiveTab: state.setActiveTab,
     showToast: state.showToast,
   })));
   const model = validationRunSummaryModel(snapshot, tasks, syncStatus);
@@ -60,8 +59,7 @@ export function ValidationRunSummary() {
           aria-label={`${diagnostic.label}. ${diagnostic.detail}`}
           onClick={() => {
             if (diagnostic.kind === "stale") void refresh().catch((error) => showToast(`Failed to refresh validation state: ${(error as Error).message}`, "error"));
-            else if (diagnostic.taskId && tasks.some((task) => task.id === diagnostic.taskId)) navigate({ kind: "task", id: diagnostic.taskId });
-            else setActiveTab("tasks");
+            else if (diagnostic.taskId) navigate({ kind: "task", id: diagnostic.taskId });
           }}
         >
           {diagnostic.kind === "stale" || diagnostic.kind === "recovering" ? <ArrowsClockwise size={13} className={diagnostic.kind === "recovering" ? "tf-spin" : ""} aria-hidden="true" /> : <WarningCircle size={13} weight="fill" aria-hidden="true" />}

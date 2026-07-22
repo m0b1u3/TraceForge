@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { readFileSync } from "node:fs";
 import { WorkspaceLayout, getWorkspaceMode } from "./WorkspaceLayout.js";
+import { useStore } from "../store.js";
 
 // @ts-expect-error enable React act in jsdom tests
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -38,6 +39,7 @@ afterEach(() => {
   root = null;
   container = null;
   document.body.innerHTML = "";
+  useStore.setState({ workspacePanelRequest: null });
 });
 
 describe("getWorkspaceMode", () => {
@@ -67,6 +69,24 @@ describe("desktop workspace layout", () => {
 });
 
 describe("WorkspaceLayout", () => {
+  it("opens the Knowledge drawer for a programmatic navigation request and restores focus", () => {
+    const workspace = renderWorkspace(1024).querySelector(".workspace-shell");
+    const source = document.createElement("button");
+    source.textContent = "Locate validation task";
+    document.body.appendChild(source);
+    source.focus();
+
+    act(() => useStore.setState({ workspacePanelRequest: { panel: "knowledge", requestId: 1 } }));
+
+    expect(workspace?.getAttribute("data-active-panel")).toBe("knowledge");
+    expect(document.querySelector("#workspace-knowledge")?.getAttribute("role")).toBe("dialog");
+    const close = document.querySelector<HTMLButtonElement>("button[aria-label='Close Knowledge panel']");
+    expect(document.activeElement).toBe(close);
+
+    act(() => close?.click());
+    expect(document.activeElement).toBe(source);
+  });
+
   it("provides a visible tablet drawer close action and returns focus to its trigger", () => {
     const workspace = renderWorkspace(1024).querySelector(".workspace-shell");
     const trafficTrigger = document.querySelector<HTMLButtonElement>("button[value='traffic']");

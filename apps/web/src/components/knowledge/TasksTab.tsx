@@ -5,7 +5,7 @@ import { useStore } from "../../store.js";
 import { patchTask } from "../../api.js";
 import { FeedbackState } from "../ui/feedback-state.js";
 import { KnowledgeWindowFooter, useKnowledgeWindow } from "./knowledge-window.js";
-import { ValidationWorkflow, type ValidationNavigationTarget } from "./ValidationWorkflow.js";
+import { ValidationWorkflow } from "./ValidationWorkflow.js";
 
 // Human-editable target statuses (status is a closed state machine; these are the most common wrap-up/reopen actions)
 const HUMAN_ACTIONS: { status: Task["status"]; label: string }[] = [
@@ -68,19 +68,11 @@ function TaskRow({ t, focused, onFocusHandled }: { t: Task; focused: boolean; on
 
 export function TasksTab() {
   const tasks = useStore((s) => s.tasks);
-  const selectFact = useStore((s) => s.selectFact);
+  const navigateToKnowledge = useStore((s) => s.navigateToKnowledge);
   const knowledgeTarget = useStore((s) => s.knowledgeTarget);
   const clearKnowledgeTarget = useStore((s) => s.clearKnowledgeTarget);
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   const window = useKnowledgeWindow(tasks.length);
-  const navigate = (target: ValidationNavigationTarget) => {
-    if (target.kind === "finding") selectFact(target.id);
-    else {
-      const targetIndex = tasks.findIndex((task) => task.id === target.id);
-      if (targetIndex >= 0) window.reveal(targetIndex);
-      setFocusedTaskId(target.id);
-    }
-  };
   useEffect(() => {
     if (knowledgeTarget?.kind !== "task") return;
     const targetIndex = tasks.findIndex((task) => task.id === knowledgeTarget.id);
@@ -92,7 +84,7 @@ export function TasksTab() {
   }, [clearKnowledgeTarget, knowledgeTarget, tasks, window]);
   return (
     <>
-      <ValidationWorkflow onNavigate={navigate} />
+      <ValidationWorkflow onNavigate={navigateToKnowledge} />
       {tasks.length === 0 && <FeedbackState title="No tasks yet" description="Agent todos and blocked work will appear here. New evidence can reopen completed tasks." />}
       {tasks.slice(0, window.count).map((t) => <TaskRow t={t} key={t.id} focused={focusedTaskId === t.id} onFocusHandled={() => setFocusedTaskId(null)} />)}
       <KnowledgeWindowFooter visible={window.count} total={tasks.length} onShowMore={window.showMore} />

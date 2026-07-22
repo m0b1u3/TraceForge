@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { X } from "@phosphor-icons/react";
+import { useStore } from "../store.js";
 
 export type WorkspacePanel = "traffic" | "agent" | "knowledge";
 export type WorkspaceMode = "columns" | "drawer" | "single";
@@ -27,7 +28,9 @@ export function getWorkspaceMode(width: number): WorkspaceMode {
 export function WorkspaceLayout({ traffic, agent, knowledge }: WorkspaceLayoutProps) {
   const [mode, setMode] = useState<WorkspaceMode>(() => getWorkspaceMode(globalThis.innerWidth || 1440));
   const [activePanel, setActivePanel] = useState<WorkspacePanel>("agent");
-  const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRequest = useStore((state) => state.workspacePanelRequest);
+  const lastTriggerRef = useRef<HTMLElement | null>(null);
+  const handledRequestRef = useRef(0);
   const trafficPaneRef = useRef<HTMLDivElement | null>(null);
   const knowledgePaneRef = useRef<HTMLDivElement | null>(null);
 
@@ -47,10 +50,19 @@ export function WorkspaceLayout({ traffic, agent, knowledge }: WorkspaceLayoutPr
   }, [mode]);
 
   useEffect(() => {
-    if (mode !== "drawer" || activePanel === "agent") return;
+    if (!panelRequest || panelRequest.requestId === handledRequestRef.current) return;
+    handledRequestRef.current = panelRequest.requestId;
+    if (mode === "columns") return;
+    lastTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setActivePanel(panelRequest.panel);
+  }, [mode, panelRequest]);
+
+  useEffect(() => {
+    if (mode === "columns" || activePanel === "agent") return;
     const pane = activePanel === "traffic" ? trafficPaneRef.current : knowledgePaneRef.current;
     const firstControl = pane?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex="0"]');
     (firstControl ?? pane)?.focus();
+    if (mode !== "drawer") return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeDrawer();
     };
