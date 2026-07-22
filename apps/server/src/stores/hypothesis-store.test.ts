@@ -6,10 +6,10 @@ let store: HypothesisStore;
 beforeEach(() => { store = new HypothesisStore(createDb(":memory:")); });
 
 describe("HypothesisStore", () => {
-  it("create assigns id, defaults status open + updateCount 0", () => {
+  it("create assigns id, defaults status candidate + updateCount 0", () => {
     const h = store.create("c1", { statement: "越权", basedOnFactIds: ["f1"] });
     expect(h.id).toMatch(/^hyp_/);
-    expect(h.status).toBe("open");
+    expect(h.status).toBe("candidate");
     expect(h.updateCount).toBe(0);
     expect(store.getById(h.id)?.statement).toBe("越权");
   });
