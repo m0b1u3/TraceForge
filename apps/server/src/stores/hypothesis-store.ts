@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { hypotheses } from "../db/schema.js";
-import { type Hypothesis, HypothesisSchema } from "@traceforge/shared";
+import { type Hypothesis, type HypothesisTransition, type RuntimeEvent, HypothesisSchema, HypothesisTransitionSchema } from "@traceforge/shared";
 
 function rowToH(row: typeof hypotheses.$inferSelect): Hypothesis {
   const parsedFactors = JSON.parse(row.scoreFactorsJson) as Record<string, unknown>;
@@ -23,17 +23,27 @@ function rowToH(row: typeof hypotheses.$inferSelect): Hypothesis {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     updateCount: row.updateCount,
+    auditTrail: JSON.parse(row.auditTrailJson),
   });
 }
 
+export interface HypothesisChangeContext {
+  reason: string;
+  evidenceFactIds?: string[];
+  kind?: HypothesisTransition["kind"];
+}
+
+type Emit = (event: RuntimeEvent) => void;
+
 export class HypothesisStore {
-  constructor(private db: Db) {}
+  constructor(private db: Db, private emit?: Emit) {}
 
   create(
     caseId: string,
     input: {
       statement: string; basedOnFactIds: string[]; relatedTaskIds?: string[]; runId?: string | null;
       priorityScore?: number; scoreFactors?: Hypothesis["scoreFactors"]; status?: "candidate" | "active";
+      reason?: string;
     },
   ): Hypothesis {
     const runHypotheses = this.listByCase(caseId).filter((item) => (item.runId ?? null) === (input.runId ?? null));
@@ -43,6 +53,17 @@ export class HypothesisStore {
       ? "candidate"
       : input.status ?? "candidate";
     const now = new Date().toISOString();
+    const transition = HypothesisTransitionSchema.parse({
+      id: `hyptr_${randomUUID()}`,
+      kind: "created",
+      fromStatus: null,
+      toStatus: requestedStatus,
+      previousScore: null,
+      nextScore: input.priorityScore ?? 50,
+      reason: input.reason?.trim() || "Recorded as an evidence-backed hypothesis.",
+      evidenceFactIds: input.basedOnFactIds,
+      createdAt: now,
+    });
     const h = HypothesisSchema.parse({
       id: `hyp_${randomUUID()}`,
       caseId,
@@ -56,6 +77,7 @@ export class HypothesisStore {
       createdAt: now,
       updatedAt: now,
       updateCount: 0,
+      auditTrail: [transition],
     });
     this.db
       .insert(hypotheses)
@@ -69,11 +91,13 @@ export class HypothesisStore {
         scoreFactorsJson: JSON.stringify(h.scoreFactors ?? {}),
         basedOnFactIdsJson: JSON.stringify(h.basedOnFactIds),
         relatedTaskIdsJson: JSON.stringify(h.relatedTaskIds),
+        auditTrailJson: JSON.stringify(h.auditTrail),
         createdAt: now,
         updatedAt: now,
         updateCount: 0,
       })
       .run();
+    this.emit?.({ type: "hypothesis_created", hypothesis: h, transition });
     return h;
   }
 
@@ -85,18 +109,36 @@ export class HypothesisStore {
   update(
     id: string,
     patch: Partial<Pick<Hypothesis, "status" | "relatedTaskIds" | "statement" | "priorityScore" | "scoreFactors">>,
+    context?: HypothesisChangeContext,
   ): Hypothesis | undefined {
     const cur = this.getById(id);
     if (!cur) return undefined;
+    const nextStatus = patch.status ?? cur.status;
+    const nextScore = patch.priorityScore ?? cur.priorityScore ?? 50;
+    const inferredKind: HypothesisTransition["kind"] = nextStatus !== cur.status
+      ? nextStatus === "active" ? "promoted" : nextStatus === "candidate" ? "demoted" : nextStatus
+      : nextScore !== cur.priorityScore ? "scored" : "updated";
+    const transition = HypothesisTransitionSchema.parse({
+      id: `hyptr_${randomUUID()}`,
+      kind: context?.kind ?? inferredKind,
+      fromStatus: cur.status,
+      toStatus: nextStatus,
+      previousScore: cur.priorityScore ?? null,
+      nextScore,
+      reason: context?.reason.trim() || "Hypothesis metadata updated.",
+      evidenceFactIds: context?.evidenceFactIds ?? [],
+      createdAt: new Date().toISOString(),
+    });
     const next: Hypothesis = {
       ...cur,
       statement: patch.statement ?? cur.statement,
-      status: patch.status ?? cur.status,
-      priorityScore: patch.priorityScore ?? cur.priorityScore ?? 50,
+      status: nextStatus,
+      priorityScore: nextScore,
       scoreFactors: patch.scoreFactors ?? cur.scoreFactors,
       relatedTaskIds: patch.relatedTaskIds ?? cur.relatedTaskIds,
       updatedAt: new Date().toISOString(),
       updateCount: cur.updateCount + 1,
+      auditTrail: [...cur.auditTrail, transition],
     };
     this.db
       .update(hypotheses)
@@ -106,11 +148,13 @@ export class HypothesisStore {
         priorityScore: next.priorityScore,
         scoreFactorsJson: JSON.stringify(next.scoreFactors ?? {}),
         relatedTaskIdsJson: JSON.stringify(next.relatedTaskIds),
+        auditTrailJson: JSON.stringify(next.auditTrail),
         updatedAt: next.updatedAt,
         updateCount: next.updateCount,
       })
       .where(eq(hypotheses.id, id))
       .run();
+    this.emit?.({ type: "hypothesis_updated", hypothesis: next, transition });
     return next;
   }
 

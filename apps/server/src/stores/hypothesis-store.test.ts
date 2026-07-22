@@ -18,6 +18,16 @@ describe("HypothesisStore", () => {
     const u = store.update(h.id, { status: "confirmed" });
     expect(u?.status).toBe("confirmed");
     expect(u?.updateCount).toBe(1);
+    expect(u?.auditTrail.map((entry) => entry.kind)).toEqual(["created", "confirmed"]);
+  });
+  it("persists transition reasons and emits lifecycle events", () => {
+    const events: import("@traceforge/shared").RuntimeEvent[] = [];
+    const eventStore = new HypothesisStore(createDb(":memory:"), (event) => events.push(event));
+    const h = eventStore.create("c1", { statement: "Evidence-backed path", basedOnFactIds: ["f1"], reason: "Observed an object identifier." });
+    const updated = eventStore.update(h.id, { status: "active", priorityScore: 82 }, { kind: "promoted", reason: "Entered top five.", evidenceFactIds: ["f1"] });
+    expect(updated?.auditTrail.at(-1)).toMatchObject({ kind: "promoted", reason: "Entered top five.", previousScore: 50, nextScore: 82, evidenceFactIds: ["f1"] });
+    expect(eventStore.getById(h.id)?.auditTrail).toHaveLength(2);
+    expect(events.map((event) => event.type)).toEqual(["hypothesis_created", "hypothesis_updated"]);
   });
   it("listByCase isolates", () => {
     store.create("c1", { statement: "a", basedOnFactIds: ["f1"] });

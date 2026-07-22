@@ -917,6 +917,24 @@ textarea:focus-visible,
 .hypothesis-links button:hover { background: var(--surface-hover); color: var(--foreground); }
 .hypothesis-links button:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent); outline-offset: 1px; }
 .hypothesis-links em { color: var(--foreground-muted); font-size: 9px; font-style: normal; }
+.hypothesis-audit { display: grid; gap: 0; padding-top: 3px; }
+.hypothesis-audit h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 5px; color: var(--foreground-secondary); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.hypothesis-audit h4 span { color: var(--foreground-muted); font: 8px var(--mono); }
+.hypothesis-audit-entry { display: grid; grid-template-columns: 18px minmax(0, 1fr); position: relative; padding: 7px 0; }
+.hypothesis-audit-entry:not(:last-child)::after { position: absolute; top: 25px; bottom: -3px; left: 7px; width: 1px; background: var(--border-subtle); content: ""; }
+.hypothesis-audit-entry > span { display: grid; place-items: center; align-self: start; width: 15px; height: 15px; border-radius: 50%; background: var(--surface-elevated); color: var(--foreground-muted); }
+.hypothesis-audit-entry > span i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.hypothesis-audit-entry.is-promoted > span { color: var(--success); }
+.hypothesis-audit-entry.is-demoted > span { color: var(--warning); }
+.hypothesis-audit-entry.is-confirmed > span { color: var(--success); }
+.hypothesis-audit-entry.is-refuted > span { color: var(--danger); }
+.hypothesis-audit-entry > div { min-width: 0; }
+.hypothesis-audit-entry strong { color: var(--foreground-secondary); font-size: 9px; text-transform: capitalize; }
+.hypothesis-audit-entry p { margin: 2px 0 3px; color: var(--foreground-secondary); font-size: 9px; line-height: 1.45; }
+.hypothesis-audit-entry small { color: var(--foreground-muted); font: 8px var(--mono); }
+.hypothesis-audit-entry aside { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.hypothesis-audit-entry aside button { display: inline-flex; align-items: center; gap: 3px; padding: 2px 5px; border: 0; border-radius: var(--radius-sm); background: var(--surface-elevated); color: var(--information); font: 8px var(--mono); cursor: pointer; }
+.hypothesis-audit-entry aside button:hover { background: var(--surface-hover); color: var(--foreground); }
 .hypothesis-detail footer { display: flex; justify-content: space-between; gap: 8px; color: var(--foreground-muted); font: 8px var(--mono); }
 .hypothesis-detail footer code { overflow: hidden; text-overflow: ellipsis; }
 [data-theme="light"] .hypothesis-row.is-active { background: color-mix(in srgb, var(--primary) 5%, transparent); }

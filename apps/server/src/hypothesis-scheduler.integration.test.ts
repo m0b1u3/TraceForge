@@ -67,6 +67,9 @@ describe("HypothesisScheduler with real SQLite", () => {
     expect(rebalanced.promoted).toContain(ids[0]);
     expect(rebalanced.demoted).toHaveLength(1);
     expect(store.listByCase("case_1").filter((item) => item.status === "active")).toHaveLength(5);
+    expect(store.getById(ids[0])?.auditTrail.some((entry) => entry.kind === "promoted" && entry.reason.includes("top 5"))).toBe(true);
+    const demoted = store.getById(rebalanced.demoted[0]);
+    expect(demoted?.auditTrail.some((entry) => entry.kind === "demoted" && entry.reason.includes("activation boundary"))).toBe(true);
   });
 
   it("does not reactivate confirmed or archived hypotheses", () => {

@@ -810,13 +810,18 @@ export const useStore = create<State>((set, get) => ({
       if (!(last?.kind === "reasoning" && last.text === event.content)) get().addAgentEvent({ kind: "reasoning", text: event.content });
     }
     else if (event.type === "agent_tool_call" && event.caseId === cid) get().addAgentEvent({ kind: "tool_call", text: `${event.tool}(${event.input})` });
+    else if ((event.type === "hypothesis_created" || event.type === "hypothesis_updated") && event.hypothesis.caseId === cid) {
+      set((state) => {
+        const exists = state.hypotheses.some((item) => item.id === event.hypothesis.id);
+        return {
+          hypotheses: exists
+            ? state.hypotheses.map((item) => item.id === event.hypothesis.id ? event.hypothesis : item)
+            : [event.hypothesis, ...state.hypotheses],
+        };
+      });
+    }
     else if (event.type === "agent_tool_result" && event.caseId === cid) {
       get().addAgentEvent({ kind: "tool_result", text: `${event.tool} → ${event.content}` });
-      if (event.tool === "record_hypothesis" || event.tool === "resolve_hypothesis") {
-        void listHypotheses(cid).then((hypotheses) => {
-          if (get().caseId === cid) set({ hypotheses });
-        }).catch(() => undefined);
-      }
     }
     else if (event.type === "agent_tool_blocked" && event.caseId === cid) get().addAgentEvent({ kind: "tool_result", text: `${event.tool} blocked → ${event.reason}\n${event.input}` });
     else if (event.type === "agent_done" && event.caseId === cid) { get().setAgentBusy(false); get().addAgentEvent({ kind: "done", text: event.content }); }

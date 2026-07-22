@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from "react";
-import { ArrowSquareOut, CaretDown, CheckCircle, Crosshair, Flask, Prohibit } from "@phosphor-icons/react";
+import { ArrowDown, ArrowSquareOut, ArrowUp, CaretDown, CheckCircle, Crosshair, Flask, Prohibit } from "@phosphor-icons/react";
 import type { Hypothesis } from "@traceforge/shared";
 import { useStore } from "../../store.js";
 import { FeedbackState } from "../ui/feedback-state.js";
@@ -54,6 +54,23 @@ function HypothesisRow({ hypothesis }: { hypothesis: Hypothesis }) {
             <div><span>Evidence</span>{hypothesis.basedOnFactIds.length ? hypothesis.basedOnFactIds.map((id) => <button type="button" key={id} onClick={() => navigate({ kind: "finding", id })}>{id}<ArrowSquareOut size={11} /></button>) : <em>None</em>}</div>
             <div><span>Tasks</span>{hypothesis.relatedTaskIds.length ? hypothesis.relatedTaskIds.map((id) => <button type="button" key={id} onClick={() => navigate({ kind: "task", id })}>{id}<ArrowSquareOut size={11} /></button>) : <em>None</em>}</div>
           </div>
+          <section className="hypothesis-audit" aria-label="Hypothesis history">
+            <h4>Decision history <span>{hypothesis.auditTrail.length}</span></h4>
+            {[...hypothesis.auditTrail].reverse().map((transition) => (
+              <div className={`hypothesis-audit-entry is-${transition.kind}`} key={transition.id}>
+                <span aria-hidden="true">{transition.kind === "promoted" ? <ArrowUp size={11} /> : transition.kind === "demoted" ? <ArrowDown size={11} /> : <i />}</span>
+                <div>
+                  <strong>{transition.kind}</strong>
+                  <p>{transition.reason}</p>
+                  <small>
+                    {transition.previousScore !== transition.nextScore && `${transition.previousScore ?? "—"} → ${transition.nextScore ?? "—"} · `}
+                    {new Date(transition.createdAt).toLocaleString()}
+                  </small>
+                  {transition.evidenceFactIds.length > 0 && <aside>{transition.evidenceFactIds.map((id) => <button type="button" key={id} onClick={() => navigate({ kind: "finding", id })}>{id}<ArrowSquareOut size={10} /></button>)}</aside>}
+                </div>
+              </div>
+            ))}
+          </section>
           <footer><code>{hypothesis.id}</code><time dateTime={hypothesis.updatedAt}>Updated {new Date(hypothesis.updatedAt).toLocaleString()}</time></footer>
         </div>
       )}

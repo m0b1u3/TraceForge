@@ -354,6 +354,19 @@ export const SessionStateSchema = z.object({
 });
 export type SessionState = z.infer<typeof SessionStateSchema>;
 
+export const HypothesisTransitionSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["created", "promoted", "demoted", "scored", "confirmed", "refuted", "archived", "updated"]),
+  fromStatus: z.enum(["candidate", "active", "confirmed", "refuted", "archived"]).nullable(),
+  toStatus: z.enum(["candidate", "active", "confirmed", "refuted", "archived"]),
+  previousScore: z.number().min(0).max(100).nullable(),
+  nextScore: z.number().min(0).max(100).nullable(),
+  reason: z.string().min(1),
+  evidenceFactIds: z.array(z.string()).default([]),
+  createdAt: z.string(),
+});
+export type HypothesisTransition = z.infer<typeof HypothesisTransitionSchema>;
+
 export const HypothesisSchema = z.object({
   id: z.string(),
   caseId: z.string(),
@@ -374,6 +387,7 @@ export const HypothesisSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   updateCount: z.number().default(0),
+  auditTrail: z.array(HypothesisTransitionSchema).default([]),
 });
 export type Hypothesis = z.infer<typeof HypothesisSchema>;
 

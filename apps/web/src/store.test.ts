@@ -11,6 +11,7 @@ function resetStore() {
     attackPaths: [],
     securityReports: [],
     facts: [],
+    hypotheses: [],
     tasks: [],
     timeline: [],
     actions: [],
@@ -537,5 +538,18 @@ describe("store agent interventions", () => {
       kind: "done",
       text: "Scope kept blocked: target.example",
     });
+  });
+
+  it("applies hypothesis lifecycle events without refetching the pool", () => {
+    const createdAt = "2026-07-22T00:00:00.000Z";
+    const transition = { id: "hyptr_1", kind: "created" as const, fromStatus: null, toStatus: "candidate" as const, previousScore: null, nextScore: 50, reason: "Observed evidence.", evidenceFactIds: ["fact_1"], createdAt };
+    const hypothesis = { id: "hyp_1", caseId: "case_1", runId: "run_1", statement: "Object access may be unauthorized", status: "candidate" as const, priorityScore: 50, basedOnFactIds: ["fact_1"], relatedTaskIds: [], createdAt, updatedAt: createdAt, updateCount: 0, auditTrail: [transition] };
+    useStore.getState().handleRuntimeEvent({ type: "hypothesis_created", hypothesis, transition });
+    expect(useStore.getState().hypotheses).toEqual([hypothesis]);
+
+    const promoted = { ...transition, id: "hyptr_2", kind: "promoted" as const, fromStatus: "candidate" as const, toStatus: "active" as const, previousScore: 50, nextScore: 80, reason: "Entered top five." };
+    const updated = { ...hypothesis, status: "active" as const, priorityScore: 80, updateCount: 1, auditTrail: [transition, promoted] };
+    useStore.getState().handleRuntimeEvent({ type: "hypothesis_updated", hypothesis: updated, transition: promoted });
+    expect(useStore.getState().hypotheses).toEqual([updated]);
   });
 });

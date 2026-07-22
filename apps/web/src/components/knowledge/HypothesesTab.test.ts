@@ -15,6 +15,7 @@ function hypothesis(id: string, status: Hypothesis["status"], priorityScore: num
     createdAt: "2026-07-22T00:00:00.000Z",
     updatedAt: "2026-07-22T00:00:00.000Z",
     updateCount: 0,
+    auditTrail: [],
   };
 }
 

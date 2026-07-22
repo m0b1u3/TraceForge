@@ -138,7 +138,7 @@ export function registerRoutes(
     agentEventStore.append(event.entry.caseId, "validation", event.entry.detail, event.entry.eventType, event.entry.createdAt);
   });
   const sessionStore = new SessionStateStore(db);
-  const hypothesisStore = new HypothesisStore(db);
+  const hypothesisStore = new HypothesisStore(db, (event) => bus.emit(event));
   const hypothesisScheduler = new HypothesisScheduler(hypothesisStore);
   const identityStore = new IdentityStore(db);
   const attackPathStore = new AttackPathStore(db);

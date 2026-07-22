@@ -56,7 +56,10 @@ export class HypothesisScheduler {
           : item.priorityScore ?? 50;
         const updated = priorityScore === item.priorityScore
           ? item
-          : this.hypotheses.update(item.id, { priorityScore }) ?? item;
+          : this.hypotheses.update(item.id, { priorityScore }, {
+            kind: "scored",
+            reason: `Priority recalculated from six scoring factors (${item.priorityScore ?? 50} → ${priorityScore}).`,
+          }) ?? item;
         return updated;
       })
       .sort((left, right) =>
@@ -70,7 +73,13 @@ export class HypothesisScheduler {
     for (const item of eligible) {
       const nextStatus = nextActiveIds.has(item.id) ? "active" : "candidate";
       if (item.status === nextStatus) continue;
-      this.hypotheses.update(item.id, { status: nextStatus });
+      const boundaryScore = eligible[Math.min(MAX_ACTIVE_HYPOTHESES - 1, eligible.length - 1)]?.priorityScore ?? 0;
+      this.hypotheses.update(item.id, { status: nextStatus }, {
+        kind: nextStatus === "active" ? "promoted" : "demoted",
+        reason: nextStatus === "active"
+          ? `Promoted into the top ${MAX_ACTIVE_HYPOTHESES} active verification slots at score ${item.priorityScore ?? 0}; activation boundary ${boundaryScore}.`
+          : `Demoted because score ${item.priorityScore ?? 0} fell outside the top ${MAX_ACTIVE_HYPOTHESES}; activation boundary ${boundaryScore}.`,
+      });
       if (nextStatus === "active") promoted.push(item.id);
       else demoted.push(item.id);
     }

@@ -233,6 +233,7 @@ export function createDb(path: string) {
     { name: "run_id", definition: "TEXT" },
     { name: "priority_score", definition: "INTEGER NOT NULL DEFAULT 50" },
     { name: "score_factors_json", definition: "TEXT NOT NULL DEFAULT '{}'" },
+    { name: "audit_trail_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
   ]);
   const usageColumns = sqlite.prepare("PRAGMA table_info(agent_run_usage)").all() as Array<{ name: string }>;
   const hasUsageColumn = (name: string) => usageColumns.some((column) => column.name === name);

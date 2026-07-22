@@ -12,9 +12,12 @@ export interface HypothesisWriter {
       operationRisk: number; pathRelevance: number; freshness: number;
     };
     status?: "candidate" | "active";
+    reason?: string;
   }): { id: string; status?: string };
   getById(id: string): { id: string; status: string } | undefined;
-  update(id: string, patch: { status?: string; relatedTaskIds?: string[]; statement?: string }): { id: string; status: string } | undefined;
+  update(id: string, patch: { status?: string; relatedTaskIds?: string[]; statement?: string }, context?: {
+    reason: string; evidenceFactIds?: string[]; kind?: "confirmed" | "refuted" | "archived" | "updated";
+  }): { id: string; status: string } | undefined;
 }
 export interface FactReader {
   getById(id: string): { id: string } | undefined;
@@ -74,19 +77,21 @@ export function makeRecordHypothesisTool(caseId: string, hyp: HypothesisWriter, 
           },
           required: ["impact", "evidenceStrength", "verificationCost", "operationRisk", "pathRelevance", "freshness"],
         },
+        reason: { type: "string", description: "Why this hypothesis is worth tracking now." },
       },
       required: ["statement", "basedOnFactIds"],
     },
     risk: "normal",
     source: "builtin",
     execute: async (input) => {
-      const { statement, basedOnFactIds, relatedTaskIds, activate, priorityScore, scoreFactors } = (input ?? {}) as {
+      const { statement, basedOnFactIds, relatedTaskIds, activate, priorityScore, scoreFactors, reason } = (input ?? {}) as {
         statement?: string; basedOnFactIds?: string[]; relatedTaskIds?: string[];
         activate?: boolean; priorityScore?: number;
         scoreFactors?: {
           impact: number; evidenceStrength: number; verificationCost: number;
           operationRisk: number; pathRelevance: number; freshness: number;
         };
+        reason?: string;
       };
       if (!statement) return { ok: false, content: "缺少 statement" };
       if (!basedOnFactIds || basedOnFactIds.length === 0) return { ok: false, content: "假设必须基于已记录的 Fact：basedOnFactIds 不能为空。" };
@@ -94,7 +99,7 @@ export function makeRecordHypothesisTool(caseId: string, hyp: HypothesisWriter, 
       if (missing.length > 0) return { ok: false, content: `basedOnFactIds 引用了不存在的 Fact：${missing.join(", ")}` };
       const h = hyp.create(caseId, {
         statement, basedOnFactIds, relatedTaskIds, runId: runId ?? null,
-        priorityScore, scoreFactors, status: activate ? "active" : "candidate",
+        priorityScore, scoreFactors, status: activate ? "active" : "candidate", reason,
       });
       return { ok: true, content: `已记录假设 ${h.id}：${statement}` };
     },
@@ -112,13 +117,14 @@ export function makeResolveHypothesisTool(caseId: string, hyp: HypothesisWriter,
         id: { type: "string" },
         status: { type: "string", enum: ["confirmed", "refuted"] },
         confirmingFactId: { type: "string" },
+        reason: { type: "string", description: "Evidence-based explanation for confirming or refuting this hypothesis." },
       },
       required: ["id", "status"],
     },
     risk: "normal",
     source: "builtin",
     execute: async (input) => {
-      const { id, status, confirmingFactId } = (input ?? {}) as { id?: string; status?: "confirmed" | "refuted"; confirmingFactId?: string };
+      const { id, status, confirmingFactId, reason } = (input ?? {}) as { id?: string; status?: "confirmed" | "refuted"; confirmingFactId?: string; reason?: string };
       if (!id || !status) return { ok: false, content: "缺少 id 或 status" };
       if (!hyp.getById(id)) return { ok: false, content: `未找到假设 ${id}` };
       if (status === "confirmed") {
@@ -126,7 +132,11 @@ export function makeResolveHypothesisTool(caseId: string, hyp: HypothesisWriter,
           return { ok: false, content: "确认假设须用 confirmingFactId 引用一个已记录的、证实它的 Fact。" };
         }
       }
-      const r = hyp.update(id, { status });
+      const r = hyp.update(id, { status }, {
+        kind: status,
+        reason: reason?.trim() || (status === "confirmed" ? "Confirmed by recorded evidence." : "Refuted after verification."),
+        evidenceFactIds: confirmingFactId ? [confirmingFactId] : [],
+      });
       return { ok: true, content: `假设 ${id} → ${r?.status}` };
     },
   };

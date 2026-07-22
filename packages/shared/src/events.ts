@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, AgentRun, IdentityContext, AttackPath, SecurityReport } from "./schemas.js";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, AgentRun, IdentityContext, AttackPath, SecurityReport, Hypothesis, HypothesisTransition } from "./schemas.js";
 import type { ValidationWorkflowSnapshot } from "./validation-workflow.js";
 
 export type RuntimeEvent =
@@ -18,6 +18,8 @@ export type RuntimeEvent =
   | { type: "fact_updated"; fact: Fact }
   | { type: "task_created"; task: Task }
   | { type: "task_updated"; task: Task }
+  | { type: "hypothesis_created"; hypothesis: Hypothesis; transition: HypothesisTransition }
+  | { type: "hypothesis_updated"; hypothesis: Hypothesis; transition: HypothesisTransition }
   | { type: "timeline_appended"; entry: TimelineEntry }
   | { type: "validation_workflow_updated"; snapshot: ValidationWorkflowSnapshot }
   | { type: "candidates_extracted"; caseId: string; candidates: CandidateFact[] }
