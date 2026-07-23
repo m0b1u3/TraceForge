@@ -919,6 +919,7 @@ textarea:focus-visible,
 .hypothesis-scheduling header > span { display: inline-flex; align-items: center; gap: 5px; color: var(--foreground-muted); font-size: 8px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }
 .hypothesis-scheduling header strong { color: var(--foreground); font: 600 9px var(--mono); }
 .hypothesis-scheduling p { margin: 0; color: var(--foreground-secondary); font-size: 9px; line-height: 1.45; }
+.hypothesis-capacity-note { color: var(--foreground-muted); font: 7.5px/1.4 var(--mono); }
 .hypothesis-boundary { display: grid; grid-template-columns: auto minmax(40px, 1fr) auto; align-items: center; gap: 7px; color: var(--foreground-muted); font: 7.5px var(--mono); text-transform: uppercase; }
 .hypothesis-boundary span { display: flex; gap: 3px; }
 .hypothesis-boundary strong { color: var(--foreground-secondary); font-weight: 600; }

@@ -1,12 +1,13 @@
 import {
   HYPOTHESIS_ACTIVATION_MARGIN,
   HYPOTHESIS_MIN_RESIDENCY_MS,
-  MAX_ACTIVE_HYPOTHESES,
+  getAdaptiveHypothesisCapacity,
   hypothesisActivationStartedAt,
   isFastTrackHypothesis,
   type Hypothesis,
 } from "@traceforge/shared";
 import type { HypothesisStore } from "./stores/hypothesis-store.js";
+import type { TaskStore } from "./stores/task-store.js";
 
 export {
   HYPOTHESIS_ACTIVATION_MARGIN,
@@ -30,6 +31,8 @@ export interface RebalanceResult {
   promoted: string[];
   demoted: string[];
   changed: boolean;
+  capacity: number;
+  capacityReason: string;
 }
 
 const DEFAULT_FACTORS: HypothesisScoreFactors = {
@@ -58,7 +61,10 @@ export function scoreHypothesis(factors: Partial<HypothesisScoreFactors>): numbe
 }
 
 export class HypothesisScheduler {
-  constructor(private hypotheses: HypothesisStore, private now: () => Date = () => new Date()) {}
+  constructor(
+    private hypotheses: HypothesisStore,
+    private options: { tasks?: Pick<TaskStore, "listByCase">; now?: () => Date } = {},
+  ) {}
 
   rebalance(caseId: string, runId: string): RebalanceResult {
     const eligible = this.hypotheses.listByCase(caseId)
@@ -80,17 +86,23 @@ export class HypothesisScheduler {
         || left.createdAt.localeCompare(right.createdAt),
       );
 
-    const currentActive = eligible.filter((item) => item.status === "active").slice(0, MAX_ACTIVE_HYPOTHESES);
+    const capacityDecision = getAdaptiveHypothesisCapacity(
+      eligible,
+      this.options.tasks?.listByCase(caseId) ?? [],
+      runId,
+    );
+    const activeCapacity = capacityDecision.capacity;
+    const currentActive = eligible.filter((item) => item.status === "active").slice(0, activeCapacity);
     const challengers = eligible.filter((item) => item.status === "candidate");
     const selected = [...currentActive];
     const promotionReasons = new Map<string, string>();
     const fastTrackPromotions = new Set<string>();
     for (const challenger of challengers) {
-      if (selected.length >= MAX_ACTIVE_HYPOTHESES) break;
+      if (selected.length >= activeCapacity) break;
       selected.push(challenger);
       promotionReasons.set(challenger.id, `Promoted into a vacant active verification slot at score ${challenger.priorityScore ?? 0}.`);
     }
-    const now = this.now().getTime();
+    const now = (this.options.now?.() ?? new Date()).getTime();
     for (const challenger of challengers.filter((item) => !selected.some((selectedItem) => selectedItem.id === item.id))) {
       const fastTrack = isFastTrackHypothesis(challenger);
       const replaceable = selected
@@ -106,7 +118,7 @@ export class HypothesisScheduler {
       if (!fastTrack && scoreGap < HYPOTHESIS_ACTIVATION_MARGIN) continue;
       selected.splice(selected.findIndex((item) => item.id === incumbent.id), 1, challenger);
       promotionReasons.set(challenger.id, fastTrack
-        ? `Fast-track promotion into the top ${MAX_ACTIVE_HYPOTHESES}: score ${challenger.priorityScore ?? 0} with strong evidence and high impact/path relevance displaced ${incumbent.id}.`
+        ? `Fast-track promotion into the ${activeCapacity}-slot active set: score ${challenger.priorityScore ?? 0} with strong evidence and high impact/path relevance displaced ${incumbent.id}.`
         : `Promoted after exceeding ${incumbent.id} by ${scoreGap} points, above the ${HYPOTHESIS_ACTIVATION_MARGIN}-point hysteresis margin.`);
       if (fastTrack) fastTrackPromotions.add(challenger.id);
     }
@@ -120,8 +132,12 @@ export class HypothesisScheduler {
       this.hypotheses.update(item.id, { status: nextStatus }, {
         kind: nextStatus === "active" ? "promoted" : "demoted",
         reason: nextStatus === "active"
-          ? `${promotionReasons.get(item.id) ?? `Promoted into the top ${MAX_ACTIVE_HYPOTHESES} active verification slots.`} Activation boundary ${boundaryScore}.`
-          : `${fastTrackPromotions.size > 0 ? "Demoted by a strong-evidence fast-track challenger" : `Demoted after falling outside the ${HYPOTHESIS_ACTIVATION_MARGIN}-point hysteresis boundary`}; score ${item.priorityScore ?? 0}, activation boundary ${boundaryScore}.`,
+          ? `${promotionReasons.get(item.id) ?? `Promoted into the ${activeCapacity}-slot active verification set.`} Activation boundary ${boundaryScore}. ${capacityDecision.reason}`
+          : `${item.status === "active" && currentActive.every((activeItem) => activeItem.id !== item.id)
+            ? `Demoted after adaptive capacity contracted to ${activeCapacity}`
+            : fastTrackPromotions.size > 0
+              ? "Demoted by a strong-evidence fast-track challenger"
+              : `Demoted after falling outside the ${HYPOTHESIS_ACTIVATION_MARGIN}-point hysteresis boundary`}; score ${item.priorityScore ?? 0}, activation boundary ${boundaryScore}. ${capacityDecision.reason}`,
       });
       if (nextStatus === "active") promoted.push(item.id);
       else demoted.push(item.id);
@@ -130,6 +146,13 @@ export class HypothesisScheduler {
     const active = this.hypotheses.listByCase(caseId)
       .filter((item) => item.runId === runId && item.status === "active")
       .sort((left, right) => (right.priorityScore ?? 0) - (left.priorityScore ?? 0));
-    return { active, promoted, demoted, changed: promoted.length > 0 || demoted.length > 0 };
+    return {
+      active,
+      promoted,
+      demoted,
+      changed: promoted.length > 0 || demoted.length > 0,
+      capacity: activeCapacity,
+      capacityReason: capacityDecision.reason,
+    };
   }
 }

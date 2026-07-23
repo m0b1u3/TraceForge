@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createDb } from "./db/client.js";
 import { HYPOTHESIS_ACTIVATION_MARGIN, HYPOTHESIS_MIN_RESIDENCY_MS, HypothesisScheduler, isFastTrackHypothesis, scoreHypothesis } from "./hypothesis-scheduler.js";
 import { HypothesisStore } from "./stores/hypothesis-store.js";
+import { TaskStore } from "./stores/task-store.js";
 
 describe("HypothesisScheduler with real SQLite", () => {
   it("scores evidence-rich, high-impact, low-cost hypotheses above weak expensive ones", () => {
@@ -24,8 +25,9 @@ describe("HypothesisScheduler with real SQLite", () => {
     expect(strong).toBeGreaterThan(weak);
   });
 
-  it("keeps the top five active and demotes a displaced hypothesis", () => {
-    const store = new HypothesisStore(createDb(":memory:"));
+  it("expands to five active slots when evidence maturity supports the demand", () => {
+    const db = createDb(":memory:");
+    const store = new HypothesisStore(db);
     const scheduler = new HypothesisScheduler(store);
     const ids: string[] = [];
 
@@ -36,8 +38,8 @@ describe("HypothesisScheduler with real SQLite", () => {
         basedOnFactIds: [],
         status: "candidate",
         scoreFactors: {
-          impact: 20 + index * 10,
-          evidenceStrength: 50,
+          impact: 60 + index * 5,
+          evidenceStrength: 80,
           verificationCost: 40,
           operationRisk: 30,
           pathRelevance: 50,
@@ -49,6 +51,7 @@ describe("HypothesisScheduler with real SQLite", () => {
 
     const initial = scheduler.rebalance("case_1", "run_1");
     expect(initial.active).toHaveLength(5);
+    expect(initial.capacity).toBe(5);
     expect(initial.active.map((item) => item.id)).not.toContain(ids[0]);
 
     store.update(ids[0], {
@@ -67,7 +70,7 @@ describe("HypothesisScheduler with real SQLite", () => {
     expect(rebalanced.promoted).toContain(ids[0]);
     expect(rebalanced.demoted).toHaveLength(1);
     expect(store.listByCase("case_1").filter((item) => item.status === "active")).toHaveLength(5);
-    expect(store.getById(ids[0])?.auditTrail.some((entry) => entry.kind === "promoted" && entry.reason.includes("top 5"))).toBe(true);
+    expect(store.getById(ids[0])?.auditTrail.some((entry) => entry.kind === "promoted" && entry.reason.includes("5-slot active set"))).toBe(true);
     const demoted = store.getById(rebalanced.demoted[0]);
     expect(demoted?.auditTrail.some((entry) => entry.kind === "demoted" && entry.reason.includes("activation boundary"))).toBe(true);
   });
@@ -91,7 +94,7 @@ describe("HypothesisScheduler with real SQLite", () => {
   it("holds a newly active set stable during its minimum residency", () => {
     const store = new HypothesisStore(createDb(":memory:"));
     let clock = Date.now();
-    const scheduler = new HypothesisScheduler(store, () => new Date(clock));
+    const scheduler = new HypothesisScheduler(store, { now: () => new Date(clock) });
     for (let index = 0; index < 5; index += 1) store.create("case_1", { runId: "run_1", statement: `Incumbent ${index}`, basedOnFactIds: [], priorityScore: 50 + index });
     scheduler.rebalance("case_1", "run_1");
     const promotedAt = Math.max(...store.listByCase("case_1").flatMap((item) => item.auditTrail.filter((entry) => entry.kind === "promoted").map((entry) => Date.parse(entry.createdAt))));
@@ -105,7 +108,7 @@ describe("HypothesisScheduler with real SQLite", () => {
   it("requires a meaningful score margin after residency to avoid boundary churn", () => {
     const store = new HypothesisStore(createDb(":memory:"));
     let clock = Date.now();
-    const scheduler = new HypothesisScheduler(store, () => new Date(clock));
+    const scheduler = new HypothesisScheduler(store, { now: () => new Date(clock) });
     for (let index = 0; index < 5; index += 1) store.create("case_1", { runId: "run_1", statement: `Incumbent ${index}`, basedOnFactIds: [], priorityScore: 50 + index });
     scheduler.rebalance("case_1", "run_1");
     const promotedAt = Math.max(...store.listByCase("case_1").flatMap((item) => item.auditTrail.filter((entry) => entry.kind === "promoted").map((entry) => Date.parse(entry.createdAt))));
@@ -129,5 +132,48 @@ describe("HypothesisScheduler with real SQLite", () => {
     const result = scheduler.rebalance("case_1", "run_1");
     expect(result.promoted).toContain(challenger.id);
     expect(store.getById(challenger.id)?.auditTrail.at(-1)?.reason).toContain("Fast-track");
+  });
+
+  it("keeps a small active set when hypotheses lack evidence and executable tasks", () => {
+    const store = new HypothesisStore(createDb(":memory:"));
+    const scheduler = new HypothesisScheduler(store);
+    for (let index = 0; index < 5; index += 1) {
+      store.create("case_1", { runId: "run_1", statement: `Early idea ${index}`, basedOnFactIds: [], priorityScore: 40 + index });
+    }
+
+    const result = scheduler.rebalance("case_1", "run_1");
+    expect(result.capacity).toBe(2);
+    expect(result.active).toHaveLength(2);
+    expect(result.capacityReason).toContain("0 evidence- or task-supported");
+  });
+
+  it("contracts capacity under running-task and high-risk pressure", () => {
+    const db = createDb(":memory:");
+    const store = new HypothesisStore(db);
+    const tasks = new TaskStore(db);
+    const hypotheses = Array.from({ length: 5 }, (_, index) => store.create("case_1", {
+      runId: "run_1",
+      statement: `Mature idea ${index}`,
+      basedOnFactIds: [`fact_${index}`],
+      scoreFactors: {
+        impact: 90,
+        evidenceStrength: 90,
+        verificationCost: 20,
+        operationRisk: index < 2 ? 85 : 30,
+        pathRelevance: 85,
+        freshness: 90,
+      },
+    }));
+    tasks.create("case_1", {
+      runId: "run_1", title: "Execute controlled replay", status: "running", reason: "Validation in progress",
+      blockedBy: [], triggerWhen: [], relatedFacts: ["fact_0"], hypothesisIds: [hypotheses[0].id], priority: "high",
+    });
+    const scheduler = new HypothesisScheduler(store, { tasks });
+
+    const result = scheduler.rebalance("case_1", "run_1");
+    expect(result.capacity).toBe(3);
+    expect(result.active).toHaveLength(3);
+    expect(result.capacityReason).toContain("running task");
+    expect(result.capacityReason).toContain("high-risk hypotheses");
   });
 });

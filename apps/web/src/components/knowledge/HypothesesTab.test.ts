@@ -41,7 +41,7 @@ describe("HypothesesTab scheduling explanation", () => {
   it("explains the score gap without inventing scheduler state", () => {
     const active = Array.from({ length: 5 }, (_, index) => hypothesis(`active-${index}`, "active", 70 + index));
     const candidate = hypothesis("candidate", "candidate", 75);
-    expect(getHypothesisScheduleState(candidate, [...active, candidate], Date.now())).toMatchObject({
+    expect(getHypothesisScheduleState(candidate, [...active, candidate], [], Date.now())).toMatchObject({
       kind: "waiting",
       boundaryScore: 70,
       pointsNeeded: 3,
@@ -63,7 +63,7 @@ describe("HypothesesTab scheduling explanation", () => {
       evidenceFactIds: [],
       createdAt: "2026-07-22T00:00:00.000Z",
     }];
-    const state = getHypothesisScheduleState(active, [active], now);
+    const state = getHypothesisScheduleState(active, [active], [], now);
     expect(state.kind).toBe("protected");
     expect(state.residencyRemainingMs).toBe(HYPOTHESIS_MIN_RESIDENCY_MS - 60_000);
   });

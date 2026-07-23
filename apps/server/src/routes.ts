@@ -140,7 +140,7 @@ export function registerRoutes(
   });
   const sessionStore = new SessionStateStore(db);
   const hypothesisStore = new HypothesisStore(db, (event) => bus.emit(event));
-  const hypothesisScheduler = new HypothesisScheduler(hypothesisStore);
+  const hypothesisScheduler = new HypothesisScheduler(hypothesisStore, { tasks: taskStore });
   const identityStore = new IdentityStore(db);
   const attackPathStore = new AttackPathStore(db);
   const securityReportStore = new SecurityReportStore(db);
