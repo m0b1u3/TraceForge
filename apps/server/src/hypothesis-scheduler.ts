@@ -1,10 +1,20 @@
-import type { Hypothesis } from "@traceforge/shared";
+import {
+  HYPOTHESIS_ACTIVATION_MARGIN,
+  HYPOTHESIS_MIN_RESIDENCY_MS,
+  MAX_ACTIVE_HYPOTHESES,
+  hypothesisActivationStartedAt,
+  isFastTrackHypothesis,
+  type Hypothesis,
+} from "@traceforge/shared";
 import type { HypothesisStore } from "./stores/hypothesis-store.js";
 
-export const MAX_ACTIVE_HYPOTHESES = 5;
-export const HYPOTHESIS_ACTIVATION_MARGIN = 8;
-export const HYPOTHESIS_MIN_RESIDENCY_MS = 2 * 60 * 1000;
-export const HYPOTHESIS_FAST_TRACK_SCORE = 88;
+export {
+  HYPOTHESIS_ACTIVATION_MARGIN,
+  HYPOTHESIS_FAST_TRACK_SCORE,
+  HYPOTHESIS_MIN_RESIDENCY_MS,
+  MAX_ACTIVE_HYPOTHESES,
+  isFastTrackHypothesis,
+} from "@traceforge/shared";
 
 export interface HypothesisScoreFactors {
   impact: number;
@@ -47,21 +57,6 @@ export function scoreHypothesis(factors: Partial<HypothesisScoreFactors>): numbe
   );
 }
 
-export function isFastTrackHypothesis(hypothesis: Hypothesis): boolean {
-  const factors = hypothesis.scoreFactors;
-  if (!factors || (hypothesis.priorityScore ?? 0) < HYPOTHESIS_FAST_TRACK_SCORE) return false;
-  return factors.evidenceStrength >= 85
-    && (factors.impact >= 85 || factors.pathRelevance >= 85);
-}
-
-function activationStartedAt(hypothesis: Hypothesis): number | null {
-  const transition = [...hypothesis.auditTrail].reverse().find((entry) =>
-    entry.kind === "promoted" || (entry.kind === "created" && entry.toStatus === "active"));
-  if (!transition) return null;
-  const timestamp = Date.parse(transition.createdAt);
-  return Number.isFinite(timestamp) ? timestamp : null;
-}
-
 export class HypothesisScheduler {
   constructor(private hypotheses: HypothesisStore, private now: () => Date = () => new Date()) {}
 
@@ -101,7 +96,7 @@ export class HypothesisScheduler {
       const replaceable = selected
         .filter((item) => {
           if (fastTrack) return true;
-          const startedAt = activationStartedAt(item);
+          const startedAt = hypothesisActivationStartedAt(item);
           return startedAt === null || now - startedAt >= HYPOTHESIS_MIN_RESIDENCY_MS;
         })
         .sort((left, right) => (left.priorityScore ?? 0) - (right.priorityScore ?? 0));

@@ -1,6 +1,13 @@
-import { useState, type CSSProperties } from "react";
-import { ArrowDown, ArrowSquareOut, ArrowUp, CaretDown, CheckCircle, Crosshair, Flask, Prohibit } from "@phosphor-icons/react";
-import type { Hypothesis } from "@traceforge/shared";
+import { useEffect, useState, type CSSProperties } from "react";
+import { ArrowDown, ArrowSquareOut, ArrowUp, CaretDown, CheckCircle, Crosshair, Flask, HourglassMedium, Lightning, LockKey, Prohibit } from "@phosphor-icons/react";
+import {
+  HYPOTHESIS_ACTIVATION_MARGIN,
+  HYPOTHESIS_MIN_RESIDENCY_MS,
+  MAX_ACTIVE_HYPOTHESES,
+  hypothesisActivationStartedAt,
+  isFastTrackHypothesis,
+  type Hypothesis,
+} from "@traceforge/shared";
 import { useStore } from "../../store.js";
 import { FeedbackState } from "../ui/feedback-state.js";
 import { KnowledgeWindowFooter, useKnowledgeWindow } from "./knowledge-window.js";
@@ -30,23 +37,98 @@ const FACTOR_LABELS: Array<[keyof NonNullable<Hypothesis["scoreFactors"]>, strin
   ["operationRisk", "Risk"],
 ];
 
-function HypothesisRow({ hypothesis }: { hypothesis: Hypothesis }) {
+export interface HypothesisScheduleState {
+  kind: "protected" | "replaceable" | "fast-track" | "vacancy" | "waiting" | "resolved";
+  label: string;
+  detail: string;
+  boundaryScore: number | null;
+  pointsNeeded: number;
+  residencyRemainingMs: number;
+}
+
+function formatDuration(milliseconds: number): string {
+  const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+export function getHypothesisScheduleState(hypothesis: Hypothesis, pool: Hypothesis[], now: number): HypothesisScheduleState {
+  if (hypothesis.status !== "active" && hypothesis.status !== "candidate") {
+    return { kind: "resolved", label: "Resolved", detail: "No longer participates in active scheduling.", boundaryScore: null, pointsNeeded: 0, residencyRemainingMs: 0 };
+  }
+  const active = pool.filter((item) => item.status === "active");
+  const boundaryScore = active.length ? Math.min(...active.map((item) => item.priorityScore ?? 0)) : null;
+  if (hypothesis.status === "active") {
+    const startedAt = hypothesisActivationStartedAt(hypothesis);
+    const remaining = startedAt === null ? 0 : Math.max(0, HYPOTHESIS_MIN_RESIDENCY_MS - (now - startedAt));
+    return remaining > 0
+      ? { kind: "protected", label: `Protected ${formatDuration(remaining)}`, detail: "Minimum active residency prevents premature replacement while verification starts.", boundaryScore, pointsNeeded: 0, residencyRemainingMs: remaining }
+      : { kind: "replaceable", label: "Active · open", detail: `May be replaced by a candidate that clears the ${HYPOTHESIS_ACTIVATION_MARGIN}-point margin.`, boundaryScore, pointsNeeded: 0, residencyRemainingMs: 0 };
+  }
+  if (isFastTrackHypothesis(hypothesis)) {
+    return { kind: "fast-track", label: "Fast-track ready", detail: "Strong evidence and high impact or path relevance allow immediate promotion.", boundaryScore, pointsNeeded: 0, residencyRemainingMs: 0 };
+  }
+  if (active.length < MAX_ACTIVE_HYPOTHESES) {
+    return { kind: "vacancy", label: "Slot available", detail: "Eligible for promotion at the next scheduler pass.", boundaryScore, pointsNeeded: 0, residencyRemainingMs: 0 };
+  }
+  const activationScore = (boundaryScore ?? 0) + HYPOTHESIS_ACTIVATION_MARGIN;
+  const pointsNeeded = Math.max(0, activationScore - (hypothesis.priorityScore ?? 0));
+  const allIncumbentsProtected = active.every((item) => {
+    const startedAt = hypothesisActivationStartedAt(item);
+    return startedAt !== null && now - startedAt < HYPOTHESIS_MIN_RESIDENCY_MS;
+  });
+  return {
+    kind: "waiting",
+    label: pointsNeeded > 0 ? `Needs +${pointsNeeded}` : "Margin cleared",
+    detail: pointsNeeded > 0
+      ? `Needs ${pointsNeeded} more priority points to clear the activation boundary at ${activationScore}.`
+      : allIncumbentsProtected
+        ? "Score margin is clear; promotion waits for an incumbent residency lock to expire."
+        : "Score margin is clear and the hypothesis is eligible at the next scheduler pass.",
+    boundaryScore,
+    pointsNeeded,
+    residencyRemainingMs: 0,
+  };
+}
+
+function ScheduleSignal({ state }: { state: HypothesisScheduleState }) {
+  if (state.kind === "resolved") return null;
+  const icon = state.kind === "protected"
+    ? <LockKey size={11} weight="fill" />
+    : state.kind === "fast-track"
+      ? <Lightning size={11} weight="fill" />
+      : state.kind === "waiting"
+        ? <HourglassMedium size={11} />
+        : <Crosshair size={11} />;
+  return <span className={`hypothesis-schedule-signal is-${state.kind}`} title={state.detail}>{icon}<span>{state.label}</span></span>;
+}
+
+function HypothesisRow({ hypothesis, pool, now }: { hypothesis: Hypothesis; pool: Hypothesis[]; now: number }) {
   const [open, setOpen] = useState(hypothesis.status === "active");
   const navigate = useStore((state) => state.navigateToKnowledge);
   const detailId = `hypothesis-detail-${hypothesis.id}`;
   const score = hypothesis.priorityScore ?? 0;
+  const schedule = getHypothesisScheduleState(hypothesis, pool, now);
   return (
     <article className={`tf-row tf-row-expandable hypothesis-row is-${hypothesis.status}`}>
       <button type="button" className="tf-row-head" aria-expanded={open} aria-controls={detailId} onClick={() => setOpen((value) => !value)}>
         <span className="hypothesis-state-icon" aria-hidden="true">
           {hypothesis.status === "active" ? <Crosshair size={13} weight="bold" /> : hypothesis.status === "confirmed" ? <CheckCircle size={13} weight="fill" /> : hypothesis.status === "refuted" ? <Prohibit size={13} /> : <Flask size={13} />}
         </span>
-        <span className="hypothesis-row-copy"><strong>{hypothesis.statement}</strong><small><span className={`tf-tag hypothesis-status-${hypothesis.status}`}>{hypothesis.status}</span>{hypothesis.runId ? `Run ${hypothesis.runId.slice(-6)}` : "Project knowledge"}</small></span>
+        <span className="hypothesis-row-copy"><strong>{hypothesis.statement}</strong><small><span className={`tf-tag hypothesis-status-${hypothesis.status}`}>{hypothesis.status}</span>{hypothesis.runId ? `Run ${hypothesis.runId.slice(-6)}` : "Project knowledge"}<ScheduleSignal state={schedule} /></small></span>
         <span className="hypothesis-score" aria-label={`Priority score ${score}`}><strong>{score}</strong><small>priority</small></span>
         <CaretDown className={`knowledge-caret ${open ? "is-open" : ""}`} size={14} aria-hidden="true" />
       </button>
       {open && (
         <div className="tf-row-detail hypothesis-detail" id={detailId}>
+          <section className={`hypothesis-scheduling is-${schedule.kind}`} aria-label="Scheduling decision">
+            <header><span>{schedule.kind === "fast-track" ? <Lightning size={13} weight="fill" /> : schedule.kind === "protected" ? <LockKey size={13} weight="fill" /> : <Crosshair size={13} />} Scheduling</span><strong>{schedule.label}</strong></header>
+            <p>{schedule.detail}</p>
+            {schedule.boundaryScore !== null && <div className="hypothesis-boundary">
+              <span>score <strong>{score}</strong></span>
+              <i aria-hidden="true"><b style={{ "--hypothesis-score": `${score}%`, "--hypothesis-boundary": `${Math.min(100, schedule.boundaryScore + HYPOTHESIS_ACTIVATION_MARGIN)}%` } as CSSProperties} /></i>
+              <span>activation <strong>{schedule.boundaryScore + HYPOTHESIS_ACTIVATION_MARGIN}</strong></span>
+            </div>}
+          </section>
           {hypothesis.scoreFactors && <div className="hypothesis-factors" aria-label="Priority score factors">
             {FACTOR_LABELS.map(([key, label]) => <span key={key}><small>{label}</small><strong>{hypothesis.scoreFactors?.[key]}</strong><i style={{ "--factor-value": `${hypothesis.scoreFactors?.[key] ?? 0}%` } as CSSProperties} /></span>)}
           </div>}
@@ -80,18 +162,24 @@ function HypothesisRow({ hypothesis }: { hypothesis: Hypothesis }) {
 
 export function HypothesesTab() {
   const hypotheses = useStore((state) => state.hypotheses);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!hypotheses.some((item) => item.status === "active" && (hypothesisActivationStartedAt(item) ?? 0) + HYPOTHESIS_MIN_RESIDENCY_MS > Date.now())) return;
+    const interval = globalThis.setInterval(() => setNow(Date.now()), 1_000);
+    return () => globalThis.clearInterval(interval);
+  }, [hypotheses]);
   const ranked = rankHypotheses(hypotheses);
-  const window = useKnowledgeWindow(ranked.length);
+  const knowledgeWindow = useKnowledgeWindow(ranked.length);
   const active = hypotheses.filter((item) => item.status === "active").length;
   const candidates = hypotheses.filter((item) => item.status === "candidate").length;
   if (hypotheses.length === 0) return <FeedbackState title="No hypotheses yet" description="The Agent will record evidence-backed attack ideas here, then promote the strongest candidates for active verification." />;
   return <>
     <div className="hypothesis-pool-summary" aria-label="Hypothesis pool status">
-      <span><strong>{active}</strong> active <small>of 5</small></span>
+      <span><strong>{active}</strong> active <small>of {MAX_ACTIVE_HYPOTHESES}</small></span>
       <span><strong>{candidates}</strong> candidates</span>
       <span><strong>{hypotheses.length}</strong> total <small>of 30</small></span>
     </div>
-    {ranked.slice(0, window.count).map((hypothesis) => <HypothesisRow hypothesis={hypothesis} key={hypothesis.id} />)}
-    <KnowledgeWindowFooter visible={window.count} total={ranked.length} onShowMore={window.showMore} />
+    {ranked.slice(0, knowledgeWindow.count).map((hypothesis) => <HypothesisRow hypothesis={hypothesis} pool={hypotheses} now={now} key={hypothesis.id} />)}
+    <KnowledgeWindowFooter visible={knowledgeWindow.count} total={ranked.length} onShowMore={knowledgeWindow.showMore} />
   </>;
 }
