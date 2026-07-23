@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDb } from "./db/client.js";
-import { HypothesisScheduler, scoreHypothesis } from "./hypothesis-scheduler.js";
+import { HYPOTHESIS_ACTIVATION_MARGIN, HYPOTHESIS_MIN_RESIDENCY_MS, HypothesisScheduler, isFastTrackHypothesis, scoreHypothesis } from "./hypothesis-scheduler.js";
 import { HypothesisStore } from "./stores/hypothesis-store.js";
 
 describe("HypothesisScheduler with real SQLite", () => {
@@ -86,5 +86,48 @@ describe("HypothesisScheduler with real SQLite", () => {
 
     expect(scheduler.rebalance("case_1", "run_1").active).toHaveLength(0);
     expect(store.getById(confirmed.id)?.status).toBe("confirmed");
+  });
+
+  it("holds a newly active set stable during its minimum residency", () => {
+    const store = new HypothesisStore(createDb(":memory:"));
+    let clock = Date.now();
+    const scheduler = new HypothesisScheduler(store, () => new Date(clock));
+    for (let index = 0; index < 5; index += 1) store.create("case_1", { runId: "run_1", statement: `Incumbent ${index}`, basedOnFactIds: [], priorityScore: 50 + index });
+    scheduler.rebalance("case_1", "run_1");
+    const promotedAt = Math.max(...store.listByCase("case_1").flatMap((item) => item.auditTrail.filter((entry) => entry.kind === "promoted").map((entry) => Date.parse(entry.createdAt))));
+    const challenger = store.create("case_1", { runId: "run_1", statement: "Strong but not critical", basedOnFactIds: [], priorityScore: 70 });
+
+    expect(scheduler.rebalance("case_1", "run_1").promoted).not.toContain(challenger.id);
+    clock = promotedAt + HYPOTHESIS_MIN_RESIDENCY_MS + 1;
+    expect(scheduler.rebalance("case_1", "run_1").promoted).toContain(challenger.id);
+  });
+
+  it("requires a meaningful score margin after residency to avoid boundary churn", () => {
+    const store = new HypothesisStore(createDb(":memory:"));
+    let clock = Date.now();
+    const scheduler = new HypothesisScheduler(store, () => new Date(clock));
+    for (let index = 0; index < 5; index += 1) store.create("case_1", { runId: "run_1", statement: `Incumbent ${index}`, basedOnFactIds: [], priorityScore: 50 + index });
+    scheduler.rebalance("case_1", "run_1");
+    const promotedAt = Math.max(...store.listByCase("case_1").flatMap((item) => item.auditTrail.filter((entry) => entry.kind === "promoted").map((entry) => Date.parse(entry.createdAt))));
+    clock = promotedAt + HYPOTHESIS_MIN_RESIDENCY_MS + 1;
+    const challenger = store.create("case_1", { runId: "run_1", statement: "Near boundary", basedOnFactIds: [], priorityScore: 50 + HYPOTHESIS_ACTIVATION_MARGIN - 1 });
+
+    expect(scheduler.rebalance("case_1", "run_1").promoted).not.toContain(challenger.id);
+  });
+
+  it("lets strong evidence take a slot immediately through the fast track", () => {
+    const store = new HypothesisStore(createDb(":memory:"));
+    const scheduler = new HypothesisScheduler(store);
+    for (let index = 0; index < 5; index += 1) store.create("case_1", { runId: "run_1", statement: `Incumbent ${index}`, basedOnFactIds: [], priorityScore: 60 + index });
+    scheduler.rebalance("case_1", "run_1");
+    const challenger = store.create("case_1", {
+      runId: "run_1", statement: "Critical evidence", basedOnFactIds: ["fact_critical"],
+      scoreFactors: { impact: 95, evidenceStrength: 95, verificationCost: 10, operationRisk: 10, pathRelevance: 90, freshness: 100 },
+    });
+
+    expect(isFastTrackHypothesis({ ...challenger, priorityScore: scoreHypothesis(challenger.scoreFactors ?? {}) })).toBe(true);
+    const result = scheduler.rebalance("case_1", "run_1");
+    expect(result.promoted).toContain(challenger.id);
+    expect(store.getById(challenger.id)?.auditTrail.at(-1)?.reason).toContain("Fast-track");
   });
 });
