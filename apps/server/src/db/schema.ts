@@ -265,6 +265,7 @@ export const hypotheses = sqliteTable("hypotheses", {
   scoreFactorsJson: text("score_factors_json").notNull().default("{}"),
   basedOnFactIdsJson: text("based_on_fact_ids_json").notNull(),
   relatedTaskIdsJson: text("related_task_ids_json").notNull(),
+  relationsJson: text("relations_json").notNull().default("{}"),
   auditTrailJson: text("audit_trail_json").notNull().default("[]"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

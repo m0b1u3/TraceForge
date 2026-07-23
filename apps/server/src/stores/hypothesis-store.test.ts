@@ -34,4 +34,25 @@ describe("HypothesisStore", () => {
     store.create("c2", { statement: "b", basedOnFactIds: ["f2"] });
     expect(store.listByCase("c1")).toHaveLength(1);
   });
+  it("persists same-Run relationships and rejects cross-Run references", () => {
+    const parent = store.create("c1", { runId: "run_1", statement: "Parent", basedOnFactIds: ["f1"] });
+    const child = store.create("c1", {
+      runId: "run_1",
+      statement: "Child",
+      basedOnFactIds: ["f2"],
+      relations: { prerequisiteIds: [parent.id], derivedFromIds: [parent.id] },
+    });
+    expect(store.getById(child.id)?.relations).toEqual({
+      prerequisiteIds: [parent.id],
+      conflictIds: [],
+      supportIds: [],
+      derivedFromIds: [parent.id],
+    });
+    expect(() => store.create("c1", {
+      runId: "run_2",
+      statement: "Cross-run child",
+      basedOnFactIds: ["f3"],
+      relations: { prerequisiteIds: [parent.id] },
+    })).toThrow("cross-Run");
+  });
 });

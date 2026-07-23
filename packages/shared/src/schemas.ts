@@ -367,6 +367,14 @@ export const HypothesisTransitionSchema = z.object({
 });
 export type HypothesisTransition = z.infer<typeof HypothesisTransitionSchema>;
 
+export const HypothesisRelationsSchema = z.object({
+  prerequisiteIds: z.array(z.string()).default([]),
+  conflictIds: z.array(z.string()).default([]),
+  supportIds: z.array(z.string()).default([]),
+  derivedFromIds: z.array(z.string()).default([]),
+}).default({});
+export type HypothesisRelations = z.infer<typeof HypothesisRelationsSchema>;
+
 export const HypothesisSchema = z.object({
   id: z.string(),
   caseId: z.string(),
@@ -384,6 +392,7 @@ export const HypothesisSchema = z.object({
   }).optional(),
   basedOnFactIds: z.array(z.string()),
   relatedTaskIds: z.array(z.string()).default([]),
+  relations: HypothesisRelationsSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   updateCount: z.number().default(0),

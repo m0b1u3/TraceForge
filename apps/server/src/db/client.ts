@@ -141,7 +141,7 @@ export function createDb(path: string) {
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, statement TEXT NOT NULL,
       run_id TEXT, status TEXT NOT NULL, priority_score INTEGER NOT NULL DEFAULT 50,
       score_factors_json TEXT NOT NULL DEFAULT '{}', based_on_fact_ids_json TEXT NOT NULL,
-      related_task_ids_json TEXT NOT NULL, created_at TEXT NOT NULL,
+      related_task_ids_json TEXT NOT NULL, relations_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL, update_count INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_hypotheses_case ON hypotheses(case_id);
@@ -233,6 +233,7 @@ export function createDb(path: string) {
     { name: "run_id", definition: "TEXT" },
     { name: "priority_score", definition: "INTEGER NOT NULL DEFAULT 50" },
     { name: "score_factors_json", definition: "TEXT NOT NULL DEFAULT '{}'" },
+    { name: "relations_json", definition: "TEXT NOT NULL DEFAULT '{}'" },
     { name: "audit_trail_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
   ]);
   const usageColumns = sqlite.prepare("PRAGMA table_info(agent_run_usage)").all() as Array<{ name: string }>;

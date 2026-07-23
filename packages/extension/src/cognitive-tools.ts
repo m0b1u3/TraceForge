@@ -13,6 +13,12 @@ export interface HypothesisWriter {
     };
     status?: "candidate" | "active";
     reason?: string;
+    relations?: {
+      prerequisiteIds?: string[];
+      conflictIds?: string[];
+      supportIds?: string[];
+      derivedFromIds?: string[];
+    };
   }): { id: string; status?: string };
   getById(id: string): { id: string; status: string } | undefined;
   update(id: string, patch: { status?: string; relatedTaskIds?: string[]; statement?: string }, context?: {
@@ -63,6 +69,16 @@ export function makeRecordHypothesisTool(caseId: string, hyp: HypothesisWriter, 
         statement: { type: "string" },
         basedOnFactIds: { type: "array", items: { type: "string" } },
         relatedTaskIds: { type: "array", items: { type: "string" } },
+        relations: {
+          type: "object",
+          description: "Optional same-Run hypothesis relationships. Prerequisites must be confirmed before activation; conflicts cannot be active together.",
+          properties: {
+            prerequisiteIds: { type: "array", items: { type: "string" } },
+            conflictIds: { type: "array", items: { type: "string" } },
+            supportIds: { type: "array", items: { type: "string" } },
+            derivedFromIds: { type: "array", items: { type: "string" } },
+          },
+        },
         activate: { type: "boolean" },
         priorityScore: { type: "number", minimum: 0, maximum: 100 },
         scoreFactors: {
@@ -84,8 +100,9 @@ export function makeRecordHypothesisTool(caseId: string, hyp: HypothesisWriter, 
     risk: "normal",
     source: "builtin",
     execute: async (input) => {
-      const { statement, basedOnFactIds, relatedTaskIds, activate, priorityScore, scoreFactors, reason } = (input ?? {}) as {
+      const { statement, basedOnFactIds, relatedTaskIds, relations, activate, priorityScore, scoreFactors, reason } = (input ?? {}) as {
         statement?: string; basedOnFactIds?: string[]; relatedTaskIds?: string[];
+        relations?: { prerequisiteIds?: string[]; conflictIds?: string[]; supportIds?: string[]; derivedFromIds?: string[] };
         activate?: boolean; priorityScore?: number;
         scoreFactors?: {
           impact: number; evidenceStrength: number; verificationCost: number;
@@ -99,7 +116,7 @@ export function makeRecordHypothesisTool(caseId: string, hyp: HypothesisWriter, 
       if (missing.length > 0) return { ok: false, content: `basedOnFactIds 引用了不存在的 Fact：${missing.join(", ")}` };
       const h = hyp.create(caseId, {
         statement, basedOnFactIds, relatedTaskIds, runId: runId ?? null,
-        priorityScore, scoreFactors, status: activate ? "active" : "candidate", reason,
+        priorityScore, scoreFactors, relations, status: activate ? "active" : "candidate", reason,
       });
       return { ok: true, content: `已记录假设 ${h.id}：${statement}` };
     },

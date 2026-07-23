@@ -18,6 +18,15 @@ export interface HypothesisCapacityDecision {
   reason: string;
 }
 
+export interface HypothesisRelationshipDecision {
+  activationAllowed: boolean;
+  prerequisiteBlockers: string[];
+  activeConflicts: string[];
+  supportBonus: number;
+  supportingIds: string[];
+  confirmedDerivedFromIds: string[];
+}
+
 export function isFastTrackHypothesis(hypothesis: Hypothesis): boolean {
   const factors = hypothesis.scoreFactors;
   if (!factors || (hypothesis.priorityScore ?? 0) < HYPOTHESIS_FAST_TRACK_SCORE) return false;
@@ -69,5 +78,34 @@ export function getAdaptiveHypothesisCapacity(
     reason: pressures.length
       ? `Capacity ${capacity}/${MAX_ACTIVE_HYPOTHESES}: demand ${demand}, constrained by ${pressures.join(" and ")}.`
       : `Capacity ${capacity}/${MAX_ACTIVE_HYPOTHESES}: ${supportedIds.size} evidence- or task-supported hypotheses.`,
+  };
+}
+
+export function getHypothesisRelationshipDecision(
+  hypothesis: Hypothesis,
+  pool: Hypothesis[],
+  selectedActiveIds: Iterable<string> = [],
+): HypothesisRelationshipDecision {
+  const byId = new Map(pool.map((item) => [item.id, item]));
+  const selected = new Set(selectedActiveIds);
+  const relations = hypothesis.relations ?? { prerequisiteIds: [], conflictIds: [], supportIds: [], derivedFromIds: [] };
+  const prerequisiteBlockers = relations.prerequisiteIds.filter((id) => byId.get(id)?.status !== "confirmed");
+  const conflictIds = new Set([
+    ...relations.conflictIds,
+    ...pool.filter((item) => item.relations?.conflictIds.includes(hypothesis.id)).map((item) => item.id),
+  ]);
+  const activeConflicts = [...conflictIds].filter((id) => selected.has(id));
+  const supportingIds = pool
+    .filter((item) => item.relations?.supportIds.includes(hypothesis.id) && (item.status === "active" || item.status === "confirmed"))
+    .map((item) => item.id);
+  const confirmedDerivedFromIds = relations.derivedFromIds.filter((id) => byId.get(id)?.status === "confirmed");
+  const supportBonus = Math.min(10, supportingIds.length * 3 + confirmedDerivedFromIds.length * 2);
+  return {
+    activationAllowed: prerequisiteBlockers.length === 0 && activeConflicts.length === 0,
+    prerequisiteBlockers,
+    activeConflicts,
+    supportBonus,
+    supportingIds,
+    confirmedDerivedFromIds,
   };
 }

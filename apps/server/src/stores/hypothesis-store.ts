@@ -20,6 +20,7 @@ function rowToH(row: typeof hypotheses.$inferSelect): Hypothesis {
     scoreFactors,
     basedOnFactIds: JSON.parse(row.basedOnFactIdsJson),
     relatedTaskIds: JSON.parse(row.relatedTaskIdsJson),
+    relations: JSON.parse(row.relationsJson),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     updateCount: row.updateCount,
@@ -43,6 +44,7 @@ export class HypothesisStore {
     input: {
       statement: string; basedOnFactIds: string[]; relatedTaskIds?: string[]; runId?: string | null;
       priorityScore?: number; scoreFactors?: Hypothesis["scoreFactors"]; status?: "candidate" | "active";
+      relations?: Partial<NonNullable<Hypothesis["relations"]>>;
       reason?: string;
     },
   ): Hypothesis {
@@ -52,6 +54,21 @@ export class HypothesisStore {
       && runHypotheses.filter((item) => item.status === "active").length >= 5
       ? "candidate"
       : input.status ?? "candidate";
+    const relations = {
+      prerequisiteIds: [...new Set(input.relations?.prerequisiteIds ?? [])],
+      conflictIds: [...new Set(input.relations?.conflictIds ?? [])],
+      supportIds: [...new Set(input.relations?.supportIds ?? [])],
+      derivedFromIds: [...new Set(input.relations?.derivedFromIds ?? [])],
+    };
+    const relationIds = [...relations.prerequisiteIds, ...relations.conflictIds, ...relations.supportIds, ...relations.derivedFromIds];
+    const related = new Map(this.listByCase(caseId).map((item) => [item.id, item]));
+    const invalidRelationIds = relationIds.filter((id) => {
+      const target = related.get(id);
+      return !target || (target.runId ?? null) !== (input.runId ?? null);
+    });
+    if (invalidRelationIds.length > 0) {
+      throw new Error(`hypothesis relations contain unknown or cross-Run references: ${[...new Set(invalidRelationIds)].join(", ")}`);
+    }
     const now = new Date().toISOString();
     const transition = HypothesisTransitionSchema.parse({
       id: `hyptr_${randomUUID()}`,
@@ -74,6 +91,7 @@ export class HypothesisStore {
       scoreFactors: input.scoreFactors,
       basedOnFactIds: input.basedOnFactIds,
       relatedTaskIds: input.relatedTaskIds ?? [],
+      relations,
       createdAt: now,
       updatedAt: now,
       updateCount: 0,
@@ -91,6 +109,7 @@ export class HypothesisStore {
         scoreFactorsJson: JSON.stringify(h.scoreFactors ?? {}),
         basedOnFactIdsJson: JSON.stringify(h.basedOnFactIds),
         relatedTaskIdsJson: JSON.stringify(h.relatedTaskIds),
+        relationsJson: JSON.stringify(h.relations),
         auditTrailJson: JSON.stringify(h.auditTrail),
         createdAt: now,
         updatedAt: now,

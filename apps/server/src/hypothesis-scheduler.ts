@@ -2,6 +2,7 @@ import {
   HYPOTHESIS_ACTIVATION_MARGIN,
   HYPOTHESIS_MIN_RESIDENCY_MS,
   getAdaptiveHypothesisCapacity,
+  getHypothesisRelationshipDecision,
   hypothesisActivationStartedAt,
   isFastTrackHypothesis,
   type Hypothesis,
@@ -67,8 +68,9 @@ export class HypothesisScheduler {
   ) {}
 
   rebalance(caseId: string, runId: string): RebalanceResult {
-    const eligible = this.hypotheses.listByCase(caseId)
-      .filter((item) => item.runId === runId && (item.status === "candidate" || item.status === "active"))
+    const runPool = this.hypotheses.listByCase(caseId).filter((item) => item.runId === runId);
+    const eligible = runPool
+      .filter((item) => item.status === "candidate" || item.status === "active")
       .map((item) => {
         const priorityScore = item.scoreFactors
           ? scoreHypothesis(item.scoreFactors)
@@ -92,33 +94,61 @@ export class HypothesisScheduler {
       runId,
     );
     const activeCapacity = capacityDecision.capacity;
-    const currentActive = eligible.filter((item) => item.status === "active").slice(0, activeCapacity);
+    const effectiveScore = new Map(eligible.map((item) => [
+      item.id,
+      Math.min(100, (item.priorityScore ?? 0) + getHypothesisRelationshipDecision(item, runPool).supportBonus),
+    ]));
+    eligible.sort((left, right) =>
+      (effectiveScore.get(right.id) ?? 0) - (effectiveScore.get(left.id) ?? 0)
+      || left.createdAt.localeCompare(right.createdAt));
+    const currentActive: Hypothesis[] = [];
+    const relationshipBlockedIds = new Set<string>();
+    for (const item of eligible.filter((candidate) => candidate.status === "active")) {
+      if (currentActive.length >= activeCapacity) break;
+      const decision = getHypothesisRelationshipDecision(item, runPool, currentActive.map((active) => active.id));
+      if (!decision.activationAllowed) {
+        relationshipBlockedIds.add(item.id);
+        continue;
+      }
+      currentActive.push(item);
+    }
     const challengers = eligible.filter((item) => item.status === "candidate");
     const selected = [...currentActive];
     const promotionReasons = new Map<string, string>();
     const fastTrackPromotions = new Set<string>();
     for (const challenger of challengers) {
       if (selected.length >= activeCapacity) break;
+      const relationship = getHypothesisRelationshipDecision(challenger, runPool, selected.map((item) => item.id));
+      if (!relationship.activationAllowed) {
+        relationshipBlockedIds.add(challenger.id);
+        continue;
+      }
       selected.push(challenger);
-      promotionReasons.set(challenger.id, `Promoted into a vacant active verification slot at score ${challenger.priorityScore ?? 0}.`);
+      promotionReasons.set(challenger.id, `Promoted into a vacant active verification slot at effective score ${effectiveScore.get(challenger.id) ?? 0}.`);
     }
     const now = (this.options.now?.() ?? new Date()).getTime();
     for (const challenger of challengers.filter((item) => !selected.some((selectedItem) => selectedItem.id === item.id))) {
       const fastTrack = isFastTrackHypothesis(challenger);
       const replaceable = selected
         .filter((item) => {
+          const remainingIds = selected.filter((selectedItem) => selectedItem.id !== item.id).map((selectedItem) => selectedItem.id);
+          if (!getHypothesisRelationshipDecision(challenger, runPool, remainingIds).activationAllowed) return false;
           if (fastTrack) return true;
           const startedAt = hypothesisActivationStartedAt(item);
           return startedAt === null || now - startedAt >= HYPOTHESIS_MIN_RESIDENCY_MS;
         })
-        .sort((left, right) => (left.priorityScore ?? 0) - (right.priorityScore ?? 0));
+        .sort((left, right) => (effectiveScore.get(left.id) ?? 0) - (effectiveScore.get(right.id) ?? 0));
       const incumbent = replaceable[0];
-      if (!incumbent) continue;
-      const scoreGap = (challenger.priorityScore ?? 0) - (incumbent.priorityScore ?? 0);
+      if (!incumbent) {
+        const relationship = getHypothesisRelationshipDecision(challenger, runPool, selected.map((item) => item.id));
+        if (!relationship.activationAllowed) relationshipBlockedIds.add(challenger.id);
+        continue;
+      }
+      const scoreGap = (effectiveScore.get(challenger.id) ?? 0) - (effectiveScore.get(incumbent.id) ?? 0);
       if (!fastTrack && scoreGap < HYPOTHESIS_ACTIVATION_MARGIN) continue;
       selected.splice(selected.findIndex((item) => item.id === incumbent.id), 1, challenger);
       promotionReasons.set(challenger.id, fastTrack
-        ? `Fast-track promotion into the ${activeCapacity}-slot active set: score ${challenger.priorityScore ?? 0} with strong evidence and high impact/path relevance displaced ${incumbent.id}.`
+        ? `Fast-track promotion into the ${activeCapacity}-slot active set: effective score ${effectiveScore.get(challenger.id) ?? 0} with strong evidence and high impact/path relevance displaced ${incumbent.id}.`
         : `Promoted after exceeding ${incumbent.id} by ${scoreGap} points, above the ${HYPOTHESIS_ACTIVATION_MARGIN}-point hysteresis margin.`);
       if (fastTrack) fastTrackPromotions.add(challenger.id);
     }
@@ -133,7 +163,9 @@ export class HypothesisScheduler {
         kind: nextStatus === "active" ? "promoted" : "demoted",
         reason: nextStatus === "active"
           ? `${promotionReasons.get(item.id) ?? `Promoted into the ${activeCapacity}-slot active verification set.`} Activation boundary ${boundaryScore}. ${capacityDecision.reason}`
-          : `${item.status === "active" && currentActive.every((activeItem) => activeItem.id !== item.id)
+          : `${relationshipBlockedIds.has(item.id)
+            ? "Demoted because prerequisite or conflict relationships block activation"
+            : item.status === "active" && currentActive.every((activeItem) => activeItem.id !== item.id)
             ? `Demoted after adaptive capacity contracted to ${activeCapacity}`
             : fastTrackPromotions.size > 0
               ? "Demoted by a strong-evidence fast-track challenger"

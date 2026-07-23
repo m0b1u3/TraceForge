@@ -176,4 +176,42 @@ describe("HypothesisScheduler with real SQLite", () => {
     expect(result.capacityReason).toContain("running task");
     expect(result.capacityReason).toContain("high-risk hypotheses");
   });
+
+  it("blocks a dependent hypothesis until every prerequisite is confirmed", () => {
+    const store = new HypothesisStore(createDb(":memory:"));
+    const prerequisite = store.create("case_1", {
+      runId: "run_1", statement: "Authentication boundary is reachable", basedOnFactIds: ["fact_1"], priorityScore: 50,
+    });
+    const dependent = store.create("case_1", {
+      runId: "run_1", statement: "Boundary can be bypassed", basedOnFactIds: ["fact_2"], priorityScore: 95,
+      relations: { prerequisiteIds: [prerequisite.id], derivedFromIds: [prerequisite.id] },
+    });
+    const alternative = store.create("case_1", {
+      runId: "run_1", statement: "Alternative path", basedOnFactIds: ["fact_3"], priorityScore: 60,
+    });
+    const scheduler = new HypothesisScheduler(store);
+
+    expect(scheduler.rebalance("case_1", "run_1").active.map((item) => item.id)).not.toContain(dependent.id);
+    store.update(prerequisite.id, { status: "confirmed" }, { reason: "Confirmed by evidence.", kind: "confirmed" });
+    const afterConfirmation = scheduler.rebalance("case_1", "run_1");
+    expect(afterConfirmation.active.map((item) => item.id)).toContain(dependent.id);
+    expect(afterConfirmation.active.map((item) => item.id)).toContain(alternative.id);
+  });
+
+  it("never keeps mutually conflicting hypotheses active together", () => {
+    const store = new HypothesisStore(createDb(":memory:"));
+    const incumbent = store.create("case_1", {
+      runId: "run_1", statement: "Token is scoped per tenant", basedOnFactIds: ["fact_1"], priorityScore: 70,
+    });
+    const challenger = store.create("case_1", {
+      runId: "run_1", statement: "Token is globally reusable", basedOnFactIds: ["fact_2"], priorityScore: 95,
+      relations: { conflictIds: [incumbent.id] },
+    });
+    const scheduler = new HypothesisScheduler(store);
+    const result = scheduler.rebalance("case_1", "run_1");
+    const activeIds = new Set(result.active.map((item) => item.id));
+
+    expect(activeIds.has(incumbent.id) && activeIds.has(challenger.id)).toBe(false);
+    expect(activeIds.has(challenger.id)).toBe(true);
+  });
 });

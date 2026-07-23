@@ -1,9 +1,10 @@
 import { useEffect, useState, type CSSProperties } from "react";
-import { ArrowDown, ArrowSquareOut, ArrowUp, CaretDown, CheckCircle, Crosshair, Flask, HourglassMedium, Lightning, LockKey, Prohibit } from "@phosphor-icons/react";
+import { ArrowDown, ArrowSquareOut, ArrowUp, CaretDown, CheckCircle, Crosshair, Flask, HourglassMedium, Lightning, LinkSimple, LockKey, Prohibit, TreeStructure } from "@phosphor-icons/react";
 import {
   HYPOTHESIS_ACTIVATION_MARGIN,
   HYPOTHESIS_MIN_RESIDENCY_MS,
   getAdaptiveHypothesisCapacity,
+  getHypothesisRelationshipDecision,
   hypothesisActivationStartedAt,
   isFastTrackHypothesis,
   type Hypothesis,
@@ -39,7 +40,7 @@ const FACTOR_LABELS: Array<[keyof NonNullable<Hypothesis["scoreFactors"]>, strin
 ];
 
 export interface HypothesisScheduleState {
-  kind: "protected" | "replaceable" | "fast-track" | "vacancy" | "waiting" | "resolved";
+  kind: "protected" | "replaceable" | "fast-track" | "vacancy" | "waiting" | "blocked" | "resolved";
   label: string;
   detail: string;
   boundaryScore: number | null;
@@ -47,6 +48,7 @@ export interface HypothesisScheduleState {
   residencyRemainingMs: number;
   capacity: number;
   capacityReason: string;
+  relationshipBonus: number;
 }
 
 function formatDuration(milliseconds: number): string {
@@ -57,30 +59,45 @@ function formatDuration(milliseconds: number): string {
 export function getHypothesisScheduleState(hypothesis: Hypothesis, pool: Hypothesis[], tasks: Task[], now: number): HypothesisScheduleState {
   const runPool = pool.filter((item) => (item.runId ?? null) === (hypothesis.runId ?? null));
   const capacityDecision = getAdaptiveHypothesisCapacity(runPool, tasks, hypothesis.runId);
+  const selectedActiveIds = runPool.filter((item) => item.status === "active" && item.id !== hypothesis.id).map((item) => item.id);
+  const relationship = getHypothesisRelationshipDecision(hypothesis, runPool, selectedActiveIds);
   if (hypothesis.status !== "active" && hypothesis.status !== "candidate") {
     return {
       kind: "resolved", label: "Resolved", detail: "No longer participates in active scheduling.",
       boundaryScore: null, pointsNeeded: 0, residencyRemainingMs: 0,
-      capacity: capacityDecision.capacity, capacityReason: capacityDecision.reason,
+      capacity: capacityDecision.capacity, capacityReason: capacityDecision.reason, relationshipBonus: relationship.supportBonus,
     };
   }
   const active = runPool.filter((item) => item.status === "active");
-  const boundaryScore = active.length ? Math.min(...active.map((item) => item.priorityScore ?? 0)) : null;
+  const effectiveScore = Math.min(100, (hypothesis.priorityScore ?? 0) + relationship.supportBonus);
+  const boundaryScore = active.length ? Math.min(...active.map((item) =>
+    Math.min(100, (item.priorityScore ?? 0) + getHypothesisRelationshipDecision(item, runPool).supportBonus))) : null;
+  if (!relationship.activationAllowed) {
+    const blockers = [
+      relationship.prerequisiteBlockers.length ? `prerequisites ${relationship.prerequisiteBlockers.join(", ")}` : null,
+      relationship.activeConflicts.length ? `active conflicts ${relationship.activeConflicts.join(", ")}` : null,
+    ].filter((value): value is string => value !== null);
+    return {
+      kind: "blocked", label: "Relation blocked", detail: `Cannot activate until ${blockers.join(" and ")} are resolved.`,
+      boundaryScore, pointsNeeded: 0, residencyRemainingMs: 0,
+      capacity: capacityDecision.capacity, capacityReason: capacityDecision.reason, relationshipBonus: relationship.supportBonus,
+    };
+  }
   if (hypothesis.status === "active") {
     const startedAt = hypothesisActivationStartedAt(hypothesis);
     const remaining = startedAt === null ? 0 : Math.max(0, HYPOTHESIS_MIN_RESIDENCY_MS - (now - startedAt));
     return remaining > 0
-      ? { kind: "protected", label: `Protected ${formatDuration(remaining)}`, detail: "Minimum active residency prevents premature replacement while verification starts.", boundaryScore, pointsNeeded: 0, residencyRemainingMs: remaining, capacity: capacityDecision.capacity, capacityReason: capacityDecision.reason }
-      : { kind: "replaceable", label: "Active · open", detail: `May be replaced by a candidate that clears the ${HYPOTHESIS_ACTIVATION_MARGIN}-point margin.`, boundaryScore, pointsNeeded: 0, residencyRemainingMs: 0, capacity: capacityDecision.capacity, capacityReason: capacityDecision.reason };
+      ? { kind: "protected", label: `Protected ${formatDuration(remaining)}`, detail: "Minimum active residency prevents premature replacement while verification starts.", boundaryScore, pointsNeeded: 0, residencyRemainingMs: remaining, capacity: capacityDecision.capacity, capacityReason: capacityDecision.reason, relationshipBonus: relationship.supportBonus }
+      : { kind: "replaceable", label: "Active · open", detail: `May be replaced by a candidate that clears the ${HYPOTHESIS_ACTIVATION_MARGIN}-point margin.`, boundaryScore, pointsNeeded: 0, residencyRemainingMs: 0, capacity: capacityDecision.capacity, capacityReason: capacityDecision.reason, relationshipBonus: relationship.supportBonus };
   }
   if (isFastTrackHypothesis(hypothesis)) {
-    return { kind: "fast-track", label: "Fast-track ready", detail: "Strong evidence and high impact or path relevance allow immediate promotion.", boundaryScore, pointsNeeded: 0, residencyRemainingMs: 0, capacity: capacityDecision.capacity, capacityReason: capacityDecision.reason };
+    return { kind: "fast-track", label: "Fast-track ready", detail: "Strong evidence and high impact or path relevance allow immediate promotion.", boundaryScore, pointsNeeded: 0, residencyRemainingMs: 0, capacity: capacityDecision.capacity, capacityReason: capacityDecision.reason, relationshipBonus: relationship.supportBonus };
   }
   if (active.length < capacityDecision.capacity) {
-    return { kind: "vacancy", label: "Slot available", detail: "Eligible for promotion at the next scheduler pass.", boundaryScore, pointsNeeded: 0, residencyRemainingMs: 0, capacity: capacityDecision.capacity, capacityReason: capacityDecision.reason };
+    return { kind: "vacancy", label: "Slot available", detail: "Eligible for promotion at the next scheduler pass.", boundaryScore, pointsNeeded: 0, residencyRemainingMs: 0, capacity: capacityDecision.capacity, capacityReason: capacityDecision.reason, relationshipBonus: relationship.supportBonus };
   }
   const activationScore = (boundaryScore ?? 0) + HYPOTHESIS_ACTIVATION_MARGIN;
-  const pointsNeeded = Math.max(0, activationScore - (hypothesis.priorityScore ?? 0));
+  const pointsNeeded = Math.max(0, activationScore - effectiveScore);
   const allIncumbentsProtected = active.every((item) => {
     const startedAt = hypothesisActivationStartedAt(item);
     return startedAt !== null && now - startedAt < HYPOTHESIS_MIN_RESIDENCY_MS;
@@ -98,6 +115,7 @@ export function getHypothesisScheduleState(hypothesis: Hypothesis, pool: Hypothe
     residencyRemainingMs: 0,
     capacity: capacityDecision.capacity,
     capacityReason: capacityDecision.reason,
+    relationshipBonus: relationship.supportBonus,
   };
 }
 
@@ -107,7 +125,7 @@ function ScheduleSignal({ state }: { state: HypothesisScheduleState }) {
     ? <LockKey size={11} weight="fill" />
     : state.kind === "fast-track"
       ? <Lightning size={11} weight="fill" />
-      : state.kind === "waiting"
+      : state.kind === "waiting" || state.kind === "blocked"
         ? <HourglassMedium size={11} />
         : <Crosshair size={11} />;
   return <span className={`hypothesis-schedule-signal is-${state.kind}`} title={state.detail}>{icon}<span>{state.label}</span></span>;
@@ -135,6 +153,7 @@ function HypothesisRow({ hypothesis, pool, tasks, now }: { hypothesis: Hypothesi
             <header><span>{schedule.kind === "fast-track" ? <Lightning size={13} weight="fill" /> : schedule.kind === "protected" ? <LockKey size={13} weight="fill" /> : <Crosshair size={13} />} Scheduling</span><strong>{schedule.label}</strong></header>
             <p>{schedule.detail}</p>
             <small className="hypothesis-capacity-note">{schedule.capacityReason}</small>
+            {schedule.relationshipBonus > 0 && <small className="hypothesis-relationship-bonus">Relationship support +{schedule.relationshipBonus}</small>}
             {schedule.boundaryScore !== null && <div className="hypothesis-boundary">
               <span>score <strong>{score}</strong></span>
               <i aria-hidden="true"><b style={{ "--hypothesis-score": `${score}%`, "--hypothesis-boundary": `${Math.min(100, schedule.boundaryScore + HYPOTHESIS_ACTIVATION_MARGIN)}%` } as CSSProperties} /></i>
@@ -148,6 +167,17 @@ function HypothesisRow({ hypothesis, pool, tasks, now }: { hypothesis: Hypothesi
             <div><span>Evidence</span>{hypothesis.basedOnFactIds.length ? hypothesis.basedOnFactIds.map((id) => <button type="button" key={id} onClick={() => navigate({ kind: "finding", id })}>{id}<ArrowSquareOut size={11} /></button>) : <em>None</em>}</div>
             <div><span>Tasks</span>{hypothesis.relatedTaskIds.length ? hypothesis.relatedTaskIds.map((id) => <button type="button" key={id} onClick={() => navigate({ kind: "task", id })}>{id}<ArrowSquareOut size={11} /></button>) : <em>None</em>}</div>
           </div>
+          {hypothesis.relations && Object.values(hypothesis.relations).some((ids) => ids.length > 0) && <section className="hypothesis-relations" aria-label="Hypothesis relationships">
+            <h4><TreeStructure size={12} /> Relationships</h4>
+            {([
+              ["Prerequisites", hypothesis.relations.prerequisiteIds],
+              ["Conflicts", hypothesis.relations.conflictIds],
+              ["Supports", hypothesis.relations.supportIds],
+              ["Derived from", hypothesis.relations.derivedFromIds],
+            ] as const).filter(([, ids]) => ids.length > 0).map(([label, ids]) => (
+              <div key={label}><span>{label}</span>{ids.map((id) => <code key={id}><LinkSimple size={10} />{id}</code>)}</div>
+            ))}
+          </section>}
           <section className="hypothesis-audit" aria-label="Hypothesis history">
             <h4>Decision history <span>{hypothesis.auditTrail.length}</span></h4>
             {[...hypothesis.auditTrail].reverse().map((transition) => (

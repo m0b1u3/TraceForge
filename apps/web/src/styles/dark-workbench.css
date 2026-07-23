@@ -901,6 +901,7 @@ textarea:focus-visible,
 .hypothesis-schedule-signal.is-fast-track,
 .hypothesis-schedule-signal.is-vacancy { color: var(--primary); }
 .hypothesis-schedule-signal.is-waiting { color: var(--warning); }
+.hypothesis-schedule-signal.is-blocked { color: var(--danger); }
 .hypothesis-row-copy .tf-tag { padding: 2px 5px; }
 .hypothesis-status-active { color: var(--primary); }
 .hypothesis-status-confirmed { color: var(--success); }
@@ -915,11 +916,13 @@ textarea:focus-visible,
 .hypothesis-scheduling.is-fast-track,
 .hypothesis-scheduling.is-vacancy { border-left-color: var(--primary); }
 .hypothesis-scheduling.is-waiting { border-left-color: var(--warning); }
+.hypothesis-scheduling.is-blocked { border-left-color: var(--danger); }
 .hypothesis-scheduling header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .hypothesis-scheduling header > span { display: inline-flex; align-items: center; gap: 5px; color: var(--foreground-muted); font-size: 8px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }
 .hypothesis-scheduling header strong { color: var(--foreground); font: 600 9px var(--mono); }
 .hypothesis-scheduling p { margin: 0; color: var(--foreground-secondary); font-size: 9px; line-height: 1.45; }
 .hypothesis-capacity-note { color: var(--foreground-muted); font: 7.5px/1.4 var(--mono); }
+.hypothesis-relationship-bonus { color: var(--information); font: 7.5px/1.4 var(--mono); }
 .hypothesis-boundary { display: grid; grid-template-columns: auto minmax(40px, 1fr) auto; align-items: center; gap: 7px; color: var(--foreground-muted); font: 7.5px var(--mono); text-transform: uppercase; }
 .hypothesis-boundary span { display: flex; gap: 3px; }
 .hypothesis-boundary strong { color: var(--foreground-secondary); font-weight: 600; }
@@ -939,6 +942,11 @@ textarea:focus-visible,
 .hypothesis-links button:hover { background: var(--surface-hover); color: var(--foreground); }
 .hypothesis-links button:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent); outline-offset: 1px; }
 .hypothesis-links em { color: var(--foreground-muted); font-size: 9px; font-style: normal; }
+.hypothesis-relations { display: grid; gap: 6px; }
+.hypothesis-relations h4 { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--foreground-secondary); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.hypothesis-relations > div { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.hypothesis-relations > div > span { width: 68px; color: var(--foreground-muted); font-size: 8px; text-transform: uppercase; }
+.hypothesis-relations code { display: inline-flex; align-items: center; gap: 3px; padding: 2px 5px; background: var(--surface-elevated); color: var(--foreground-secondary); font: 8px var(--mono); }
 .hypothesis-audit { display: grid; gap: 0; padding-top: 3px; }
 .hypothesis-audit h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 5px; color: var(--foreground-secondary); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .hypothesis-audit h4 span { color: var(--foreground-muted); font: 8px var(--mono); }

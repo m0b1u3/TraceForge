@@ -67,4 +67,14 @@ describe("HypothesesTab scheduling explanation", () => {
     expect(state.kind).toBe("protected");
     expect(state.residencyRemainingMs).toBe(HYPOTHESIS_MIN_RESIDENCY_MS - 60_000);
   });
+
+  it("explains unresolved prerequisite blocking within the same Run", () => {
+    const prerequisite = hypothesis("prerequisite", "candidate", 60);
+    const dependent = hypothesis("dependent", "candidate", 95);
+    dependent.relations = { prerequisiteIds: [prerequisite.id], conflictIds: [], supportIds: [], derivedFromIds: [prerequisite.id] };
+    expect(getHypothesisScheduleState(dependent, [prerequisite, dependent], [], Date.now())).toMatchObject({
+      kind: "blocked",
+      label: "Relation blocked",
+    });
+  });
 });
