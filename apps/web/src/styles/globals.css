@@ -1,25 +1,130 @@
 @import "tailwindcss";
 
+/*
+ * Single source of truth for semantic design tokens.
+ * Color encodes state only: phosphor = live/running, amber = pending approval
+ * or warning, verdict red = confirmed finding/critical, info = hypothesis.
+ * Everything else stays neutral steel gray. app.css and dark-workbench.css
+ * consume these variables and must not redefine them.
+ */
+:root {
+  color-scheme: dark;
+
+  --background: #0A0E13;
+  --surface: #11161D;
+  --surface-elevated: #171E27;
+  --surface-hover: #1A232E;
+
+  --foreground: #E6EBF0;
+  --foreground-secondary: #8B98A5;
+  --foreground-muted: #69737F;
+
+  --primary: #3DDC97;
+  --primary-hover: #62E5AB;
+  --primary-foreground: #062015;
+  --success: #3DDC97;
+  --information: #8298FF;
+  --warning: #E5A50A;
+  --danger: #F04452;
+  --destructive: var(--danger);
+
+  --border: #1D2833;
+  --border-subtle: rgba(148, 163, 184, 0.12);
+  --border-strong: rgba(148, 163, 184, 0.22);
+  --ring: var(--primary);
+
+  /* Aliases consumed by bespoke workbench styles. */
+  --bg: var(--background);
+  --panel: var(--surface);
+  --panel-elevated: var(--surface-elevated);
+  --panel-soft: var(--surface-hover);
+  --card: var(--surface);
+  --muted: var(--surface-elevated);
+  --line: var(--border-subtle);
+  --line-strong: var(--border-strong);
+  --line-focus: var(--ring);
+  --text: var(--foreground);
+  --text-secondary: var(--foreground-secondary);
+  --text-tertiary: var(--foreground-muted);
+  --accent: var(--primary);
+  --accent-soft: rgba(61, 220, 151, 0.1);
+  --green: var(--success);
+  --green-soft: rgba(61, 220, 151, 0.1);
+  --amber: var(--warning);
+  --amber-soft: rgba(229, 165, 10, 0.1);
+  --red: var(--danger);
+  --red-soft: rgba(240, 68, 82, 0.1);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
+  --shadow-lg: 0 30px 80px rgba(0, 0, 0, 0.44);
+  --shadow-panel: 0 8px 28px rgba(0, 0, 0, 0.32);
+
+  --type-label: 10px;
+  --type-meta: 11px;
+  --type-control: 12px;
+  --type-body: 13px;
+  --type-reasoning: 14px;
+  --type-heading: 16px;
+  --type-title: 20px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --background: #EEF1F4;
+  --surface: #FFFFFF;
+  --surface-elevated: #F4F6F8;
+  --surface-hover: #E8ECEF;
+
+  --foreground: #161B22;
+  --foreground-secondary: #4E5A66;
+  --foreground-muted: #707C88;
+
+  --primary: #0B9669;
+  --primary-hover: #0A8359;
+  --primary-foreground: #FFFFFF;
+  --success: #0B9669;
+  --information: #5566D6;
+  --warning: #A96E00;
+  --danger: #D63040;
+
+  --border: #D4DBE1;
+  --border-subtle: rgba(21, 32, 43, 0.1);
+  --border-strong: rgba(21, 32, 43, 0.22);
+
+  --accent-soft: rgba(11, 150, 105, 0.09);
+  --green-soft: rgba(11, 150, 105, 0.09);
+  --amber-soft: rgba(169, 110, 0, 0.09);
+  --red-soft: rgba(214, 48, 64, 0.08);
+
+  --shadow-sm: 0 1px 2px rgba(30, 48, 55, 0.05);
+  --shadow: 0 18px 48px rgba(30, 48, 55, 0.08);
+  --shadow-lg: 0 28px 72px rgba(30, 48, 55, 0.16);
+  --shadow-panel: 0 8px 24px rgba(30, 48, 55, 0.1);
+}
+
 @theme {
-  --color-background: #070d12;
-  --color-foreground: #e8eef1;
-  --color-card: #0b141b;
-  --color-card-foreground: #e7edf2;
-  --color-popover: #0f202c;
-  --color-popover-foreground: #e7edf2;
-  --color-primary: #27b47e;
-  --color-primary-foreground: #f4fff9;
-  --color-secondary: #132431;
-  --color-secondary-foreground: #d9e3ea;
-  --color-muted: #101c24;
-  --color-muted-foreground: #91a0ad;
-  --color-accent: #152a37;
-  --color-accent-foreground: #e7edf2;
-  --color-destructive: #ed5d62;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--surface-elevated);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--surface-hover);
+  --color-secondary-foreground: var(--foreground-secondary);
+  --color-muted: var(--surface-elevated);
+  --color-muted-foreground: var(--foreground-muted);
+  --color-accent: var(--surface-hover);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--danger);
   --color-destructive-foreground: #ffffff;
-  --color-border: #1b2a34;
-  --color-input: #273b48;
-  --color-ring: #4acb98;
+  --color-border: var(--border);
+  --color-input: var(--border-strong);
+  --color-ring: var(--ring);
+
   --radius: 0.5rem;
   --radius-xs: 0.375rem;
   --radius-sm: 0.375rem;
@@ -30,10 +135,6 @@
 @layer base {
   * {
     border-color: var(--border);
-  }
-
-  html {
-    color-scheme: dark;
   }
 
   body {

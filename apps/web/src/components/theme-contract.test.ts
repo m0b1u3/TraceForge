@@ -35,23 +35,61 @@ const primitiveRadiusClasses = [
 ].sort();
 
 describe("Operations Canvas theme contract", () => {
-  it("uses one dark semantic theme", () => {
+  it("owns all semantic color tokens in globals.css with a dark instrument palette", () => {
     expect(globals).toContain("color-scheme: dark");
-    expect(globals).toMatch(/--color-background:\s*#070d12/);
-    expect(globals).toMatch(/--color-foreground:\s*#e8eef1/);
-    expect(globals).toMatch(/--color-card:\s*#0b141b/);
-    expect(globals).toMatch(/--color-muted:\s*#101c24/);
-    expect(globals).toMatch(/--color-primary:\s*#27b47e/);
-    expect(globals).toMatch(/--color-destructive:\s*#ed5d62/);
-    expect(globals).toMatch(/--color-border:\s*#1b2a34/);
-    expect(globals).toMatch(/--color-ring:\s*#4acb98/);
-    expect(appRoot).toMatch(/--success:\s*#43cb91/);
-    expect(appRoot).toMatch(/--information:\s*#5b9ff5/);
-    expect(appRoot).toMatch(/--warning:\s*#e9a23b/);
-    expect(appRoot).toContain("--border-subtle: rgba(126, 156, 174, 0.14)");
-    expect(appRoot).toMatch(/--z-header:\s*20/);
-    expect(appRoot).toMatch(/--z-drawer:\s*40/);
-    expect(appRoot).toMatch(/--z-modal:\s*50/);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--background:\s*#0A0E13/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface:\s*#11161D/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface-elevated:\s*#171E27/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground:\s*#E6EBF0/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground-secondary:\s*#8B98A5/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--border-subtle:\s*rgba\(148,\s*163,\s*184,\s*0\.12\)/);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--primary:\s*#3DDC97/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--warning:\s*#E5A50A/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--danger:\s*#F04452/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--information:\s*#8298FF/i);
+  });
+
+  it("maps tailwind theme tokens to semantic variables so themes switch at runtime", () => {
+    expect(globals).toMatch(/--color-background:\s*var\(--background\)/);
+    expect(globals).toMatch(/--color-foreground:\s*var\(--foreground\)/);
+    expect(globals).toMatch(/--color-primary:\s*var\(--primary\)/);
+    expect(globals).toMatch(/--color-destructive:\s*var\(--danger\)/);
+    expect(globals).toMatch(/--color-ring:\s*var\(--ring\)/);
+  });
+
+  it("ships a light variant of the semantic tokens from the same source", () => {
+    const light = globals.match(/:root\[data-theme="light"\]\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+    expect(light).toContain("color-scheme: light");
+    expect(light).toMatch(/--background:\s*#EEF1F4/i);
+    expect(light).toMatch(/--surface:\s*#FFFFFF/i);
+    expect(light).toMatch(/--foreground:\s*#161B22/i);
+    expect(light).toMatch(/--primary:\s*#0B9669/i);
+    expect(light).toMatch(/--warning:\s*#A96E00/i);
+    expect(light).toMatch(/--danger:\s*#D63040/i);
+    expect(light).toMatch(/--information:\s*#5566D6/i);
+  });
+
+  it("does not redefine semantic colors outside globals.css", () => {
+    expect(appRoot).not.toMatch(/--background\s*:/);
+    expect(appRoot).not.toMatch(/--primary\s*:/);
+    expect(appRoot).not.toMatch(/--foreground\s*:/);
+    const workbenchRoot = workbench.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+    expect(workbenchRoot).not.toMatch(/--background\s*:/);
+    expect(workbenchRoot).not.toMatch(/--primary\s*:/);
+    expect(workbenchRoot).not.toMatch(/--color-background\s*:/);
+    expect(workbench).not.toContain("#0b0f10");
+    expect(workbench).not.toContain("#79d5b6");
+    expect(workbench).not.toMatch(/:root\[data-theme="light"\]\s*\{[^}]*--background\s*:/);
+  });
+
+  it("keeps the widened type scale with a reasoning size", () => {
+    expect(globals).toMatch(/--type-label:\s*10px/);
+    expect(globals).toMatch(/--type-meta:\s*11px/);
+    expect(globals).toMatch(/--type-control:\s*12px/);
+    expect(globals).toMatch(/--type-body:\s*13px/);
+    expect(globals).toMatch(/--type-reasoning:\s*14px/);
+    expect(globals).toMatch(/--type-heading:\s*16px/);
+    expect(globals).toMatch(/--type-title:\s*20px/);
   });
 
   it("keeps typography tracking at zero", () => {
@@ -81,6 +119,9 @@ describe("Operations Canvas theme contract", () => {
   it("keeps workbench panels, modals, and launchers on the shared radius scale", () => {
     expect(globals).toMatch(/--radius:\s*0\.5rem/);
     expect(appRoot).not.toMatch(/--radius\s*:/);
+    expect(appRoot).toMatch(/--z-header:\s*20/);
+    expect(appRoot).toMatch(/--z-drawer:\s*40/);
+    expect(appRoot).toMatch(/--z-modal:\s*50/);
     expect(appRoot).toMatch(/--radius-sm:\s*6px/);
     expect(appRoot).toMatch(/--radius-lg:\s*10px/);
     expect(appRoot).toMatch(/--radius-xl:\s*14px/);

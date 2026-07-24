@@ -1,68 +1,6 @@
 @import "./workbench-milestone.css";
 
-:root {
-  color-scheme: dark;
-  --background: #0b0f10;
-  --surface: #101415;
-  --surface-elevated: #161b1d;
-  --surface-hover: #181e20;
-  --foreground: #f0f2f0;
-  --foreground-secondary: #a6adae;
-  --foreground-muted: #697174;
-  --border-subtle: rgba(207, 218, 217, 0.105);
-  --primary: #79d5b6;
-  --primary-hover: #91e0c4;
-  --success: #79c8aa;
-  --information: #8298ff;
-  --warning: #dda747;
-  --danger: #e86368;
-  --type-label: 10px;
-  --type-meta: 11px;
-  --type-control: 12px;
-  --type-body: 13px;
-  --type-heading: 15px;
-  --type-title: 18px;
-  --bg: var(--background);
-  --panel: var(--surface);
-  --panel-elevated: var(--surface-elevated);
-  --panel-soft: #14191f;
-  --line: var(--border-subtle);
-  --line-strong: rgba(169, 184, 192, 0.2);
-  --line-focus: var(--primary);
-  --text: var(--foreground);
-  --text-secondary: var(--foreground-secondary);
-  --text-tertiary: var(--foreground-muted);
-  --accent: var(--primary);
-  --accent-soft: rgba(121, 200, 170, 0.1);
-  --green: var(--success);
-  --green-soft: rgba(121, 200, 170, 0.1);
-  --amber: var(--warning);
-  --amber-soft: rgba(217, 166, 106, 0.1);
-  --red: var(--danger);
-  --red-soft: rgba(225, 118, 124, 0.1);
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--surface);
-  --color-card-foreground: var(--foreground);
-  --color-popover: var(--surface-elevated);
-  --color-popover-foreground: var(--foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: #0a1712;
-  --color-secondary: #1a2026;
-  --color-secondary-foreground: #dfe4e5;
-  --color-muted: #161b21;
-  --color-muted-foreground: var(--foreground-muted);
-  --color-accent: #20272e;
-  --color-accent-foreground: var(--foreground);
-  --color-destructive: var(--danger);
-  --color-destructive-foreground: #fff;
-  --color-border: rgba(169, 184, 192, 0.14);
-  --color-input: rgba(169, 184, 192, 0.2);
-  --color-ring: var(--primary);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
-  --shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
-  --shadow-lg: 0 30px 80px rgba(0, 0, 0, 0.44);
-}
+/* Semantic tokens live in globals.css (:root + [data-theme="light"]). */
 
 html,
 body {
@@ -84,7 +22,7 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 [role="tab"]:focus-visible {
-  outline: 2px solid rgba(121, 200, 170, 0.72);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -1034,7 +972,7 @@ textarea:focus-visible,
   grid-template-columns: clamp(280px, 20.5vw, 344px) minmax(360px, 1fr) auto;
   gap: 0;
   padding: 0;
-  background: #0b0f10;
+  background: var(--background);
   border-bottom: 1px solid var(--border-subtle);
 }
 .topbar-brand {
@@ -1084,7 +1022,7 @@ textarea:focus-visible,
   grid-template-columns: clamp(280px, 20.5vw, 344px) minmax(520px, 1fr) clamp(360px, 27vw, 455px);
   gap: 0;
   padding: 0;
-  background: #0b0f10;
+  background: var(--background);
 }
 .workspace-agent,
 .workspace-knowledge { padding: 0; }
@@ -1242,7 +1180,7 @@ textarea:focus-visible,
 .finding-detail-toolbar { min-height: 52px; border-bottom: 1px solid var(--border-subtle); color: #878f91; font-size: 11px; }
 .fact-value-grid { gap: 0; }
 .fact-value-row { grid-template-columns: 92px minmax(0, 1fr); min-height: 48px; padding: 10px 0; }
-.fact-value-row code { padding: 10px 12px; border-radius: 4px; background: #0b0f10; color: #d0d5d4; font-size: 11px; }
+.fact-value-row code { padding: 10px 12px; border-radius: 4px; background: var(--background); color: #d0d5d4; font-size: 11px; }
 .fact-meta-grid { display: grid; gap: 0; margin-top: 4px; padding-top: 6px; }
 .fact-meta-grid .kv { display: grid; grid-template-columns: 92px minmax(0, 1fr); min-height: 38px; align-items: center; gap: 10px; border-bottom: 0; color: #c3c8c7; font-size: 11.5px; }
 .fact-meta-grid .kv > span { color: #81898b; }
@@ -1438,64 +1376,6 @@ textarea:focus-visible,
 }
 
 /* Light mode: cool laboratory paper, not an inverted dashboard. */
-:root[data-theme="light"] {
-  color-scheme: light;
-  --background: #e9eef0;
-  --surface: #f7f9f9;
-  --surface-elevated: #ffffff;
-  --surface-hover: #edf2f2;
-  --foreground: #172126;
-  --foreground-secondary: #526168;
-  --foreground-muted: #738188;
-  --border-subtle: rgba(35, 55, 63, .12);
-  --primary: #16815f;
-  --primary-hover: #116d50;
-  --success: #16815f;
-  --information: #356fa8;
-  --warning: #a7651d;
-  --danger: #c34750;
-  --bg: var(--background);
-  --panel: var(--surface);
-  --panel-elevated: var(--surface-elevated);
-  --panel-soft: #eef3f3;
-  --line: var(--border-subtle);
-  --line-strong: rgba(35, 55, 63, .22);
-  --line-focus: var(--primary);
-  --text: var(--foreground);
-  --text-secondary: var(--foreground-secondary);
-  --text-tertiary: var(--foreground-muted);
-  --accent: var(--primary);
-  --accent-soft: rgba(22, 129, 95, .09);
-  --green: var(--success);
-  --green-soft: rgba(22, 129, 95, .09);
-  --amber: var(--warning);
-  --amber-soft: rgba(167, 101, 29, .09);
-  --red: var(--danger);
-  --red-soft: rgba(195, 71, 80, .08);
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--surface-elevated);
-  --color-card-foreground: var(--foreground);
-  --color-popover: #ffffff;
-  --color-popover-foreground: var(--foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: #ffffff;
-  --color-secondary: #e7eded;
-  --color-secondary-foreground: #26343a;
-  --color-muted: #edf2f2;
-  --color-muted-foreground: var(--foreground-muted);
-  --color-accent: #e5efec;
-  --color-accent-foreground: var(--foreground);
-  --color-destructive: var(--danger);
-  --color-destructive-foreground: #ffffff;
-  --color-border: rgba(35, 55, 63, .15);
-  --color-input: rgba(35, 55, 63, .2);
-  --color-ring: var(--primary);
-  --shadow-sm: 0 1px 2px rgba(30, 48, 55, .05);
-  --shadow: 0 18px 48px rgba(30, 48, 55, .08);
-  --shadow-lg: 0 28px 72px rgba(30, 48, 55, .16);
-}
-
 [data-theme="light"] .hero-shell { background: var(--background); }
 [data-theme="light"] .hero-title { color: var(--foreground); }
 [data-theme="light"] .hero-sub { color: var(--foreground-secondary); }
