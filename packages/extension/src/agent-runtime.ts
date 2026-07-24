@@ -52,6 +52,7 @@ export interface AgentRunOptions {
   getObserverReviewTrigger?: () => ObserverReviewTrigger | null;
   toolTimeoutMs?: number;
   failureMemory?: FailureMemory;
+  onAuthorizeToolExecute?: (call: { name: string; input: unknown }) => string | undefined | Promise<string | undefined>;
   onBeforeToolExecute?: (call: { name: string; input: unknown }) => string | undefined | Promise<string | undefined>;
   onToolExecuted?: (report: ToolExecutionReport) => void | Promise<void>;
 }
@@ -518,6 +519,19 @@ export class AgentRuntime {
       return result;
     }
 
+    const blockedReason = await options.onAuthorizeToolExecute?.({ name: call.name, input: call.input });
+    if (blockedReason) {
+      const content = `[tool_blocked] ${call.name}: ${blockedReason}`;
+      onEvent({ type: "tool_blocked", name: call.name, input: JSON.stringify(call.input), content });
+      const result = { content, ok: false };
+      if (options.onToolExecuted) {
+        await options.onToolExecuted({
+          name: call.name, input: call.input, content, ok: false, blocked: true, risk: tool.risk,
+        });
+      }
+      return result;
+    }
+
     const advisory = await options.onBeforeToolExecute?.({ name: call.name, input: call.input });
     if (advisory) onEvent({ type: "tool_advisory", name: call.name, content: advisory });
     onEvent({ type: "tool_call", name: call.name, content: JSON.stringify(call.input) });
@@ -539,8 +553,7 @@ export class AgentRuntime {
         Math.max(1_000, options.toolTimeoutMs ?? 45_000),
         options.signal,
       );
-      const nonInformativeHttpFailure = /(?:^|\s)status=5\d\d(?:\s|$)/i.test(res.content);
-      const effectiveOk = res.ok && !nonInformativeHttpFailure;
+      const effectiveOk = res.ok;
       if (effectiveOk && changesWorkspace(call.name)) failureMemory.clear();
       const failureClass = effectiveOk ? undefined : classifyToolFailure(res.content);
       const transient = failureClass === "transient";

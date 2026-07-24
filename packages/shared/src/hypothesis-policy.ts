@@ -1,10 +1,10 @@
 import type { Hypothesis, Task } from "./schemas.js";
 
-export const MAX_ACTIVE_HYPOTHESES = 5;
+export const MAX_ACTIVE_HYPOTHESES = 1;
 export const HYPOTHESIS_ACTIVATION_MARGIN = 8;
 export const HYPOTHESIS_MIN_RESIDENCY_MS = 2 * 60 * 1000;
 export const HYPOTHESIS_FAST_TRACK_SCORE = 88;
-export const MIN_ACTIVE_HYPOTHESES = 2;
+export const MIN_ACTIVE_HYPOTHESES = 1;
 
 const ACTIONABLE_TASK_STATUSES = new Set<Task["status"]>(["open", "recheck_candidate", "approved", "running"]);
 
@@ -61,9 +61,7 @@ export function getAdaptiveHypothesisCapacity(
   const runningTasks = runTasks.filter((task) => task.status === "running").length;
   const highRiskHypotheses = eligible.filter((item) =>
     (item.priorityScore ?? 0) >= 65 && (item.scoreFactors?.operationRisk ?? 0) >= 75).length;
-  const runningCeiling = runningTasks >= 2 ? 3 : runningTasks === 1 ? 4 : MAX_ACTIVE_HYPOTHESES;
-  const riskCeiling = highRiskHypotheses >= 2 ? 3 : highRiskHypotheses === 1 ? 4 : MAX_ACTIVE_HYPOTHESES;
-  const capacity = Math.max(MIN_ACTIVE_HYPOTHESES, Math.min(demand, runningCeiling, riskCeiling));
+  const capacity = 1;
   const pressures = [
     runningTasks > 0 ? `${runningTasks} running task${runningTasks === 1 ? "" : "s"}` : null,
     highRiskHypotheses > 0 ? `${highRiskHypotheses} high-risk hypothes${highRiskHypotheses === 1 ? "is" : "es"}` : null,
@@ -76,8 +74,8 @@ export function getAdaptiveHypothesisCapacity(
     runningTasks,
     highRiskHypotheses,
     reason: pressures.length
-      ? `Capacity ${capacity}/${MAX_ACTIVE_HYPOTHESES}: demand ${demand}, constrained by ${pressures.join(" and ")}.`
-      : `Capacity ${capacity}/${MAX_ACTIVE_HYPOTHESES}: ${supportedIds.size} evidence- or task-supported hypotheses.`,
+      ? `Serial verification slot ${capacity}/${MAX_ACTIVE_HYPOTHESES}: ${pressures.join(" and ")}; queued hypotheses wait for the current task boundary.`
+      : `Serial verification slot ${capacity}/${MAX_ACTIVE_HYPOTHESES}: ${supportedIds.size} evidence- or task-supported hypotheses queued by priority.`,
   };
 }
 

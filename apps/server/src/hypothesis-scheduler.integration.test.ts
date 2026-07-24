@@ -25,7 +25,7 @@ describe("HypothesisScheduler with real SQLite", () => {
     expect(strong).toBeGreaterThan(weak);
   });
 
-  it("expands to five active slots when evidence maturity supports the demand", () => {
+  it("keeps one active slot and queues every other mature hypothesis", () => {
     const db = createDb(":memory:");
     const store = new HypothesisStore(db);
     const scheduler = new HypothesisScheduler(store);
@@ -50,8 +50,8 @@ describe("HypothesisScheduler with real SQLite", () => {
     }
 
     const initial = scheduler.rebalance("case_1", "run_1");
-    expect(initial.active).toHaveLength(5);
-    expect(initial.capacity).toBe(5);
+    expect(initial.active).toHaveLength(1);
+    expect(initial.capacity).toBe(1);
     expect(initial.active.map((item) => item.id)).not.toContain(ids[0]);
 
     store.update(ids[0], {
@@ -69,8 +69,8 @@ describe("HypothesisScheduler with real SQLite", () => {
     expect(rebalanced.active.map((item) => item.id)).toContain(ids[0]);
     expect(rebalanced.promoted).toContain(ids[0]);
     expect(rebalanced.demoted).toHaveLength(1);
-    expect(store.listByCase("case_1").filter((item) => item.status === "active")).toHaveLength(5);
-    expect(store.getById(ids[0])?.auditTrail.some((entry) => entry.kind === "promoted" && entry.reason.includes("5-slot active set"))).toBe(true);
+    expect(store.listByCase("case_1").filter((item) => item.status === "active")).toHaveLength(1);
+    expect(store.getById(ids[0])?.auditTrail.some((entry) => entry.kind === "promoted" && entry.reason.includes("1-slot active set"))).toBe(true);
     const demoted = store.getById(rebalanced.demoted[0]);
     expect(demoted?.auditTrail.some((entry) => entry.kind === "demoted" && entry.reason.includes("activation boundary"))).toBe(true);
   });
@@ -142,12 +142,12 @@ describe("HypothesisScheduler with real SQLite", () => {
     }
 
     const result = scheduler.rebalance("case_1", "run_1");
-    expect(result.capacity).toBe(2);
-    expect(result.active).toHaveLength(2);
-    expect(result.capacityReason).toContain("0 evidence- or task-supported");
+    expect(result.capacity).toBe(1);
+    expect(result.active).toHaveLength(1);
+    expect(result.capacityReason).toContain("queued by priority");
   });
 
-  it("contracts capacity under running-task and high-risk pressure", () => {
+  it("pins capacity to one under running-task and high-risk pressure", () => {
     const db = createDb(":memory:");
     const store = new HypothesisStore(db);
     const tasks = new TaskStore(db);
@@ -171,8 +171,8 @@ describe("HypothesisScheduler with real SQLite", () => {
     const scheduler = new HypothesisScheduler(store, { tasks });
 
     const result = scheduler.rebalance("case_1", "run_1");
-    expect(result.capacity).toBe(3);
-    expect(result.active).toHaveLength(3);
+    expect(result.capacity).toBe(1);
+    expect(result.active).toHaveLength(1);
     expect(result.capacityReason).toContain("running task");
     expect(result.capacityReason).toContain("high-risk hypotheses");
   });
@@ -199,8 +199,9 @@ describe("HypothesisScheduler with real SQLite", () => {
     expect(store.getById(dependent.id)?.auditTrail).toHaveLength(blockedAuditLength ?? 0);
     store.update(prerequisite.id, { status: "confirmed" }, { reason: "Confirmed by evidence.", kind: "confirmed" });
     const afterConfirmation = scheduler.rebalance("case_1", "run_1");
-    expect(afterConfirmation.active.map((item) => item.id)).toContain(dependent.id);
+    expect(afterConfirmation.active).toHaveLength(1);
     expect(afterConfirmation.active.map((item) => item.id)).toContain(alternative.id);
+    expect(afterConfirmation.active.map((item) => item.id)).not.toContain(dependent.id);
     expect(store.getById(dependent.id)?.auditTrail.some((entry) =>
       entry.kind === "relationship_unblocked")).toBe(true);
   });
@@ -296,5 +297,37 @@ describe("HypothesisScheduler with real SQLite", () => {
     store.update(secondPrerequisite.id, { status: "confirmed" }, { kind: "confirmed", reason: "Second confirmed." });
     scheduler.rebalance("case_1", "run_1");
     expect(tasks.getById(task.id)).toMatchObject({ status: "running", reason: "Lease already acquired.", relationshipGate: null });
+  });
+
+  it("settles the current candidate before promoting the next queued candidate", () => {
+    const db = createDb(":memory:");
+    const hypotheses = new HypothesisStore(db);
+    const tasks = new TaskStore(db);
+    const firstCandidate = hypotheses.create("case_1", {
+      runId: "run_1", statement: "First candidate requires validation", basedOnFactIds: ["fact_first"], priorityScore: 90,
+    });
+    const secondCandidate = hypotheses.create("case_1", {
+      runId: "run_1", statement: "Second candidate requires validation", basedOnFactIds: ["fact_second"], priorityScore: 80,
+    });
+    const firstTask = tasks.create("case_1", {
+      runId: "run_1", title: "Validate first candidate", status: "running", reason: "Current validation",
+      blockedBy: [], triggerWhen: [], relatedFacts: ["fact_first"], hypothesisIds: [firstCandidate.id], priority: "high",
+    });
+    const secondTask = tasks.create("case_1", {
+      runId: "run_1", title: "Validate second candidate", status: "open", reason: "Queued",
+      blockedBy: [], triggerWhen: [], relatedFacts: ["fact_second"], hypothesisIds: [secondCandidate.id], priority: "high",
+    });
+    const scheduler = new HypothesisScheduler(hypotheses, { tasks });
+
+    const duringFirst = scheduler.rebalance("case_1", "run_1");
+    expect(duringFirst.active.map((item) => item.id)).toEqual([firstCandidate.id]);
+    expect(tasks.getById(firstTask.id)?.status).toBe("running");
+    expect(tasks.getById(secondTask.id)?.status).toBe("blocked");
+
+    tasks.update(firstTask.id, { status: "done", reason: "First validation settled." });
+    const afterFirst = scheduler.rebalance("case_1", "run_1");
+    expect(afterFirst.active.map((item) => item.id)).toEqual([secondCandidate.id]);
+    expect(tasks.getById(secondTask.id)?.status).toBe("open");
+    expect(afterFirst.resumedTaskIds).toEqual([secondTask.id]);
   });
 });

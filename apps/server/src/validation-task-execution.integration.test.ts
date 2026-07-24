@@ -14,7 +14,9 @@ function setup() {
   const hypothesis = hypotheses.create("case_1", { runId: "run_1", statement: "Validate ownership", basedOnFactIds: [], status: "active" });
   const tool = makeRecordTaskTool(
     "case_1", tasks, timeline, () => undefined, "run_1", hypotheses, undefined,
-    (current, requestedStatus, patch) => evaluateRecordTaskValidationStatusTransition({ current, requestedStatus, patch }),
+    (current, requestedStatus, patch) => evaluateRecordTaskValidationStatusTransition({
+      current, requestedStatus, patch, tasks: tasks.listByCase("case_1"),
+    }),
   );
   return { hypotheses, tasks, hypothesis, tool };
 }
@@ -32,7 +34,7 @@ describe("consensus task status single entry with real SQLite", () => {
     });
     const denied = await tool.execute({ id: second.id, title: second.title, status: "running" });
     expect(denied.ok).toBe(false);
-    expect(denied.content).toContain("manage_validation_task");
+    expect(denied.content).toContain("already running");
     expect(tasks.getById(second.id)?.status).toBe("open");
     expect((await tool.execute({ id: first.id, title: first.title, status: "open" })).ok).toBe(false);
     expect(tasks.getById(first.id)?.status).toBe("running");
@@ -51,7 +53,7 @@ describe("consensus task status single entry with real SQLite", () => {
     expect(tasks.getById(validation.id)?.title).toBe(validation.title);
   });
 
-  it("does not restrict an ordinary task while validation is running", async () => {
+  it("queues an ordinary task while any other validation task is running", async () => {
     const { tasks, hypothesis, tool } = setup();
     tasks.create("case_1", {
       runId: "run_1", title: "[Consensus:fact_1:supported] verify", status: "running", reason: "",
@@ -61,6 +63,9 @@ describe("consensus task status single entry with real SQLite", () => {
       runId: "run_1", title: "Explore password reset", status: "open", reason: "",
       blockedBy: [], triggerWhen: [], relatedFacts: [], hypothesisIds: [hypothesis.id], priority: "medium",
     });
-    expect((await tool.execute({ id: ordinary.id, title: ordinary.title, status: "running" })).ok).toBe(true);
+    const denied = await tool.execute({ id: ordinary.id, title: ordinary.title, status: "running" });
+    expect(denied.ok).toBe(false);
+    expect(denied.content).toContain("already running");
+    expect(tasks.getById(ordinary.id)?.status).toBe("open");
   });
 });

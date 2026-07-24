@@ -91,6 +91,7 @@ export class HypothesisScheduler {
         .filter((hypothesis) =>
           hypothesis.status === "refuted"
           || hypothesis.status === "archived"
+          || (task.status !== "running" && !selectedIds.includes(hypothesis.id))
           || !getHypothesisRelationshipDecision(
             hypothesis,
             runPool,
@@ -131,9 +132,31 @@ export class HypothesisScheduler {
   }
 
   rebalance(caseId: string, runId: string): RebalanceResult {
-    const runPool = this.hypotheses.listByCase(caseId).filter((item) => item.runId === runId);
+    let runPool = this.hypotheses.listByCase(caseId).filter((item) => item.runId === runId);
+    const runTasks = this.options.tasks?.listByCase(caseId).filter((task) => task.runId === runId) ?? [];
+    const terminalTaskStatuses = new Set(["done", "failed", "rejected", "out_of_scope"]);
+    const completedHypothesisIds = new Set(runPool
+      .filter((hypothesis) => {
+        const linked = runTasks.filter((task) => task.hypothesisIds?.includes(hypothesis.id));
+        return linked.length > 0 && linked.every((task) => terminalTaskStatuses.has(task.status));
+      })
+      .map((hypothesis) => hypothesis.id));
+    for (const hypothesis of runPool.filter((item) => item.status === "active" && completedHypothesisIds.has(item.id))) {
+      this.hypotheses.update(hypothesis.id, { status: "candidate" }, {
+        kind: "demoted",
+        reason: "Serial verification task settled; the next queued hypothesis may enter the execution slot.",
+      });
+    }
+    runPool = this.hypotheses.listByCase(caseId).filter((item) => item.runId === runId);
+    const runningHypothesisIds = new Set(
+      (this.options.tasks?.listByCase(caseId) ?? [])
+        .filter((task) => task.runId === runId && task.status === "running")
+        .flatMap((task) => task.hypothesisIds ?? []),
+    );
     const eligible = runPool
-      .filter((item) => item.status === "candidate" || item.status === "active")
+      .filter((item) =>
+        (item.status === "candidate" || item.status === "active")
+        && !completedHypothesisIds.has(item.id))
       .map((item) => {
         const priorityScore = item.scoreFactors
           ? scoreHypothesis(item.scoreFactors)
@@ -147,7 +170,8 @@ export class HypothesisScheduler {
         return updated;
       })
       .sort((left, right) =>
-        (right.priorityScore ?? 0) - (left.priorityScore ?? 0)
+        Number(runningHypothesisIds.has(right.id)) - Number(runningHypothesisIds.has(left.id))
+        || (right.priorityScore ?? 0) - (left.priorityScore ?? 0)
         || left.createdAt.localeCompare(right.createdAt),
       );
 
@@ -162,7 +186,8 @@ export class HypothesisScheduler {
       Math.min(100, (item.priorityScore ?? 0) + getHypothesisRelationshipDecision(item, runPool).supportBonus),
     ]));
     eligible.sort((left, right) =>
-      (effectiveScore.get(right.id) ?? 0) - (effectiveScore.get(left.id) ?? 0)
+      Number(runningHypothesisIds.has(right.id)) - Number(runningHypothesisIds.has(left.id))
+      || (effectiveScore.get(right.id) ?? 0) - (effectiveScore.get(left.id) ?? 0)
       || left.createdAt.localeCompare(right.createdAt));
     const currentActive: Hypothesis[] = [];
     const relationshipBlockedIds = new Set<string>();
@@ -194,6 +219,7 @@ export class HypothesisScheduler {
       const fastTrack = isFastTrackHypothesis(challenger);
       const replaceable = selected
         .filter((item) => {
+          if (runningHypothesisIds.has(item.id)) return false;
           const remainingIds = selected.filter((selectedItem) => selectedItem.id !== item.id).map((selectedItem) => selectedItem.id);
           if (!getHypothesisRelationshipDecision(challenger, runPool, remainingIds).activationAllowed) return false;
           if (fastTrack) return true;

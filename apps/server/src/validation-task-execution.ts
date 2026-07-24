@@ -16,9 +16,9 @@ export function evaluateValidationTaskExecutionTransition(input: {
   requestedStatus: Task["status"];
   tasks: Task[];
 }): TaskStatusGateResult {
-  if (input.requestedStatus !== "running" || !isConsensusValidationTask(input.current)) return { allowed: true };
+  if (input.requestedStatus !== "running") return { allowed: true };
   const active = input.tasks.find((task) =>
-    task.id !== input.current.id && task.runId === input.current.runId && task.status === "running" && isConsensusValidationTask(task));
+    task.id !== input.current.id && task.runId === input.current.runId && task.status === "running");
   if (!active) return { allowed: true };
   return {
     allowed: false,
@@ -30,7 +30,22 @@ export function evaluateRecordTaskValidationStatusTransition(input: {
   current: Task;
   requestedStatus: Task["status"];
   patch?: Partial<Task>;
+  tasks?: Task[];
 }): TaskStatusGateResult {
+  if (input.requestedStatus === "running" && input.current.relationshipGate?.blockedHypothesisIds.length) {
+    return {
+      allowed: false,
+      message: `Task ${input.current.id} is queued behind hypotheses ${input.current.relationshipGate.blockedHypothesisIds.join(", ")}.`,
+    };
+  }
+  if (input.requestedStatus === "running" && input.tasks) {
+    const execution = evaluateValidationTaskExecutionTransition({
+      current: input.current,
+      requestedStatus: input.requestedStatus,
+      tasks: input.tasks,
+    });
+    if (!execution.allowed) return execution;
+  }
   if (!isConsensusValidationTask(input.current)) return { allowed: true };
   const titleChanged = input.patch?.title !== undefined && input.patch.title !== input.current.title;
   if (!titleChanged && input.requestedStatus === input.current.status) return { allowed: true };

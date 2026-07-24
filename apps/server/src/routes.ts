@@ -858,7 +858,9 @@ export function registerRoutes(
         consensus: validationConsensusStore.listByCase(id),
         hypotheses: hypothesisStore.listByCase(id),
       }),
-      (current, requestedStatus, patch) => evaluateRecordTaskValidationStatusTransition({ current, requestedStatus, patch }),
+      (current, requestedStatus, patch) => evaluateRecordTaskValidationStatusTransition({
+        current, requestedStatus, patch, tasks: taskStore.listByCase(id),
+      }),
     ));
     registry.register(makeManageValidationTaskTool({
       caseId: id,
@@ -1086,11 +1088,13 @@ export function registerRoutes(
 - Host platform: ${process.platform}; shell commands must be compatible with this platform.
 - Current case id: ${id}. Workspace tools are server-bound to this case; never invent or reuse a caseId.
 - Never print binary files to stdout. For binary artifacts, record path, byte size, hash, format and a short analysis summary.
-- A repeated HTTP failure means the same endpoint + technique + response class, even when payload spelling changes. Pivot after two non-informative variants.
+- Repeated non-informative attempts are grouped by objective, technique and observed outcome. Pivot after the evidence gap is no longer changing.
 
 [Evidence and hypothesis loop]
 - Keep broad ideas in one hypothesis pool. Before repeated active testing of a suspected weakness, record or update one hypothesis and attach a concrete validation task.
-- Facts are observations. A vulnerability remains candidate/validating until independent evidence confirms exploitability; HTTP 500 alone is not proof.
+- When several suspicious points exist, create one Hypothesis and one queued Task for each point. Only one Task may be running in a Run.
+- Finish, block, reject, or explicitly release the current Task before starting the next queued Task. Never interleave separate validation tracks.
+- Facts are observations. A vulnerability remains candidate/validating until the evidence demonstrates a reproducible causal mechanism, attributable source, concrete security impact and an auditable evidence chain. No single signal automatically verifies a finding.
 - After a meaningful result, update the hypothesis/task instead of issuing more variants without a stated evidence gap.
 - This protocol organizes exploration; it does not forbid related targets already inside the authorized scope or suppress useful plaintext clues.
 `;
@@ -1159,6 +1163,7 @@ export function registerRoutes(
     let executingValidationTask = initiallyRunningValidation && initiallyRunningFindingId
       ? { taskId: initiallyRunningValidation.id, findingId: initiallyRunningFindingId }
       : undefined;
+    let executingTaskId = rankedTasks.find((item) => item.task.status === "running")?.task.id;
     let validationOutcomeBefore: ValidationOutcomeSnapshot | undefined;
     const priorityDetail = formatValidationTaskPriorities(rankedTasks);
     if (priorityDetail) {
@@ -1264,6 +1269,24 @@ export function registerRoutes(
       getSteeringMessages: () => runs.consumeSteering(runId),
       onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger),
       failureMemory,
+      onAuthorizeToolExecute: (call) => {
+        const taskNeutralTools = new Set([
+          "record_fact", "record_hypothesis", "resolve_hypothesis", "record_task", "manage_validation_task",
+          "list_traffic", "get_traffic", "search_traffic", "search_facts", "get_fact_detail",
+          "recall_conversation", "recall_case_knowledge", "get_validation_workflow_state",
+          "list_identities", "list_attack_paths", "list_security_reports", "update_session_state",
+        ]);
+        if (taskNeutralTools.has(call.name)) return undefined;
+        const actionableTasks = taskStore.listByCase(id).filter((task) =>
+          task.runId === runId && ["open", "approved", "running", "recheck_candidate"].includes(task.status));
+        if (actionableTasks.length === 0) return undefined;
+        const runningTasks = actionableTasks.filter((task) => task.status === "running");
+        if (runningTasks.length === 1) return undefined;
+        if (runningTasks.length > 1) {
+          return `Run ${runId} has multiple running tasks. Resolve the invalid state before executing more investigation tools.`;
+        }
+        return `Run ${runId} has queued investigation tasks but no execution lease. Start exactly one task with record_task or manage_validation_task before executing this tool.`;
+      },
       onBeforeToolExecute: (call) => {
         validationOutcomeBefore = executingValidationTask ? captureValidationOutcome() : undefined;
         const serialized = JSON.stringify(call.input);
@@ -1284,6 +1307,16 @@ export function registerRoutes(
         });
       },
       onToolExecuted: (report) => {
+        if (executingTaskId && !["record_task", "manage_validation_task"].includes(report.name)) {
+          const taskEntry = timelineStore.append(
+            id,
+            "task_tool_result",
+            `Task=${executingTaskId}; tool=${report.name}; outcome=${report.ok ? "ok" : "failed"}`,
+            executingTaskId,
+            runId,
+          );
+          bus.emit({ type: "timeline_appended", entry: taskEntry });
+        }
         if (executingValidationTask && validationOutcomeBefore && !["record_task", "manage_validation_task"].includes(report.name)) {
           const observation = observeValidationOutcome({
             ...executingValidationTask,
@@ -1309,6 +1342,11 @@ export function registerRoutes(
           const taskId = typeof candidateTaskId === "string" ? candidateTaskId : undefined;
           const task = taskId ? taskStore.getById(taskId) : undefined;
           const findingId = task && isConsensusValidationTask(task) ? validationFindingId(task) : undefined;
+          if (task?.status === "running") {
+            executingTaskId = task.id;
+          } else if (taskId && executingTaskId === taskId) {
+            executingTaskId = undefined;
+          }
           if (task && findingId && task.status === "running") {
             executingValidationTask = { taskId: task.id, findingId };
           } else if (taskId && executingValidationTask?.taskId === taskId) {
@@ -1391,7 +1429,7 @@ export function registerRoutes(
               ? applyValidationExplorationPolicy({ state: validationExplorationState, shift: priorityShift, ranked: rerankedTasks })
               : undefined;
             if (explorationDecision) validationExplorationState = explorationDecision.state;
-            if (priorityShift.shifted && priorityShift.next && explorationDecision?.allowValidationShift) {
+            if (priorityShift.shifted && priorityShift.next && explorationDecision?.allowValidationShift && !executingTaskId) {
               const prioritized = rerankedTasks.find((item) => item.task.id === priorityShift.next?.taskId);
               const priorityEntry = timelineStore.append(
                 id,
@@ -1408,6 +1446,15 @@ export function registerRoutes(
                 "Do not interrupt or repeat the tool that just completed. At the next decision point, finish recording its evidence, then switch only if the new task remains actionable.",
               ].join("\n"));
               currentValidationPriority = priorityShift.next;
+            } else if (priorityShift.shifted && executingTaskId) {
+              const queuedEntry = timelineStore.append(
+                id,
+                "validation_priority_queued",
+                `Current=${executingTaskId}; queued=${priorityShift.next?.taskId ?? "none"}; reason=${priorityShift.reason}`,
+                priorityShift.next?.taskId,
+                runId,
+              );
+              bus.emit({ type: "timeline_appended", entry: queuedEntry });
             } else if (priorityShift.shifted && explorationDecision && !explorationDecision.allowValidationShift) {
               explorationWindowTaskId = explorationDecision.explorationTaskId;
               if (explorationDecision.notifyExplorationWindow && explorationWindowTaskId) {
