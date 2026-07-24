@@ -72,9 +72,9 @@ export type ObserverReviewTrigger =
   | "finding_verification";
 
 export const DEFAULT_RUN_BUDGET: AgentRunBudget = {
-  maxTurns: 48,
-  warningTurnsRemaining: 6,
-  maxTotalTokens: 240_000,
+  maxTurns: Infinity,
+  warningTurnsRemaining: 0,
+  maxTotalTokens: Infinity,
   maxContextCharacters: 96_000,
   maxToolResultCharacters: 12_000,
 };
@@ -316,7 +316,7 @@ export class AgentRuntime {
         onEvent({ type: "budget_exhausted", content: `run budget exhausted after ${budget.maxTurns} turns` });
         return;
       }
-      if (cumulativeTotalTokens >= budget.maxTotalTokens) {
+      if (Number.isFinite(budget.maxTotalTokens) && cumulativeTotalTokens >= budget.maxTotalTokens) {
         onEvent({ type: "budget_exhausted", content: `run token budget exhausted after ${cumulativeTotalTokens} tokens` });
         return;
       }

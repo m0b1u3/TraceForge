@@ -32,10 +32,12 @@ describe("Observer checkpoint scheduling", () => {
 });
 
 describe("runtime context governance", () => {
-  it("uses finite production defaults", () => {
+  it("keeps long-running investigations unlimited by default", () => {
     const budget = normalizeRunBudget();
-    expect(budget.maxTurns).toBe(48);
-    expect(budget.maxTotalTokens).toBe(240_000);
+    expect(budget.maxTurns).toBe(Infinity);
+    expect(budget.maxTotalTokens).toBe(Infinity);
+    expect(budget.maxContextCharacters).toBe(96_000);
+    expect(budget.maxToolResultCharacters).toBe(12_000);
   });
 
   it("omits binary output and truncates oversized text", () => {
