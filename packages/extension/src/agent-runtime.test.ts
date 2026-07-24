@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { classifyToolFailure, executeWithDeadline, incrementalTrajectory, shouldReviewAtCheckpoint } from "./agent-runtime.js";
+import {
+  classifyToolFailure, compactConversation, compactToolResult, executeWithDeadline,
+  incrementalTrajectory, normalizeRunBudget, shouldReviewAtCheckpoint,
+} from "./agent-runtime.js";
 
 describe("AgentRuntime failure classification", () => {
   it("classifies tool failures by retry policy", () => {
@@ -13,8 +16,8 @@ describe("AgentRuntime failure classification", () => {
 });
 
 describe("Observer checkpoint scheduling", () => {
-  it("uses a low-frequency six-turn fallback by default", () => {
-    expect([1, 2, 3, 4, 5, 6, 7, 12].filter((turn) => shouldReviewAtCheckpoint(turn))).toEqual([6, 12]);
+  it("supports a low-frequency twelve-turn fallback", () => {
+    expect([1, 6, 11, 12, 18, 24].filter((turn) => shouldReviewAtCheckpoint(turn, 12))).toEqual([12, 24]);
   });
 
   it("sends only messages added after the previous review", () => {
@@ -25,6 +28,30 @@ describe("Observer checkpoint scheduling", () => {
       { role: "user" as const, content: "[Observer correction]\nverify evidence" },
     ];
     expect(incrementalTrajectory(messages, 3)).toBe("user: [Observer correction]\nverify evidence");
+  });
+});
+
+describe("runtime context governance", () => {
+  it("uses finite production defaults", () => {
+    const budget = normalizeRunBudget();
+    expect(budget.maxTurns).toBe(48);
+    expect(budget.maxTotalTokens).toBe(240_000);
+  });
+
+  it("omits binary output and truncates oversized text", () => {
+    expect(compactToolResult(`HPROF\u0000\u0001binary`)).toContain("binary output omitted");
+    expect(compactToolResult("x".repeat(100), 20).length).toBeLessThan(100);
+  });
+
+  it("compacts old messages while preserving recent context", () => {
+    const messages = Array.from({ length: 14 }, (_, index) => ({
+      role: index === 0 ? "user" as const : "assistant" as const,
+      content: `${index}:${"x".repeat(100)}`,
+    }));
+    const latest = messages.at(-1)?.content;
+    compactConversation(messages, 500);
+    expect(messages.some((message) => message.content.includes("context compacted"))).toBe(true);
+    expect(messages.at(-1)?.content).toBe(latest);
   });
 });
 

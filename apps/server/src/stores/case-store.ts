@@ -10,10 +10,11 @@ export class CaseStore {
   create(name: string, scopeRules: ScopeRule[]): Case {
     const id = `case_${randomUUID()}`;
     const createdAt = new Date().toISOString();
-    const c = CaseSchema.parse({ id, name, status: "active", scopeRules, createdAt });
+    const boundRules = scopeRules.map((rule) => ({ ...rule, caseId: id }));
+    const c = CaseSchema.parse({ id, name, status: "active", scopeRules: boundRules, createdAt });
     this.db.insert(cases).values({
       id, name, status: c.status,
-      scopeRulesJson: JSON.stringify(scopeRules), createdAt,
+      scopeRulesJson: JSON.stringify(boundRules), createdAt,
     }).run();
     return c;
   }
@@ -21,9 +22,14 @@ export class CaseStore {
   get(id: string): Case | undefined {
     const row = this.db.select().from(cases).where(eq(cases.id, id)).get();
     if (!row) return undefined;
+    const rawRules = JSON.parse(row.scopeRulesJson) as ScopeRule[];
+    const scopeRules = rawRules.map((rule) => ({ ...rule, caseId: row.id }));
+    if (scopeRules.some((rule, index) => rule.caseId !== rawRules[index]?.caseId)) {
+      this.db.update(cases).set({ scopeRulesJson: JSON.stringify(scopeRules) }).where(eq(cases.id, row.id)).run();
+    }
     return CaseSchema.parse({
       id: row.id, name: row.name, status: row.status,
-      scopeRules: JSON.parse(row.scopeRulesJson), createdAt: row.createdAt,
+      scopeRules, createdAt: row.createdAt,
     });
   }
 
@@ -32,7 +38,8 @@ export class CaseStore {
     if (!c) return undefined;
     const rules = c.scopeRules.length > 0
       ? c.scopeRules.map((r) => ({ ...r }))
-      : [{ caseId: "pending", allowHosts: [], denyHosts: [] }];
+      : [{ caseId: id, allowHosts: [], denyHosts: [] }];
+    for (const rule of rules) rule.caseId = id;
     if (!rules[0].allowHosts.includes(host)) {
       rules[0] = { ...rules[0], allowHosts: [...rules[0].allowHosts, host] };
     }
@@ -49,12 +56,9 @@ export class CaseStore {
   }
 
   list(): Case[] {
-    return this.db.select().from(cases).all().map((row) =>
-      CaseSchema.parse({
-        id: row.id, name: row.name, status: row.status,
-        scopeRules: JSON.parse(row.scopeRulesJson), createdAt: row.createdAt,
-      }),
-    );
+    return this.db.select().from(cases).all()
+      .map((row) => this.get(row.id))
+      .filter((entry): entry is Case => Boolean(entry));
   }
 
   delete(id: string): boolean {

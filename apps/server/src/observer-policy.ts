@@ -6,11 +6,18 @@ export type ObserverActiveStatus = Extract<ObserverWarning["status"], "detected"
 export function observerFingerprint(
   warning: Pick<ObserverWarning, "title" | "relatedFacts" | "relatedTasks">,
 ): string {
-  const material = [
-    warning.title.trim().toLowerCase().replace(/\s+/g, " "),
-    [...warning.relatedFacts].sort().join(","),
-    [...warning.relatedTasks].sort().join(","),
-  ].join("|");
+  const semanticTitle = warning.title
+    .trim()
+    .toLowerCase()
+    .replace(/\b(?:the|a|an|agent|warning|pending|unresolved|repeated|multiple)\b/g, " ")
+    .replace(/\b(?:sql injection|sqli)\b/g, "sql_injection")
+    .replace(/\b(?:heap dump|heapdump)\b/g, "heapdump")
+    .replace(/\b(?:jolokia endpoint|jolokia)\b/g, "jolokia")
+    .replace(/\b(?:http\s*)?(?:4\d\d|5\d\d)\b/g, "http_error")
+    .replace(/[^a-z0-9_\u4e00-\u9fff]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const material = semanticTitle;
   return createHash("sha256").update(material).digest("hex").slice(0, 24);
 }
 

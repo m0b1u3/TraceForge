@@ -27,4 +27,21 @@ describe("FailureMemory", () => {
     expect(computeFailureFingerprint("t", { a: 1, b: 2 }))
       .toBe(computeFailureFingerprint("t", { b: 2, a: 1 }));
   });
+
+  it("clusters equivalent injection variants semantically", () => {
+    const first = { url: "http://target/article?id=1%20OR%201=1", method: "GET" };
+    const second = { method: "GET", url: "http://target/article?id=2%27%20or%20%271%27=%271" };
+    expect(computeFailureFingerprint("http_replay", first))
+      .toBe(computeFailureFingerprint("http_replay", second));
+  });
+
+  it("blocks a transient semantic cluster after two failures", () => {
+    const memory = new FailureMemory();
+    const first = { url: "http://target/article?id=1 OR 1=1", method: "GET" };
+    const second = { url: "http://target/article?id=2' OR '1'='1", method: "GET" };
+    memory.add("http_replay", first, 2);
+    expect(memory.has("http_replay", second)).toBe(false);
+    memory.add("http_replay", second, 2);
+    expect(memory.has("http_replay", first)).toBe(true);
+  });
 });

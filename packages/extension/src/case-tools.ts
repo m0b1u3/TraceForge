@@ -42,7 +42,14 @@ export function makeGetTrafficTool(caseId: string, traffic: TrafficReader): Tool
         ok: true,
         content: JSON.stringify({
           url: entry.url, method: entry.method, status: entry.responseStatus,
-          requestHeaders: entry.requestHeaders, body: entry.responseBody,
+          requestHeaders: entry.requestHeaders,
+          responseHeaders: entry.responseHeaders,
+          responseSize: entry.responseSize,
+          contentType: entry.contentType,
+          body: entry.responseBody && entry.responseBody.length > 12_000
+            ? `${entry.responseBody.slice(0, 8_000)}\n[... ${entry.responseBody.length - 12_000} characters omitted ...]\n${entry.responseBody.slice(-4_000)}`
+            : entry.responseBody,
+          bodyTruncated: (entry.responseBody?.length ?? 0) > 12_000,
         }, null, 2),
       };
     },

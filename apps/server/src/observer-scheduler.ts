@@ -37,6 +37,7 @@ function recordedAttackPathStatus(content: string): string | null {
 export class ObserverScheduler {
   private pending: EventTrigger | null = null;
   private consecutivePermanentFailures = 0;
+  private successfulCommandsSinceReview = 0;
 
   observe(report: ToolExecutionReport): void {
     const input = inputRecord(report.input);
@@ -50,7 +51,10 @@ export class ObserverScheduler {
     if (!report.ok) return;
     this.consecutivePermanentFailures = 0;
 
-    if (report.risk === "command") this.mark("high_risk");
+    if (report.risk === "command") {
+      this.successfulCommandsSinceReview += 1;
+      if (this.successfulCommandsSinceReview >= 4) this.mark("high_risk");
+    }
 
     if (
       report.name === "compare_identity_traffic"
@@ -82,6 +86,7 @@ export class ObserverScheduler {
   consume(): EventTrigger | null {
     const trigger = this.pending;
     this.pending = null;
+    if (trigger) this.successfulCommandsSinceReview = 0;
     return trigger;
   }
 

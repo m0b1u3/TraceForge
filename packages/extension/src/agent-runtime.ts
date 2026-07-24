@@ -25,6 +25,9 @@ export interface AgentEvent {
 export interface AgentRunBudget {
   maxTurns: number;
   warningTurnsRemaining: number;
+  maxTotalTokens: number;
+  maxContextCharacters: number;
+  maxToolResultCharacters: number;
 }
 
 export interface ToolExecutionReport {
@@ -69,8 +72,11 @@ export type ObserverReviewTrigger =
   | "finding_verification";
 
 export const DEFAULT_RUN_BUDGET: AgentRunBudget = {
-  maxTurns: Infinity,
-  warningTurnsRemaining: 0,
+  maxTurns: 48,
+  warningTurnsRemaining: 6,
+  maxTotalTokens: 240_000,
+  maxContextCharacters: 96_000,
+  maxToolResultCharacters: 12_000,
 };
 
 export function normalizeRunBudget(input?: Partial<AgentRunBudget>): AgentRunBudget {
@@ -92,7 +98,48 @@ export function normalizeRunBudget(input?: Partial<AgentRunBudget>): AgentRunBud
   return {
     maxTurns,
     warningTurnsRemaining,
+    maxTotalTokens: positiveInteger(input?.maxTotalTokens, DEFAULT_RUN_BUDGET.maxTotalTokens),
+    maxContextCharacters: positiveInteger(input?.maxContextCharacters, DEFAULT_RUN_BUDGET.maxContextCharacters),
+    maxToolResultCharacters: positiveInteger(input?.maxToolResultCharacters, DEFAULT_RUN_BUDGET.maxToolResultCharacters),
   };
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+function binaryLike(content: string): boolean {
+  if (!content) return false;
+  const sample = content.slice(0, 4_096);
+  let controls = 0;
+  for (const char of sample) {
+    const code = char.charCodeAt(0);
+    if (code === 0 || (code < 9 || (code > 13 && code < 32))) controls += 1;
+  }
+  return controls / Math.max(1, sample.length) > 0.02;
+}
+
+export function compactToolResult(content: string, maxCharacters = DEFAULT_RUN_BUDGET.maxToolResultCharacters): string {
+  if (binaryLike(content)) {
+    return `[binary output omitted: ${content.length} characters; record the file path, size, hash and analysis summary instead]`;
+  }
+  if (content.length <= maxCharacters) return content;
+  const head = Math.floor(maxCharacters * 0.7);
+  const tail = maxCharacters - head;
+  return `${content.slice(0, head)}\n\n[... ${content.length - maxCharacters} characters omitted ...]\n\n${content.slice(-tail)}`;
+}
+
+export function compactConversation(messages: TurnMessage[], maxCharacters: number): void {
+  let total = messages.reduce((sum, message) => sum + message.content.length, 0);
+  if (total <= maxCharacters) return;
+  const preserveFrom = Math.max(1, messages.length - 10);
+  for (let i = 1; i < preserveFrom && total > maxCharacters; i += 1) {
+    const message = messages[i];
+    if (!message || message.content.startsWith("[Earlier context compacted")) continue;
+    const replacement = `[Earlier ${message.role} context compacted: ${message.content.length} characters omitted]`;
+    total -= message.content.length - replacement.length;
+    messages[i] = { ...message, content: replacement };
+  }
 }
 
 export interface ObserverReviewDecision {
@@ -269,6 +316,11 @@ export class AgentRuntime {
         onEvent({ type: "budget_exhausted", content: `run budget exhausted after ${budget.maxTurns} turns` });
         return;
       }
+      if (cumulativeTotalTokens >= budget.maxTotalTokens) {
+        onEvent({ type: "budget_exhausted", content: `run token budget exhausted after ${cumulativeTotalTokens} tokens` });
+        return;
+      }
+      compactConversation(messages, budget.maxContextCharacters);
 
       const turnsRemaining = budgetFinite ? budget.maxTurns - turnCount : Infinity;
       if (budgetFinite && !warned && turnsRemaining <= budget.warningTurnsRemaining) {
@@ -368,8 +420,9 @@ export class AgentRuntime {
         for (let i = 0; i < batch.calls.length; i++) {
           const call = batch.calls[i];
           const result = results[i];
-          onEvent({ type: "tool_result", name: call.name, content: result.content });
-          messages.push({ role: "tool", content: result.content, toolCallId: call.id });
+          const safeContent = compactToolResult(result.content, budget.maxToolResultCharacters);
+          onEvent({ type: "tool_result", name: call.name, content: safeContent });
+          messages.push({ role: "tool", content: safeContent, toolCallId: call.id });
         }
         if (this.interrupted(options)) {
           this.emitInterrupted(onEvent);
@@ -486,15 +539,18 @@ export class AgentRuntime {
         Math.max(1_000, options.toolTimeoutMs ?? 45_000),
         options.signal,
       );
-      if (res.ok && changesWorkspace(call.name)) failureMemory.clear();
-      const failureClass = res.ok ? undefined : classifyToolFailure(res.content);
+      const nonInformativeHttpFailure = /(?:^|\s)status=5\d\d(?:\s|$)/i.test(res.content);
+      const effectiveOk = res.ok && !nonInformativeHttpFailure;
+      if (effectiveOk && changesWorkspace(call.name)) failureMemory.clear();
+      const failureClass = effectiveOk ? undefined : classifyToolFailure(res.content);
       const transient = failureClass === "transient";
-      if (!res.ok && failureClass === "permanent") failureMemory.add(call.name, call.input);
+      if (!effectiveOk && failureClass === "permanent") failureMemory.add(call.name, call.input);
+      if (!effectiveOk && failureClass === "transient") failureMemory.add(call.name, call.input, 2);
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: res.content });
       const content = advisory
         ? `[Exploration advisory issued before execution]\n${advisory}\n\n[Tool result]\n${res.content}`
         : res.content;
-      const result = { content, ok: res.ok };
+      const result = { content, ok: effectiveOk };
       if (options.onToolExecuted) {
         await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, transient, failureClass, risk: tool.risk });
       }

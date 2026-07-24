@@ -8,6 +8,7 @@ export class TrafficStore {
 
   add(entry: TrafficEntry): void {
     const e = TrafficEntrySchema.parse(entry);
+    const responseBody = safeStoredBody(e.responseBody, e.contentType);
     this.db.insert(trafficEntries).values({
       id: e.id, caseId: e.caseId, runId: e.runId, identityId: e.identityId,
       identityVersion: e.identityVersion, attributionSource: e.attributionSource,
@@ -18,12 +19,12 @@ export class TrafficStore {
       responseHeadersJson: e.responseHeaders ? JSON.stringify(e.responseHeaders) : null,
       responseSize: e.responseSize ?? null,
       contentType: e.contentType ?? null,
-      responseBody: e.responseBody, createdAt: e.createdAt,
+      responseBody, createdAt: e.createdAt,
     }).run();
   }
 
   updateResponse(id: string, responseBody: string | null, responseSize: number | null): void {
-    this.db.update(trafficEntries).set({ responseBody, responseSize }).where(eq(trafficEntries.id, id)).run();
+    this.db.update(trafficEntries).set({ responseBody: safeStoredBody(responseBody, null), responseSize }).where(eq(trafficEntries.id, id)).run();
   }
 
   clearByCase(caseId: string): number {
@@ -54,4 +55,18 @@ export class TrafficStore {
         }),
       );
   }
+}
+
+function safeStoredBody(body: string | null, contentType: string | null | undefined): string | null {
+  if (!body) return body;
+  const textual = !contentType || /(?:text|json|xml|javascript|x-www-form-urlencoded|graphql)/i.test(contentType);
+  if (!textual) return null;
+  const sample = body.slice(0, 4_096);
+  let controls = 0;
+  for (const character of sample) {
+    const code = character.charCodeAt(0);
+    if (code === 0 || code < 9 || (code > 13 && code < 32)) controls += 1;
+  }
+  if (controls / Math.max(1, sample.length) > 0.02) return null;
+  return body.length > 64_000 ? body.slice(0, 64_000) : body;
 }

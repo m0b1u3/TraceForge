@@ -242,7 +242,7 @@ export function registerRoutes(
   app.post("/api/cases", async (req) => {
     const body = req.body as { name: string; allowHosts: string[]; denyHosts?: string[] };
     const c = cases.create(body.name, [
-      { caseId: "pending", allowHosts: body.allowHosts, denyHosts: body.denyHosts ?? [] },
+      { caseId: "", allowHosts: body.allowHosts, denyHosts: body.denyHosts ?? [] },
     ]);
     bus.emit({ type: "case_created", case: c });
     return c;
@@ -748,7 +748,11 @@ export function registerRoutes(
           const level = validatedObserverLevel(w, validFactIds, validTaskIds);
           const fingerprint = observerFingerprint(w);
           observedFingerprints.add(fingerprint);
-          const existing = observerStore.getActiveByFingerprint(id, reviewRunId, fingerprint);
+          const existing = observerStore.getActiveByFingerprint(id, reviewRunId, fingerprint)
+            ?? observerStore.listByCase(id).warnings.find((candidate) =>
+              candidate.relatedRunId === reviewRunId
+              && ["open", "detected", "correcting", "escalated"].includes(candidate.status)
+              && observerFingerprint(candidate) === fingerprint);
           if (existing) {
             if (existing.status === "escalated") continue;
             const warning = observerStore.observeAgain(existing.id, {
@@ -1041,7 +1045,7 @@ export function registerRoutes(
 
     // 若配置了 MCP server，把其工具纳入 agent 工具集；工具名直接使用 MCP toolName。
     if (mcp) {
-      for (const h of mcp.listTools()) registry.register(mcpToolToDescriptor(h, mcp));
+      for (const h of mcp.listTools()) registry.register(mcpToolToDescriptor(h, mcp, { caseId: id }));
     }
 
     const gate = new ApprovalGate(async (tool, input) => {
@@ -1051,7 +1055,7 @@ export function registerRoutes(
       bus.emit({ type: "approval_requested", caseId: id, approvalId, tool: tool.name, input: serializedInput });
       const decision = await approvals.request(approvalId, running.abortController.signal);
       pendingInterventions.clearApproval(id, approvalId);
-      agentEventStore.append(id, "done", `Approval ${decision}: ${tool.name}`);
+      agentEventStore.append(id, "validation", `Approval ${decision}: ${tool.name}`, tool.name);
       bus.emit({ type: "approval_resolved", caseId: id, approvalId, tool: tool.name, decision });
       return decision;
     });
@@ -1076,6 +1080,20 @@ export function registerRoutes(
 - 禁止用完全相同的输入重复调用任何已经执行失败的工具（尤其是 exec_command 和脚本类调用）。如果一次调用返回错误、非零退出码或失败结果，立即用 record_fact 记录一条 type=failed_attempt 的 Fact，然后换用其他方法。
 - 如果当前环境无法解决问题，调用 download_tool(url, filename, executable=true) 从网络下载现成工具，保存到 workspace/<caseId>/downloads/，然后通过 exec_command 执行（仍需用户批准）。
 - 重试相同失败输入会被 runtime 自动拒绝，不要一直重复尝试，不要浪费轮次。`;
+
+    const runtimeProtocol = `
+[Runtime environment]
+- Host platform: ${process.platform}; shell commands must be compatible with this platform.
+- Current case id: ${id}. Workspace tools are server-bound to this case; never invent or reuse a caseId.
+- Never print binary files to stdout. For binary artifacts, record path, byte size, hash, format and a short analysis summary.
+- A repeated HTTP failure means the same endpoint + technique + response class, even when payload spelling changes. Pivot after two non-informative variants.
+
+[Evidence and hypothesis loop]
+- Keep broad ideas in one hypothesis pool. Before repeated active testing of a suspected weakness, record or update one hypothesis and attach a concrete validation task.
+- Facts are observations. A vulnerability remains candidate/validating until independent evidence confirms exploitability; HTTP 500 alone is not proof.
+- After a meaningful result, update the hypothesis/task instead of issuing more variants without a stated evidence gap.
+- This protocol organizes exploration; it does not forbid related targets already inside the authorized scope or suppress useful plaintext clues.
+`;
 
     const failedAttempts = factStore.listByCase(id)
       .filter((f) => f.type === "failed_attempt" && f.validity === "valid")
@@ -1167,7 +1185,7 @@ export function registerRoutes(
     agentEventStore.append(id, "started", `Started: ${goal}`);
     const observerScheduler = new ObserverScheduler();
     await new AgentRuntime(llm, registry, gate).run(
-      `${system}\n\nValidation task protocol: use manage_validation_task to claim a consensus validation task before executing it, release it before pivoting, and complete it only after recording the required evidence. Do not manually change consensus validation status with record_task.\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}\n\n${getValidationMatrixPlan()}`,
+      `${system}\n${runtimeProtocol}\nValidation task protocol: use manage_validation_task to claim a consensus validation task before executing it, release it before pivoting, and complete it only after recording the required evidence. Do not manually change consensus validation status with record_task.\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}\n\n${getValidationMatrixPlan()}`,
       built.messages,
       (e) => {
       if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
@@ -1241,7 +1259,7 @@ export function registerRoutes(
       signal: running.abortController.signal,
       runId,
       budget,
-      reviewIntervalTurns: 6,
+      reviewIntervalTurns: 12,
       getObserverReviewTrigger: () => observerScheduler.consume(),
       getSteeringMessages: () => runs.consumeSteering(runId),
       onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger),

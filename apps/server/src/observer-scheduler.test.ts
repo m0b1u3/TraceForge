@@ -52,7 +52,7 @@ describe("ObserverScheduler event policy", () => {
   it("marks successful command execution as a high-risk review event", () => {
     const scheduler = new ObserverScheduler();
     scheduler.observe({ name: "exec_command", input: {}, content: "done", ok: true, risk: "command" });
-    expect(scheduler.consume()).toBe("high_risk");
+    expect(scheduler.consume()).toBe(null);
   });
 
   it("reviews validated and invalidated attack paths as evidence events", () => {
