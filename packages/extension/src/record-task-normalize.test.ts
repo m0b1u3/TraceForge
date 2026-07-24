@@ -12,6 +12,7 @@ function mkTasks() {
         created.push(t);
         return t;
       },
+      listByCase: (caseId: string) => created.filter((task) => task.caseId === caseId),
       getById: () => undefined,
       update: () => undefined,
     },
@@ -43,5 +44,19 @@ describe("makeRecordTaskTool normalization", () => {
     await tool.execute({ title: "t", priority: "low", status: "blocked", hypothesisIds: ["hyp_1"] });
     expect(tk.created[0].priority).toBe("low");
     expect(tk.created[0].status).toBe("blocked");
+  });
+  it("reuses an equivalent relationship-gated task instead of creating a duplicate", async () => {
+    const tk = mkTasks();
+    const existing = tk.writer.create("c", {
+      runId: "run_1", title: "Replay privileged request", status: "blocked", reason: "waiting",
+      blockedBy: [], triggerWhen: [], relatedFacts: [], hypothesisIds: ["hyp_1"], priority: "high",
+      relationshipGate: { blockedHypothesisIds: ["hyp_1"], resumeStatus: "approved", priorReason: "ready" },
+    });
+    const tool = makeRecordTaskTool("c", tk.writer, timeline, noop, "run_1");
+    const result = await tool.execute({ title: " replay privileged request ", hypothesisIds: ["hyp_1"] });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain(existing.id);
+    expect(result.content).toContain("relationship-gated");
+    expect(tk.created).toHaveLength(1);
   });
 });

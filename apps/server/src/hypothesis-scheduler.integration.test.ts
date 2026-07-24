@@ -283,8 +283,12 @@ describe("HypothesisScheduler with real SQLite", () => {
     scheduler.rebalance("case_1", "run_1");
     expect(tasks.getById(task.id)).toMatchObject({
       status: "running",
-      relationshipGate: { blockedHypothesisIds: [firstDependent.id, secondDependent.id], resumeStatus: null },
+      relationshipGate: { resumeStatus: null },
     });
+    expect(tasks.getById(task.id)?.relationshipGate?.blockedHypothesisIds).toEqual(
+      expect.arrayContaining([firstDependent.id, secondDependent.id]),
+    );
+    expect(tasks.getById(task.id)?.relationshipGate?.blockedHypothesisIds).toHaveLength(2);
     store.update(firstPrerequisite.id, { status: "confirmed" }, { kind: "confirmed", reason: "First confirmed." });
     scheduler.rebalance("case_1", "run_1");
     expect(tasks.getById(task.id)?.relationshipGate?.blockedHypothesisIds).toEqual([secondDependent.id]);

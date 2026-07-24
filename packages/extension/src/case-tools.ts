@@ -58,6 +58,7 @@ export interface FactWriter {
 export interface TaskWriter {
   create(caseId: string, input: Omit<Task, "id" | "caseId" | "createdAt" | "updatedAt" | "updateCount">): Task;
   getById(id: string): Task | undefined;
+  listByCase?(caseId: string): Task[];
   update(id: string, patch: Partial<Pick<Task, "title" | "status" | "reason" | "priority" | "blockedBy" | "triggerWhen" | "relatedFacts" | "hypothesisIds">>): Task | undefined;
 }
 export interface ActionWriter {
@@ -264,6 +265,24 @@ export function makeRecordTaskTool(
         return !hypothesis || (hypothesis.caseId !== undefined && hypothesis.caseId !== caseId);
       })) {
         return { ok: false, content: "hypothesisIds contains an unknown Hypothesis" };
+      }
+      if (typeof i.id !== "string" && tasks.listByCase) {
+        const normalizedTitle = String(i.title).trim().toLocaleLowerCase();
+        const requestedHypotheses = [...hypothesisIds].sort();
+        const duplicate = tasks.listByCase(caseId).find((task) => {
+          if ((task.runId ?? null) !== (runId ?? null)) return false;
+          if (["done", "failed", "rejected", "out_of_scope"].includes(task.status)) return false;
+          const existingHypotheses = [...(task.hypothesisIds ?? [])].sort();
+          return task.title.trim().toLocaleLowerCase() === normalizedTitle
+            && existingHypotheses.length === requestedHypotheses.length
+            && existingHypotheses.every((id, index) => id === requestedHypotheses[index]);
+        });
+        if (duplicate) {
+          const gate = duplicate.relationshipGate
+            ? ` It is relationship-gated by ${duplicate.relationshipGate.blockedHypothesisIds.join(", ")}; wait for the gate to clear.`
+            : "";
+          return { ok: true, content: `Equivalent Task already exists: ${duplicate.id} [${duplicate.status}]. Reuse it instead of creating a duplicate.${gate}` };
+        }
       }
       if (typeof i.id === "string" && i.id) {
         const currentTask = tasks.getById(i.id);

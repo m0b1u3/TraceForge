@@ -93,4 +93,33 @@ describe("tasks route", () => {
     const res = await app.inject({ method: "PATCH", url: "/api/tasks/nope", payload: { status: "done" } });
     expect(res.statusCode).toBe(404);
   });
+
+  it("persists and returns relationship-gate explanations", async () => {
+    const created = await app.inject({
+      method: "POST", url: `/api/cases/${caseId}/tasks`,
+      payload: {
+        runId: "run_1",
+        title: "Replay privileged request",
+        status: "blocked",
+        reason: "Relationship gate",
+        blockedBy: [],
+        triggerWhen: [],
+        relatedFacts: [],
+        hypothesisIds: ["hyp_child"],
+        relationshipGate: {
+          blockedHypothesisIds: ["hyp_child"],
+          resumeStatus: "approved",
+          priorReason: "Operator approved controlled replay.",
+        },
+        priority: "high",
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const listed = (await app.inject({ url: `/api/cases/${caseId}/tasks` })).json();
+    expect(listed[0].relationshipGate).toEqual({
+      blockedHypothesisIds: ["hyp_child"],
+      resumeStatus: "approved",
+      priorReason: "Operator approved controlled replay.",
+    });
+  });
 });

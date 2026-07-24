@@ -45,7 +45,10 @@ export function buildContext(input: ContextInput, budget: ContextBudget): BuildR
     ? `活跃任务（已按执行优先级排序）：\n${input.activeTasks.map((t) => {
       const priority = input.taskPriorities?.[t.id];
       const ranking = priority ? ` [score:${priority.score}; ${priority.reasons.join(", ")}]` : "";
-      return `- ${t.id} [${t.status}/${t.priority}]${ranking} ${t.title}`;
+      const gate = t.relationshipGate
+        ? ` [RELATIONSHIP GATE: blocked by ${t.relationshipGate.blockedHypothesisIds.join(", ")}; do not execute or create a duplicate task; wait for those hypothesis gates to clear]`
+        : "";
+      return `- ${t.id} [${t.status}/${t.priority}]${ranking}${gate} ${t.title}`;
     }).join("\n")}`
     : "活跃任务：（无）";
   const inventoryLine = `📁 本 Case 已积累：${input.factCount} 个 Fact、${input.trafficCount} 条流量、${input.summaryCount} 条远期对话摘要。需要历史发现时用 search_facts("关键词") / search_traffic(...) / recall_conversation(...) 检索；要某 Fact 细节用 get_fact_detail(id)。`;

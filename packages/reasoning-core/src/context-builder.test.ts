@@ -45,4 +45,20 @@ describe("buildContext", () => {
     expect(r.degraded.length).toBeGreaterThan(0);
     expect(r.estimatedTokens).toBeLessThanOrEqual(300 + 200);
   });
+  it("explains relationship-gated tasks and tells the agent not to duplicate them", () => {
+    const r = buildContext({
+      ...base,
+      activeTasks: [{
+        id: "task_1", caseId: "case_1", runId: "run_1", title: "Replay privileged request",
+        status: "blocked", reason: "Relationship gate", blockedBy: [], triggerWhen: [], relatedFacts: [],
+        hypothesisIds: ["hyp_child"], relationshipGate: {
+          blockedHypothesisIds: ["hyp_child"], resumeStatus: "approved", priorReason: "Ready",
+        },
+        priority: "high", createdAt: "now", updatedAt: "now", updateCount: 1,
+      }],
+    }, budget);
+    expect(r.messages[0].content).toContain("RELATIONSHIP GATE");
+    expect(r.messages[0].content).toContain("hyp_child");
+    expect(r.messages[0].content).toContain("do not execute or create a duplicate task");
+  });
 });
