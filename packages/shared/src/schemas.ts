@@ -231,6 +231,11 @@ export const TaskSchema = z.object({
   triggerWhen: z.array(z.string()).default([]),
   relatedFacts: z.array(z.string()).default([]),
   hypothesisIds: z.array(z.string()).optional(),
+  relationshipGate: z.object({
+    blockedHypothesisIds: z.array(z.string()),
+    resumeStatus: z.enum(["open", "recheck_candidate", "approved"]).nullable(),
+    priorReason: z.string(),
+  }).nullable().optional(),
   priority: z.enum(["low", "medium", "high"]).default("medium"),
   createdAt: z.string(),
   updatedAt: z.string(),

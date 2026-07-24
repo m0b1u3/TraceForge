@@ -221,4 +221,76 @@ describe("HypothesisScheduler with real SQLite", () => {
     expect(activeIds.has(incumbent.id) && activeIds.has(challenger.id)).toBe(false);
     expect(activeIds.has(challenger.id)).toBe(true);
   });
+
+  it("blocks and safely resumes a linked task when its hypothesis gate changes", () => {
+    const db = createDb(":memory:");
+    const store = new HypothesisStore(db);
+    const tasks = new TaskStore(db);
+    const prerequisite = store.create("case_1", {
+      runId: "run_1", statement: "Privileged route is reachable", basedOnFactIds: ["fact_1"],
+    });
+    const dependent = store.create("case_1", {
+      runId: "run_1", statement: "Route permits an authorization bypass", basedOnFactIds: ["fact_2"],
+      relations: { prerequisiteIds: [prerequisite.id] },
+    });
+    const task = tasks.create("case_1", {
+      runId: "run_1", title: "Replay privileged request", status: "approved", reason: "Operator approved controlled replay.",
+      blockedBy: [], triggerWhen: [], relatedFacts: ["fact_2"], hypothesisIds: [dependent.id], priority: "high",
+    });
+    const scheduler = new HypothesisScheduler(store, { tasks });
+
+    const blocked = scheduler.rebalance("case_1", "run_1");
+    expect(blocked.blockedTaskIds).toEqual([task.id]);
+    expect(tasks.getById(task.id)).toMatchObject({
+      status: "blocked",
+      relationshipGate: { blockedHypothesisIds: [dependent.id], resumeStatus: "approved" },
+    });
+
+    store.update(prerequisite.id, { status: "confirmed" }, { kind: "confirmed", reason: "Route observed." });
+    const resumed = scheduler.rebalance("case_1", "run_1");
+    expect(resumed.resumedTaskIds).toEqual([task.id]);
+    expect(tasks.getById(task.id)).toMatchObject({
+      status: "approved",
+      reason: "Operator approved controlled replay.",
+      relationshipGate: null,
+    });
+  });
+
+  it("waits for every linked hypothesis gate and never interrupts a running task", () => {
+    const db = createDb(":memory:");
+    const store = new HypothesisStore(db);
+    const tasks = new TaskStore(db);
+    const firstPrerequisite = store.create("case_1", {
+      runId: "run_1", statement: "First boundary", basedOnFactIds: ["fact_1"],
+    });
+    const secondPrerequisite = store.create("case_1", {
+      runId: "run_1", statement: "Second boundary", basedOnFactIds: ["fact_2"],
+    });
+    const firstDependent = store.create("case_1", {
+      runId: "run_1", statement: "First dependent", basedOnFactIds: ["fact_3"],
+      relations: { prerequisiteIds: [firstPrerequisite.id] },
+    });
+    const secondDependent = store.create("case_1", {
+      runId: "run_1", statement: "Second dependent", basedOnFactIds: ["fact_4"],
+      relations: { prerequisiteIds: [secondPrerequisite.id] },
+    });
+    const task = tasks.create("case_1", {
+      runId: "run_1", title: "In-flight correlated validation", status: "running", reason: "Lease already acquired.",
+      blockedBy: [], triggerWhen: [], relatedFacts: [], hypothesisIds: [firstDependent.id, secondDependent.id], priority: "high",
+    });
+    const scheduler = new HypothesisScheduler(store, { tasks });
+
+    scheduler.rebalance("case_1", "run_1");
+    expect(tasks.getById(task.id)).toMatchObject({
+      status: "running",
+      relationshipGate: { blockedHypothesisIds: [firstDependent.id, secondDependent.id], resumeStatus: null },
+    });
+    store.update(firstPrerequisite.id, { status: "confirmed" }, { kind: "confirmed", reason: "First confirmed." });
+    scheduler.rebalance("case_1", "run_1");
+    expect(tasks.getById(task.id)?.relationshipGate?.blockedHypothesisIds).toEqual([secondDependent.id]);
+    expect(tasks.getById(task.id)?.status).toBe("running");
+    store.update(secondPrerequisite.id, { status: "confirmed" }, { kind: "confirmed", reason: "Second confirmed." });
+    scheduler.rebalance("case_1", "run_1");
+    expect(tasks.getById(task.id)).toMatchObject({ status: "running", reason: "Lease already acquired.", relationshipGate: null });
+  });
 });

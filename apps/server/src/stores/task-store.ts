@@ -11,6 +11,7 @@ function rowToTask(row: typeof tasks.$inferSelect): Task {
     id: row.id, caseId: row.caseId, runId: row.runId, title: row.title, status: row.status, reason: row.reason,
     blockedBy: JSON.parse(row.blockedByJson), triggerWhen: JSON.parse(row.triggerWhenJson),
     relatedFacts: JSON.parse(row.relatedFactsJson), hypothesisIds: JSON.parse(row.hypothesisIdsJson), priority: row.priority,
+    relationshipGate: JSON.parse(row.relationshipGateJson),
     createdAt: row.createdAt, updatedAt: row.updatedAt, updateCount: row.updateCount,
   });
 }
@@ -26,12 +27,13 @@ export class TaskStore {
       id, caseId, runId: t.runId, title: t.title, status: t.status, reason: t.reason,
       blockedByJson: JSON.stringify(t.blockedBy), triggerWhenJson: JSON.stringify(t.triggerWhen),
       relatedFactsJson: JSON.stringify(t.relatedFacts), hypothesisIdsJson: JSON.stringify(t.hypothesisIds ?? []), priority: t.priority,
+      relationshipGateJson: JSON.stringify(t.relationshipGate ?? null),
       createdAt: now, updatedAt: now, updateCount: 0,
     }).run();
     return t;
   }
 
-  update(id: string, patch: Partial<Pick<Task, "title" | "status" | "reason" | "priority" | "blockedBy" | "triggerWhen" | "relatedFacts" | "hypothesisIds">>): Task | undefined {
+  update(id: string, patch: Partial<Pick<Task, "title" | "status" | "reason" | "priority" | "blockedBy" | "triggerWhen" | "relatedFacts" | "hypothesisIds" | "relationshipGate">>): Task | undefined {
     const cur = this.getById(id);
     if (!cur) return undefined;
     const updatedAt = new Date().toISOString();
@@ -40,6 +42,7 @@ export class TaskStore {
       title: next.title, status: next.status, reason: next.reason, priority: next.priority,
       blockedByJson: JSON.stringify(next.blockedBy), triggerWhenJson: JSON.stringify(next.triggerWhen),
       relatedFactsJson: JSON.stringify(next.relatedFacts), hypothesisIdsJson: JSON.stringify(next.hypothesisIds ?? []),
+      relationshipGateJson: JSON.stringify(next.relationshipGate ?? null),
       updateCount: next.updateCount, updatedAt,
     }).where(eq(tasks.id, id)).run();
     return next;

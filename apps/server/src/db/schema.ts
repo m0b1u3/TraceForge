@@ -131,6 +131,7 @@ export const tasks = sqliteTable("tasks", {
   triggerWhenJson: text("trigger_when_json").notNull(),
   relatedFactsJson: text("related_facts_json").notNull(),
   hypothesisIdsJson: text("hypothesis_ids_json").notNull().default("[]"),
+  relationshipGateJson: text("relationship_gate_json").notNull().default("null"),
   priority: text("priority").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

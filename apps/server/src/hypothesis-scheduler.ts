@@ -34,6 +34,8 @@ export interface RebalanceResult {
   changed: boolean;
   capacity: number;
   capacityReason: string;
+  blockedTaskIds: string[];
+  resumedTaskIds: string[];
 }
 
 const DEFAULT_FACTORS: HypothesisScoreFactors = {
@@ -64,8 +66,69 @@ export function scoreHypothesis(factors: Partial<HypothesisScoreFactors>): numbe
 export class HypothesisScheduler {
   constructor(
     private hypotheses: HypothesisStore,
-    private options: { tasks?: Pick<TaskStore, "listByCase">; now?: () => Date } = {},
+    private options: { tasks?: Pick<TaskStore, "listByCase" | "update">; now?: () => Date } = {},
   ) {}
+
+  private syncRelationshipGatedTasks(
+    caseId: string,
+    runId: string,
+    runPool: Hypothesis[],
+    selected: Hypothesis[],
+  ): { blockedTaskIds: string[]; resumedTaskIds: string[] } {
+    if (!this.options.tasks) return { blockedTaskIds: [], resumedTaskIds: [] };
+    const selectedIds = selected.map((item) => item.id);
+    const hypothesesById = new Map(runPool.map((item) => [item.id, item]));
+    const blockedTaskIds: string[] = [];
+    const resumedTaskIds: string[] = [];
+    const blockableStatuses = new Set(["open", "recheck_candidate", "approved"]);
+    const terminalStatuses = new Set(["done", "failed", "rejected", "out_of_scope"]);
+
+    for (const task of this.options.tasks.listByCase(caseId).filter((item) => item.runId === runId)) {
+      const linked = (task.hypothesisIds ?? [])
+        .map((id) => hypothesesById.get(id))
+        .filter((item): item is Hypothesis => item !== undefined);
+      const blockedHypothesisIds = linked
+        .filter((hypothesis) =>
+          hypothesis.status === "refuted"
+          || hypothesis.status === "archived"
+          || !getHypothesisRelationshipDecision(
+            hypothesis,
+            runPool,
+            selectedIds.filter((id) => id !== hypothesis.id),
+          ).activationAllowed)
+        .map((hypothesis) => hypothesis.id)
+        .sort();
+      const previousGate = task.relationshipGate;
+
+      if (blockedHypothesisIds.length > 0) {
+        const unchanged = previousGate
+          && previousGate.blockedHypothesisIds.length === blockedHypothesisIds.length
+          && previousGate.blockedHypothesisIds.every((id, index) => id === blockedHypothesisIds[index]);
+        if (unchanged) continue;
+        const resumeStatus = previousGate?.resumeStatus
+          ?? (blockableStatuses.has(task.status) ? task.status as "open" | "recheck_candidate" | "approved" : null);
+        const priorReason = previousGate?.priorReason ?? task.reason;
+        const nextStatus = blockableStatuses.has(task.status) ? "blocked" : task.status;
+        this.options.tasks.update(task.id, {
+          status: nextStatus,
+          reason: `Relationship gate: waiting on hypotheses ${blockedHypothesisIds.join(", ")}.`,
+          relationshipGate: { blockedHypothesisIds, resumeStatus, priorReason },
+        });
+        if (nextStatus === "blocked" && task.status !== "blocked") blockedTaskIds.push(task.id);
+        continue;
+      }
+
+      if (!previousGate) continue;
+      const canResume = previousGate.resumeStatus !== null && !terminalStatuses.has(task.status);
+      this.options.tasks.update(task.id, {
+        status: canResume ? previousGate.resumeStatus! : task.status,
+        reason: previousGate.priorReason,
+        relationshipGate: null,
+      });
+      if (canResume && task.status === "blocked") resumedTaskIds.push(task.id);
+    }
+    return { blockedTaskIds, resumedTaskIds };
+  }
 
   rebalance(caseId: string, runId: string): RebalanceResult {
     const runPool = this.hypotheses.listByCase(caseId).filter((item) => item.runId === runId);
@@ -208,6 +271,7 @@ export class HypothesisScheduler {
     const active = this.hypotheses.listByCase(caseId)
       .filter((item) => item.runId === runId && item.status === "active")
       .sort((left, right) => (right.priorityScore ?? 0) - (left.priorityScore ?? 0));
+    const taskGateChanges = this.syncRelationshipGatedTasks(caseId, runId, runPool, selected);
     return {
       active,
       promoted,
@@ -215,6 +279,7 @@ export class HypothesisScheduler {
       changed: promoted.length > 0 || demoted.length > 0,
       capacity: activeCapacity,
       capacityReason: capacityDecision.reason,
+      ...taskGateChanges,
     };
   }
 }

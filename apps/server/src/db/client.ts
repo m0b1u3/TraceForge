@@ -68,7 +68,8 @@ export function createDb(path: string) {
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
       run_id TEXT,
       reason TEXT NOT NULL, blocked_by_json TEXT NOT NULL, trigger_when_json TEXT NOT NULL,
-      related_facts_json TEXT NOT NULL, hypothesis_ids_json TEXT NOT NULL DEFAULT '[]', priority TEXT NOT NULL,
+      related_facts_json TEXT NOT NULL, hypothesis_ids_json TEXT NOT NULL DEFAULT '[]',
+      relationship_gate_json TEXT NOT NULL DEFAULT 'null', priority TEXT NOT NULL,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       update_count INTEGER NOT NULL DEFAULT 0
     );
@@ -227,6 +228,7 @@ export function createDb(path: string) {
   ensureColumns("tasks", [
     { name: "run_id", definition: "TEXT" },
     { name: "hypothesis_ids_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
+    { name: "relationship_gate_json", definition: "TEXT NOT NULL DEFAULT 'null'" },
   ]);
   ensureColumns("timeline", [{ name: "run_id", definition: "TEXT" }]);
   ensureColumns("hypotheses", [
