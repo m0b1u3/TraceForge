@@ -55,4 +55,21 @@ describe("HypothesisStore", () => {
       relations: { prerequisiteIds: [parent.id] },
     })).toThrow("cross-Run");
   });
+  it("rejects prerequisite and derived relationship cycles on update", () => {
+    const first = store.create("c1", { runId: "run_1", statement: "First", basedOnFactIds: ["f1"] });
+    const second = store.create("c1", {
+      runId: "run_1",
+      statement: "Second",
+      basedOnFactIds: ["f2"],
+      relations: { prerequisiteIds: [first.id] },
+    });
+    expect(() => store.update(first.id, {
+      relations: {
+        prerequisiteIds: [],
+        conflictIds: [],
+        supportIds: [],
+        derivedFromIds: [second.id],
+      },
+    })).toThrow("cycle");
+  });
 });

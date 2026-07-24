@@ -192,10 +192,17 @@ describe("HypothesisScheduler with real SQLite", () => {
     const scheduler = new HypothesisScheduler(store);
 
     expect(scheduler.rebalance("case_1", "run_1").active.map((item) => item.id)).not.toContain(dependent.id);
+    expect(store.getById(dependent.id)?.auditTrail.some((entry) =>
+      entry.kind === "relationship_blocked" && entry.reason.includes(prerequisite.id))).toBe(true);
+    const blockedAuditLength = store.getById(dependent.id)?.auditTrail.length;
+    scheduler.rebalance("case_1", "run_1");
+    expect(store.getById(dependent.id)?.auditTrail).toHaveLength(blockedAuditLength ?? 0);
     store.update(prerequisite.id, { status: "confirmed" }, { reason: "Confirmed by evidence.", kind: "confirmed" });
     const afterConfirmation = scheduler.rebalance("case_1", "run_1");
     expect(afterConfirmation.active.map((item) => item.id)).toContain(dependent.id);
     expect(afterConfirmation.active.map((item) => item.id)).toContain(alternative.id);
+    expect(store.getById(dependent.id)?.auditTrail.some((entry) =>
+      entry.kind === "relationship_unblocked")).toBe(true);
   });
 
   it("never keeps mutually conflicting hypotheses active together", () => {

@@ -39,6 +39,52 @@ type Emit = (event: RuntimeEvent) => void;
 export class HypothesisStore {
   constructor(private db: Db, private emit?: Emit) {}
 
+  private normalizeRelations(relations?: Partial<NonNullable<Hypothesis["relations"]>>): NonNullable<Hypothesis["relations"]> {
+    return {
+      prerequisiteIds: [...new Set(relations?.prerequisiteIds ?? [])],
+      conflictIds: [...new Set(relations?.conflictIds ?? [])],
+      supportIds: [...new Set(relations?.supportIds ?? [])],
+      derivedFromIds: [...new Set(relations?.derivedFromIds ?? [])],
+    };
+  }
+
+  private validateRelations(
+    caseId: string,
+    runId: string | null,
+    sourceId: string | null,
+    relations: NonNullable<Hypothesis["relations"]>,
+  ): void {
+    const runHypotheses = this.listByCase(caseId).filter((item) => (item.runId ?? null) === runId);
+    const related = new Map(runHypotheses.map((item) => [item.id, item]));
+    const relationIds = [
+      ...relations.prerequisiteIds,
+      ...relations.conflictIds,
+      ...relations.supportIds,
+      ...relations.derivedFromIds,
+    ];
+    const invalidRelationIds = relationIds.filter((id) => id === sourceId || !related.has(id));
+    if (invalidRelationIds.length > 0) {
+      throw new Error(`hypothesis relations contain self, unknown, or cross-Run references: ${[...new Set(invalidRelationIds)].join(", ")}`);
+    }
+    if (!sourceId) return;
+
+    const dependencyIds = (hypothesis: Hypothesis): string[] => [
+      ...(hypothesis.relations?.prerequisiteIds ?? []),
+      ...(hypothesis.relations?.derivedFromIds ?? []),
+    ];
+    const reachesSource = (id: string, visited: Set<string>): boolean => {
+      if (id === sourceId) return true;
+      if (visited.has(id)) return false;
+      visited.add(id);
+      const hypothesis = related.get(id);
+      return hypothesis ? dependencyIds(hypothesis).some((dependencyId) => reachesSource(dependencyId, visited)) : false;
+    };
+    if ([...relations.prerequisiteIds, ...relations.derivedFromIds]
+      .some((id) => reachesSource(id, new Set()))) {
+      throw new Error("hypothesis prerequisite/derived relationship cycle detected");
+    }
+  }
+
   create(
     caseId: string,
     input: {
@@ -54,21 +100,8 @@ export class HypothesisStore {
       && runHypotheses.filter((item) => item.status === "active").length >= 5
       ? "candidate"
       : input.status ?? "candidate";
-    const relations = {
-      prerequisiteIds: [...new Set(input.relations?.prerequisiteIds ?? [])],
-      conflictIds: [...new Set(input.relations?.conflictIds ?? [])],
-      supportIds: [...new Set(input.relations?.supportIds ?? [])],
-      derivedFromIds: [...new Set(input.relations?.derivedFromIds ?? [])],
-    };
-    const relationIds = [...relations.prerequisiteIds, ...relations.conflictIds, ...relations.supportIds, ...relations.derivedFromIds];
-    const related = new Map(this.listByCase(caseId).map((item) => [item.id, item]));
-    const invalidRelationIds = relationIds.filter((id) => {
-      const target = related.get(id);
-      return !target || (target.runId ?? null) !== (input.runId ?? null);
-    });
-    if (invalidRelationIds.length > 0) {
-      throw new Error(`hypothesis relations contain unknown or cross-Run references: ${[...new Set(invalidRelationIds)].join(", ")}`);
-    }
+    const relations = this.normalizeRelations(input.relations);
+    this.validateRelations(caseId, input.runId ?? null, null, relations);
     const now = new Date().toISOString();
     const transition = HypothesisTransitionSchema.parse({
       id: `hyptr_${randomUUID()}`,
@@ -127,11 +160,17 @@ export class HypothesisStore {
 
   update(
     id: string,
-    patch: Partial<Pick<Hypothesis, "status" | "relatedTaskIds" | "statement" | "priorityScore" | "scoreFactors">>,
+    patch: Partial<Pick<Hypothesis, "status" | "relatedTaskIds" | "statement" | "priorityScore" | "scoreFactors" | "relations">>,
     context?: HypothesisChangeContext,
   ): Hypothesis | undefined {
     const cur = this.getById(id);
     if (!cur) return undefined;
+    const nextRelations = patch.relations === undefined
+      ? this.normalizeRelations(cur.relations)
+      : this.normalizeRelations(patch.relations);
+    if (patch.relations !== undefined) {
+      this.validateRelations(cur.caseId, cur.runId ?? null, cur.id, nextRelations);
+    }
     const nextStatus = patch.status ?? cur.status;
     const nextScore = patch.priorityScore ?? cur.priorityScore ?? 50;
     const inferredKind: HypothesisTransition["kind"] = nextStatus !== cur.status
@@ -155,6 +194,7 @@ export class HypothesisStore {
       priorityScore: nextScore,
       scoreFactors: patch.scoreFactors ?? cur.scoreFactors,
       relatedTaskIds: patch.relatedTaskIds ?? cur.relatedTaskIds,
+      relations: nextRelations,
       updatedAt: new Date().toISOString(),
       updateCount: cur.updateCount + 1,
       auditTrail: [...cur.auditTrail, transition],
@@ -167,6 +207,7 @@ export class HypothesisStore {
         priorityScore: next.priorityScore,
         scoreFactorsJson: JSON.stringify(next.scoreFactors ?? {}),
         relatedTaskIdsJson: JSON.stringify(next.relatedTaskIds),
+        relationsJson: JSON.stringify(next.relations),
         auditTrailJson: JSON.stringify(next.auditTrail),
         updatedAt: next.updatedAt,
         updateCount: next.updateCount,

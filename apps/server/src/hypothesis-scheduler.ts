@@ -153,6 +153,36 @@ export class HypothesisScheduler {
       if (fastTrack) fastTrackPromotions.add(challenger.id);
     }
     const nextActiveIds = new Set(selected.map((item) => item.id));
+    for (const item of eligible) {
+      const relationship = getHypothesisRelationshipDecision(
+        item,
+        runPool,
+        selected.filter((selectedItem) => selectedItem.id !== item.id).map((selectedItem) => selectedItem.id),
+      );
+      const lastRelationshipTransition = [...item.auditTrail]
+        .reverse()
+        .find((transition) =>
+          transition.kind === "relationship_blocked" || transition.kind === "relationship_unblocked");
+      if (!relationship.activationAllowed && lastRelationshipTransition?.kind !== "relationship_blocked") {
+        const blockers = [
+          relationship.prerequisiteBlockers.length > 0
+            ? `unconfirmed prerequisites ${relationship.prerequisiteBlockers.join(", ")}`
+            : null,
+          relationship.activeConflicts.length > 0
+            ? `active conflicts ${relationship.activeConflicts.join(", ")}`
+            : null,
+        ].filter((reason): reason is string => reason !== null);
+        this.hypotheses.update(item.id, {}, {
+          kind: "relationship_blocked",
+          reason: `Relationship gate blocked activation: ${blockers.join("; ")}.`,
+        });
+      } else if (relationship.activationAllowed && lastRelationshipTransition?.kind === "relationship_blocked") {
+        this.hypotheses.update(item.id, {}, {
+          kind: "relationship_unblocked",
+          reason: "Relationship gate reopened after prerequisite or conflict state changed.",
+        });
+      }
+    }
     const promoted: string[] = [];
     const demoted: string[] = [];
     for (const item of eligible) {

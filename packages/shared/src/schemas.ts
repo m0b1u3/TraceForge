@@ -356,7 +356,10 @@ export type SessionState = z.infer<typeof SessionStateSchema>;
 
 export const HypothesisTransitionSchema = z.object({
   id: z.string(),
-  kind: z.enum(["created", "promoted", "demoted", "scored", "confirmed", "refuted", "archived", "updated"]),
+  kind: z.enum([
+    "created", "promoted", "demoted", "scored", "confirmed", "refuted", "archived", "updated",
+    "relationship_blocked", "relationship_unblocked",
+  ]),
   fromStatus: z.enum(["candidate", "active", "confirmed", "refuted", "archived"]).nullable(),
   toStatus: z.enum(["candidate", "active", "confirmed", "refuted", "archived"]),
   previousScore: z.number().min(0).max(100).nullable(),
