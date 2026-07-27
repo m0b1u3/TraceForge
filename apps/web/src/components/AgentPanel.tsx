@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Broom, CircleNotch, PaperPlaneTilt, Play, Sparkle, Stop, TerminalWindow } from "@phosphor-icons/react";
+import { ArrowDown, Broom, CircleNotch, PaperPlaneTilt, Play, Sparkle, Stop } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import type { AgentEvent, AgentRun } from "@traceforge/shared";
 import { runAgent, resolveApproval, approveScope, rejectScope, steerAgentRun, interruptAgentRun, listAgentEvents } from "../api.js";
@@ -14,7 +14,7 @@ import {
   type InterventionAction,
 } from "./agent/AgentInterventionCard.js";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog.js";
-import { RunPhase, deriveRunPhase } from "./agent/RunPhase.js";
+import { RunTimelineRuler } from "./agent/RunTimelineRuler.js";
 import { useShallow } from "zustand/react/shallow";
 import { TokenUsageDialog } from "./agent/TokenUsageDialog.js";
 import { useOlderHistory } from "../hooks/use-older-history.js";
@@ -68,7 +68,7 @@ export function AgentPanel() {
     caseId, agentEvents, agentBusy, setAgentBusy, showToast, pendingApproval,
     pendingScope, clearPendingScope, clearPendingApproval, resetAgent, addAgentEvent,
     activeRun, setActiveRun, continuationRun, setContinuationRun,
-    trafficCount, factCount,
+    facts,
   } = useStore(useShallow((state) => ({
     caseId: state.caseId, agentEvents: state.agentEvents, agentBusy: state.agentBusy, setAgentBusy: state.setAgentBusy,
     showToast: state.showToast, pendingApproval: state.pendingApproval, pendingScope: state.pendingScope,
@@ -76,7 +76,7 @@ export function AgentPanel() {
     resetAgent: state.resetAgent, addAgentEvent: state.addAgentEvent, activeRun: state.activeRun,
     setActiveRun: state.setActiveRun, continuationRun: state.continuationRun,
     setContinuationRun: state.setContinuationRun,
-    trafficCount: state.traffic.length, factCount: state.facts.length,
+    facts: state.facts,
   })));
   const [goal, setGoal] = useState("");
   const [interventionAction, setInterventionAction] = useState<InterventionAction>(null);
@@ -284,7 +284,6 @@ export function AgentPanel() {
   return (
     <main className="panel chat-panel">
       <div className="panel-header agent-console-header">
-        <div className="agent-console-title"><span className="section-kicker"><TerminalWindow size={14} aria-hidden="true" />Run console</span><h2>Autonomous security review</h2></div>
         <div className="panel-header-actions">
           <span className={`console-status ${agentBusy ? "is-running" : ""}`}><span />{agentBusy ? "Running" : "Idle"}</span>
           {agentEvents.length > 0 && (
@@ -303,6 +302,21 @@ export function AgentPanel() {
         </div>
       </div>
       <ValidationRunSummary />
+      <RunTimelineRuler
+        events={pageEvents}
+        facts={facts}
+        pendingApproval={pendingApproval}
+        pendingScope={pendingScope}
+        onJump={(eventIndex) => {
+          const container = messagesRef.current;
+          const target = container?.querySelector(`[data-conversation-key="event-${eventIndex}"]`);
+          if (!(target instanceof HTMLElement)) return;
+          shouldAutoScrollRef.current = false;
+          target.scrollIntoView({ block: "center" });
+          target.classList.add("is-jumped");
+          globalThis.setTimeout(() => target.classList.remove("is-jumped"), 1400);
+        }}
+      />
       <section
         className="messages"
         role="log"
@@ -441,7 +455,6 @@ export function AgentPanel() {
           {agentBusy ? <CircleNotch size={15} className="tf-spin" /> : <><span>Send</span><PaperPlaneTilt size={14} weight="fill" /></>}
         </button>
       </div>
-      <RunPhase phase={deriveRunPhase({ events: agentEvents, trafficCount, factCount, busy: agentBusy })} blocked={Boolean(pendingApproval || pendingScope)} active={agentBusy || Boolean(pendingApproval || pendingScope)} />
       <TokenUsageDialog open={usageOpen} onOpenChange={setUsageOpen} />
       <Dialog open={runLauncherOpen} onOpenChange={setRunLauncherOpen}>
         <DialogContent className="run-launcher-dialog">

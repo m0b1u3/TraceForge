@@ -1394,7 +1394,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background: #f1f4f3;
   color: var(--text-secondary);
 }
-.agent-event.is-tool { border-left-color: #bd7a27; border-style: solid; background: #fffdfa; }
+.agent-event.is-tool { border-left-color: #8ea69f; border-style: solid; background: #f7f9f8; }
 .agent-event.is-error { border-left-color: var(--red); background: var(--red-soft); }
 .agent-event.is-complete { border-left-color: var(--green); background: #eaf5f1; }
 .agent-event.is-operator {

@@ -7,6 +7,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import type { AgentConversationEventItem } from "./agent-conversation.js";
+import { rulerToolName } from "./RunTimelineRuler.js";
 import { useStore } from "../../store.js";
 import type { Fact, Task, ValidationWorkflowSnapshot } from "@traceforge/shared";
 
@@ -45,6 +46,7 @@ export const AgentEventRow = memo(function AgentEventRow({ item }: { item: Agent
         open={expanded}
         onOpenChange={setExpanded}
         className={`agent-event ${eventClassName(item.kind)} ${expanded ? "is-expanded" : ""}`}
+        data-conversation-key={item.key}
       >
         <EventHeader item={item}>
           <EventActions text={item.text} copied={copied} onCopiedChange={setCopied} onInspect={inspect}>
@@ -64,7 +66,7 @@ export const AgentEventRow = memo(function AgentEventRow({ item }: { item: Agent
   }
 
   return (
-    <article className={`agent-event ${eventClassName(item.kind)}`}>
+    <article className={`agent-event ${eventClassName(item.kind)}`} data-conversation-key={item.key}>
       <EventHeader item={item} validationState={validationState} targetTitle={targetTitle}><EventActions text={item.text} copied={copied} onCopiedChange={setCopied} onInspect={inspect} onLocate={item.target ? () => navigateToKnowledge(item.target) : undefined} /></EventHeader>
       <p className="agent-event-content">{item.text}</p>
     </article>
@@ -104,10 +106,12 @@ function EventActions({
 }
 
 function EventHeader({ item, children, validationState, targetTitle }: { item: AgentConversationEventItem; children?: ReactNode; validationState?: ValidationState | null; targetTitle?: string }) {
+  const isTool = item.kind === "tool_call" || item.kind === "tool_result";
   return (
     <div className="agent-event-header">
       <span className="agent-event-icon" aria-hidden="true">{eventIcon(item.kind)}</span>
       <span className="agent-event-label">{item.label}</span>
+      {isTool && <code className="agent-event-tool-chip">{rulerToolName(item.text)}</code>}
       {validationState && <span className={`agent-event-state is-${validationState.tone}`}><span aria-hidden="true" />{validationState.label}</span>}
       {targetTitle && <span className="agent-event-target" title={targetTitle}>{targetTitle}</span>}
       {item.createdAt && <time className="agent-event-time" dateTime={item.createdAt} title={new Date(item.createdAt).toLocaleString()}>{new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>}
