@@ -25,8 +25,9 @@ function renderWorkspace(width: number) {
     root?.render(
       createElement(WorkspaceLayout, {
         traffic: createElement("div", null, "Traffic evidence"),
-        agent: createElement("div", null, "Agent workspace"),
+        canvas: createElement("div", null, "Evidence graph"),
         knowledge: createElement("div", null, "Knowledge base"),
+        dock: createElement("div", null, "Run console"),
       }),
     );
   });
@@ -39,7 +40,7 @@ afterEach(() => {
   root = null;
   container = null;
   document.body.innerHTML = "";
-  useStore.setState({ workspacePanelRequest: null });
+  useStore.setState({ workspacePanelRequest: null, dockCollapsed: false });
 });
 
 describe("getWorkspaceMode", () => {
@@ -66,9 +67,21 @@ describe("desktop workspace layout", () => {
     expect(css).toContain("grid-template-columns: minmax(240px, 0.72fr) minmax(430px, 1.42fr) minmax(340px, 1.12fr);");
     expect(minimumTrackWidth + columnGaps + horizontalPadding).toBeLessThanOrEqual(minimumViewportWidth);
   });
+
+  it("spans the run dock across all columns below the panes", () => {
+    const css = readFileSync("apps/web/src/app.css", "utf8");
+    expect(css).toMatch(/\.workspace-dock\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/);
+    expect(css).toMatch(/\.workspace-shell\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s*auto/);
+  });
 });
 
 describe("WorkspaceLayout", () => {
+  it("defaults to the graph canvas as the active panel", () => {
+    const workspace = renderWorkspace(1440).querySelector(".workspace-shell");
+    expect(workspace?.getAttribute("data-active-panel")).toBe("canvas");
+    expect(document.querySelector("#workspace-canvas")?.textContent).toContain("Evidence graph");
+  });
+
   it("opens the Knowledge drawer for a programmatic navigation request and restores focus", () => {
     const workspace = renderWorkspace(1024).querySelector(".workspace-shell");
     const source = document.createElement("button");
@@ -103,13 +116,13 @@ describe("WorkspaceLayout", () => {
     expect(document.activeElement).toBe(closeButton);
 
     act(() => closeButton?.click());
-    expect(workspace?.getAttribute("data-active-panel")).toBe("agent");
+    expect(workspace?.getAttribute("data-active-panel")).toBe("canvas");
     expect(document.activeElement).toBe(trafficTrigger);
 
     act(() => trafficTrigger?.click());
 
     act(() => globalThis.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
-    expect(workspace?.getAttribute("data-active-panel")).toBe("agent");
+    expect(workspace?.getAttribute("data-active-panel")).toBe("canvas");
     expect(document.activeElement).toBe(trafficTrigger);
   });
 
@@ -125,7 +138,28 @@ describe("WorkspaceLayout", () => {
     expect(workspace?.getAttribute("data-active-panel")).toBe("knowledge");
     expect(knowledgeTrigger?.getAttribute("aria-pressed")).toBe("true");
     expect(workspace?.textContent).toContain("Traffic evidence");
-    expect(workspace?.textContent).toContain("Agent workspace");
+    expect(workspace?.textContent).toContain("Evidence graph");
     expect(workspace?.textContent).toContain("Knowledge base");
+  });
+
+  it("collapses the run dock to a slim bar and expands it back via the toggle", () => {
+    const workspace = renderWorkspace(1440).querySelector(".workspace-shell");
+    const toggle = document.querySelector<HTMLButtonElement>(".workspace-dock-toggle");
+
+    expect(workspace?.getAttribute("data-dock")).toBe("expanded");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(workspace?.textContent).toContain("Run console");
+
+    act(() => toggle?.click());
+
+    expect(workspace?.getAttribute("data-dock")).toBe("collapsed");
+    expect(useStore.getState().dockCollapsed).toBe(true);
+    expect(document.querySelector(".workspace-dock-body")).toBeNull();
+
+    act(() => toggle?.click());
+
+    expect(workspace?.getAttribute("data-dock")).toBe("expanded");
+    expect(useStore.getState().dockCollapsed).toBe(false);
+    expect(workspace?.textContent).toContain("Run console");
   });
 });

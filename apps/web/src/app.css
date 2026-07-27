@@ -80,10 +80,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   position: relative;
   display: grid;
   grid-template-columns: minmax(240px, 0.72fr) minmax(430px, 1.42fr) minmax(340px, 1.12fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: var(--space-4);
   padding: var(--space-4);
   min-width: 0;
   min-height: 0;
+}
+
+.workspace-shell[data-dock="expanded"] {
+  grid-template-rows: minmax(0, 1fr) minmax(200px, 35%);
 }
 
 .workspace-pane {
@@ -94,6 +99,75 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .workspace-pane > .panel {
   flex: 1;
+}
+
+.workspace-dock {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.workspace-dock-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 34px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.workspace-shell[data-dock="collapsed"] .workspace-dock-bar {
+  border-bottom-color: transparent;
+}
+
+.workspace-dock-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: var(--font-semibold);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.workspace-dock-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.workspace-dock-toggle:hover {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.workspace-dock-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace-dock-body > .panel {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .workspace-switcher {
@@ -1004,9 +1078,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 @media (min-width: 768px) and (max-width: 1099px) {
   .workspace-shell[data-mode="drawer"] {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: var(--space-2);
     padding: var(--space-3);
+  }
+  .workspace-shell[data-mode="drawer"][data-dock="expanded"] {
+    grid-template-rows: auto minmax(0, 1fr) minmax(160px, 30%);
   }
   .workspace-shell[data-mode="drawer"] .workspace-switcher {
     display: inline-flex;
@@ -1029,8 +1106,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     background: var(--accent-soft);
     color: var(--accent);
   }
-  .workspace-shell[data-mode="drawer"] .workspace-agent {
+  .workspace-shell[data-mode="drawer"] .workspace-canvas {
     grid-row: 2;
+  }
+  .workspace-shell[data-mode="drawer"] .workspace-dock {
+    grid-row: 3;
   }
   .workspace-shell[data-mode="drawer"] .workspace-traffic,
   .workspace-shell[data-mode="drawer"] .workspace-knowledge {
@@ -1097,10 +1177,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .workspace-shell[data-mode="single"] {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
     min-height: min(680px, calc(100svh - 112px));
     gap: var(--space-2);
     padding: var(--space-2);
+  }
+  .workspace-shell[data-mode="single"][data-dock="expanded"] {
+    grid-template-rows: auto minmax(0, 1fr) minmax(150px, 38svh);
+  }
+  .workspace-shell[data-mode="single"] .workspace-dock {
+    grid-row: 3;
   }
   .workspace-shell[data-mode="single"] .workspace-switcher {
     display: grid;
@@ -1115,7 +1201,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     min-height: 0;
   }
   .workspace-shell[data-mode="single"][data-active-panel="traffic"] .workspace-traffic,
-  .workspace-shell[data-mode="single"][data-active-panel="agent"] .workspace-agent,
+  .workspace-shell[data-mode="single"][data-active-panel="canvas"] .workspace-canvas,
   .workspace-shell[data-mode="single"][data-active-panel="knowledge"] .workspace-knowledge {
     display: flex;
   }
