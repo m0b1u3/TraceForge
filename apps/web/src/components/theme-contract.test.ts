@@ -177,4 +177,32 @@ describe("Operations Canvas theme contract", () => {
     expect(app).toMatch(/@media\s*\(max-width:\s*799px\)[\s\S]*?\.launchpad-table-head,[\s\S]*?\.launchpad-row\s*\{[^}]*min-width:\s*0[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) 112px 32px/);
     expect(app).toMatch(/\.launchpad-tools label,[\s\S]*?\.launchpad-tools label:focus-within\s*\{[^}]*width:\s*min\(100%,\s*320px\)/);
   });
+
+  it("reserves state green for live signals in every theme", () => {
+    expect(workbench).not.toMatch(/\.capture-summary\s*>\s*div:first-child\s*strong\s*\{[^}]*color:\s*var\(--primary\)/);
+    expect(workbench).not.toMatch(/\.capture-readiness-block\s+svg\s*\{[^}]*color:\s*var\(--primary\)/);
+    expect(workbench).not.toMatch(/\.capture-readiness-block\s+strong\s*\{[^}]*color:\s*#7fcfb2/i);
+    expect(workbench).toMatch(/\.capture-readiness-block\s+strong\s*\{[^}]*color:\s*var\(--foreground-secondary\)/);
+    expect(workbench).not.toMatch(/\.topbar-runtime\s*>\s*\[data-slot="badge"\]\s+svg\s*\{[^}]*color:\s*var\(--primary\)/);
+    expect(app).not.toMatch(/\.launchpad-agent\s+svg\s*\{[^}]*color:\s*var\(--success\)/);
+    expect(app).not.toMatch(/\.launchpad-status\[data-status="idle"\][^{]*\{[^}]*color:\s*var\(--success\)/);
+  });
+
+  it("keeps interactive states on their own tokens instead of borrowed hues", () => {
+    expect(app).toMatch(/\.tf-btn-primary:hover\s*\{[^}]*background:\s*var\(--primary-hover\)/);
+    expect(app).not.toMatch(/\.tf-btn-primary:hover\s*\{[^}]*#1d4ed8/i);
+    expect(app).toMatch(/\.launchpad-row\[data-selected="true"\]::before\s*\{[^}]*background:\s*var\(--information\)/);
+    expect(app).toMatch(/\.launchpad-row\[data-selected="true"\]\s*\{[^}]*color-mix\(in\s+srgb,\s*var\(--foreground\)/);
+    expect(workbench).toMatch(/\.graph-footer\s+input\[type="range"\]\s*\{[^}]*accent-color:\s*var\(--information\)/);
+  });
+
+  it("renders disabled primary buttons as neutral chrome instead of a washed tint", () => {
+    expect(workbenchPrimitives.Button).toMatch(/default:\s*"[^"]*disabled:bg-secondary[^"]*disabled:text-muted-foreground/);
+  });
+
+  it("routes light overrides through the shared tokens with no legacy green palette", () => {
+    expect(workbench).not.toMatch(/#16815f|#147657|#116d50|#7fcfb2|#8fb8aa|#e3efeb|#d8eae4|#dce9e5/i);
+    expect(workbench).toMatch(/\[data-theme="light"\] \.tf-btn-primary\s*\{[^}]*background:\s*var\(--primary\)[^}]*color:\s*var\(--primary-foreground\)/);
+    expect(workbench).toMatch(/\[data-theme="light"\] \.traffic-panel\s*\{[^}]*background:\s*var\(--background\)/);
+  });
 });

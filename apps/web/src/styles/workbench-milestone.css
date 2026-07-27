@@ -1,14 +1,12 @@
 /* Milestone layer: one authoritative contract for the new workflow surfaces. */
 :root {
-  --tf-trace: #75c7a5;
-  --tf-trace-muted: color-mix(in srgb, var(--tf-trace) 22%, transparent);
   --tf-inspector-surface: #0e1316;
   --tf-code-surface: #090d0f;
 }
 
-.request-row.is-selected { background: color-mix(in srgb, var(--primary) 9%, var(--surface)); }
-.request-row.is-selected::before { content: ""; position: absolute; inset-block: 7px; left: 0; width: 2px; background: var(--tf-trace); }
-.request-row.is-selected .request-row-caret { transform: rotate(90deg); color: var(--tf-trace); }
+.request-row.is-selected { background: color-mix(in srgb, var(--foreground) 5%, var(--surface)); }
+.request-row.is-selected::before { content: ""; position: absolute; inset-block: 7px; left: 0; width: 2px; background: var(--information); }
+.request-row.is-selected .request-row-caret { transform: rotate(90deg); color: var(--information); }
 .request-row,
 .agent-event { content-visibility: auto; contain-intrinsic-size: auto 72px; }
 
@@ -105,4 +103,4 @@
 .run-launcher-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 :root[data-theme="light"] { --tf-inspector-surface: #f8fafa; --tf-code-surface: #eef2f2; }
-:root[data-theme="light"] .request-row.is-selected { background: #dce9e5; }
+:root[data-theme="light"] .run-ruler-tick { background: var(--foreground-secondary); opacity: .85; }

@@ -250,13 +250,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 .tf-btn:hover { background: var(--panel-soft); }
 .tf-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.tf-btn-primary:disabled { border-color: var(--border-subtle); background: var(--surface-hover); color: var(--foreground-muted); opacity: 1; }
 
 .tf-btn-primary {
   border-color: transparent;
   background: var(--accent);
   color: #fff;
 }
-.tf-btn-primary:hover { background: #1d4ed8; }
+.tf-btn-primary:hover { background: var(--primary-hover); }
 
 .tf-btn-danger {
   border-color: #fecaca;
@@ -682,7 +683,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .replay-controls button { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #344054; font-size: 12px; font-weight: 600; cursor: pointer; }
 .replay-controls button:hover { border-color: var(--line-strong); background: #f8fafc; }
 .replay-controls button.active { border-color: var(--accent); color: var(--accent); background: #eff6ff; }
-.graph-footer input[type="range"] { width: 100%; accent-color: var(--accent); }
+.graph-footer input[type="range"] { width: 100%; accent-color: var(--information); }
 .current-event { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #475467; font-size: 12px; }
 .current-event strong { color: #101828; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -756,7 +757,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .launchpad-mark { width: 24px; height: 24px; fill: var(--primary); }
 .launchpad-top-actions { display: flex; align-items: center; gap: 8px; }
 .launchpad-agent { display: inline-flex; align-items: center; gap: 7px; margin-right: 10px; color: var(--foreground-secondary); font-size: 12px; }
-.launchpad-agent svg { color: var(--success); }
+.launchpad-agent svg { color: var(--foreground-muted); }
 .launchpad-main { width: 100%; min-height: calc(100vh - 64px); display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(320px, .92fr); gap: 16px; padding: 16px; }
 .launchpad-engagements, .launchpad-start { min-width: 0; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface); box-shadow: 0 18px 48px rgba(0,0,0,.08); }
 .launchpad-engagements { display: flex; flex-direction: column; padding: 28px 20px 12px; }
@@ -773,15 +774,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .launchpad-table-body { min-height: 320px; }
 .launchpad-row { position: relative; min-height: 76px; padding: 0 12px; border-bottom: 1px solid var(--border-subtle); transition: background 140ms ease; }
 .launchpad-row:hover { background: var(--surface-hover); }
-.launchpad-row[data-selected="true"] { background: color-mix(in srgb, var(--primary) 7%, var(--surface)); }
-.launchpad-row[data-selected="true"]::before { content: ""; position: absolute; inset: 0 auto 0 -1px; width: 2px; background: var(--primary); }
+.launchpad-row[data-selected="true"] { background: color-mix(in srgb, var(--foreground) 4%, var(--surface)); }
+.launchpad-row[data-selected="true"]::before { content: ""; position: absolute; inset: 0 auto 0 -1px; width: 2px; background: var(--information); }
 .launchpad-row-main { height: 76px; min-width: 0; display: flex; align-items: center; border: 0; padding: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .launchpad-row-main:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 65%, transparent); outline-offset: -3px; border-radius: 6px; }
 .launchpad-case-name { min-width: 0; display: grid; gap: 5px; }
 .launchpad-case-name strong { overflow: hidden; text-overflow: ellipsis; color: var(--foreground); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .launchpad-case-name small, .launchpad-time { overflow: hidden; text-overflow: ellipsis; color: var(--foreground-muted); font: 11px/1.2 var(--font-mono); white-space: nowrap; }
 .launchpad-status { display: inline-flex; align-items: center; gap: 7px; color: var(--foreground-secondary); font-size: 11.5px; white-space: nowrap; }
-.launchpad-status[data-status="running"], .launchpad-status[data-status="idle"] { color: var(--success); }
+.launchpad-status[data-status="running"] { color: var(--success); }
 .launchpad-status[data-status="waiting"] { color: var(--warning); }
 .launchpad-status[data-status="failed"] { color: var(--danger); }
 .launchpad-status[data-status="completed"], .launchpad-status[data-status="paused"] { color: var(--information); }
