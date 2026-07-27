@@ -227,8 +227,10 @@ interface State {
   selectedTrafficId: string | null;
   selectedTrafficSnapshot: TrafficEntry | null;
   selectedFactId: string | null;
+  selectedTaskId: string | null;
+  selectedTimelineNodeId: string | null;
   selectedAgentEvent: { kind: "tool_call" | "tool_result"; label: string; text: string } | null;
-  inspectorMode: "overview" | "traffic" | "finding";
+  inspectorMode: "overview" | "traffic" | "finding" | "task" | "timeline";
   cases: Case[];
   activeTab: "facts" | "hypotheses" | "tasks" | "timeline" | "mcp" | "graph" | "observer" | "reports";
   graphModalOpen: boolean;
@@ -284,6 +286,8 @@ interface State {
   selectTraffic: (id: string | null) => void;
   inspectTraffic: (entry: TrafficEntry) => void;
   selectFact: (id: string | null) => void;
+  selectTask: (id: string | null) => void;
+  selectTimelineNode: (id: string | null) => void;
   selectAgentEvent: (event: State["selectedAgentEvent"]) => void;
   resetBrowser: () => void;
   resetAgent: () => void;
@@ -331,6 +335,8 @@ export const useStore = create<State>((set, get) => ({
   selectedTrafficId: null,
   selectedTrafficSnapshot: null,
   selectedFactId: null,
+  selectedTaskId: null,
+  selectedTimelineNodeId: null,
   selectedAgentEvent: null,
   inspectorMode: "overview",
   cases: [],
@@ -436,7 +442,7 @@ export const useStore = create<State>((set, get) => ({
   )),
   setCase: (id) => {
     cancelPendingStreamDeltas();
-    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], hypotheses: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationWorkflowDelta: null, validationSyncStatus: id ? "recovering" : "stale", knowledgeTarget: null, workspacePanelRequest: null, pendingScope: null, pendingConfirmation: null });
+    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], hypotheses: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedTaskId: null, selectedTimelineNodeId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationWorkflowDelta: null, validationSyncStatus: id ? "recovering" : "stale", knowledgeTarget: null, workspacePanelRequest: null, pendingScope: null, pendingConfirmation: null });
   },
   setCases: (list) => set({ cases: list }),
   setActiveTab: (tab) => set({ activeTab: tab }),
@@ -590,10 +596,12 @@ export const useStore = create<State>((set, get) => ({
     !approvalId || s.pendingApproval?.approvalId === approvalId ? { pendingApproval: null } : {}
   )),
   setBrowser: (controller, url) => set((s) => ({ browserController: controller, browserUrl: url ?? s.browserUrl })),
-  selectTraffic: (id) => set({ selectedTrafficId: id, selectedTrafficSnapshot: null, selectedFactId: null, selectedAgentEvent: null, inspectorMode: id ? "traffic" : "overview" }),
-  inspectTraffic: (entry) => set({ selectedTrafficId: entry.id, selectedTrafficSnapshot: entry, selectedFactId: null, selectedAgentEvent: null, inspectorMode: "traffic" }),
-  selectFact: (id) => set({ selectedFactId: id, selectedTrafficId: null, selectedTrafficSnapshot: null, selectedAgentEvent: null, inspectorMode: id ? "finding" : "overview" }),
-  selectAgentEvent: (event) => set({ selectedAgentEvent: event, selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, inspectorMode: event ? "finding" : "overview" }),
+  selectTraffic: (id) => set({ selectedTrafficId: id, selectedTrafficSnapshot: null, selectedFactId: null, selectedTaskId: null, selectedTimelineNodeId: null, selectedAgentEvent: null, inspectorMode: id ? "traffic" : "overview" }),
+  inspectTraffic: (entry) => set({ selectedTrafficId: entry.id, selectedTrafficSnapshot: entry, selectedFactId: null, selectedTaskId: null, selectedTimelineNodeId: null, selectedAgentEvent: null, inspectorMode: "traffic" }),
+  selectFact: (id) => set({ selectedFactId: id, selectedTrafficId: null, selectedTrafficSnapshot: null, selectedTaskId: null, selectedTimelineNodeId: null, selectedAgentEvent: null, inspectorMode: id ? "finding" : "overview" }),
+  selectTask: (id) => set({ selectedTaskId: id, selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedTimelineNodeId: null, selectedAgentEvent: null, inspectorMode: id ? "task" : "overview" }),
+  selectTimelineNode: (id) => set({ selectedTimelineNodeId: id, selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedTaskId: null, selectedAgentEvent: null, inspectorMode: id ? "timeline" : "overview" }),
+  selectAgentEvent: (event) => set({ selectedAgentEvent: event, selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedTaskId: null, selectedTimelineNodeId: null, inspectorMode: event ? "finding" : "overview" }),
   resetBrowser: () => set({ browserController: null, browserUrl: "" }),
   resetAgent: () => {
     cancelPendingStreamDeltas();

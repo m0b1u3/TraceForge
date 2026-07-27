@@ -130,9 +130,22 @@ function EventEdge(props: EdgeProps) {
 const edgeTypes = { event: EventEdge };
 export const GRAPH_NODE_WINDOW_SIZE = 240;
 
-export function graphTimelineWindow(timeline: TimelineEntry[], cursor: number, limit = GRAPH_NODE_WINDOW_SIZE) {
+export type GraphNodeSelection = { type: "fact"; id: string } | { type: "task"; id: string } | { type: "timeline"; id: string };
+
+export function graphNodeSelection(entry: TimelineEntry): GraphNodeSelection {
+  const kind = kindOf(entry);
+  if (entry.refId && kind === "fact") return { type: "fact", id: entry.refId };
+  if (entry.refId && kind === "task") return { type: "task", id: entry.refId };
+  return { type: "timeline", id: entry.id };
+}
+
+export function graphTimelineWindow(timeline: TimelineEntry[], cursor: number, limit = GRAPH_NODE_WINDOW_SIZE, pinnedId?: string | null) {
   const end = Math.min(timeline.length, Math.max(0, cursor));
-  const start = Math.max(0, end - limit);
+  let start = Math.max(0, end - limit);
+  if (pinnedId) {
+    const pinnedIndex = timeline.findIndex((entry) => entry.id === pinnedId);
+    if (pinnedIndex >= 0 && pinnedIndex < start) start = pinnedIndex;
+  }
   return { entries: timeline.slice(start, end), start, end, truncated: start > 0 };
 }
 
@@ -339,11 +352,18 @@ export function layeredLayout(nodes: Node<FlowNodeData>[], edges: Edge[], direct
   return positioned;
 }
 
-function FitOnChange({ focusNodeId, nodes, focusLatest }: { focusNodeId?: string; nodes: Node<FlowNodeData>[]; focusLatest: boolean }) {
+function FitOnChange({ focusNodeId, nodes, focusLatest, pinnedNodeId }: { focusNodeId?: string; nodes: Node<FlowNodeData>[]; focusLatest: boolean; pinnedNodeId?: string | null }) {
   const { fitView, setCenter } = useReactFlow();
   useEffect(() => {
     const frame = requestAnimationFrame(() =>
       requestAnimationFrame(() => {
+        if (pinnedNodeId) {
+          const pinned = nodes.find((n) => n.id === pinnedNodeId);
+          if (pinned) {
+            void setCenter(pinned.position.x + (pinned.width ?? 240) / 2, pinned.position.y + (pinned.height ?? 104) / 2, { zoom: 0.8, duration: 220 });
+            return;
+          }
+        }
         // Small chains should remain fully visible. Centering the latest node on a
         // four-step replay clips the first node and makes the sequence look broken.
         if ((focusLatest || nodes.length > 30) && nodes.length > 8 && focusNodeId) {
@@ -357,11 +377,11 @@ function FitOnChange({ focusNodeId, nodes, focusLatest }: { focusNodeId?: string
       }),
     );
     return () => cancelAnimationFrame(frame);
-  }, [fitView, focusLatest, focusNodeId, nodes, setCenter]);
+  }, [fitView, focusLatest, focusNodeId, nodes, pinnedNodeId, setCenter]);
   return null;
 }
 
-function FlowCanvas({ nodes, edges, focusNodeId, focusLatest, onNodeClick }: { nodes: Node<FlowNodeData>[]; edges: Edge[]; focusNodeId?: string; focusLatest: boolean; onNodeClick?: NodeMouseHandler }) {
+function FlowCanvas({ nodes, edges, focusNodeId, focusLatest, pinnedNodeId, onNodeClick, onPaneClick }: { nodes: Node<FlowNodeData>[]; edges: Edge[]; focusNodeId?: string; focusLatest: boolean; pinnedNodeId?: string | null; onNodeClick?: NodeMouseHandler; onPaneClick?: () => void }) {
   const layouted = useMemo(() => layeredLayout(nodes, edges, focusLatest ? "RIGHT" : "DOWN"), [nodes, edges, focusLatest]);
 
   return (
@@ -378,46 +398,17 @@ function FlowCanvas({ nodes, edges, focusNodeId, focusLatest, onNodeClick }: { n
       minZoom={0.36}
       maxZoom={1.25}
       onNodeClick={onNodeClick}
+      onPaneClick={onPaneClick}
       defaultEdgeOptions={{
         type: "event",
         markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "#64748b" },
       }}
       proOptions={{ hideAttribution: true }}
     >
-      <FitOnChange focusLatest={focusLatest} focusNodeId={focusNodeId} nodes={layouted} />
+      <FitOnChange focusLatest={focusLatest} focusNodeId={focusNodeId} nodes={layouted} pinnedNodeId={pinnedNodeId} />
       <Background color="rgba(148,163,184,0.18)" gap={22} />
       <Controls position="bottom-right" showInteractive={false} />
     </ReactFlow>
-  );
-}
-
-function findEntity(refId: string | null, facts: Fact[], tasks: Task[], actions: ActionCard[]) {
-  if (!refId) return undefined;
-  return facts.find((f) => f.id === refId) ?? tasks.find((t) => t.id === refId) ?? actions.find((a) => a.id === refId);
-}
-
-function DetailPanel({ entry, onClose, facts, tasks, actions }: { entry: TimelineEntry; onClose: () => void; facts: Fact[]; tasks: Task[]; actions: ActionCard[] }) {
-  const entity = findEntity(entry.refId, facts, tasks, actions);
-  return (
-    <div className="graph-detail open">
-      <div className="tf-gdetail-head">
-        <span>{titleOf(entry)}</span>
-        <button type="button" className="tf-btn" onClick={onClose}>Close</button>
-      </div>
-      <div className="tf-gdetail-title">{entry.detail}</div>
-      <div className="tf-gdetail-id">{entry.id}</div>
-      <div className="tf-gdetail-meta">
-        <div className="tf-gdetail-kv"><span>time</span><span>{formatTime(entry.createdAt)}</span></div>
-        <div className="tf-gdetail-kv"><span>type</span><span>{entry.eventType}</span></div>
-        {entry.refId && <div className="tf-gdetail-kv"><span>ref</span><span>{entry.refId}</span></div>}
-      </div>
-      {entity && (
-        <div className="tf-gdetail-rel">
-          <div className="tf-gdetail-rel-h">Referenced entity</div>
-          <div className="tf-gdetail-link">{entity.title}</div>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -430,21 +421,42 @@ const SpeedButton = memo(function SpeedButton({ value, speed, setSpeed }: { valu
 });
 
 function GraphInner({ interactive }: { interactive: boolean }) {
-  const { timeline, runGoal, facts, tasks, actions } = useStore(useShallow((state) => ({
+  const { timeline, runGoal, facts, tasks, actions, selectedFactId, selectedTaskId, selectedTimelineNodeId, selectFact, selectTask, selectTimelineNode } = useStore(useShallow((state) => ({
     timeline: state.timeline,
     runGoal: state.activeRun?.goal ?? null,
     facts: state.facts,
     tasks: state.tasks,
     actions: state.actions,
+    selectedFactId: state.selectedFactId,
+    selectedTaskId: state.selectedTaskId,
+    selectedTimelineNodeId: state.selectedTimelineNodeId,
+    selectFact: state.selectFact,
+    selectTask: state.selectTask,
+    selectTimelineNode: state.selectTimelineNode,
   })));
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(2);
-  const [selected, setSelected] = useState<TimelineEntry | null>(null);
 
-  const timelineWindow = useMemo(() => graphTimelineWindow(timeline, cursor), [timeline, cursor]);
+  // The selected entity is pinned into the visible window so its node stays
+  // on the canvas even when newer events would push it past the cap.
+  const selectedNodeId = useMemo(() => {
+    if (selectedTimelineNodeId) return selectedTimelineNodeId;
+    const refId = selectedFactId ?? selectedTaskId;
+    if (!refId) return null;
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      if (timeline[i].refId === refId) return timeline[i].id;
+    }
+    return null;
+  }, [timeline, selectedFactId, selectedTaskId, selectedTimelineNodeId]);
+
+  const timelineWindow = useMemo(() => graphTimelineWindow(timeline, cursor, GRAPH_NODE_WINDOW_SIZE, selectedNodeId), [timeline, cursor, selectedNodeId]);
   const visible = timelineWindow.entries;
   const graph = useMemo(() => buildTimelineGraph(visible, runGoal, facts, tasks, actions), [visible, runGoal, facts, tasks, actions]);
+  const nodes = useMemo(
+    () => graph.nodes.map((node) => (node.id === selectedNodeId ? { ...node, selected: true } : node)),
+    [graph.nodes, selectedNodeId],
+  );
 
   useEffect(() => {
     if (!playing) return;
@@ -463,16 +475,21 @@ function GraphInner({ interactive }: { interactive: boolean }) {
     }
   }, [timeline.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (selected && !visible.some((entry) => entry.id === selected.id)) setSelected(null);
-  }, [selected, visible]);
-
   const current = visible[visible.length - 1];
 
   const onNodeClick: NodeMouseHandler = (_e, node) => {
     if (!interactive) return;
     const entry = visible.find((e) => e.id === node.id);
-    if (entry) setSelected(entry);
+    if (!entry) return;
+    const target = graphNodeSelection(entry);
+    if (target.type === "fact") selectFact(target.id);
+    else if (target.type === "task") selectTask(target.id);
+    else selectTimelineNode(target.id);
+  };
+
+  const onPaneClick = () => {
+    if (!interactive) return;
+    selectTimelineNode(null);
   };
 
   if (timeline.length === 0) {
@@ -481,8 +498,16 @@ function GraphInner({ interactive }: { interactive: boolean }) {
 
   return (
     <div className="graph-wrapper">
-      <div className="graph-canvas" onClick={() => setSelected(null)}>
-        <FlowCanvas nodes={graph.nodes} edges={graph.edges} focusLatest={interactive} focusNodeId={graph.focusNodeId} onNodeClick={onNodeClick} />
+      <div className="graph-canvas">
+        <FlowCanvas
+          nodes={nodes}
+          edges={graph.edges}
+          focusLatest={interactive && !selectedNodeId}
+          focusNodeId={graph.focusNodeId}
+          pinnedNodeId={interactive ? selectedNodeId : null}
+          onNodeClick={onNodeClick}
+          onPaneClick={onPaneClick}
+        />
       </div>
       <div className="graph-footer">
         <div className="replay-controls">
@@ -531,9 +556,6 @@ function GraphInner({ interactive }: { interactive: boolean }) {
           {timelineWindow.truncated && <small>Showing latest {visible.length} events</small>}
         </div>
       </div>
-      {interactive && selected && (
-        <DetailPanel entry={selected} onClose={() => setSelected(null)} facts={facts} tasks={tasks} actions={actions} />
-      )}
     </div>
   );
 }

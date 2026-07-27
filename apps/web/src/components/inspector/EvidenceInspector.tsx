@@ -51,11 +51,11 @@ export function ToolEventInspector({ event }: { event: { kind: "tool_call" | "to
   return <InspectorShell kicker="Agent trace" title={event.label} icon={<TerminalWindow size={15} />} onClose={() => close(null)}><InspectorCode label={event.kind === "tool_call" ? "Arguments" : "Result"} value={event.text} /></InspectorShell>;
 }
 
-function InspectorShell({ elementRef, targeted = false, kicker, title, icon, onClose, children }: { elementRef?: Ref<HTMLDivElement>; targeted?: boolean; kicker: string; title: string; icon: ReactNode; onClose: () => void; children: ReactNode }) {
+export function InspectorShell({ elementRef, targeted = false, kicker, title, icon, onClose, children }: { elementRef?: Ref<HTMLDivElement>; targeted?: boolean; kicker: string; title: string; icon: ReactNode; onClose: () => void; children: ReactNode }) {
   return <div ref={elementRef} tabIndex={-1} aria-current={targeted ? "location" : undefined} className={`context-inspector${targeted ? " is-targeted" : ""}`}><header className="context-inspector-header"><div><span className="section-kicker">{kicker}</span><h2>{icon}{title}</h2></div><Button variant="ghost" size="icon-xs" aria-label="Close inspector" onClick={onClose}><X size={14} /></Button></header><div className="context-inspector-scroll">{children}</div></div>;
 }
 
-function InspectorCode({ label, value, copyValue = value, action }: { label: string; value: string; copyValue?: string; action?: ReactNode }) {
+export function InspectorCode({ label, value, copyValue = value, action }: { label: string; value: string; copyValue?: string; action?: ReactNode }) {
   const showToast = useStore((state) => state.showToast);
   const [copied, setCopied] = useState(false);
   const copy = async () => {

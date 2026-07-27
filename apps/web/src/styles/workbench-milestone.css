@@ -73,6 +73,9 @@
 .workbench-loading { display: flex; min-height: 100dvh; align-items: center; justify-content: center; gap: 8px; background: var(--background); color: var(--foreground-muted); font-size: 12px; }
 .inspector-data-block > p { color: var(--foreground-muted); font-size: 11px; }
 .inspector-data-block pre { max-height: 260px; margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--tf-code-surface); color: var(--foreground-secondary); font-family: var(--mono); font-size: 10.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inspector-link-list { display: flex; flex-direction: column; gap: 6px; }
+.inspector-link { padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--tf-code-surface); color: var(--foreground-secondary); font-size: 11px; text-align: left; cursor: pointer; }
+.inspector-link:hover { border-color: var(--border-strong); color: var(--foreground); }
 .inspector-header-list { margin: 0; padding: 8px 12px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--tf-code-surface); }
 .inspector-header-list > div { display: grid; grid-template-columns: minmax(86px, .7fr) minmax(0, 1.3fr); gap: 8px; padding: 5px 0; font-family: var(--mono); font-size: 10px; }
 .inspector-header-list dt { color: var(--information); overflow-wrap: anywhere; }

@@ -553,3 +553,52 @@ describe("store agent interventions", () => {
     expect(useStore.getState().hypotheses).toEqual([updated]);
   });
 });
+
+describe("graph-driven inspector selection", () => {
+  it("selectTask clears every other selection and switches inspector mode", () => {
+    useStore.setState({
+      selectedTrafficId: "traf_1",
+      selectedFactId: "fact_1",
+      selectedAgentEvent: { kind: "tool_call", label: "x", text: "x" },
+      selectedTimelineNodeId: "tl_1",
+      inspectorMode: "traffic",
+    });
+
+    useStore.getState().selectTask("task_1");
+
+    const state = useStore.getState();
+    expect(state.selectedTaskId).toBe("task_1");
+    expect(state.selectedTrafficId).toBeNull();
+    expect(state.selectedFactId).toBeNull();
+    expect(state.selectedAgentEvent).toBeNull();
+    expect(state.selectedTimelineNodeId).toBeNull();
+    expect(state.inspectorMode).toBe("task");
+
+    useStore.getState().selectTask(null);
+    expect(useStore.getState().inspectorMode).toBe("overview");
+  });
+
+  it("selectTimelineNode clears every other selection and switches inspector mode", () => {
+    useStore.setState({ selectedTaskId: "task_1", selectedFactId: "fact_1", inspectorMode: "task" });
+
+    useStore.getState().selectTimelineNode("tl_9");
+
+    const state = useStore.getState();
+    expect(state.selectedTimelineNodeId).toBe("tl_9");
+    expect(state.selectedTaskId).toBeNull();
+    expect(state.selectedFactId).toBeNull();
+    expect(state.inspectorMode).toBe("timeline");
+  });
+
+  it("existing selectors clear graph-driven selections", () => {
+    useStore.setState({ selectedTaskId: "task_1", selectedTimelineNodeId: "tl_9", inspectorMode: "task" });
+
+    useStore.getState().selectFact("fact_2");
+
+    const state = useStore.getState();
+    expect(state.selectedFactId).toBe("fact_2");
+    expect(state.selectedTaskId).toBeNull();
+    expect(state.selectedTimelineNodeId).toBeNull();
+    expect(state.inspectorMode).toBe("finding");
+  });
+});

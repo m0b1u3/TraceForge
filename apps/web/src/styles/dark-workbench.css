@@ -561,6 +561,7 @@ textarea:focus-visible,
 .flow-card-head strong { color: #e8eceb; }
 .flow-card p { color: #aab4b7; }
 .flow-card small { color: #81a9e8; }
+.react-flow__node.selected .flow-card { border-color: var(--information); box-shadow: 0 0 0 1.5px var(--information), 0 12px 26px rgba(0, 0, 0, 0.28); }
 .flow-icon { background: #172422; }
 .edge-label { border: 1px solid rgba(169, 184, 192, 0.14); border-radius: 4px; background: #171d22; color: #8d999e; box-shadow: none; font-family: var(--mono); font-size: 8.5px; font-weight: 500; }
 .graph-footer { gap: 7px; padding: 9px 10px; border-top-color: rgba(169, 184, 192, 0.09); background: #101419; }

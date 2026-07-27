@@ -3,7 +3,7 @@ import { CircleNotch, Warning } from "@phosphor-icons/react";
 import { useShallow } from "zustand/react/shallow";
 import { useStore } from "../store.js";
 import { AgentPanel } from "./AgentPanel.js";
-import { GraphView } from "./GraphView.js";
+import { CanvasPanel } from "./CanvasPanel.js";
 import { KnowledgePanel } from "./KnowledgePanel.js";
 import { TopBar } from "./TopBar.js";
 import { TrafficPanel } from "./TrafficPanel.js";
@@ -52,7 +52,7 @@ export default function Workbench() {
     <TopBar />
     <main className="workspace-page">
       <ObserverConfirmation />
-      <WorkspaceLayout traffic={<TrafficPanel />} canvas={<GraphView interactive />} knowledge={<KnowledgePanel />} dock={<AgentPanel />} />
+      <WorkspaceLayout traffic={<TrafficPanel />} canvas={<CanvasPanel />} knowledge={<KnowledgePanel />} dock={<AgentPanel />} />
     </main>
     {graphModalOpen && <Suspense fallback={<DeferredSurface label="attack graph" />}><GraphModal /></Suspense>}
     {settingsModalOpen && <Suspense fallback={<DeferredSurface label="settings" />}><SettingsModal /></Suspense>}

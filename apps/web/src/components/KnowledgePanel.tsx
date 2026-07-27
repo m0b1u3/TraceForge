@@ -6,10 +6,10 @@ import { McpTab } from "./knowledge/McpTab.js";
 import { ObserverTab } from "./knowledge/ObserverTab.js";
 import { ReportsTab } from "./knowledge/ReportsTab.js";
 import { HypothesesTab } from "./knowledge/HypothesesTab.js";
-import { Database, GitBranch } from "@phosphor-icons/react";
-import { Button } from "@/components/ui/button";
+import { Database } from "@phosphor-icons/react";
 import { TrafficInspector } from "./inspector/TrafficInspector.js";
 import { FindingInspector, ToolEventInspector } from "./inspector/EvidenceInspector.js";
+import { TaskInspector, TimelineEventInspector } from "./inspector/GraphInspectors.js";
 import {
   Tabs,
   TabsList,
@@ -51,7 +51,7 @@ function TabPanel({ tab }: { tab: TabKey }) {
 }
 
 function KnowledgeInspector() {
-  const { selectedTraffic, selectedFact, selectedAgentEvent, knowledgeTarget, clearKnowledgeTarget } = useStore(useShallow((state) => ({
+  const { selectedTraffic, selectedFact, selectedTask, selectedTimelineEntry, selectedAgentEvent, knowledgeTarget, clearKnowledgeTarget } = useStore(useShallow((state) => ({
     selectedTraffic: state.selectedTrafficId
       ? state.traffic.find((entry) => entry.id === state.selectedTrafficId)
         ?? (state.selectedTrafficSnapshot?.id === state.selectedTrafficId ? state.selectedTrafficSnapshot : null)
@@ -59,12 +59,20 @@ function KnowledgeInspector() {
     selectedFact: state.selectedFactId
       ? state.facts.find((fact) => fact.id === state.selectedFactId) ?? null
       : null,
+    selectedTask: state.selectedTaskId
+      ? state.tasks.find((task) => task.id === state.selectedTaskId) ?? null
+      : null,
+    selectedTimelineEntry: state.selectedTimelineNodeId
+      ? state.timeline.find((entry) => entry.id === state.selectedTimelineNodeId) ?? null
+      : null,
     selectedAgentEvent: state.selectedAgentEvent,
     knowledgeTarget: state.knowledgeTarget,
     clearKnowledgeTarget: state.clearKnowledgeTarget,
   })));
   if (selectedTraffic) return <TrafficInspector entry={selectedTraffic} />;
   if (selectedFact) return <FindingInspector fact={selectedFact} targetRequestId={knowledgeTarget?.kind === "finding" && knowledgeTarget.id === selectedFact.id ? knowledgeTarget.requestId : null} onTargetHandled={clearKnowledgeTarget} />;
+  if (selectedTask) return <TaskInspector task={selectedTask} />;
+  if (selectedTimelineEntry) return <TimelineEventInspector entry={selectedTimelineEntry} />;
   if (selectedAgentEvent) return <ToolEventInspector event={selectedAgentEvent} />;
   return null;
 }
@@ -88,10 +96,9 @@ function KnowledgeTabCounts() {
 }
 
 function KnowledgeOverview() {
-  const { activeTab, setActiveTab, setGraphModalOpen } = useStore(useShallow((state) => ({
+  const { activeTab, setActiveTab } = useStore(useShallow((state) => ({
     activeTab: state.activeTab,
     setActiveTab: state.setActiveTab,
-    setGraphModalOpen: state.setGraphModalOpen,
   })));
   const visibleTab: TabKey = activeTab === "graph" ? "facts" : activeTab;
   return (
@@ -102,16 +109,6 @@ function KnowledgeOverview() {
           <span className="section-kicker">Knowledge</span>
           <h2>{TAB_TITLE[visibleTab]}</h2>
         </div>
-          <div className="panel-header-actions">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setGraphModalOpen(true)}
-            >
-              <GitBranch size={14} /> Paths
-            </Button>
-          </div>
       </div>
       <Tabs
         value={visibleTab}
@@ -132,7 +129,7 @@ function KnowledgeOverview() {
 }
 
 export function KnowledgePanel() {
-  const inspectorOpen = useStore((state) => Boolean(state.selectedTrafficId || state.selectedFactId || state.selectedAgentEvent));
+  const inspectorOpen = useStore((state) => Boolean(state.selectedTrafficId || state.selectedFactId || state.selectedTaskId || state.selectedTimelineNodeId || state.selectedAgentEvent));
   return (
     <aside className="panel knowledge-panel">
       {inspectorOpen ? <KnowledgeInspector /> : <KnowledgeOverview />}

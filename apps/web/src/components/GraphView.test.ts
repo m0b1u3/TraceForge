@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { Edge, Node } from "@xyflow/react";
 import type { TimelineEntry } from "@traceforge/shared";
-import { GRAPH_NODE_WINDOW_SIZE, graphTimelineWindow, layeredLayout, type FlowNodeData } from "./GraphView.js";
+import { GRAPH_NODE_WINDOW_SIZE, graphNodeSelection, graphTimelineWindow, layeredLayout, type FlowNodeData } from "./GraphView.js";
 
 const entry = {} as TimelineEntry;
 
@@ -81,5 +81,48 @@ describe("graphTimelineWindow", () => {
     expect(window.entries).toHaveLength(20);
     expect(window.start).toBe(0);
     expect(window.truncated).toBe(false);
+  });
+
+  it("leaves the window untouched when the pinned entry is already visible", () => {
+    const window = graphTimelineWindow(timeline, 500, GRAPH_NODE_WINDOW_SIZE, "event_300");
+
+    expect(window.entries).toHaveLength(GRAPH_NODE_WINDOW_SIZE);
+    expect(window.start).toBe(260);
+  });
+
+  it("expands the window backwards to include a pinned entry outside it", () => {
+    const window = graphTimelineWindow(timeline, 500, GRAPH_NODE_WINDOW_SIZE, "event_100");
+
+    expect(window.start).toBe(100);
+    expect(window.entries[0]?.id).toBe("event_100");
+    expect(window.entries.at(-1)?.id).toBe("event_499");
+    expect(window.truncated).toBe(true);
+  });
+
+  it("ignores a pinned id that does not exist in the timeline", () => {
+    const window = graphTimelineWindow(timeline, 500, GRAPH_NODE_WINDOW_SIZE, "event_missing");
+
+    expect(window.start).toBe(260);
+    expect(window.entries).toHaveLength(GRAPH_NODE_WINDOW_SIZE);
+  });
+});
+
+describe("graphNodeSelection", () => {
+  const base = { id: "tl_1", caseId: "case_1", detail: "d", createdAt: "0" };
+
+  it("maps fact nodes with a referenced fact to a finding selection", () => {
+    expect(graphNodeSelection({ ...base, eventType: "fact_created", refId: "fact_9" })).toEqual({ type: "fact", id: "fact_9" });
+    expect(graphNodeSelection({ ...base, eventType: "fact_updated", refId: "fact_9" })).toEqual({ type: "fact", id: "fact_9" });
+  });
+
+  it("maps task nodes with a referenced task to a task selection", () => {
+    expect(graphNodeSelection({ ...base, eventType: "task_updated", refId: "task_3" })).toEqual({ type: "task", id: "task_3" });
+    expect(graphNodeSelection({ ...base, eventType: "task_reopened", refId: "task_3" })).toEqual({ type: "task", id: "task_3" });
+  });
+
+  it("falls back to a timeline selection for other nodes or missing refs", () => {
+    expect(graphNodeSelection({ ...base, eventType: "context_built", refId: null })).toEqual({ type: "timeline", id: "tl_1" });
+    expect(graphNodeSelection({ ...base, eventType: "fact_created", refId: null })).toEqual({ type: "timeline", id: "tl_1" });
+    expect(graphNodeSelection({ ...base, eventType: "action_recorded", refId: "act_1" })).toEqual({ type: "timeline", id: "tl_1" });
   });
 });
