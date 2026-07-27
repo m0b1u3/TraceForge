@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { Edge, Node } from "@xyflow/react";
 import type { TimelineEntry } from "@traceforge/shared";
-import { GRAPH_NODE_WINDOW_SIZE, graphNodeSelection, graphTimelineWindow, layeredLayout, type FlowNodeData } from "./GraphView.js";
+import { GRAPH_NODE_WINDOW_SIZE, buildTimelineGraph, graphNodeSelection, graphTimelineWindow, layeredLayout, type FlowNodeData } from "./GraphView.js";
 
 const entry = {} as TimelineEntry;
 
@@ -124,5 +124,39 @@ describe("graphNodeSelection", () => {
     expect(graphNodeSelection({ ...base, eventType: "context_built", refId: null })).toEqual({ type: "timeline", id: "tl_1" });
     expect(graphNodeSelection({ ...base, eventType: "fact_created", refId: null })).toEqual({ type: "timeline", id: "tl_1" });
     expect(graphNodeSelection({ ...base, eventType: "action_recorded", refId: "act_1" })).toEqual({ type: "timeline", id: "tl_1" });
+  });
+});
+
+describe("buildTimelineGraph hypothesis nodes", () => {
+  const timeline: TimelineEntry[] = [
+    { id: "tl_1", caseId: "case_1", eventType: "fact_created", refId: "fact_1", detail: "API exposes stack traces", createdAt: "2026-07-27T10:00:00.000Z" },
+    { id: "tl_2", caseId: "case_1", eventType: "context_built", refId: null, detail: "context", createdAt: "2026-07-27T10:00:05.000Z" },
+  ];
+  const hypothesis = {
+    id: "hyp_1",
+    caseId: "case_1",
+    statement: "Debug mode is enabled in production",
+    status: "candidate" as const,
+    basedOnFactIds: ["fact_1"],
+    relatedTaskIds: [],
+    createdAt: "2026-07-27T10:00:06.000Z",
+    updatedAt: "2026-07-27T10:00:06.000Z",
+    updateCount: 0,
+  };
+
+  it("appends hypothesis nodes linked to their supporting facts", () => {
+    const graph = buildTimelineGraph(timeline, null, [], [], [], [hypothesis]);
+
+    const node = graph.nodes.find((item) => item.id === "hyp-hyp_1");
+    expect(node?.data.kind).toBe("hypothesis");
+    expect(node?.data.title).toBe("Hypothesis");
+    expect(node?.data.body).toBe("Debug mode is enabled in production");
+    expect(graph.edges.some((edge) => edge.source === "tl_1" && edge.target === "hyp-hyp_1" && edge.label === "supports")).toBe(true);
+  });
+
+  it("omits hypothesis nodes while replaying history", () => {
+    const graph = buildTimelineGraph(timeline, null, [], [], [], []);
+
+    expect(graph.nodes.some((item) => item.id.startsWith("hyp-"))).toBe(false);
   });
 });

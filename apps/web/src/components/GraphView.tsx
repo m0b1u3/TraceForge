@@ -9,7 +9,7 @@ import {
   ArrowCounterClockwise, Clock, Database, Flag, Lightbulb, Lightning, Notebook, Pause, Play, Robot, ShieldCheck,
 } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
-import type { Fact, Task, ActionCard, TimelineEntry } from "@traceforge/shared";
+import type { Fact, Task, ActionCard, Hypothesis, TimelineEntry } from "@traceforge/shared";
 import { useShallow } from "zustand/react/shallow";
 import { FeedbackState } from "./ui/feedback-state.js";
 
@@ -21,6 +21,7 @@ const KIND_META: Record<string, { label: string; icon: typeof Notebook; color: s
   action: { label: "ACTION", icon: Lightning, color: "#aa91d8", border: "#4c4162" },
   solver: { label: "AGENT", icon: Robot, color: "#62c49e", border: "#315b4d" },
   flag: { label: "FLAG", icon: Flag, color: "#d89467", border: "#624436" },
+  hypothesis: { label: "IDEA", icon: Lightbulb, color: "#8298FF", border: "#3a4462" },
   note: { label: "EVENT", icon: Notebook, color: "#8799a5", border: "#3a4b55" },
 };
 
@@ -45,6 +46,7 @@ function kindOf(entry: TimelineEntry): string {
   if (t === "action_recorded") return "action";
   if (t === "context_built") return "solver";
   if (t === "flag_submitted") return "flag";
+  if (t === "hypothesis") return "hypothesis";
   return "note";
 }
 
@@ -155,6 +157,7 @@ export function buildTimelineGraph(
   facts: Fact[],
   tasks: Task[],
   actions: ActionCard[],
+  hypotheses: Hypothesis[] = [],
 ) {
   if (timeline.length === 0) return { nodes: [] as Node<FlowNodeData>[], edges: [] as Edge[], focusNodeId: undefined as string | undefined };
 
@@ -268,6 +271,41 @@ export function buildTimelineGraph(
     }
     if (kind === "solver") latestContextNode = entry.id;
     latestNodeByKind.set(kind, entry.id);
+  }
+
+  // Hypotheses have no timeline entries of their own; they are synthesized as
+  // virtual nodes at the live tail and wired to the facts that support them.
+  for (const hypothesis of hypotheses) {
+    const id = `hyp-${hypothesis.id}`;
+    const entry: TimelineEntry = {
+      id,
+      caseId: hypothesis.caseId,
+      eventType: "hypothesis",
+      refId: null,
+      detail: hypothesis.statement,
+      createdAt: hypothesis.updatedAt || hypothesis.createdAt,
+    };
+    nodes.push({
+      id,
+      type: "bw",
+      position: { x: 0, y: 0 },
+      width: 240,
+      height: 104,
+      data: {
+        entry,
+        kind: "hypothesis",
+        title: "Hypothesis",
+        body: hypothesis.statement,
+        meta: hypothesis.status,
+      },
+    });
+    let connected = false;
+    for (const factId of hypothesis.basedOnFactIds) {
+      connected = addEdge(latestNodeByRef.get(factId), id, "supports", KIND_META.hypothesis.color) || connected;
+    }
+    if (!connected) {
+      addEdge(latestContextNode ?? (goal ? "__goal__" : undefined), id, "related", KIND_META.hypothesis.color);
+    }
   }
 
   return { nodes, edges, focusNodeId: timeline[timeline.length - 1]?.id };
@@ -421,18 +459,20 @@ const SpeedButton = memo(function SpeedButton({ value, speed, setSpeed }: { valu
 });
 
 function GraphInner({ interactive }: { interactive: boolean }) {
-  const { timeline, runGoal, facts, tasks, actions, selectedFactId, selectedTaskId, selectedTimelineNodeId, selectFact, selectTask, selectTimelineNode, dockCollapsed, toggleDockCollapsed } = useStore(useShallow((state) => ({
+  const { timeline, runGoal, facts, tasks, actions, hypotheses, selectedFactId, selectedTaskId, selectedTimelineNodeId, selectFact, selectTask, selectTimelineNode, setKnowledgeDialog, dockCollapsed, toggleDockCollapsed } = useStore(useShallow((state) => ({
     timeline: state.timeline,
     runGoal: state.activeRun?.goal ?? null,
     facts: state.facts,
     tasks: state.tasks,
     actions: state.actions,
+    hypotheses: state.hypotheses,
     selectedFactId: state.selectedFactId,
     selectedTaskId: state.selectedTaskId,
     selectedTimelineNodeId: state.selectedTimelineNodeId,
     selectFact: state.selectFact,
     selectTask: state.selectTask,
     selectTimelineNode: state.selectTimelineNode,
+    setKnowledgeDialog: state.setKnowledgeDialog,
     dockCollapsed: state.dockCollapsed,
     toggleDockCollapsed: state.toggleDockCollapsed,
   })));
@@ -454,7 +494,8 @@ function GraphInner({ interactive }: { interactive: boolean }) {
 
   const timelineWindow = useMemo(() => graphTimelineWindow(timeline, cursor, GRAPH_NODE_WINDOW_SIZE, selectedNodeId), [timeline, cursor, selectedNodeId]);
   const visible = timelineWindow.entries;
-  const graph = useMemo(() => buildTimelineGraph(visible, runGoal, facts, tasks, actions), [visible, runGoal, facts, tasks, actions]);
+  const liveTail = cursor >= timeline.length;
+  const graph = useMemo(() => buildTimelineGraph(visible, runGoal, facts, tasks, actions, liveTail ? hypotheses : []), [visible, runGoal, facts, tasks, actions, hypotheses, liveTail]);
   const nodes = useMemo(
     () => graph.nodes.map((node) => (node.id === selectedNodeId ? { ...node, selected: true } : node)),
     [graph.nodes, selectedNodeId],
@@ -481,6 +522,10 @@ function GraphInner({ interactive }: { interactive: boolean }) {
 
   const onNodeClick: NodeMouseHandler = (_e, node) => {
     if (!interactive) return;
+    if (node.id.startsWith("hyp-")) {
+      setKnowledgeDialog("hypotheses");
+      return;
+    }
     const entry = visible.find((e) => e.id === node.id);
     if (!entry) return;
     const target = graphNodeSelection(entry);
