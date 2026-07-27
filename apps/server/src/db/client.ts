@@ -135,7 +135,7 @@ export function createDb(path: string) {
     CREATE TABLE IF NOT EXISTS agent_events (
       seq INTEGER PRIMARY KEY AUTOINCREMENT,
       id TEXT NOT NULL, case_id TEXT NOT NULL, kind TEXT NOT NULL,
-      text TEXT NOT NULL, tool TEXT, created_at TEXT NOT NULL
+      text TEXT NOT NULL, tool TEXT, refs_json TEXT, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_agent_events_case ON agent_events(case_id);
     CREATE TABLE IF NOT EXISTS hypotheses (
@@ -209,6 +209,9 @@ export function createDb(path: string) {
   ensureColumns("knowledge_usage", [
     { name: "positive_outcome_score", definition: "REAL NOT NULL DEFAULT 0" },
     { name: "negative_outcome_score", definition: "REAL NOT NULL DEFAULT 0" },
+  ]);
+  ensureColumns("agent_events", [
+    { name: "refs_json", definition: "TEXT" },
   ]);
   ensureColumns("facts", [
     { name: "source_run_id", definition: "TEXT" },

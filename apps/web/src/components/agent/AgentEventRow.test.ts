@@ -88,4 +88,40 @@ describe("AgentEventRow", () => {
     expect(row.textContent).toContain(fullText);
     expect(row.querySelector('button[aria-label="Collapse event"]')).not.toBeNull();
   });
+
+  it("renders produced-knowledge chips on tool results and selects the entity on click", async () => {
+    useStore.setState({
+      facts: [{ id: "fact_1", caseId: "case_1", type: "vulnerability_hint", title: "Heapdump endpoint exposed", value: {}, source: { type: "agent", ref: "run_1" }, confidence: .95, tags: [], validity: "valid", findingStatus: null, createdAt: "now", updatedAt: "now", updateCount: 0 }],
+    });
+    const row = await renderRow({
+      type: "event",
+      key: "event-refs",
+      kind: "tool_result",
+      label: "Tool result",
+      text: "record_fact → recorded",
+      summary: "record_fact → recorded",
+      refs: { factIds: ["fact_1"], taskIds: ["task_9"], timelineEntryIds: ["tl_1"] },
+    });
+
+    const factChip = row.querySelector<HTMLButtonElement>('button[data-ref-kind="fact"]');
+    expect(factChip?.textContent).toContain("Heapdump endpoint exposed");
+    expect(row.querySelector('button[data-ref-kind="task"]')?.textContent).toContain("task_9");
+
+    act(() => factChip?.click());
+
+    expect(useStore.getState().selectedFactId).toBe("fact_1");
+    expect(useStore.getState().inspectorMode).toBe("finding");
+  });
+
+  it("renders no chips when a tool result has no refs", async () => {
+    const row = await renderRow({
+      type: "event",
+      key: "event-no-refs",
+      kind: "tool_result",
+      label: "Tool result",
+      text: "get_traffic → []",
+      summary: "get_traffic → []",
+    });
+    expect(row.querySelector(".agent-event-refs")).toBeNull();
+  });
 });

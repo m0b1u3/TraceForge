@@ -34,4 +34,15 @@ describe("AgentEventStore", () => {
     expect(store.listByCase("case_1", { limit: 2 }).map((event) => event.text)).toEqual(["three", "four"]);
     expect(store.listByCase("case_1", { limit: 2, offset: 2 }).map((event) => event.text)).toEqual(["one", "two"]);
   });
+
+  it("persists refs and returns them on list", () => {
+    const store = new AgentEventStore(db);
+    const refs = { factIds: ["fact_1", "fact_2"], taskIds: ["task_1"], timelineEntryIds: ["tl_1", "tl_2", "tl_3"] };
+    store.append("case_1", "tool_result", "record_fact → ok", "record_fact", undefined, refs);
+    store.append("case_1", "text", "no refs here");
+
+    const list = store.listByCase("case_1");
+    expect(list[0].refs).toEqual(refs);
+    expect(list[1].refs).toBeNull();
+  });
 });

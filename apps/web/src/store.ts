@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, ValidationWorkflowSnapshot, Hypothesis } from "@traceforge/shared";
+import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, ValidationWorkflowSnapshot, Hypothesis, AgentEventRefs } from "@traceforge/shared";
 import { validationTimelineConsoleEvent } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listHypotheses, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities, listSecurityReports, getValidationWorkflow } from "./api.js";
@@ -12,6 +12,7 @@ export interface AgentUiEvent {
   kind: "user" | "text" | "reasoning" | "tool_call" | "tool_result" | "validation" | "done" | "error" | "started";
   text: string;
   tool?: string | null;
+  refs?: AgentEventRefs | null;
   createdAt?: string;
 }
 
@@ -474,7 +475,7 @@ export const useStore = create<State>((set, get) => ({
       timeline: takeRecent(timeline, CLIENT_TIMELINE_LIMIT),
       mcpTools,
       warnings,
-      agentEvents: takeRecent(agentEvents.map((e) => ({ id: e.id, kind: e.kind, text: e.text, tool: e.tool, createdAt: e.createdAt })), CLIENT_AGENT_EVENT_LIMIT),
+      agentEvents: takeRecent(agentEvents.map((e) => ({ id: e.id, kind: e.kind, text: e.text, tool: e.tool, refs: e.refs, createdAt: e.createdAt })), CLIENT_AGENT_EVENT_LIMIT),
       activeRun,
       continuationRun: latestRun?.status === "needs_continuation" ? latestRun : null,
       agentBusy: isRunBusy(activeRun),
@@ -838,7 +839,7 @@ export const useStore = create<State>((set, get) => ({
       });
     }
     else if (event.type === "agent_tool_result" && event.caseId === cid) {
-      get().addAgentEvent({ kind: "tool_result", text: `${event.tool} → ${event.content}` });
+      get().addAgentEvent({ kind: "tool_result", text: `${event.tool} → ${event.content}`, refs: event.refs ?? null });
     }
     else if (event.type === "agent_tool_blocked" && event.caseId === cid) get().addAgentEvent({ kind: "tool_result", text: `${event.tool} blocked → ${event.reason}\n${event.input}` });
     else if (event.type === "agent_done" && event.caseId === cid) { get().setAgentBusy(false); get().addAgentEvent({ kind: "done", text: event.content }); }

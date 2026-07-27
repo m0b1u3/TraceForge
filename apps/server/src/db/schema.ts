@@ -187,6 +187,7 @@ export const agentEvents = sqliteTable("agent_events", {
   kind: text("kind").notNull(),
   text: text("text").notNull(),
   tool: text("tool"),
+  refsJson: text("refs_json"),
   createdAt: text("created_at").notNull(),
 });
 

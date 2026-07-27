@@ -334,12 +334,20 @@ export const ObserverWarningSchema = z.object({
 });
 export type ObserverWarning = z.infer<typeof ObserverWarningSchema>;
 
+export const AgentEventRefsSchema = z.object({
+  factIds: z.array(z.string()).default([]),
+  taskIds: z.array(z.string()).default([]),
+  timelineEntryIds: z.array(z.string()).default([]),
+});
+export type AgentEventRefs = z.infer<typeof AgentEventRefsSchema>;
+
 export const AgentEventSchema = z.object({
   id: z.string(),
   caseId: z.string(),
   kind: z.enum(["user", "started", "text", "reasoning", "tool_call", "tool_result", "validation", "done", "error"]),
   text: z.string(),
   tool: z.string().nullable().default(null),
+  refs: AgentEventRefsSchema.nullable().default(null),
   createdAt: z.string(),
 });
 export type AgentEvent = z.infer<typeof AgentEventSchema>;

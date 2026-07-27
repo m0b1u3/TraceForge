@@ -537,6 +537,10 @@ function GraphInner({ interactive }: { interactive: boolean }) {
     if (entry.eventType.startsWith("validation_")) {
       if (dockCollapsed) toggleDockCollapsed();
       globalThis.dispatchEvent(new CustomEvent("traceforge:jump-to-validation", { detail: { eventType: entry.eventType, detail: entry.detail } }));
+    } else {
+      // 其余实体节点走 refs 精确反查:console 里产出该实体的 tool 事件。
+      // AgentPanel 侧有匹配才展开 dock 并定位,无匹配则静默。
+      globalThis.dispatchEvent(new CustomEvent("traceforge:jump-to-event-ref", { detail: { refId: target.id } }));
     }
   };
 

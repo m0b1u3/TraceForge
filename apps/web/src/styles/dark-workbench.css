@@ -428,6 +428,26 @@ textarea:focus-visible,
 .agent-event.is-reasoning .agent-event-content { color: #afb8bd; }
 .agent-event.is-tool .agent-event-content { max-height: 300px; overflow: auto; padding: 12px 14px; border-radius: 6px; background: #0e1216; color: #bac2c6; font-family: var(--mono); font-size: 11.5px; line-height: 1.6; }
 
+/* 工具产出的知识引用 chips:console → 图谱的联动入口,中性色,不占状态语义 */
+.agent-event-refs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 7px; }
+.agent-event-refs-label { color: var(--foreground-muted); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.agent-event-ref-chip {
+  max-width: 34ch;
+  overflow: hidden;
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--surface-elevated);
+  color: var(--foreground-secondary);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-event-ref-chip:hover { border-color: var(--information); color: var(--foreground); }
+.agent-event-refs-more { color: var(--foreground-muted); font-family: var(--mono); font-size: 10px; }
+
 .agent-event.is-operator {
   width: 100%;
   min-height: auto;

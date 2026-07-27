@@ -1,5 +1,6 @@
 import { memo, useState, type ReactNode } from "react";
 import { ArrowSquareOut, Brain, CaretDown, Check, CheckCircle, Copy, MagnifyingGlass, Robot, ShieldCheck, TerminalWindow, User, Warning } from "@phosphor-icons/react";
+import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -9,7 +10,7 @@ import {
 import type { AgentConversationEventItem } from "./agent-conversation.js";
 import { rulerToolName } from "./RunTimelineRuler.js";
 import { useStore } from "../../store.js";
-import type { Fact, Task, ValidationWorkflowSnapshot } from "@traceforge/shared";
+import type { AgentEventRefs, Fact, Task, ValidationWorkflowSnapshot } from "@traceforge/shared";
 
 type ValidationState = { label: "Active" | "Current" | "Blocked" | "Resolved" | "Satisfied" | "Released" | "Deferred" | "Recorded" | "Superseded" | "Unavailable"; tone: "active" | "warning" | "muted" };
 
@@ -39,6 +40,7 @@ export const AgentEventRow = memo(function AgentEventRow({ item }: { item: Agent
   const inspect = isTool ? () => selectAgentEvent({ kind: item.kind, label: item.label, text: item.text }) : undefined;
   const validationState = item.kind === "validation" ? validationEventState(item.eventType, item.target, workflow, targetTask, targetFact) : null;
   const targetTitle = targetTask?.title ?? targetFact?.title;
+  const refChips = item.refs && (item.refs.factIds.length > 0 || item.refs.taskIds.length > 0) ? <RefChips refs={item.refs} /> : null;
 
   if (canExpand) {
     return (
@@ -61,6 +63,7 @@ export const AgentEventRow = memo(function AgentEventRow({ item }: { item: Agent
         <CollapsibleContent>
           <p className="agent-event-content">{item.text}</p>
         </CollapsibleContent>
+        {refChips}
       </Collapsible>
     );
   }
@@ -69,9 +72,34 @@ export const AgentEventRow = memo(function AgentEventRow({ item }: { item: Agent
     <article className={`agent-event ${eventClassName(item.kind)}`} data-conversation-key={item.key}>
       <EventHeader item={item} validationState={validationState} targetTitle={targetTitle}><EventActions text={item.text} copied={copied} onCopiedChange={setCopied} onInspect={inspect} onLocate={item.target ? () => navigateToKnowledge(item.target) : undefined} /></EventHeader>
       <p className="agent-event-content">{item.text}</p>
+      {refChips}
     </article>
   );
-}, (previous, next) => previous.item.key === next.item.key && previous.item.kind === next.item.kind && previous.item.label === next.item.label && previous.item.text === next.item.text && previous.item.summary === next.item.summary && previous.item.target?.kind === next.item.target?.kind && previous.item.target?.id === next.item.target?.id && previous.item.eventType === next.item.eventType && previous.item.createdAt === next.item.createdAt);
+}, (previous, next) => previous.item.key === next.item.key && previous.item.kind === next.item.kind && previous.item.label === next.item.label && previous.item.text === next.item.text && previous.item.summary === next.item.summary && previous.item.target?.kind === next.item.target?.kind && previous.item.target?.id === next.item.target?.id && previous.item.eventType === next.item.eventType && previous.item.createdAt === next.item.createdAt && JSON.stringify(previous.item.refs ?? null) === JSON.stringify(next.item.refs ?? null));
+
+const REF_CHIP_LIMIT = 3;
+
+// 工具产出的知识引用 chips:点击即选中图谱节点/inspector 目标,是 console → 图谱的精确联动入口。
+function RefChips({ refs }: { refs: AgentEventRefs }) {
+  const selectFact = useStore((state) => state.selectFact);
+  const selectTask = useStore((state) => state.selectTask);
+  const factTitles = useStore(useShallow((state) => refs.factIds.map((id) => state.facts.find((fact) => fact.id === id)?.title ?? null)));
+  const taskTitles = useStore(useShallow((state) => refs.taskIds.map((id) => state.tasks.find((task) => task.id === id)?.title ?? null)));
+  const chips = [
+    ...refs.factIds.map((id, index) => ({ kind: "fact" as const, id, label: factTitles[index] ?? id, select: () => selectFact(id) })),
+    ...refs.taskIds.map((id, index) => ({ kind: "task" as const, id, label: taskTitles[index] ?? id, select: () => selectTask(id) })),
+  ];
+  const visible = chips.slice(0, REF_CHIP_LIMIT);
+  return (
+    <div className="agent-event-refs">
+      <span className="agent-event-refs-label">Produced</span>
+      {visible.map((chip) => (
+        <button key={`${chip.kind}-${chip.id}`} type="button" className={`agent-event-ref-chip is-${chip.kind}`} data-ref-kind={chip.kind} title={chip.label} onClick={chip.select}>{chip.label}</button>
+      ))}
+      {chips.length > visible.length && <span className="agent-event-refs-more">+{chips.length - visible.length} more</span>}
+    </div>
+  );
+}
 
 function EventActions({
   text,

@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, AgentRun, IdentityContext, AttackPath, SecurityReport, Hypothesis, HypothesisTransition } from "./schemas.js";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, AgentRun, IdentityContext, AttackPath, SecurityReport, Hypothesis, HypothesisTransition, AgentEventRefs } from "./schemas.js";
 import type { ValidationWorkflowSnapshot } from "./validation-workflow.js";
 
 export type RuntimeEvent =
@@ -30,7 +30,7 @@ export type RuntimeEvent =
   | { type: "agent_text"; caseId: string; content: string }
   | { type: "agent_reasoning"; caseId: string; content: string }
   | { type: "agent_tool_call"; caseId: string; tool: string; input: string }
-  | { type: "agent_tool_result"; caseId: string; tool: string; content: string }
+  | { type: "agent_tool_result"; caseId: string; tool: string; content: string; refs?: AgentEventRefs | null }
   | { type: "agent_tool_blocked"; caseId: string; runId: string; tool: string; input: string; reason: string }
   | { type: "agent_done"; caseId: string; content: string }
   | { type: "agent_error"; caseId: string; content: string }

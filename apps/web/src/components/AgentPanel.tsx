@@ -5,7 +5,7 @@ import type { AgentEvent, AgentRun } from "@traceforge/shared";
 import { runAgent, resolveApproval, approveScope, rejectScope, steerAgentRun, interruptAgentRun, listAgentEvents } from "../api.js";
 import { AgentEventRow } from "./agent/AgentEventRow.js";
 import { ValidationEventGroup } from "./agent/ValidationEventGroup.js";
-import { buildAgentConversationItems } from "./agent/agent-conversation.js";
+import { buildAgentConversationItems, findAgentEventIndexByRef } from "./agent/agent-conversation.js";
 import {
   ApprovalInterventionCard,
   RunContinuationCard,
@@ -96,7 +96,7 @@ export function AgentPanel() {
     pageSize: AGENT_HISTORY_PAGE_SIZE,
     loadPage: (id, limit, offset) => listAgentEvents(id, { limit, offset }),
   });
-  const allAgentEvents = useMemo(() => history.items.map(({ kind, text, tool, createdAt }) => ({ kind, text, tool, createdAt })), [history.items]);
+  const allAgentEvents = useMemo(() => history.items.map(({ kind, text, tool, refs, createdAt }) => ({ kind, text, tool, refs: refs ?? null, createdAt })), [history.items]);
   const { start: pageStart, end: pageEnd, latest: latestPage } = getAgentEventPage(allAgentEvents.length, eventPageEnd);
   const pageEvents = useMemo(() => allAgentEvents.slice(pageStart, pageEnd), [allAgentEvents, pageEnd, pageStart]);
   const conversationItems = useMemo(() => buildAgentConversationItems({
@@ -147,6 +147,24 @@ export function AgentPanel() {
     };
     globalThis.addEventListener("traceforge:jump-to-validation", handler);
     return () => globalThis.removeEventListener("traceforge:jump-to-validation", handler);
+  }, [allAgentEvents]);
+
+  // Graph entity nodes (fact/task/timeline) ask for the console row whose refs
+  // recorded them; the dock only opens when a matching row actually exists.
+  useEffect(() => {
+    const handler = (raw: Event) => {
+      const { refId } = (raw as CustomEvent<{ refId: string }>).detail;
+      const index = findAgentEventIndexByRef(allAgentEvents, refId);
+      if (index < 0) return;
+      const store = useStore.getState();
+      if (store.dockCollapsed) store.toggleDockCollapsed();
+      pendingJumpRef.current = index;
+      shouldAutoScrollRef.current = false;
+      const end = index + 1;
+      setEventPageEnd(end >= allAgentEvents.length ? null : end);
+    };
+    globalThis.addEventListener("traceforge:jump-to-event-ref", handler);
+    return () => globalThis.removeEventListener("traceforge:jump-to-event-ref", handler);
   }, [allAgentEvents]);
 
   useLayoutEffect(() => {

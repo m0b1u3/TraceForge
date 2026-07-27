@@ -111,8 +111,8 @@ describe("search_traffic", () => {
 describe("recall_conversation", () => {
   const events = {
     listByCase: (): AgentEvent[] => [
-      { id: "e1", caseId: "c", kind: "user", text: "测试登录越权", tool: null, createdAt: "t" },
-      { id: "e2", caseId: "c", kind: "done", text: "已记录订单接口", tool: null, createdAt: "t" },
+      { id: "e1", caseId: "c", kind: "user", text: "测试登录越权", tool: null, refs: null, createdAt: "t" },
+      { id: "e2", caseId: "c", kind: "done", text: "已记录订单接口", tool: null, refs: null, createdAt: "t" },
     ],
   };
   const summaries = { latest: () => ({ content: "早期发现了 3 个 API" }) };
@@ -168,7 +168,7 @@ describe("recall_conversation query expansion", () => {
   it("finds earlier conversation text through expanded terms", async () => {
     const events = {
       listByCase: (): AgentEvent[] => [
-        { id: "e1", caseId: "c", kind: "done", text: "Earlier note: possible BOLA in profile API", tool: null, createdAt: "t" },
+        { id: "e1", caseId: "c", kind: "done", text: "Earlier note: possible BOLA in profile API", tool: null, refs: null, createdAt: "t" },
       ],
     };
     const summaries = { latest: () => undefined };

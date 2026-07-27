@@ -92,6 +92,15 @@ describe("validation workflow realtime state", () => {
     expect(useStore.getState().agentEvents).toEqual([expect.objectContaining({ kind: "validation", text: "Task=task_1; consensus=insufficient", tool: "validation_task_claimed", createdAt: "now" })]);
   });
 
+  it("keeps refs from live tool result events for console to graph linking", () => {
+    const refs = { factIds: ["fact_1"], taskIds: [], timelineEntryIds: ["tl_1"] };
+    useStore.getState().handleRuntimeEvent({ type: "agent_tool_result", caseId: "case_1", tool: "record_fact", content: "ok", refs });
+    useStore.getState().handleRuntimeEvent({ type: "agent_tool_result", caseId: "case_1", tool: "get_traffic", content: "[]" });
+    const events = useStore.getState().agentEvents;
+    expect(events[0]).toEqual(expect.objectContaining({ kind: "tool_result", refs }));
+    expect(events[1]).toEqual(expect.objectContaining({ kind: "tool_result", refs: null }));
+  });
+
   it("uses one knowledge navigation action for panel requests, inspector cleanup, and stale targets", () => {
     useStore.setState({
       tasks: [{ id: "task_1", caseId: "case_1", title: "Validate IDOR", status: "open", reason: "", blockedBy: [], triggerWhen: [], relatedFacts: [], priority: "high", createdAt: "now", updatedAt: "now", updateCount: 0 }],

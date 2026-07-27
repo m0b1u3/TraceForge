@@ -11,7 +11,7 @@ import { FactStore } from "./stores/fact-store.js";
 import { TaskStore } from "./stores/task-store.js";
 import { TimelineStore } from "./stores/timeline-store.js";
 import { EventBus } from "./event-bus.js";
-import { validationTimelineConsoleEvent, type Task, type ObserverWarning, type CaseSummary, type Fact } from "@traceforge/shared";
+import { validationTimelineConsoleEvent, type Task, type ObserverWarning, type CaseSummary, type Fact, type TimelineEntry, type AgentEventRefs } from "@traceforge/shared";
 import type { LlmProvider } from "@traceforge/llm";
 import { loadLlmConfig, createProviderFromConfig } from "@traceforge/llm";
 import { ActionCardStore } from "./stores/action-store.js";
@@ -34,6 +34,7 @@ import {
 import { BrowserSession } from "./browser-session.js";
 import { ObserverWarningStore } from "./stores/observer-store.js";
 import { AgentEventStore } from "./stores/agent-event-store.js";
+import { collectToolRefs } from "./agent-event-refs.js";
 import { ApprovalRegistry } from "./agent-approvals.js";
 import { AgentRunRegistry } from "./agent-runs.js";
 import { SessionStateStore } from "./stores/session-state-store.js";
@@ -1188,13 +1189,29 @@ export function registerRoutes(
 
     agentEventStore.append(id, "user", goal); // 存用户这句目标，刷新/切 Case 后历史可见完整双边对话
     agentEventStore.append(id, "started", `Started: ${goal}`);
+    // tool 事件 refs 联动:run 级缓冲收集本 case 的 timeline 条目,
+    // onBeforeToolExecute/onToolExecuted 夹出每个工具的执行窗口,
+    // 按工具名 FIFO 与 tool_result 事件配对(批量结果按调用顺序发出,两钩子严格一一对应)。
+    // 并行批次中窗口可能重叠,写工具的产出会同时落入只读批友的窗口——可接受的重复,不写死工具名。
+    const runTimelineEntries: TimelineEntry[] = [];
+    const offTimelineCollect = bus.subscribe((event) => {
+      if (event.type === "timeline_appended" && event.entry.caseId === id) runTimelineEntries.push(event.entry);
+    });
+    const toolRefWindows = new Map<string, number[]>();
+    const pendingToolRefs = new Map<string, (AgentEventRefs | null)[]>();
     const observerScheduler = new ObserverScheduler();
     await new AgentRuntime(llm, registry, gate).run(
       `${system}\n${runtimeProtocol}\nValidation task protocol: use manage_validation_task to claim a consensus validation task before executing it, release it before pivoting, and complete it only after recording the required evidence. Do not manually change consensus validation status with record_task.\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}\n\n${getValidationMatrixPlan()}`,
       built.messages,
       (e) => {
       if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
-      else if (e.type === "tool_result") { bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content }); agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined); trajectory.push(`[result] ${e.name} → ${e.content}`); }
+      else if (e.type === "tool_result") {
+        const refsQueue = pendingToolRefs.get(e.name ?? "");
+        const refs = refsQueue?.shift() ?? null;
+        bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content, refs });
+        agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined, undefined, refs ?? undefined);
+        trajectory.push(`[result] ${e.name} → ${e.content}`);
+      }
       else if (e.type === "tool_blocked") {
         bus.emit({
           type: "agent_tool_blocked",
@@ -1288,6 +1305,9 @@ export function registerRoutes(
         return `Run ${runId} has queued investigation tasks but no execution lease. Start exactly one task with record_task or manage_validation_task before executing this tool.`;
       },
       onBeforeToolExecute: (call) => {
+        const windowStack = toolRefWindows.get(call.name) ?? [];
+        windowStack.push(runTimelineEntries.length);
+        toolRefWindows.set(call.name, windowStack);
         validationOutcomeBefore = executingValidationTask ? captureValidationOutcome() : undefined;
         const serialized = JSON.stringify(call.input);
         const referencedKnowledge = [...availableKnowledge.values()].filter((ref) => serialized.includes(ref.id));
@@ -1307,6 +1327,11 @@ export function registerRoutes(
         });
       },
       onToolExecuted: (report) => {
+        const windowStack = toolRefWindows.get(report.name) ?? [];
+        const windowStart = windowStack.shift() ?? runTimelineEntries.length;
+        const refsQueue = pendingToolRefs.get(report.name) ?? [];
+        refsQueue.push(collectToolRefs(runTimelineEntries.slice(windowStart)));
+        pendingToolRefs.set(report.name, refsQueue);
         if (executingTaskId && !["record_task", "manage_validation_task"].includes(report.name)) {
           const taskEntry = timelineStore.append(
             id,
@@ -1528,7 +1553,7 @@ export function registerRoutes(
         bus.emit({ type: "fact_created", fact });
         bus.emit({ type: "timeline_appended", entry });
       },
-    });
+    }).finally(offTimelineCollect);
 
     const afterRun = runs.get(runId)?.run;
     if (afterRun && afterRun.status === "running") {

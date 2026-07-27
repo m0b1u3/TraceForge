@@ -1,5 +1,5 @@
 import type { AgentUiEvent } from "../../store.js";
-import { validationTimelineConsoleEvent } from "@traceforge/shared";
+import { validationTimelineConsoleEvent, type AgentEventRefs } from "@traceforge/shared";
 
 type PendingApproval = { approvalId: string; tool: string; input: string };
 type PendingScope = { host: string; reason: string };
@@ -11,6 +11,7 @@ export type AgentConversationEventItem = {
   label: string;
   text: string;
   summary: string;
+  refs?: AgentEventRefs | null;
   target?: { kind: "task" | "finding"; id: string };
   eventType?: string;
   createdAt?: string;
@@ -81,7 +82,7 @@ function formatAgentEvent(event: AgentUiEvent): Omit<AgentConversationEventItem,
   if (event.kind === "user") return { kind: event.kind, label: "You", text, summary: text };
   if (event.kind === "error") return { kind: event.kind, label: "Error", text, summary: text };
   if (event.kind === "tool_call") return { kind: event.kind, label: "Tool call", text, summary: compactToolText(text) };
-  if (event.kind === "tool_result") return { kind: event.kind, label: "Tool result", text, summary: compactToolText(text) };
+  if (event.kind === "tool_result") return { kind: event.kind, label: "Tool result", text, summary: compactToolText(text), refs: event.refs ?? null };
   if (event.kind === "validation") {
     const validation = validationTimelineConsoleEvent({ eventType: event.tool ?? "", detail: text });
     if (!validation) return null;
@@ -94,6 +95,16 @@ function formatAgentEvent(event: AgentUiEvent): Omit<AgentConversationEventItem,
 
 function compactToolText(text: string): string {
   return compactText(text.replace(/\s+/g, " ").trim(), 180);
+}
+
+// 图谱节点 → console 的精确反查:取最后一个 refs 提到该实体的事件(最新的上下文最相关)。
+export function findAgentEventIndexByRef(events: Array<{ refs?: AgentEventRefs | null }>, refId: string): number {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const refs = events[index].refs;
+    if (!refs) continue;
+    if (refs.factIds.includes(refId) || refs.taskIds.includes(refId) || refs.timelineEntryIds.includes(refId)) return index;
+  }
+  return -1;
 }
 
 function compactText(text: string, maxLength: number): string {
