@@ -53,6 +53,8 @@ describe("Operations Canvas theme contract", () => {
     expect(globals).toMatch(/--color-background:\s*var\(--background\)/);
     expect(globals).toMatch(/--color-foreground:\s*var\(--foreground\)/);
     expect(globals).toMatch(/--color-primary:\s*var\(--primary\)/);
+    expect(globals).toMatch(/--color-cta:\s*var\(--cta\)/);
+    expect(globals).toMatch(/--color-cta-hover:\s*var\(--cta-hover\)/);
     expect(globals).toMatch(/--color-destructive:\s*var\(--danger\)/);
     expect(globals).toMatch(/--color-ring:\s*var\(--ring\)/);
   });
@@ -60,13 +62,23 @@ describe("Operations Canvas theme contract", () => {
   it("ships a light variant of the semantic tokens from the same source", () => {
     const light = globals.match(/:root\[data-theme="light"\]\s*\{([\s\S]*?)\}/)?.[1] ?? "";
     expect(light).toContain("color-scheme: light");
-    expect(light).toMatch(/--background:\s*#EEF1F4/i);
+    expect(light).toMatch(/--background:\s*#F4F6F7/i);
     expect(light).toMatch(/--surface:\s*#FFFFFF/i);
-    expect(light).toMatch(/--foreground:\s*#161B22/i);
-    expect(light).toMatch(/--primary:\s*#0B9669/i);
-    expect(light).toMatch(/--warning:\s*#A96E00/i);
-    expect(light).toMatch(/--danger:\s*#D63040/i);
-    expect(light).toMatch(/--information:\s*#5566D6/i);
+    expect(light).toMatch(/--foreground:\s*#131A22/i);
+    expect(light).toMatch(/--primary:\s*#087F5B/i);
+    expect(light).toMatch(/--cta:\s*#087F5B/i);
+    expect(light).toMatch(/--cta-hover:\s*#066A4B/i);
+    expect(light).toMatch(/--warning:\s*#B45309/i);
+    expect(light).toMatch(/--danger:\s*#D92D20/i);
+    expect(light).toMatch(/--information:\s*#4F5BD5/i);
+  });
+
+  it("anchors calls to action on a deep professional accent in every theme", () => {
+    const dark = globals.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+    expect(dark).toMatch(/--cta:\s*#0E9F6E/i);
+    expect(dark).toMatch(/--cta-hover:\s*#0C8A61/i);
+    expect(dark).toMatch(/--cta-foreground:\s*#FFFFFF/i);
+    expect(workbench).not.toMatch(/\.tf-btn-primary\s*\{[^}]*background:\s*var\(--primary\)/);
   });
 
   it("does not redefine semantic colors outside globals.css", () => {
@@ -82,14 +94,15 @@ describe("Operations Canvas theme contract", () => {
     expect(workbench).not.toMatch(/:root\[data-theme="light"\]\s*\{[^}]*--background\s*:/);
   });
 
-  it("keeps the widened type scale with a reasoning size", () => {
-    expect(globals).toMatch(/--type-label:\s*10px/);
-    expect(globals).toMatch(/--type-meta:\s*11px/);
-    expect(globals).toMatch(/--type-control:\s*12px/);
+  it("keeps the product type scale with a reasoning size", () => {
+    expect(globals).toMatch(/--type-label:\s*11px/);
+    expect(globals).toMatch(/--type-meta:\s*12px/);
+    expect(globals).toMatch(/--type-control:\s*13px/);
     expect(globals).toMatch(/--type-body:\s*13px/);
     expect(globals).toMatch(/--type-reasoning:\s*14px/);
-    expect(globals).toMatch(/--type-heading:\s*16px/);
-    expect(globals).toMatch(/--type-title:\s*20px/);
+    expect(globals).toMatch(/--type-card:\s*15px/);
+    expect(globals).toMatch(/--type-heading:\s*18px/);
+    expect(globals).toMatch(/--type-title:\s*26px/);
   });
 
   it("keeps typography tracking at zero", () => {
@@ -112,7 +125,7 @@ describe("Operations Canvas theme contract", () => {
       /\.request-row-url,\s*\.request-row p,\s*\.message,\s*\.message\.tool,\s*\.message\.reasoning,\s*\.agent-event-content,\s*\.tf-row,\s*\.kv,\s*\.tf-row-detail pre,\s*\.request-detail pre,\s*\.tf-guide-title,\s*\.tf-guide-hint,\s*\.tf-empty,\s*\.tf-select-empty\s*\{[^}]*font-size:\s*16px/,
     );
     expect(narrowScreenStyles).toMatch(
-      /\.browser-url,\s*\.flow-card-head strong,\s*\.flow-card p\s*\{[^}]*font-size:\s*16px/,
+      /\.browser-url,\s*\.flow-title,\s*\.flow-sub\s*\{[^}]*font-size:\s*16px/,
     );
   });
 
@@ -123,8 +136,8 @@ describe("Operations Canvas theme contract", () => {
     expect(appRoot).toMatch(/--z-drawer:\s*40/);
     expect(appRoot).toMatch(/--z-modal:\s*50/);
     expect(appRoot).toMatch(/--radius-sm:\s*6px/);
-    expect(appRoot).toMatch(/--radius-lg:\s*10px/);
-    expect(appRoot).toMatch(/--radius-xl:\s*14px/);
+    expect(appRoot).toMatch(/--radius-lg:\s*12px/);
+    expect(appRoot).toMatch(/--radius-xl:\s*16px/);
     expect(app).toMatch(/\.panel\s*\{[\s\S]*?border-radius:\s*var\(--radius-lg\)/);
     expect(app).toMatch(/\.tf-launcher\s*\{[\s\S]*?border-radius:\s*var\(--radius\)/);
     expect(app).toMatch(/\.tf-modal\s*\{[\s\S]*?border-radius:\s*var\(--radius\)/);
@@ -133,12 +146,12 @@ describe("Operations Canvas theme contract", () => {
     expect(app).toMatch(/\.tf-prio\s*\{[^}]*border-radius:\s*var\(--radius-sm\)/);
   });
 
-  it("maps every non-pill Tailwind radius utility used by workbench primitives within 6px to 12px", () => {
-    expect(primitiveRadiusClasses).toEqual(["lg", "md", "sm", "xs"]);
+  it("maps every Tailwind radius utility used by workbench primitives to its hierarchy tier", () => {
+    const tierByClass: Record<string, number> = { xs: 5, sm: 6, md: 8, lg: 12, xl: 16 };
+    expect(primitiveRadiusClasses.length).toBeGreaterThan(0);
 
     for (const radiusClass of primitiveRadiusClasses) {
-      expect(tailwindRadiusTokens[radiusClass], `rounded-${radiusClass}`).toBeGreaterThanOrEqual(6);
-      expect(tailwindRadiusTokens[radiusClass], `rounded-${radiusClass}`).toBeLessThanOrEqual(12);
+      expect(tailwindRadiusTokens[radiusClass], `rounded-${radiusClass}`).toBe(tierByClass[radiusClass]);
     }
   });
 
@@ -172,10 +185,19 @@ describe("Operations Canvas theme contract", () => {
     expect(app).toMatch(/@media\s*\(max-width:\s*479px\)[\s\S]*?\.settings-footer-context \[data-slot="button"\]\s*\{[^}]*width:\s*100%/);
   });
 
-  it("uses a compact launchpad table instead of horizontal scrolling on narrow windows", () => {
-    expect(app).toMatch(/@media\s*\(max-width:\s*799px\)[\s\S]*?\.launchpad-table\s*\{[^}]*overflow-x:\s*visible/);
-    expect(app).toMatch(/@media\s*\(max-width:\s*799px\)[\s\S]*?\.launchpad-table-head,[\s\S]*?\.launchpad-row\s*\{[^}]*min-width:\s*0[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) 112px 32px/);
+  it("uses a compact launchpad list instead of a data table", () => {
+    expect(app).not.toContain("launchpad-table-head");
+    expect(app).toMatch(/\.launchpad-list\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column/);
+    expect(app).toMatch(/\.launchpad-row-main\s*\{[^}]*display:\s*grid[^}]*cursor:\s*pointer/);
+    expect(app).toMatch(/@media\s*\(max-width:\s*799px\)[\s\S]*?\.launchpad-row-meta \.launchpad-number,[\s\S]*?display:\s*none/);
     expect(app).toMatch(/\.launchpad-tools label,[\s\S]*?\.launchpad-tools label:focus-within\s*\{[^}]*width:\s*min\(100%,\s*320px\)/);
+  });
+
+  it("gives the primary investigation call to action real weight", () => {
+    expect(app).toMatch(/\.launchpad-create-primary\s*\{[^}]*height:\s*44px/);
+    expect(workbenchPrimitives.Button).toMatch(/default:\s*"[^"]*bg-cta[^"]*font-semibold[^"]*hover:bg-cta-hover/);
+    expect(app).toMatch(/\.launchpad-start\s*\{[^}]*display:\s*grid[^}]*gap:\s*20px/);
+    expect(app).toMatch(/\.launchpad-readiness\s*\{[^}]*padding:[^}]*\}(?![\s\S]*?\.launchpad-readiness\s*\{[^}]*border)/);
   });
 
   it("reserves state green for live signals in every theme", () => {
@@ -189,20 +211,28 @@ describe("Operations Canvas theme contract", () => {
   });
 
   it("keeps interactive states on their own tokens instead of borrowed hues", () => {
-    expect(app).toMatch(/\.tf-btn-primary:hover\s*\{[^}]*background:\s*var\(--primary-hover\)/);
+    expect(app).toMatch(/\.tf-btn-primary:hover\s*\{[^}]*background:\s*var\(--cta-hover\)/);
     expect(app).not.toMatch(/\.tf-btn-primary:hover\s*\{[^}]*#1d4ed8/i);
     expect(app).toMatch(/\.launchpad-row\[data-selected="true"\]::before\s*\{[^}]*background:\s*var\(--information\)/);
     expect(app).toMatch(/\.launchpad-row\[data-selected="true"\]\s*\{[^}]*color-mix\(in\s+srgb,\s*var\(--foreground\)/);
     expect(workbench).toMatch(/\.graph-footer\s+input\[type="range"\]\s*\{[^}]*accent-color:\s*var\(--information\)/);
+    expect(workbench).toMatch(/\.request-row\.is-open::before,\s*\.request-row\.is-selected::before\s*\{[^}]*background:\s*var\(--information\)/);
   });
 
   it("renders disabled primary buttons as neutral chrome instead of a washed tint", () => {
     expect(workbenchPrimitives.Button).toMatch(/default:\s*"[^"]*disabled:bg-secondary[^"]*disabled:text-muted-foreground/);
   });
 
+  it("keeps ref-forwarding on primitives that Radix Slot triggers compose", () => {
+    // React 18 drops refs passed to plain function components; without
+    // forwardRef, floating menus anchored to Button lose their anchor
+    // measurement and render outside the viewport.
+    expect(workbenchPrimitives.Button).toContain("React.forwardRef");
+  });
+
   it("routes light overrides through the shared tokens with no legacy green palette", () => {
-    expect(workbench).not.toMatch(/#16815f|#147657|#116d50|#7fcfb2|#8fb8aa|#e3efeb|#d8eae4|#dce9e5/i);
-    expect(workbench).toMatch(/\[data-theme="light"\] \.tf-btn-primary\s*\{[^}]*background:\s*var\(--primary\)[^}]*color:\s*var\(--primary-foreground\)/);
+    expect(workbench).not.toMatch(/#16815f|#147657|#116d50|#7fcfb2|#8fb8aa|#e3efeb|#d8eae4|#dce9e5|#79c8aa/i);
+    expect(workbench).toMatch(/\[data-theme="light"\] \.tf-btn-primary\s*\{[^}]*background:\s*var\(--cta\)[^}]*color:\s*var\(--cta-foreground\)/);
     expect(workbench).toMatch(/\[data-theme="light"\] \.traffic-panel\s*\{[^}]*background:\s*var\(--background\)/);
   });
 });

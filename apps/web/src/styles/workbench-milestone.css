@@ -88,10 +88,9 @@
 .inspector-header-list dd { margin: 0; color: var(--foreground-secondary); overflow-wrap: anywhere; }
 
 .run-launcher-dialog { width: min(560px, calc(100vw - 32px)); }
-.topbar-knowledge { display: flex; align-items: center; gap: 2px; }
-.topbar-knowledge [data-slot="button"] { gap: 5px; color: var(--foreground-muted); font-size: 11px; }
-.topbar-knowledge [data-slot="button"]:hover { color: var(--foreground); }
-.topbar-knowledge [data-slot="button"][aria-pressed="true"] { background: var(--surface-hover); color: var(--foreground); }
+.topbar-more { flex: 0 0 auto; }
+.topbar-more svg { color: var(--foreground-muted); }
+.topbar-more:hover svg, .topbar-more[data-active="true"] svg { color: var(--foreground); }
 .knowledge-dialog { display: flex; flex-direction: column; width: min(680px, calc(100vw - 32px)); max-height: 80svh; }
 .knowledge-dialog-body { min-height: 0; overflow: auto; }
 .run-launcher-field { display: grid; gap: 8px; }
@@ -103,4 +102,4 @@
 .run-launcher-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 :root[data-theme="light"] { --tf-inspector-surface: #f8fafa; --tf-code-surface: #eef2f2; }
-:root[data-theme="light"] .run-ruler-tick { background: var(--foreground-secondary); opacity: .85; }
+:root[data-theme="light"] .run-ruler-tick:not(.is-finding):not(.is-approval) { background: var(--foreground-secondary); opacity: .85; }

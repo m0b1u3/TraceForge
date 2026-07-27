@@ -1,9 +1,10 @@
-import { ArrowsClockwise, Circle, Coins, Eye, FileText, Gear, Lightbulb, Moon, Play, Plugs, Sun, WifiHigh, WifiSlash } from "@phosphor-icons/react";
+import { ArrowsClockwise, Circle, Coins, DotsThree, Eye, FileText, Gear, Lightbulb, Moon, Play, Plugs, Sun, WifiHigh, WifiSlash } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { useAppTheme } from "../hooks/useAppTheme.js";
 import { CaseLauncher } from "./CaseLauncher.js";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/components/ui/utils";
 import { useShallow } from "zustand/react/shallow";
 
@@ -64,23 +65,30 @@ export function TopBar() {
           </div>
         )}
         {caseId && (
-          <div className="topbar-knowledge" aria-label="Knowledge views">
-            {KNOWLEDGE_DIALOGS.map(({ key, label, icon: Icon }) => (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <Button
-                key={key}
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="sm"
-                aria-pressed={knowledgeDialog === key}
-                aria-label={`Open ${label}`}
-                title={label}
-                onClick={() => setKnowledgeDialog(knowledgeDialog === key ? null : key)}
+                className="topbar-more"
+                aria-label="More workspace views"
+                title="Workspace views"
+                data-active={knowledgeDialog ? "true" : undefined}
               >
-                <Icon size={15} />
-                <span>{label}</span>
+                <DotsThree size={16} weight="bold" />
               </Button>
-            ))}
-          </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {KNOWLEDGE_DIALOGS.map(({ key, label, icon: Icon }) => (
+                <DropdownMenuItem key={key} onSelect={() => setKnowledgeDialog(knowledgeDialog === key ? null : key)}>
+                  <Icon size={14} />
+                  <span>{label}</span>
+                  {knowledgeDialog === key ? <i className="topbar-more-active" aria-hidden="true" /> : null}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
         {caseId && (
           <Button className="topbar-run-action" type="button" size="sm" onClick={runStatus === "running" ? () => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus() : openRunLauncher}>

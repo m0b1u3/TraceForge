@@ -6,23 +6,24 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
-  ArrowCounterClockwise, Clock, Database, Flag, Lightbulb, Lightning, Notebook, Pause, Play, Robot, ShieldCheck,
+  ArrowCounterClockwise, Pause, Play,
 } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import type { Fact, Task, ActionCard, Hypothesis, TimelineEntry } from "@traceforge/shared";
 import { useShallow } from "zustand/react/shallow";
 import { FeedbackState } from "./ui/feedback-state.js";
 
-const KIND_META: Record<string, { label: string; icon: typeof Notebook; color: string; border: string }> = {
-  fact: { label: "FACT", icon: Database, color: "#78aef2", border: "#35516d" },
-  memory: { label: "MEMORY", icon: Database, color: "#78aef2", border: "#35516d" },
-  task: { label: "TASK", icon: Lightbulb, color: "#d7a65a", border: "#5f4b2d" },
-  idea: { label: "TASK", icon: Lightbulb, color: "#d7a65a", border: "#5f4b2d" },
-  action: { label: "ACTION", icon: Lightning, color: "#aa91d8", border: "#4c4162" },
-  solver: { label: "AGENT", icon: Robot, color: "#62c49e", border: "#315b4d" },
-  flag: { label: "FLAG", icon: Flag, color: "#d89467", border: "#624436" },
-  hypothesis: { label: "IDEA", icon: Lightbulb, color: "#8298FF", border: "#3a4462" },
-  note: { label: "EVENT", icon: Notebook, color: "#8799a5", border: "#3a4b55" },
+const KIND_META: Record<string, { label: string }> = {
+  fact: { label: "Fact" },
+  memory: { label: "Memory" },
+  task: { label: "Task" },
+  idea: { label: "Task" },
+  action: { label: "Action" },
+  solver: { label: "Agent" },
+  flag: { label: "Flag" },
+  hypothesis: { label: "Hypothesis" },
+  note: { label: "Event" },
+  goal: { label: "Objective" },
 };
 
 function clip(v: unknown, max = 96) {
@@ -70,30 +71,23 @@ export type FlowNodeData = {
   title: string;
   body: string;
   meta: string;
+  active?: boolean;
 };
 
 function BwNode({ data }: NodeProps<Node<FlowNodeData>>) {
   const meta = KIND_META[data.kind] ?? KIND_META.note;
-  const Icon = meta.icon;
   return (
-    <div className={`flow-card ${data.kind}`}>
+    <div className={`flow-card ${data.kind}${data.active ? " is-active" : ""}`}>
       <Handle className="flow-handle" position={Position.Top} type="target" />
       <Handle className="flow-handle" position={Position.Bottom} type="source" />
       <Handle className="flow-handle" position={Position.Left} type="target" />
       <Handle className="flow-handle" position={Position.Right} type="source" />
-      <div className="flow-card-content">
-        <div className="flow-card-head">
-          <span className="flow-icon" style={{ color: meta.color, borderColor: meta.border }}>
-            <Icon size={13} />
-          </span>
-          <div>
-            <span style={{ color: meta.color }}>{meta.label}</span>
-            <strong>{clip(data.title, 52)}</strong>
-          </div>
-        </div>
-        <p>{clip(data.body, 108)}</p>
-        <small>{data.meta}</small>
+      <div className="flow-card-head">
+        <span className="flow-kind"><i aria-hidden="true" />{meta.label}</span>
+        <span className="flow-time">{data.meta}</span>
       </div>
+      <strong className="flow-title">{clip(data.body, 96)}</strong>
+      <span className="flow-sub">{data.title}</span>
     </div>
   );
 }
@@ -110,9 +104,9 @@ function EventEdge(props: EdgeProps) {
         fill="none"
         markerEnd={markerEnd}
         style={{
-          stroke: style?.stroke ?? "#94a3b8",
-          strokeWidth: active ? 2.1 : 1.25,
-          strokeOpacity: active ? 0.95 : 0.5,
+          stroke: style?.stroke ?? "var(--border-strong)",
+          strokeWidth: active ? 2 : 1.4,
+          strokeOpacity: active ? 0.95 : 0.65,
           strokeDasharray: active ? "9 7" : (style?.strokeDasharray as string | undefined),
         }}
       >
@@ -175,19 +169,19 @@ export function buildTimelineGraph(
       id: "__goal__",
       type: "bw",
       position: { x: 0, y: 0 },
-      width: 240,
-      height: 96,
+      width: 264,
+      height: 108,
       data: {
         entry: timeline[0],
-        kind: "solver",
-        title: "Objective",
+        kind: "goal",
+        title: "Case goal",
         body: goal,
-        meta: "case goal",
+        meta: "objective",
       },
     });
   }
 
-  const addEdge = (source: string | undefined, target: string, label: string, color: string, active = false) => {
+  const addEdge = (source: string | undefined, target: string, label: string, active = false) => {
     if (!source || source === target) return false;
     const id = `${source}->${target}:${label}`;
     if (edgeIds.has(id)) return false;
@@ -198,8 +192,8 @@ export function buildTimelineGraph(
       target,
       type: "event",
       label,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "#64748b" },
-      style: { stroke: color },
+      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "#7A8794" },
+      style: { stroke: "var(--border-strong)" },
       data: { active },
     });
     return true;
@@ -209,7 +203,7 @@ export function buildTimelineGraph(
     let added = false;
     for (const factId of factIds) {
       const source = latestNodeByRef.get(factId);
-      added = addEdge(source, target, label, KIND_META.fact.color, active) || added;
+      added = addEdge(source, target, label, active) || added;
     }
     return added;
   };
@@ -222,21 +216,21 @@ export function buildTimelineGraph(
       id: entry.id,
       type: "bw",
       position: { x: 0, y: 0 },
-      width: 240,
-      height: 104,
+      width: 264,
+      height: 108,
       data: {
         entry,
         kind,
         title: titleOf(entry),
         body: entry.detail,
         meta: formatTime(entry.createdAt),
+        active,
       },
     });
 
-    const color = KIND_META[kind]?.color ?? "#94a3b8";
     let connected = false;
     if (entry.refId) {
-      connected = addEdge(latestNodeByRef.get(entry.refId), entry.id, "update", color, active) || connected;
+      connected = addEdge(latestNodeByRef.get(entry.refId), entry.id, "update", active) || connected;
     }
 
     if (kind === "task" && entry.refId) {
@@ -248,22 +242,22 @@ export function buildTimelineGraph(
       const action = actionById.get(entry.refId);
       connected = addFactEdges(action?.evidenceRefs ?? [], entry.id, "evidence", active) || connected;
       for (const taskId of action?.taskRefs ?? []) {
-        connected = addEdge(latestNodeByRef.get(taskId), entry.id, "task", KIND_META.task.color, active) || connected;
+        connected = addEdge(latestNodeByRef.get(taskId), entry.id, "task", active) || connected;
       }
     }
 
     if (kind === "solver") {
-      connected = addEdge(latestContextNode ?? (goal ? "__goal__" : undefined), entry.id, latestContextNode ? "refresh" : "start", color, active) || connected;
+      connected = addEdge(latestContextNode ?? (goal ? "__goal__" : undefined), entry.id, latestContextNode ? "refresh" : "start", active) || connected;
     } else if (!connected) {
-      connected = addEdge(latestContextNode, entry.id, "uses", color, active) || connected;
+      connected = addEdge(latestContextNode, entry.id, "uses", active) || connected;
     }
 
     if (!connected) {
-      connected = addEdge(latestNodeByKind.get(kind), entry.id, "next", color, active) || connected;
+      connected = addEdge(latestNodeByKind.get(kind), entry.id, "next", active) || connected;
     }
 
     if (!connected && goal) {
-      addEdge("__goal__", entry.id, "related", color, active);
+      addEdge("__goal__", entry.id, "related", active);
     }
 
     if (entry.refId) {
@@ -289,8 +283,8 @@ export function buildTimelineGraph(
       id,
       type: "bw",
       position: { x: 0, y: 0 },
-      width: 240,
-      height: 104,
+      width: 264,
+      height: 108,
       data: {
         entry,
         kind: "hypothesis",
@@ -301,10 +295,10 @@ export function buildTimelineGraph(
     });
     let connected = false;
     for (const factId of hypothesis.basedOnFactIds) {
-      connected = addEdge(latestNodeByRef.get(factId), id, "supports", KIND_META.hypothesis.color) || connected;
+      connected = addEdge(latestNodeByRef.get(factId), id, "supports") || connected;
     }
     if (!connected) {
-      addEdge(latestContextNode ?? (goal ? "__goal__" : undefined), id, "related", KIND_META.hypothesis.color);
+      addEdge(latestContextNode ?? (goal ? "__goal__" : undefined), id, "related");
     }
   }
 
@@ -398,7 +392,7 @@ function FitOnChange({ focusNodeId, nodes, focusLatest, pinnedNodeId }: { focusN
         if (pinnedNodeId) {
           const pinned = nodes.find((n) => n.id === pinnedNodeId);
           if (pinned) {
-            void setCenter(pinned.position.x + (pinned.width ?? 240) / 2, pinned.position.y + (pinned.height ?? 104) / 2, { zoom: 0.8, duration: 220 });
+            void setCenter(pinned.position.x + (pinned.width ?? 264) / 2, pinned.position.y + (pinned.height ?? 108) / 2, { zoom: 0.8, duration: 220 });
             return;
           }
         }
@@ -407,7 +401,7 @@ function FitOnChange({ focusNodeId, nodes, focusLatest, pinnedNodeId }: { focusN
         if ((focusLatest || nodes.length > 30) && nodes.length > 8 && focusNodeId) {
           const focus = nodes.find((n) => n.id === focusNodeId);
           if (focus) {
-            void setCenter(focus.position.x + (focus.width ?? 240) / 2, focus.position.y + (focus.height ?? 104) / 2, { zoom: focusLatest ? 0.55 : 0.42, duration: 180 });
+            void setCenter(focus.position.x + (focus.width ?? 264) / 2, focus.position.y + (focus.height ?? 108) / 2, { zoom: focusLatest ? 0.55 : 0.42, duration: 180 });
             return;
           }
         }
@@ -439,7 +433,7 @@ function FlowCanvas({ nodes, edges, focusNodeId, focusLatest, pinnedNodeId, onNo
       onPaneClick={onPaneClick}
       defaultEdgeOptions={{
         type: "event",
-        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "#64748b" },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "#7A8794" },
       }}
       proOptions={{ hideAttribution: true }}
     >
