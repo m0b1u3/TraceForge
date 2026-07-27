@@ -17,7 +17,7 @@ function resetStore() {
     actions: [],
     decisions: [],
     pendingConfirmation: null,
-    activeTab: "facts",
+    knowledgeDialog: null,
     agentEvents: [],
     activeRun: null,
     continuationRun: null,
@@ -89,7 +89,7 @@ describe("validation workflow realtime state", () => {
     const entry = { id: "timeline_1", caseId: "case_1", runId: "run_1", refId: "task_1", createdAt: "now" };
     useStore.getState().handleRuntimeEvent({ type: "timeline_appended", entry: { ...entry, eventType: "validation_task_claimed", detail: "Task=task_1; consensus=insufficient" } });
     useStore.getState().handleRuntimeEvent({ type: "timeline_appended", entry: { ...entry, id: "timeline_2", eventType: "validation_feedback_recorded", detail: "{}" } });
-    expect(useStore.getState().agentEvents).toEqual([{ kind: "validation", text: "Task=task_1; consensus=insufficient", tool: "validation_task_claimed", createdAt: "now" }]);
+    expect(useStore.getState().agentEvents).toEqual([expect.objectContaining({ kind: "validation", text: "Task=task_1; consensus=insufficient", tool: "validation_task_claimed", createdAt: "now" })]);
   });
 
   it("uses one knowledge navigation action for panel requests, inspector cleanup, and stale targets", () => {
@@ -100,9 +100,9 @@ describe("validation workflow realtime state", () => {
     });
     useStore.getState().navigateToKnowledge({ kind: "task", id: "task_1" });
     expect(useStore.getState()).toEqual(expect.objectContaining({
-      activeTab: "tasks",
+      selectedTaskId: "task_1",
       selectedFactId: null,
-      inspectorMode: "overview",
+      inspectorMode: "task",
       knowledgeTarget: expect.objectContaining({ kind: "task", id: "task_1" }),
       workspacePanelRequest: expect.objectContaining({ panel: "knowledge" }),
     }));
@@ -160,10 +160,10 @@ describe("store observer confirmation", () => {
     resetStore();
   });
 
-  it("sets pending confirmation and switches to observer tab on agent_run_needs_confirmation", () => {
+  it("sets pending confirmation and opens the observer dialog on agent_run_needs_confirmation", () => {
     useStore.getState().handleRuntimeEvent({ type: "agent_run_needs_confirmation", caseId: "case_1", runId: "run_1", warning });
     expect(useStore.getState().pendingConfirmation).toEqual({ runId: "run_1", warning });
-    expect(useStore.getState().activeTab).toBe("observer");
+    expect(useStore.getState().knowledgeDialog).toBe("observer");
     expect(useStore.getState().agentEvents.at(-1)?.text).toContain("偏离目标");
     expect(useStore.getState().toast?.message).toContain("偏离目标");
   });
@@ -171,7 +171,7 @@ describe("store observer confirmation", () => {
   it("ignores confirmation events for other cases", () => {
     useStore.getState().handleRuntimeEvent({ type: "agent_run_needs_confirmation", caseId: "case_2", runId: "run_1", warning });
     expect(useStore.getState().pendingConfirmation).toBeNull();
-    expect(useStore.getState().activeTab).toBe("facts");
+    expect(useStore.getState().knowledgeDialog).toBeNull();
   });
 
   it("clears the current case when a delete event arrives over websocket", () => {
@@ -324,10 +324,10 @@ describe("store agent tool events", () => {
       reason: "identical call already failed in this run",
     });
 
-    expect(useStore.getState().agentEvents.at(-1)).toEqual({
+    expect(useStore.getState().agentEvents.at(-1)).toEqual(expect.objectContaining({
       kind: "tool_result",
       text: "exec_command blocked → identical call already failed in this run\n{\"command\":\"false\"}",
-    });
+    }));
   });
 });
 
@@ -418,8 +418,8 @@ describe("store agent streaming", () => {
     handle({ type: "agent_text", caseId: "case_1", content: "已将 127.0.0.1 加入范围。" });
 
     expect(useStore.getState().agentEvents).toEqual([
-      { kind: "text", text: "已将 127.0.0.1 加入范围。" },
-      { kind: "reasoning", text: "等待用户批准" },
+      expect.objectContaining({ kind: "text", text: "已将 127.0.0.1 加入范围。" }),
+      expect.objectContaining({ kind: "reasoning", text: "等待用户批准" }),
     ]);
     expect(useStore.getState().streamedAgentTexts).toEqual([]);
   });
@@ -534,10 +534,10 @@ describe("store agent interventions", () => {
     });
 
     expect(useStore.getState().pendingScope).toBeNull();
-    expect(useStore.getState().agentEvents.at(-1)).toEqual({
+    expect(useStore.getState().agentEvents.at(-1)).toEqual(expect.objectContaining({
       kind: "done",
       text: "Scope kept blocked: target.example",
-    });
+    }));
   });
 
   it("applies hypothesis lifecycle events without refetching the pool", () => {

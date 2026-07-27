@@ -66,12 +66,36 @@
 .inspector-link-list { display: flex; flex-direction: column; gap: 6px; }
 .inspector-link { padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--tf-code-surface); color: var(--foreground-secondary); font-size: 11px; text-align: left; cursor: pointer; }
 .inspector-link:hover { border-color: var(--border-strong); color: var(--foreground); }
+.inspector-gate-hypothesis { display: grid; gap: 3px; padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--tf-code-surface); }
+.inspector-gate-hypothesis code { color: var(--foreground-muted); font-family: var(--mono); font-size: 9.5px; overflow-wrap: anywhere; }
+.inspector-gate-hypothesis span { color: var(--foreground-secondary); font-size: 11px; line-height: 1.5; }
+
+.case-overview { display: flex; flex-direction: column; gap: 18px; }
+.case-overview-section { display: flex; flex-direction: column; gap: 8px; }
+.case-overview-section > h3 { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--foreground-muted); font-family: var(--mono); font-size: 9px; font-weight: 500; text-transform: uppercase; }
+.case-overview-section > h3 svg { color: var(--foreground-muted); }
+.case-overview-alert { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--warning) 42%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--warning) 8%, transparent); color: var(--foreground-secondary); font-size: 11px; text-align: left; cursor: pointer; }
+.case-overview-alert:hover { border-color: var(--warning); color: var(--foreground); }
+.case-overview-alert svg { flex: 0 0 auto; color: var(--warning); }
+.case-overview-run { display: flex; flex-direction: column; gap: 6px; }
+.case-overview-run > p { display: -webkit-box; overflow: hidden; margin: 0; color: var(--foreground-secondary); font-size: 11px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.case-overview-findings { display: flex; flex-direction: column; gap: 6px; }
+.case-overview-finding { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--surface); color: var(--foreground-secondary); font-size: 11px; text-align: left; cursor: pointer; }
+.case-overview-finding:hover { border-color: var(--border-strong); color: var(--foreground); }
+.case-overview-finding-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.case-overview-finding .tf-tag { flex: 0 0 auto; }
 .inspector-header-list { margin: 0; padding: 8px 12px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--tf-code-surface); }
 .inspector-header-list > div { display: grid; grid-template-columns: minmax(86px, .7fr) minmax(0, 1.3fr); gap: 8px; padding: 5px 0; font-family: var(--mono); font-size: 10px; }
 .inspector-header-list dt { color: var(--information); overflow-wrap: anywhere; }
 .inspector-header-list dd { margin: 0; color: var(--foreground-secondary); overflow-wrap: anywhere; }
 
 .run-launcher-dialog { width: min(560px, calc(100vw - 32px)); }
+.topbar-knowledge { display: flex; align-items: center; gap: 2px; }
+.topbar-knowledge [data-slot="button"] { gap: 5px; color: var(--foreground-muted); font-size: 11px; }
+.topbar-knowledge [data-slot="button"]:hover { color: var(--foreground); }
+.topbar-knowledge [data-slot="button"][aria-pressed="true"] { background: var(--surface-hover); color: var(--foreground); }
+.knowledge-dialog { display: flex; flex-direction: column; width: min(680px, calc(100vw - 32px)); max-height: 80svh; }
+.knowledge-dialog-body { min-height: 0; overflow: auto; }
 .run-launcher-field { display: grid; gap: 8px; }
 .run-launcher-field > span { color: var(--foreground-secondary); font-size: 12px; font-weight: 600; }
 .run-launcher-field textarea { resize: vertical; min-height: 116px; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface); color: var(--foreground); line-height: 1.55; }

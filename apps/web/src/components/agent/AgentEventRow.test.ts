@@ -61,7 +61,8 @@ describe("AgentEventRow", () => {
 
     act(() => row.querySelector<HTMLButtonElement>('button[aria-label="Locate related knowledge"]')?.click());
 
-    expect(useStore.getState().activeTab).toBe("tasks");
+    expect(useStore.getState().selectedTaskId).toBe("task_1");
+    expect(useStore.getState().inspectorMode).toBe("task");
     expect(useStore.getState().knowledgeTarget).toEqual(expect.objectContaining({ kind: "task", id: "task_1" }));
     expect(row.textContent).toContain("Reproduce independently");
     expect(row.querySelector("time")?.getAttribute("datetime")).toBe("2026-07-21T08:15:30.000Z");

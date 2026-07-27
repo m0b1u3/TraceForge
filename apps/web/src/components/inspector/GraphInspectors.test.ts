@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Hypothesis, Task } from "@traceforge/shared";
-import { getTaskGatePresentation } from "./TasksTab.js";
+import { getTaskGatePresentation } from "./GraphInspectors.js";
 
 const task: Task = {
   id: "task_1",

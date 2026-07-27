@@ -5,7 +5,6 @@ import type { AgentEvent, AgentRun } from "@traceforge/shared";
 import { runAgent, resolveApproval, approveScope, rejectScope, steerAgentRun, interruptAgentRun, listAgentEvents } from "../api.js";
 import { AgentEventRow } from "./agent/AgentEventRow.js";
 import { ValidationEventGroup } from "./agent/ValidationEventGroup.js";
-import { ValidationRunSummary } from "./agent/ValidationRunSummary.js";
 import { buildAgentConversationItems } from "./agent/agent-conversation.js";
 import {
   ApprovalInterventionCard,
@@ -89,6 +88,7 @@ export function AgentPanel() {
   const [eventPageEnd, setEventPageEnd] = useState<number | null>(null);
   const messagesRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
+  const pendingJumpRef = useRef<number | null>(null);
   const liveHistoryEvents = useMemo(() => agentEvents.map((event, index) => ({ ...event, id: `live-${index}` })), [agentEvents]);
   const history = useOlderHistory<AgentEvent | (typeof liveHistoryEvents)[number]>({
     caseId,
@@ -133,6 +133,32 @@ export function AgentPanel() {
     globalThis.addEventListener("traceforge:new-run", openRunLauncher);
     return () => globalThis.removeEventListener("traceforge:new-run", openRunLauncher);
   }, []);
+
+  // Graph validation nodes ask the console to surface the matching event row.
+  useEffect(() => {
+    const handler = (raw: Event) => {
+      const { eventType, detail } = (raw as CustomEvent<{ eventType: string; detail: string }>).detail;
+      const index = allAgentEvents.findIndex((event) => event.kind === "validation" && event.tool === eventType && event.text === detail);
+      if (index < 0) return;
+      pendingJumpRef.current = index;
+      shouldAutoScrollRef.current = false;
+      const end = index + 1;
+      setEventPageEnd(end >= allAgentEvents.length ? null : end);
+    };
+    globalThis.addEventListener("traceforge:jump-to-validation", handler);
+    return () => globalThis.removeEventListener("traceforge:jump-to-validation", handler);
+  }, [allAgentEvents]);
+
+  useLayoutEffect(() => {
+    if (pendingJumpRef.current === null) return;
+    const localIndex = pendingJumpRef.current - pageStart;
+    const target = messagesRef.current?.querySelector(`[data-conversation-key="event-${localIndex}"]`);
+    if (!(target instanceof HTMLElement)) return;
+    pendingJumpRef.current = null;
+    target.scrollIntoView({ block: "center" });
+    target.classList.add("is-jumped");
+    globalThis.setTimeout(() => target.classList.remove("is-jumped"), 1400);
+  }, [pageStart, pageEvents]);
 
   if (!caseId) return null;
 
@@ -301,7 +327,6 @@ export function AgentPanel() {
           )}
         </div>
       </div>
-      <ValidationRunSummary />
       <RunTimelineRuler
         events={pageEvents}
         facts={facts}

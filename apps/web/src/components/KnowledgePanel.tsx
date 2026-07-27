@@ -1,54 +1,12 @@
 import { useStore } from "../store.js";
-import { FactsTab } from "./knowledge/FactsTab.js";
-import { TasksTab } from "./knowledge/TasksTab.js";
-import { TimelineTab } from "./knowledge/TimelineTab.js";
-import { McpTab } from "./knowledge/McpTab.js";
-import { ObserverTab } from "./knowledge/ObserverTab.js";
-import { ReportsTab } from "./knowledge/ReportsTab.js";
-import { HypothesesTab } from "./knowledge/HypothesesTab.js";
-import { Database } from "@phosphor-icons/react";
+import { Fingerprint, Gauge, LockKey, Robot, Warning } from "@phosphor-icons/react";
 import { TrafficInspector } from "./inspector/TrafficInspector.js";
 import { FindingInspector, ToolEventInspector } from "./inspector/EvidenceInspector.js";
 import { TaskInspector, TimelineEventInspector } from "./inspector/GraphInspectors.js";
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from "@/components/ui/tabs";
+import { ValidationRunSummary } from "./agent/ValidationRunSummary.js";
+import { ValidationWorkflow } from "./knowledge/ValidationWorkflow.js";
+import { confidencePercent } from "./knowledge/knowledge-window.js";
 import { useShallow } from "zustand/react/shallow";
-
-const TABS = [
-  { key: "facts", label: "Facts" },
-  { key: "hypotheses", label: "Ideas" },
-  { key: "tasks", label: "Tasks" },
-  { key: "timeline", label: "Timeline" },
-  { key: "mcp", label: "MCP" },
-  { key: "observer", label: "Observer" },
-  { key: "reports", label: "Reports" },
-] as const;
-
-type TabKey = (typeof TABS)[number]["key"];
-
-const TAB_TITLE: Record<TabKey, string> = {
-  facts: "Facts",
-  hypotheses: "Hypotheses",
-  tasks: "Tasks",
-  timeline: "Timeline",
-  mcp: "MCP",
-  observer: "Observer",
-  reports: "Reports",
-};
-
-function TabPanel({ tab }: { tab: TabKey }) {
-  if (tab === "facts") return <FactsTab />;
-  if (tab === "hypotheses") return <HypothesesTab />;
-  if (tab === "tasks") return <TasksTab />;
-  if (tab === "timeline") return <TimelineTab />;
-  if (tab === "mcp") return <McpTab />;
-  if (tab === "reports") return <ReportsTab />;
-  return <ObserverTab />;
-}
 
 function KnowledgeInspector() {
   const { selectedTraffic, selectedFact, selectedTask, selectedTimelineEntry, selectedAgentEvent, knowledgeTarget, clearKnowledgeTarget } = useStore(useShallow((state) => ({
@@ -77,53 +35,89 @@ function KnowledgeInspector() {
   return null;
 }
 
-function KnowledgeTabCounts() {
-  const counts = useStore(useShallow((state) => ({
-    facts: state.facts.length,
-    hypotheses: state.hypotheses.length,
-    tasks: state.tasks.length,
-    timeline: state.timeline.length,
-    mcp: state.mcpTools.length,
-    observer: state.warnings.reduce((count, warning) => count + Number(warning.status === "open"), 0),
-    reports: state.securityReports.length,
-  } satisfies Record<TabKey, number>)));
-  return TABS.map((tab) => (
-    <TabsTrigger key={tab.key} value={tab.key}>
-      {tab.label}
-      {counts[tab.key] > 0 && <span className="knowledge-tab-count">{counts[tab.key]}</span>}
-    </TabsTrigger>
-  ));
+const OVERVIEW_FINDING_COUNT = 8;
+
+function PendingInterventions() {
+  const { pendingApproval, pendingScope, dockCollapsed, toggleDockCollapsed } = useStore(useShallow((state) => ({
+    pendingApproval: state.pendingApproval,
+    pendingScope: state.pendingScope,
+    dockCollapsed: state.dockCollapsed,
+    toggleDockCollapsed: state.toggleDockCollapsed,
+  })));
+  if (!pendingApproval && !pendingScope) return null;
+  const openConsole = () => {
+    if (dockCollapsed) toggleDockCollapsed();
+  };
+  return (
+    <section className="case-overview-section" aria-label="Pending interventions">
+      <h3><Warning size={13} weight="fill" aria-hidden="true" />Awaiting review</h3>
+      {pendingApproval && (
+        <button type="button" className="case-overview-alert" onClick={openConsole}>
+          <LockKey size={13} aria-hidden="true" />
+          <span>Approval needed: <strong>{pendingApproval.tool}</strong></span>
+        </button>
+      )}
+      {pendingScope && (
+        <button type="button" className="case-overview-alert" onClick={openConsole}>
+          <LockKey size={13} aria-hidden="true" />
+          <span>Scope decision: <strong>{pendingScope.host}</strong></span>
+        </button>
+      )}
+    </section>
+  );
 }
 
-function KnowledgeOverview() {
-  const { activeTab, setActiveTab } = useStore(useShallow((state) => ({
-    activeTab: state.activeTab,
-    setActiveTab: state.setActiveTab,
-  })));
-  const visibleTab: TabKey = activeTab === "graph" ? "facts" : activeTab;
+function RunStatusSection() {
+  const { activeRun, agentBusy } = useStore(useShallow((state) => ({ activeRun: state.activeRun, agentBusy: state.agentBusy })));
+  const status = activeRun?.status ?? (agentBusy ? "running" : "idle");
+  return (
+    <section className="case-overview-section" aria-label="Run status">
+      <h3><Robot size={13} aria-hidden="true" />Run</h3>
+      <div className="case-overview-run">
+        <span className={`console-status ${agentBusy ? "is-running" : ""}`}><span />{status}</span>
+        {activeRun && <p title={activeRun.goal}>{activeRun.goal}</p>}
+      </div>
+    </section>
+  );
+}
+
+function LatestFindings() {
+  const { facts, selectFact } = useStore(useShallow((state) => ({ facts: state.facts, selectFact: state.selectFact })));
+  const latest = facts.slice(-OVERVIEW_FINDING_COUNT).reverse();
+  if (latest.length === 0) return null;
+  return (
+    <section className="case-overview-section" aria-label="Latest evidence">
+      <h3><Fingerprint size={13} aria-hidden="true" />Latest evidence</h3>
+      <div className="case-overview-findings">
+        {latest.map((fact) => (
+          <button key={fact.id} type="button" className="case-overview-finding" onClick={() => selectFact(fact.id)}>
+            <span className="case-overview-finding-title">{fact.title}</span>
+            <span className={`tf-tag tf-row-level-${fact.findingStatus === "verified" ? "critical" : "info"}`}>{fact.findingStatus ?? fact.type} · {confidencePercent(fact.confidence)}%</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CaseOverview() {
+  const navigateToKnowledge = useStore((state) => state.navigateToKnowledge);
   return (
     <>
       <div className="panel-header">
         <div className="panel-heading">
-          <Database size={16} weight="duotone" aria-hidden="true" />
-          <span className="section-kicker">Knowledge</span>
-          <h2>{TAB_TITLE[visibleTab]}</h2>
+          <Gauge size={16} weight="duotone" aria-hidden="true" />
+          <span className="section-kicker">Case</span>
+          <h2>Overview</h2>
         </div>
       </div>
-      <Tabs
-        value={visibleTab}
-        onValueChange={(v) => setActiveTab(v as TabKey)}
-        className="knowledge-tabs"
-      >
-        <TabsList className="knowledge-tab-list" aria-label="Knowledge views">
-          <KnowledgeTabCounts />
-        </TabsList>
-        <div className="panel-body">
-          <TabsContent value={visibleTab} className="knowledge-tab-content">
-            <TabPanel tab={visibleTab} />
-          </TabsContent>
-        </div>
-      </Tabs>
+      <div className="panel-body case-overview">
+        <PendingInterventions />
+        <RunStatusSection />
+        <ValidationRunSummary />
+        <ValidationWorkflow onNavigate={navigateToKnowledge} />
+        <LatestFindings />
+      </div>
     </>
   );
 }
@@ -132,7 +126,7 @@ export function KnowledgePanel() {
   const inspectorOpen = useStore((state) => Boolean(state.selectedTrafficId || state.selectedFactId || state.selectedTaskId || state.selectedTimelineNodeId || state.selectedAgentEvent));
   return (
     <aside className="panel knowledge-panel">
-      {inspectorOpen ? <KnowledgeInspector /> : <KnowledgeOverview />}
+      {inspectorOpen ? <KnowledgeInspector /> : <CaseOverview />}
     </aside>
   );
 }

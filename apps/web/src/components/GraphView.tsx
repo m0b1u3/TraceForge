@@ -421,7 +421,7 @@ const SpeedButton = memo(function SpeedButton({ value, speed, setSpeed }: { valu
 });
 
 function GraphInner({ interactive }: { interactive: boolean }) {
-  const { timeline, runGoal, facts, tasks, actions, selectedFactId, selectedTaskId, selectedTimelineNodeId, selectFact, selectTask, selectTimelineNode } = useStore(useShallow((state) => ({
+  const { timeline, runGoal, facts, tasks, actions, selectedFactId, selectedTaskId, selectedTimelineNodeId, selectFact, selectTask, selectTimelineNode, dockCollapsed, toggleDockCollapsed } = useStore(useShallow((state) => ({
     timeline: state.timeline,
     runGoal: state.activeRun?.goal ?? null,
     facts: state.facts,
@@ -433,6 +433,8 @@ function GraphInner({ interactive }: { interactive: boolean }) {
     selectFact: state.selectFact,
     selectTask: state.selectTask,
     selectTimelineNode: state.selectTimelineNode,
+    dockCollapsed: state.dockCollapsed,
+    toggleDockCollapsed: state.toggleDockCollapsed,
   })));
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -485,6 +487,12 @@ function GraphInner({ interactive }: { interactive: boolean }) {
     if (target.type === "fact") selectFact(target.id);
     else if (target.type === "task") selectTask(target.id);
     else selectTimelineNode(target.id);
+    // Validation entries also live in the run console: surface the matching
+    // console row so the operator sees both projections of the same event.
+    if (entry.eventType.startsWith("validation_")) {
+      if (dockCollapsed) toggleDockCollapsed();
+      globalThis.dispatchEvent(new CustomEvent("traceforge:jump-to-validation", { detail: { eventType: entry.eventType, detail: entry.detail } }));
+    }
   };
 
   const onPaneClick = () => {

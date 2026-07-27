@@ -12,7 +12,7 @@ export function ValidationEventGroup({ item }: { item: ValidationGroup }) {
   const latest = item.events.at(-1)!;
   const earlier = item.events.slice(0, -1);
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className={`validation-event-group${open ? " is-open" : ""}`}>
+    <Collapsible open={open} onOpenChange={setOpen} className={`validation-event-group${open ? " is-open" : ""}`} data-conversation-key={item.events[0].key}>
       <div className="validation-event-group-control">
         <CollapsibleTrigger asChild>
           <Button type="button" variant="ghost" size="sm" aria-label={open ? "Hide earlier validation transitions" : "Show earlier validation transitions"}>

@@ -8,8 +8,13 @@ import { KnowledgePanel } from "./KnowledgePanel.js";
 import { TopBar } from "./TopBar.js";
 import { TrafficPanel } from "./TrafficPanel.js";
 import { WorkspaceLayout } from "./WorkspaceLayout.js";
+import { HypothesesTab } from "./knowledge/HypothesesTab.js";
+import { McpTab } from "./knowledge/McpTab.js";
+import { ObserverTab } from "./knowledge/ObserverTab.js";
+import { ReportsTab } from "./knowledge/ReportsTab.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog.js";
 
 const GraphModal = lazy(async () => {
   const module = await import("./GraphModal.js");
@@ -28,7 +33,7 @@ function DeferredSurface({ label }: { label: string }) {
 function ObserverConfirmation() {
   const pendingConfirmation = useStore((state) => state.pendingConfirmation);
   const clearPendingConfirmation = useStore((state) => state.clearPendingConfirmation);
-  const setActiveTab = useStore((state) => state.setActiveTab);
+  const setKnowledgeDialog = useStore((state) => state.setKnowledgeDialog);
   if (!pendingConfirmation) return null;
   const { warning } = pendingConfirmation;
   return (
@@ -38,11 +43,31 @@ function ObserverConfirmation() {
       <AlertDescription className="observer-confirmation-body">
         <p title={warning.description}>{warning.description}</p>
         <div className="observer-confirmation-actions">
-          <Button type="button" size="sm" onClick={() => { setActiveTab("observer"); clearPendingConfirmation(); }}>Review warning</Button>
+          <Button type="button" size="sm" onClick={() => { setKnowledgeDialog("observer"); clearPendingConfirmation(); }}>Review warning</Button>
           <Button type="button" variant="outline" size="sm" onClick={clearPendingConfirmation}>Dismiss</Button>
         </div>
       </AlertDescription>
     </Alert>
+  );
+}
+
+const KNOWLEDGE_DIALOG_TITLE = { hypotheses: "Hypotheses", mcp: "MCP tools", observer: "Observer", reports: "Reports" } as const;
+
+function KnowledgeDialogHost() {
+  const { knowledgeDialog, setKnowledgeDialog } = useStore(useShallow((state) => ({ knowledgeDialog: state.knowledgeDialog, setKnowledgeDialog: state.setKnowledgeDialog })));
+  if (!knowledgeDialog) return null;
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) setKnowledgeDialog(null); }}>
+      <DialogContent className="knowledge-dialog">
+        <DialogHeader><DialogTitle>{KNOWLEDGE_DIALOG_TITLE[knowledgeDialog]}</DialogTitle></DialogHeader>
+        <div className="knowledge-dialog-body">
+          {knowledgeDialog === "hypotheses" && <HypothesesTab />}
+          {knowledgeDialog === "mcp" && <McpTab />}
+          {knowledgeDialog === "observer" && <ObserverTab />}
+          {knowledgeDialog === "reports" && <ReportsTab />}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -54,6 +79,7 @@ export default function Workbench() {
       <ObserverConfirmation />
       <WorkspaceLayout traffic={<TrafficPanel />} canvas={<CanvasPanel />} knowledge={<KnowledgePanel />} dock={<AgentPanel />} />
     </main>
+    <KnowledgeDialogHost />
     {graphModalOpen && <Suspense fallback={<DeferredSurface label="attack graph" />}><GraphModal /></Suspense>}
     {settingsModalOpen && <Suspense fallback={<DeferredSurface label="settings" />}><SettingsModal /></Suspense>}
   </>;

@@ -8,6 +8,7 @@ import type { ValidationSyncState } from "./lib/validation-presentation.js";
 import { unavailableKnowledgeTarget } from "./lib/validation-feedback.js";
 
 export interface AgentUiEvent {
+  id?: string;
   kind: "user" | "text" | "reasoning" | "tool_call" | "tool_result" | "validation" | "done" | "error" | "started";
   text: string;
   tool?: string | null;
@@ -143,12 +144,15 @@ export function takeRecent<T>(items: T[], limit: number): T[] {
   return items.length <= limit ? items : items.slice(items.length - limit);
 }
 
+let agentEventClientId = 0;
+
 function appendAgentUiEvent(
   agentEvents: AgentUiEvent[],
   streamingMessages: Record<string, number>,
   event: AgentUiEvent,
 ) {
-  const nextEvents = takeRecent([...agentEvents, event], CLIENT_AGENT_EVENT_LIMIT);
+  const identified = event.id ? event : { ...event, id: `local-${++agentEventClientId}` };
+  const nextEvents = takeRecent([...agentEvents, identified], CLIENT_AGENT_EVENT_LIMIT);
   const removed = agentEvents.length + 1 - nextEvents.length;
   if (removed === 0) return { agentEvents: nextEvents, streamingMessages };
   return {
@@ -232,7 +236,7 @@ interface State {
   selectedAgentEvent: { kind: "tool_call" | "tool_result"; label: string; text: string } | null;
   inspectorMode: "overview" | "traffic" | "finding" | "task" | "timeline";
   cases: Case[];
-  activeTab: "facts" | "hypotheses" | "tasks" | "timeline" | "mcp" | "graph" | "observer" | "reports";
+  knowledgeDialog: "hypotheses" | "mcp" | "observer" | "reports" | null;
   graphModalOpen: boolean;
   mcpTools: McpToolHandle[];
   warnings: ObserverWarning[];
@@ -264,7 +268,7 @@ interface State {
   clearPendingScope: (host?: string) => void;
   setCase: (id: string | null) => void;
   setCases: (list: Case[]) => void;
-  setActiveTab: (tab: State["activeTab"]) => void;
+  setKnowledgeDialog: (dialog: State["knowledgeDialog"]) => void;
   setGraphModalOpen: (open: boolean) => void;
   enterCase: (id: string) => Promise<void>;
   deleteCase: (id: string) => Promise<void>;
@@ -340,7 +344,7 @@ export const useStore = create<State>((set, get) => ({
   selectedAgentEvent: null,
   inspectorMode: "overview",
   cases: [],
-  activeTab: "facts",
+  knowledgeDialog: null,
   graphModalOpen: false,
   mcpTools: [],
   warnings: [],
@@ -362,14 +366,15 @@ export const useStore = create<State>((set, get) => ({
       return;
     }
     set((state) => ({
-      activeTab: target.kind === "task" ? "tasks" : "facts",
       knowledgeTarget: { ...target, requestId: (state.knowledgeTarget?.requestId ?? 0) + 1 },
       workspacePanelRequest: { panel: "knowledge", requestId: (state.workspacePanelRequest?.requestId ?? 0) + 1 },
       selectedFactId: target.kind === "finding" ? target.id : null,
+      selectedTaskId: target.kind === "task" ? target.id : null,
+      selectedTimelineNodeId: null,
       selectedTrafficId: null,
       selectedTrafficSnapshot: null,
       selectedAgentEvent: null,
-      inspectorMode: target.kind === "finding" ? "finding" : "overview",
+      inspectorMode: target.kind === "finding" ? "finding" : "task",
     }));
   },
   clearKnowledgeTarget: (requestId) => set((state) => state.knowledgeTarget?.requestId === requestId ? { knowledgeTarget: null } : {}),
@@ -442,10 +447,10 @@ export const useStore = create<State>((set, get) => ({
   )),
   setCase: (id) => {
     cancelPendingStreamDeltas();
-    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], hypotheses: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedTaskId: null, selectedTimelineNodeId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationWorkflowDelta: null, validationSyncStatus: id ? "recovering" : "stale", knowledgeTarget: null, workspacePanelRequest: null, pendingScope: null, pendingConfirmation: null });
+    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], hypotheses: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedTaskId: null, selectedTimelineNodeId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationWorkflowDelta: null, validationSyncStatus: id ? "recovering" : "stale", knowledgeTarget: null, workspacePanelRequest: null, pendingScope: null, pendingConfirmation: null, knowledgeDialog: null });
   },
   setCases: (list) => set({ cases: list }),
-  setActiveTab: (tab) => set({ activeTab: tab }),
+  setKnowledgeDialog: (dialog) => set({ knowledgeDialog: dialog }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
   enterCase: async (id) => {
     get().setCase(id);
@@ -469,7 +474,7 @@ export const useStore = create<State>((set, get) => ({
       timeline: takeRecent(timeline, CLIENT_TIMELINE_LIMIT),
       mcpTools,
       warnings,
-      agentEvents: takeRecent(agentEvents.map((e) => ({ kind: e.kind, text: e.text, tool: e.tool, createdAt: e.createdAt })), CLIENT_AGENT_EVENT_LIMIT),
+      agentEvents: takeRecent(agentEvents.map((e) => ({ id: e.id, kind: e.kind, text: e.text, tool: e.tool, createdAt: e.createdAt })), CLIENT_AGENT_EVENT_LIMIT),
       activeRun,
       continuationRun: latestRun?.status === "needs_continuation" ? latestRun : null,
       agentBusy: isRunBusy(activeRun),
@@ -758,7 +763,7 @@ export const useStore = create<State>((set, get) => ({
     }
     else if (event.type === "agent_run_needs_confirmation" && event.caseId === cid) {
       get().setPendingConfirmation({ runId: event.runId, warning: event.warning });
-      get().setActiveTab("observer");
+      get().setKnowledgeDialog("observer");
       const text = `[Observer] Critical: ${event.warning.title}`;
       get().addAgentEvent({ kind: "text", text });
       get().showToast(text);

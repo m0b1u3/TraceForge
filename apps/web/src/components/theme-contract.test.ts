@@ -143,7 +143,7 @@ describe("Operations Canvas theme contract", () => {
   });
 
   it("reserves independent rows for the console chrome, run ruler, log, and composer", () => {
-    expect(workbench).toMatch(/\.chat-panel\s*\{\s*grid-template-rows:\s*auto auto auto minmax\(0,\s*1fr\) auto/);
+    expect(workbench).toMatch(/\.chat-panel\s*\{\s*grid-template-rows:\s*auto auto minmax\(0,\s*1fr\) auto/);
   });
 
   it("fits the three-pane workbench inside the 1100px desktop breakpoint", () => {

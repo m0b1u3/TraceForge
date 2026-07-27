@@ -49,7 +49,7 @@ describe("ValidationRunSummary", () => {
     expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("0");
     expect(container.textContent).toContain("Order IDOR");
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label^="Lease:"]')?.click());
-    expect(useStore.getState().activeTab).toBe("tasks");
+    expect(useStore.getState().selectedTaskId).toBe("task_1");
     expect(useStore.getState().knowledgeTarget).toEqual(expect.objectContaining({ id: "task_1" }));
 
     await act(async () => root.unmount());

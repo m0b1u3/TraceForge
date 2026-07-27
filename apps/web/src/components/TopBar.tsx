@@ -1,4 +1,4 @@
-import { ArrowsClockwise, Circle, Coins, Gear, Moon, Play, Sun, WifiHigh, WifiSlash } from "@phosphor-icons/react";
+import { ArrowsClockwise, Circle, Coins, Eye, FileText, Gear, Lightbulb, Moon, Play, Plugs, Sun, WifiHigh, WifiSlash } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { useAppTheme } from "../hooks/useAppTheme.js";
 import { CaseLauncher } from "./CaseLauncher.js";
@@ -15,8 +15,15 @@ export function formatTopBarTokenTotal(totalTokens: number): string {
   return `Tokens ${totalTokens.toLocaleString()}`;
 }
 
+const KNOWLEDGE_DIALOGS = [
+  { key: "hypotheses", label: "Ideas", icon: Lightbulb },
+  { key: "mcp", label: "MCP", icon: Plugs },
+  { key: "observer", label: "Observer", icon: Eye },
+  { key: "reports", label: "Reports", icon: FileText },
+] as const;
+
 export function TopBar() {
-  const { caseId, activeRun, agentBusy, tokenUsage, connectionStatus, setCase, setSettingsModalOpen } = useStore(useShallow((state) => ({ caseId: state.caseId, activeRun: state.activeRun, agentBusy: state.agentBusy, tokenUsage: state.tokenUsage, connectionStatus: state.connectionStatus, setCase: state.setCase, setSettingsModalOpen: state.setSettingsModalOpen })));
+  const { caseId, activeRun, agentBusy, tokenUsage, connectionStatus, setCase, setSettingsModalOpen, knowledgeDialog, setKnowledgeDialog } = useStore(useShallow((state) => ({ caseId: state.caseId, activeRun: state.activeRun, agentBusy: state.agentBusy, tokenUsage: state.tokenUsage, connectionStatus: state.connectionStatus, setCase: state.setCase, setSettingsModalOpen: state.setSettingsModalOpen, knowledgeDialog: state.knowledgeDialog, setKnowledgeDialog: state.setKnowledgeDialog })));
   const runStatus = getTopBarRunStatus(activeRun, agentBusy);
   const openRunLauncher = () => globalThis.dispatchEvent(new CustomEvent("traceforge:new-run"));
   const { theme, toggleTheme } = useAppTheme();
@@ -54,6 +61,25 @@ export function TopBar() {
               <Coins size={14} aria-hidden="true" />
               {formatTopBarTokenTotal(tokenUsage.totalTokens)}
             </button>
+          </div>
+        )}
+        {caseId && (
+          <div className="topbar-knowledge" aria-label="Knowledge views">
+            {KNOWLEDGE_DIALOGS.map(({ key, label, icon: Icon }) => (
+              <Button
+                key={key}
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-pressed={knowledgeDialog === key}
+                aria-label={`Open ${label}`}
+                title={label}
+                onClick={() => setKnowledgeDialog(knowledgeDialog === key ? null : key)}
+              >
+                <Icon size={15} />
+                <span>{label}</span>
+              </Button>
+            ))}
           </div>
         )}
         {caseId && (

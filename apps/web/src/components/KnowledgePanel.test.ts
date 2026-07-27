@@ -28,42 +28,60 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
+const fact = {
+  id: "fact_1",
+  caseId: "case_1",
+  type: "finding",
+  title: "SQL injection in /article",
+  value: { endpoint: "/article" },
+  source: { type: "ai", ref: "run_1" },
+  confidence: 0.9,
+  tags: [],
+  createdAt: "now",
+  updateCount: 0,
+  updatedAt: "",
+  validity: "valid" as const,
+  findingStatus: "verified" as const,
+};
+
 describe("KnowledgePanel", () => {
-  it("mounts only the active tab content", async () => {
+  it("shows the case overview with the latest findings when nothing is selected", () => {
     useStore.setState({
-      activeTab: "facts",
-      facts: [],
-      tasks: [{
-        id: "task_1",
-        caseId: "case_1",
-        title: "Verify authorization boundary",
-        status: "open",
-        reason: "",
-        blockedBy: [],
-        triggerWhen: [],
-        relatedFacts: [],
-        priority: "high",
-        createdAt: "now",
-        updatedAt: "now",
-        updateCount: 0,
-      }],
-      timeline: [],
-      warnings: [],
+      facts: [fact],
+      tasks: [],
       selectedTrafficId: null,
       selectedFactId: null,
+      selectedTaskId: null,
+      selectedTimelineNodeId: null,
       selectedAgentEvent: null,
     });
     const panel = renderPanel();
 
-    expect(panel.textContent).toContain("Awaiting verified evidence");
-    expect(panel.textContent).not.toContain("Verify authorization boundary");
+    expect(panel.textContent).toContain("Overview");
+    expect(panel.textContent).toContain("Latest evidence");
+    expect(panel.textContent).toContain("SQL injection in /article");
+  });
+
+  it("switches from the overview to the finding inspector on selection", async () => {
+    useStore.setState({
+      facts: [fact],
+      tasks: [],
+      selectedTrafficId: null,
+      selectedFactId: null,
+      selectedTaskId: null,
+      selectedTimelineNodeId: null,
+      selectedAgentEvent: null,
+    });
+    const panel = renderPanel();
+    expect(panel.textContent).toContain("Overview");
 
     await act(async () => {
-      useStore.getState().setActiveTab("tasks");
+      useStore.getState().selectFact("fact_1");
       await Promise.resolve();
     });
 
-    expect(panel.textContent).toContain("Verify authorization boundary");
-    expect(panel.textContent).not.toContain("Awaiting verified evidence");
+    expect(panel.textContent).not.toContain("Latest evidence");
+    expect(panel.textContent).toContain("Verified evidence");
+    expect(panel.textContent).toContain("SQL injection in /article");
   });
 });
