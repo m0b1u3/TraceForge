@@ -37,7 +37,7 @@ function SelectTrigger({
       data-slot="select-trigger"
       data-size={size}
       className={cn(
-        "flex w-fit items-center justify-between gap-2 rounded-[8px] border border-input bg-card px-3 text-[13px] font-medium text-foreground whitespace-nowrap shadow-[var(--shadow-sm)] outline-none transition-[background-color,border-color,box-shadow] duration-150 hover:border-foreground/20 hover:bg-accent/55 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/16 disabled:cursor-not-allowed disabled:opacity-45 aria-invalid:border-destructive aria-invalid:ring-destructive/20 data-[placeholder]:text-muted-foreground data-[size=default]:h-10 data-[size=sm]:h-9 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground",
+        "flex w-fit items-center justify-between gap-2 rounded-[8px] border border-input bg-card px-3 text-[length:var(--type-control)] font-medium text-foreground whitespace-nowrap shadow-[var(--shadow-sm)] outline-none transition-[background-color,border-color,box-shadow] duration-150 hover:border-foreground/20 hover:bg-accent/55 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/16 disabled:cursor-not-allowed disabled:opacity-45 aria-invalid:border-destructive aria-invalid:ring-destructive/20 data-[placeholder]:text-muted-foreground data-[size=default]:h-10 data-[size=sm]:h-9 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground",
         className
       )}
       {...props}
@@ -111,7 +111,7 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex min-h-9 w-full cursor-default items-center gap-2 rounded-[7px] py-2 pr-9 pl-2.5 text-[13px] font-medium text-muted-foreground outline-hidden select-none transition-colors duration-100 focus:bg-accent focus:text-foreground data-[state=checked]:bg-primary/9 data-[state=checked]:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-45 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+        "relative flex min-h-9 w-full cursor-default items-center gap-2 rounded-[7px] py-2 pr-9 pl-2.5 text-[length:var(--type-control)] font-medium text-muted-foreground outline-hidden select-none transition-colors duration-100 focus:bg-accent focus:text-foreground data-[state=checked]:bg-primary/9 data-[state=checked]:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-45 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className
       )}
       {...props}

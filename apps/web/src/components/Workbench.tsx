@@ -13,7 +13,7 @@ import { ObserverTab } from "./knowledge/ObserverTab.js";
 import { ReportsTab } from "./knowledge/ReportsTab.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog.js";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog.js";
 
 const GraphModal = lazy(async () => {
   const module = await import("./GraphModal.js");
@@ -51,6 +51,12 @@ function ObserverConfirmation() {
 }
 
 const KNOWLEDGE_DIALOG_TITLE = { hypotheses: "Hypotheses", mcp: "MCP tools", observer: "Observer", reports: "Reports" } as const;
+const KNOWLEDGE_DIALOG_DESCRIPTION = {
+  hypotheses: "Review investigation candidates and their validation state.",
+  mcp: "Inspect the tools currently available to the Agent.",
+  observer: "Review interventions, corrections, and analysis health.",
+  reports: "Inspect evidence-backed security reports and revisions.",
+} as const;
 
 function KnowledgeDialogHost() {
   const { knowledgeDialog, setKnowledgeDialog } = useStore(useShallow((state) => ({ knowledgeDialog: state.knowledgeDialog, setKnowledgeDialog: state.setKnowledgeDialog })));
@@ -58,7 +64,10 @@ function KnowledgeDialogHost() {
   return (
     <Dialog open onOpenChange={(open) => { if (!open) setKnowledgeDialog(null); }}>
       <DialogContent className="knowledge-dialog">
-        <DialogHeader><DialogTitle>{KNOWLEDGE_DIALOG_TITLE[knowledgeDialog]}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{KNOWLEDGE_DIALOG_TITLE[knowledgeDialog]}</DialogTitle>
+          <DialogDescription>{KNOWLEDGE_DIALOG_DESCRIPTION[knowledgeDialog]}</DialogDescription>
+        </DialogHeader>
         <div className="knowledge-dialog-body">
           {knowledgeDialog === "hypotheses" && <HypothesesTab />}
           {knowledgeDialog === "mcp" && <McpTab />}

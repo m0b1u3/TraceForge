@@ -18,15 +18,16 @@
 
 [data-slot="dialog-title"] {
   color: var(--foreground);
-  font-size: 16px;
-  font-weight: 660;
-  letter-spacing: -.025em;
+  font-size: var(--type-heading);
+  font-weight: 600;
+  letter-spacing: -.02em;
+  line-height: 1.25;
 }
 
 [data-slot="dialog-description"] {
   color: var(--foreground-secondary);
-  font-size: 12.5px;
-  line-height: 1.55;
+  font-size: var(--type-control);
+  line-height: 1.5;
 }
 
 [data-slot="dialog-close"] {
@@ -54,8 +55,10 @@
 }
 
 .settings-header {
-  min-height: 82px;
-  padding: 20px 24px 17px;
+  min-height: 84px;
+  justify-content: center;
+  gap: 5px;
+  padding: 18px 24px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface);
 }
@@ -71,17 +74,17 @@
 }
 
 .settings-nav {
-  gap: 5px;
-  padding: 16px 10px;
+  gap: 4px;
+  padding: 14px 10px;
   border-right: 1px solid var(--border-subtle);
   background: color-mix(in srgb, var(--surface-elevated) 68%, var(--surface));
 }
 
 .settings-nav button {
   grid-template-columns: 18px minmax(0, 1fr);
-  gap: 8px;
-  min-height: 54px;
-  padding: 9px 10px;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   color: var(--foreground-secondary);
@@ -95,8 +98,8 @@
 }
 
 .settings-nav button.is-active {
-  border-color: color-mix(in srgb, var(--primary) 22%, var(--border-subtle));
-  background: color-mix(in srgb, var(--primary) 7%, var(--surface));
+  border-color: transparent;
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
   color: var(--foreground);
   box-shadow: inset 2px 0 0 var(--primary);
 }
@@ -115,24 +118,25 @@
 }
 
 .settings-nav strong {
-  font-size: 12.5px;
-  font-weight: 620;
+  font-size: var(--type-control);
+  font-weight: 600;
 }
 
 .settings-nav small {
   color: var(--foreground-muted);
-  font-size: 10.5px;
-  line-height: 1.35;
+  font-size: var(--type-label);
+  line-height: 1.4;
 }
 
 .settings-content {
-  gap: 20px;
-  padding: 22px 28px 30px;
+  gap: 24px;
+  padding: 24px 28px 32px;
   background: var(--surface);
 }
 
 .settings-section {
-  gap: 15px;
+  gap: 18px;
+  max-width: 560px;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -140,7 +144,7 @@
 }
 
 .settings-section + .settings-section {
-  padding-top: 22px;
+  padding-top: 24px;
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -151,27 +155,27 @@
 
 .settings-section-heading strong {
   color: var(--foreground);
-  font-size: 14px;
-  font-weight: 640;
+  font-size: var(--type-card);
+  font-weight: 600;
   letter-spacing: -.01em;
 }
 
 .settings-section-heading span {
   color: var(--foreground-secondary);
-  font-size: 12px;
+  font-size: var(--type-control);
   line-height: 1.5;
 }
 
 .settings-section label,
 .settings-section .text-sm {
   color: var(--foreground-secondary);
-  font-size: 11.5px;
-  font-weight: 590;
+  font-size: var(--type-meta);
+  font-weight: 550;
 }
 
 .settings-section [data-slot="input"],
 .settings-section [data-slot="select-trigger"] {
-  min-height: 38px;
+  min-height: 40px;
   border-color: var(--border-subtle);
   background: color-mix(in srgb, var(--surface-elevated) 66%, var(--surface));
 }
@@ -184,7 +188,8 @@
 
 .settings-key-status {
   color: var(--success);
-  font-size: 10.5px;
+  font-size: var(--type-meta);
+  font-weight: 500;
 }
 
 .settings-theme-options {
@@ -217,13 +222,13 @@
 }
 
 .settings-theme-options strong {
-  font-size: 12.5px;
-  font-weight: 620;
+  font-size: var(--type-control);
+  font-weight: 600;
 }
 
 .settings-theme-options small {
   color: var(--foreground-muted);
-  font-size: 10.5px;
+  font-size: var(--type-label);
 }
 
 .settings-footer {
@@ -276,7 +281,7 @@
 }
 
 .graph-modal-header [data-slot="dialog-description"] {
-  font-size: 11.5px;
+  font-size: var(--type-meta);
 }
 
 .graph-modal-body {
@@ -400,15 +405,15 @@
 .flow-title {
   margin-top: 10px;
   color: var(--foreground);
-  font-size: 14px;
-  font-weight: 630;
+  font-size: var(--type-reasoning);
+  font-weight: 600;
   line-height: 1.42;
 }
 
 .flow-sub {
   margin-top: 7px;
   color: var(--foreground-secondary);
-  font-size: 11.5px;
+  font-size: var(--type-meta);
 }
 
 .edge-label {
@@ -461,7 +466,7 @@
 
 /* Knowledge dialogs and evidence inspectors */
 .knowledge-dialog {
-  width: min(820px, calc(100vw - 40px));
+  width: min(780px, calc(100vw - 40px));
   max-width: none;
   max-height: min(720px, calc(100dvh - 40px));
   gap: 0;
@@ -469,15 +474,17 @@
 }
 
 .knowledge-dialog > [data-slot="dialog-header"] {
-  min-height: 70px;
-  padding: 20px 24px 16px;
+  min-height: 78px;
+  justify-content: center;
+  gap: 4px;
+  padding: 16px 56px 16px 22px;
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .knowledge-dialog-body {
   min-height: 0;
   overflow: auto;
-  padding: 16px;
+  padding: 14px 16px 18px;
   background: color-mix(in srgb, var(--surface-elevated) 52%, var(--surface));
 }
 
@@ -490,6 +497,19 @@
   transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
 }
 
+.knowledge-dialog .tf-row {
+  margin: 0;
+  padding: 12px;
+}
+
+.knowledge-dialog .tf-row + .tf-row {
+  margin-top: 2px;
+}
+
+.knowledge-dialog-body > .tf-feedback-state {
+  min-height: 260px;
+}
+
 .knowledge-dialog .tf-row:hover,
 .observer-row:hover,
 .mcp-tool-row:hover {
@@ -498,7 +518,8 @@
 }
 
 .mcp-server-list {
-  gap: 14px;
+  display: grid;
+  gap: 12px;
 }
 
 .mcp-server-group {
@@ -509,7 +530,12 @@
 }
 
 .mcp-server-group > header {
-  min-height: 58px;
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--border-subtle);
   background: color-mix(in srgb, var(--surface-elevated) 62%, var(--surface));
 }
@@ -518,21 +544,75 @@
   padding: 5px;
 }
 
+.mcp-server-group > header > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-server-group > header svg {
+  color: var(--information);
+}
+
+.mcp-server-group > header strong,
+.mcp-tool-head strong {
+  color: var(--foreground);
+  font-family: var(--font);
+  font-size: var(--type-control);
+  font-weight: 600;
+}
+
+.mcp-server-group > header small {
+  color: var(--foreground-muted);
+  font-size: var(--type-meta);
+}
+
+.mcp-tool-row {
+  gap: 7px;
+}
+
+.mcp-tool-row p {
+  color: var(--foreground-secondary);
+  font-size: var(--type-control);
+  line-height: 1.55;
+}
+
 .observer-group > header {
   color: var(--foreground-secondary);
-  font-size: 11.5px;
-  font-weight: 620;
+  font-size: var(--type-label);
+  font-weight: 600;
 }
 
 .observer-row-description {
   color: var(--foreground-secondary);
-  font-size: 12.5px;
+  font-size: var(--type-control);
   line-height: 1.58;
 }
 
 .observer-row-suggestion {
   border-left-color: color-mix(in srgb, var(--information) 50%, transparent);
   background: color-mix(in srgb, var(--information) 5%, var(--surface-elevated));
+}
+
+.observer-telemetry-state strong {
+  font-size: var(--type-control);
+  font-weight: 600;
+}
+
+.observer-telemetry-state small {
+  font-size: var(--type-label);
+  line-height: 1.4;
+}
+
+.observer-telemetry-metrics {
+  font: 500 var(--type-label)/1.35 var(--mono);
+}
+
+.observer-row-status,
+.observer-row-suggestion > span {
+  font-size: var(--type-label);
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .report-workbench,
@@ -545,6 +625,28 @@
 .report-reference-list {
   border-color: var(--border-subtle);
   background: var(--surface);
+}
+
+.report-workbench > nav span,
+.report-workbench > nav small,
+.report-history-versions span,
+.report-history-versions small,
+.report-diff dd,
+.report-diff > p,
+.report-reference-list code,
+.report-workbench article > footer,
+.report-empty div {
+  font-size: var(--type-label);
+}
+
+.report-workbench h3 {
+  font-size: var(--type-heading);
+  font-weight: 600;
+}
+
+.report-status,
+.report-workbench section h4 {
+  font-size: var(--type-label);
 }
 
 .inspector-shell,
@@ -592,8 +694,8 @@
 
 .usage-summary strong {
   color: var(--foreground);
-  font-size: 15px;
-  font-weight: 640;
+  font-size: var(--type-card);
+  font-weight: 600;
 }
 
 .usage-table-wrap {
@@ -610,13 +712,13 @@
 .usage-table th {
   background: var(--surface-elevated);
   color: var(--foreground-muted);
-  font-size: 10.5px;
-  font-weight: 620;
+  font-size: var(--type-label);
+  font-weight: 600;
 }
 
 .usage-table td {
   color: var(--foreground-secondary);
-  font-size: 11.5px;
+  font-size: var(--type-meta);
 }
 
 .usage-table th,
@@ -673,6 +775,7 @@
 :root[data-theme="light"] .settings-layout,
 :root[data-theme="light"] .settings-content,
 :root[data-theme="light"] .settings-footer,
+:root[data-theme="light"] .settings-nav,
 :root[data-theme="light"] .knowledge-dialog,
 :root[data-theme="light"] .knowledge-dialog-body,
 :root[data-theme="light"] .observer-row,
@@ -682,6 +785,42 @@
 :root[data-theme="light"] .report-empty,
 :root[data-theme="light"] .usage-dialog {
   color: var(--foreground);
+}
+
+:root[data-theme="light"] .settings-nav,
+:root[data-theme="light"] .settings-footer,
+:root[data-theme="light"] .knowledge-dialog-body {
+  background: var(--surface-elevated);
+}
+
+:root[data-theme="light"] .settings-content,
+:root[data-theme="light"] .settings-header,
+:root[data-theme="light"] .settings-dialog,
+:root[data-theme="light"] .knowledge-dialog,
+:root[data-theme="light"] .observer-row,
+:root[data-theme="light"] .mcp-tool-row,
+:root[data-theme="light"] .mcp-server-group {
+  background: var(--surface);
+}
+
+:root[data-theme="light"] [data-slot="select-content"],
+:root[data-theme="light"] [data-slot="dropdown-menu-content"] {
+  border-color: var(--border);
+  color: var(--foreground);
+  background: var(--surface);
+  box-shadow: var(--shadow-panel);
+}
+
+:root[data-theme="light"] [data-slot="select-item"],
+:root[data-theme="light"] [data-slot="dropdown-menu-item"] {
+  color: var(--foreground-secondary);
+}
+
+:root[data-theme="light"] [data-slot="select-item"][data-highlighted],
+:root[data-theme="light"] [data-slot="select-item"][data-state="checked"],
+:root[data-theme="light"] [data-slot="dropdown-menu-item"][data-highlighted] {
+  color: var(--foreground);
+  background: var(--surface-hover);
 }
 
 @media (max-width: 900px) {

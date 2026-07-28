@@ -6,6 +6,7 @@ const app = readFileSync(new URL("../app.css", import.meta.url), "utf8");
 const workbench = readFileSync(new URL("../styles/workbench-base.css", import.meta.url), "utf8");
 const workbenchLayer = readFileSync(new URL("../styles/workbench.css", import.meta.url), "utf8");
 const production = readFileSync(new URL("../styles/primitives.css", import.meta.url), "utf8");
+const overlays = readFileSync(new URL("../styles/overlays.css", import.meta.url), "utf8");
 const topBar = readFileSync(new URL("./TopBar.tsx", import.meta.url), "utf8");
 const graphModal = readFileSync(new URL("./GraphModal.tsx", import.meta.url), "utf8");
 const graphView = readFileSync(new URL("./GraphView.tsx", import.meta.url), "utf8");
@@ -251,6 +252,19 @@ describe("Operations Canvas theme contract", () => {
     expect(production).toMatch(/:root\[data-theme="light"\]\s+\[data-slot="select-content"\],[\s\S]*?background:\s*var\(--surface\)/);
     expect(workbenchPrimitives.Input).not.toMatch(/\bdark:/);
     expect(workbenchPrimitives.Select).not.toMatch(/\bdark:/);
+  });
+
+  it("keeps feature dialog ownership out of the primitive layer", () => {
+    expect(production).not.toContain(".settings-dialog {");
+    expect(production).not.toContain(".knowledge-dialog {");
+    expect(overlays).toContain(".settings-dialog {");
+    expect(overlays).toContain(".knowledge-dialog {");
+  });
+
+  it("uses the shared typography scale across overlay content", () => {
+    expect(overlays).toContain("font-size: var(--type-heading)");
+    expect(overlays).toContain("font-size: var(--type-control)");
+    expect(overlays).toContain("font-size: var(--type-meta)");
   });
 
   it("aligns global chrome with the workbench and keeps business rows theme-safe", () => {

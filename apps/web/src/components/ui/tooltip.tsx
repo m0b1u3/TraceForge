@@ -42,7 +42,7 @@ function TooltipContent({
         data-slot="tooltip-content"
         sideOffset={sideOffset}
         className={cn(
-          "z-50 w-fit max-w-72 origin-(--radix-tooltip-content-transform-origin) rounded-[7px] border border-border bg-popover px-2.5 py-1.5 text-[11.5px] font-medium text-balance text-popover-foreground shadow-[var(--shadow-panel)] data-[state=delayed-open]:animate-[tf-tooltip-in_150ms_var(--ease-emphasized)] data-[state=closed]:animate-[tf-popover-out_100ms_var(--ease-standard)]",
+          "z-50 w-fit max-w-72 origin-(--radix-tooltip-content-transform-origin) rounded-[7px] border border-border bg-popover px-2.5 py-1.5 text-[length:var(--type-label)] font-medium text-balance text-popover-foreground shadow-[var(--shadow-panel)] data-[state=delayed-open]:animate-[tf-tooltip-in_150ms_var(--ease-emphasized)] data-[state=closed]:animate-[tf-popover-out_100ms_var(--ease-standard)]",
           className
         )}
         {...props}
