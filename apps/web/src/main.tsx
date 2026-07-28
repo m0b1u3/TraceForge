@@ -4,6 +4,7 @@ import { App } from "./App.js";
 import { applyTheme, getStoredTheme } from "./lib/theme.js";
 import "./app.css";
 import "./styles/globals.css";
+import "./styles/motion.css";
 import "./styles/dark-workbench.css";
 import "./styles/production-ui.css";
 

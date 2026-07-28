@@ -16,7 +16,8 @@ function DropdownMenuContent({ className, sideOffset = 6, ...props }: React.Comp
       <DropdownMenuPrimitive.Content
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
-        className={cn("z-50 min-w-40 overflow-hidden rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg", className)}
+        collisionPadding={12}
+        className={cn("z-50 min-w-44 origin-[var(--radix-dropdown-menu-content-transform-origin)] overflow-hidden rounded-[10px] border border-border bg-popover p-1.5 text-popover-foreground shadow-[var(--shadow-panel)] data-[state=open]:animate-[tf-popover-in_180ms_var(--ease-emphasized)] data-[state=closed]:animate-[tf-popover-out_120ms_var(--ease-standard)]", className)}
         {...props}
       />
     </DropdownMenuPrimitive.Portal>
@@ -27,7 +28,7 @@ function DropdownMenuItem({ className, ...props }: React.ComponentProps<typeof D
   return (
     <DropdownMenuPrimitive.Item
       data-slot="dropdown-menu-item"
-      className={cn("flex cursor-default items-center gap-2 rounded-md px-2.5 py-2 text-[13px] outline-none select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50", className)}
+      className={cn("flex min-h-9 cursor-default items-center gap-2.5 rounded-[7px] px-2.5 py-2 text-[13px] font-medium text-muted-foreground outline-none select-none transition-colors duration-100 focus:bg-accent focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-45 [&_svg]:size-4", className)}
       {...props}
     />
   );
