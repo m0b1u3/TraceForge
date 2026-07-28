@@ -1,4 +1,4 @@
-/* Milestone layer: one authoritative contract for the new workflow surfaces. */
+/* Feature contracts shared by the workbench surfaces. */
 :root {
   --tf-inspector-surface: #0e1316;
   --tf-code-surface: #090d0f;

@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 
 const globals = readFileSync(new URL("../styles/globals.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../app.css", import.meta.url), "utf8");
-const workbench = readFileSync(new URL("../styles/dark-workbench.css", import.meta.url), "utf8");
-const production = readFileSync(new URL("../styles/production-ui.css", import.meta.url), "utf8");
+const workbench = readFileSync(new URL("../styles/workbench-base.css", import.meta.url), "utf8");
+const production = readFileSync(new URL("../styles/primitives.css", import.meta.url), "utf8");
 const topBar = readFileSync(new URL("./TopBar.tsx", import.meta.url), "utf8");
 const graphModal = readFileSync(new URL("./GraphModal.tsx", import.meta.url), "utf8");
 const graphView = readFileSync(new URL("./GraphView.tsx", import.meta.url), "utf8");

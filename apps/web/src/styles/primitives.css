@@ -1,10 +1,8 @@
 /*
- * Final production cascade.
+ * Shared primitive and control cascade.
  *
- * This file deliberately owns cross-feature typography, floating surfaces and
- * Settings chrome. Feature styles remain responsible for layout and semantics;
- * these rules prevent legacy light-only declarations and utility variants from
- * producing different type scales or theme-inverted portals.
+ * This file owns typography, controls and Radix portal primitives. Feature
+ * styles remain responsible for layout; overlays own product-specific dialogs.
  */
 
 html {
@@ -31,6 +29,9 @@ body {
   line-height: 1.5;
   font-synthesis: none;
   text-rendering: geometricPrecision;
+  transition:
+    color var(--duration-base) var(--ease-standard),
+    background-color var(--duration-base) var(--ease-standard);
 }
 
 /* Keep global chrome and workbench columns on the same geometry. */
@@ -99,6 +100,23 @@ button,
   font-weight: 500;
 }
 
+[data-slot="button"],
+[data-slot="input"],
+[data-slot="select-trigger"],
+[data-slot="select-item"],
+[data-slot="dropdown-menu-item"],
+.tf-btn,
+.tf-input,
+.tf-select-trigger {
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-standard);
+}
+
+[data-slot="button"]:active:not(:disabled),
+.tf-btn:active:not(:disabled) {
+  transform: translateY(1px) scale(.99);
+}
+
 [data-slot="input"],
 [data-slot="select-trigger"],
 .tf-input,
@@ -133,13 +151,16 @@ button,
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent);
 }
 
-[data-slot="button"]:focus-visible,
 [data-slot="dropdown-menu-item"]:focus-visible,
 [data-slot="select-item"]:focus-visible,
 .settings-nav button:focus-visible,
 .settings-theme-options button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent);
-  outline-offset: 2px;
+  outline: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 48%, transparent);
+}
+
+[data-slot="button"]:focus-visible {
+  outline: 0;
 }
 
 /* Radix portals live outside the app shell; theme them from semantic tokens. */
@@ -177,6 +198,10 @@ button,
 [data-slot="select-item"][data-state="checked"] {
   color: var(--foreground);
   background: color-mix(in srgb, var(--primary) 9%, var(--surface-elevated));
+}
+
+[data-slot="select-item"][data-state="checked"]:focus-visible {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 54%, transparent);
 }
 
 .workbench-surface {

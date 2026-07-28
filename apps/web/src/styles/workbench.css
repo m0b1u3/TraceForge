@@ -1,3 +1,7 @@
+@import "../app.css";
+@import "./workbench-base.css";
+@import "./workbench-features.css";
+
 /*
  * TraceForge workbench layer
  * --------------------------
@@ -102,6 +106,12 @@
   border-color: var(--border-subtle);
   background: var(--surface-hover);
   color: var(--foreground);
+}
+
+.topbar-meta > .topbar-more:active,
+.topbar-meta > .topbar-theme-toggle:active,
+.topbar-meta > .topbar-settings:active {
+  transform: scale(.96);
 }
 
 .workspace-shell[data-mode="columns"] {
@@ -300,6 +310,9 @@
   margin: 1px 0;
   border: 0;
   border-radius: var(--radius-md);
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
 }
 
 .request-row-trigger {
@@ -314,6 +327,11 @@
 .request-row.is-selected {
   background: color-mix(in srgb, var(--primary) 9%, var(--surface));
   box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.request-row-trigger:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 48%, transparent);
 }
 
 .request-row-head {
@@ -549,6 +567,9 @@
   border-radius: 0;
   background: transparent;
   box-shadow: inset 0 -1px 0 var(--border-subtle);
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
 }
 
 .case-overview-finding:hover {
@@ -653,6 +674,13 @@
   transform: translateY(-2px);
 }
 
+.launchpad-row:focus-within {
+  background: var(--surface);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--primary) 44%, var(--border-subtle)),
+    0 12px 34px color-mix(in srgb, #000 9%, transparent);
+}
+
 .launchpad-row-main {
   padding: 17px 52px 16px 18px;
 }
@@ -732,6 +760,16 @@
 
 .launchpad-readiness > button:hover {
   background: var(--surface-hover);
+}
+
+.launchpad-readiness > button > svg:last-child,
+.launchpad-resume > span:last-child svg {
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.launchpad-readiness > button:hover > svg:last-child,
+.launchpad-resume:hover > span:last-child svg {
+  transform: translateX(2px);
 }
 
 .launchpad-resume {

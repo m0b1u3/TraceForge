@@ -4,8 +4,8 @@
  * Single source of truth for semantic design tokens.
  * Color encodes state only: phosphor = live/running, amber = pending approval
  * or warning, verdict red = confirmed finding/critical, info = hypothesis.
- * Everything else stays neutral steel gray. app.css and dark-workbench.css
- * consume these variables and must not redefine them.
+ * Everything else stays neutral. Primitives, workbench and overlays consume
+ * these variables and must not redefine them.
  */
 :root {
   color-scheme: dark;
