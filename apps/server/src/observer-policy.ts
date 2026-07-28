@@ -47,6 +47,9 @@ export function observerIntervention(
   warning: Pick<ObserverWarning, "status" | "title" | "suggestedGoal" | "suggestedAction">,
   options: { allowPause?: boolean } = {},
 ): { steering?: string; pauseReason?: string } {
+  if (warning.status === "detected") {
+    return { steering: warning.suggestedGoal || warning.suggestedAction };
+  }
   if (warning.status === "correcting") {
     return { steering: warning.suggestedGoal || warning.suggestedAction };
   }

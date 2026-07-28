@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { checkScope } from "@traceforge/tool-resolver";
 import {
   type TrafficEntry, type Fact, type Task, type ActionCard, type TimelineEntry,
-  ActionCardSchema, type RuntimeEvent, type ScopeRule,
+  ActionCardSchema, classifyEndpointObservation, type RuntimeEvent, type ScopeRule,
 } from "@traceforge/shared";
 import type { ToolDescriptor } from "./tool.js";
 
@@ -646,18 +646,43 @@ export function makeExtractApiEndpointsTool(
         : entries.filter((e) => e.responseBody && !isStatic(e.url));
       if (sources.length === 0) return { ok: true, content: "未发现可用于提取端点的流量。" };
 
-      const existingTitles = new Set(deps.facts.listByCase(caseId).map((f) => f.title));
-      const discovered = new Map<string, { method: string; status: number | null; sourceIds: string[]; parameters: EndpointParameter[]; viaLlm: boolean; fromBody: boolean }>();
+      const existingFacts = deps.facts.listByCase(caseId).filter((fact) => fact.validity === "valid");
+      const discovered = new Map<string, {
+        method: string;
+        status: number | null;
+        sourceIds: string[];
+        parameters: EndpointParameter[];
+        viaLlm: boolean;
+        fromBody: boolean;
+        observationKind: "endpoint" | "error_signal";
+      }>();
 
       for (const entry of sources.slice(0, limit)) {
         // 请求 URL 本身
         const reqUrl = normalizeEndpoint(entry.url);
-        if (looksLikeApi(new URL(entry.url).pathname, entry.responseBody) || !isStatic(entry.url)) {
+        const observationKind = classifyEndpointObservation(entry.responseStatus);
+        if (
+          observationKind !== "unsupported"
+          && (looksLikeApi(new URL(entry.url).pathname, entry.responseBody) || !isStatic(entry.url))
+        ) {
           const cur = discovered.get(reqUrl);
           if (cur) {
-            cur.sourceIds.push(entry.id);
+            if (!cur.sourceIds.includes(entry.id)) cur.sourceIds.push(entry.id);
+            if (observationKind === "endpoint") {
+              cur.method = entry.method;
+              cur.status = entry.responseStatus;
+              cur.observationKind = "endpoint";
+            }
           } else {
-            discovered.set(reqUrl, { method: entry.method, status: entry.responseStatus, sourceIds: [entry.id], parameters: [], viaLlm: false, fromBody: false });
+            discovered.set(reqUrl, {
+              method: entry.method,
+              status: entry.responseStatus,
+              sourceIds: [entry.id],
+              parameters: [],
+              viaLlm: false,
+              fromBody: false,
+              observationKind,
+            });
           }
         }
         // 响应体中的路径
@@ -667,8 +692,17 @@ export function makeExtractApiEndpointsTool(
           const cur = discovered.get(path);
           if (cur) {
             if (!cur.sourceIds.includes(entry.id)) cur.sourceIds.push(entry.id);
+            cur.observationKind = "endpoint";
           } else {
-            discovered.set(path, { method: "GET", status: null, sourceIds: [entry.id], parameters: [], viaLlm: false, fromBody: true });
+            discovered.set(path, {
+              method: "GET",
+              status: null,
+              sourceIds: [entry.id],
+              parameters: [],
+              viaLlm: false,
+              fromBody: true,
+              observationKind: "endpoint",
+            });
           }
         }
         // LLM 深度分析
@@ -680,6 +714,7 @@ export function makeExtractApiEndpointsTool(
             const cur = discovered.get(v.url);
             if (cur) {
               if (!cur.sourceIds.includes(entry.id)) cur.sourceIds.push(entry.id);
+              cur.observationKind = "endpoint";
               // 该端点已由 LLM 深度分析确认，标记为 LLM 辅助
               cur.viaLlm = true;
               // 合并参数并去重
@@ -691,7 +726,15 @@ export function makeExtractApiEndpointsTool(
                 }
               }
             } else {
-              discovered.set(v.url, { method: v.method, status: null, sourceIds: v.sourceIds, parameters: v.parameters, viaLlm: true, fromBody: true });
+              discovered.set(v.url, {
+                method: v.method,
+                status: null,
+                sourceIds: v.sourceIds,
+                parameters: v.parameters,
+                viaLlm: true,
+                fromBody: true,
+                observationKind: "endpoint",
+              });
             }
           }
         }
@@ -699,17 +742,34 @@ export function makeExtractApiEndpointsTool(
 
       const recordedIds: string[] = [];
       for (const [url, info] of discovered.entries()) {
-        if (existingTitles.has(url)) continue;
         const isLogin = LOGIN_PATH_MARKERS.some((m) => url.toLowerCase().includes(m));
-        const { confidence, tags, sourceType } = info.viaLlm
+        const factType = info.observationKind === "error_signal"
+          ? "http_error_signal"
+          : isLogin
+            ? "login_endpoint"
+            : "api_endpoint";
+        if (existingFacts.some((fact) => fact.title === url && fact.type === factType)) continue;
+        const { confidence, tags, sourceType } = info.observationKind === "error_signal"
+          ? {
+              confidence: 0.5,
+              tags: ["auto-discovery", "black-box", "error-signal", "requires-validation"],
+              sourceType: "traffic" as const,
+            }
+          : info.viaLlm
           ? { confidence: 0.6, tags: ["auto-discovery", "llm-assisted", "evidence-verified"], sourceType: "ai" as const }
           : info.fromBody
             ? { confidence: 0.7, tags: ["auto-discovery", "black-box", "from-body"], sourceType: "traffic" as const }
             : { confidence: 0.8, tags: ["auto-discovery", "black-box"], sourceType: "traffic" as const };
         const fact = deps.facts.create(caseId, {
-          type: isLogin ? "login_endpoint" : "api_endpoint",
+          type: factType,
           title: url,
-          value: { method: info.method, sampleStatus: info.status, sourceTrafficIds: info.sourceIds, parameters: info.parameters },
+          value: {
+            method: info.method,
+            sampleStatus: info.status,
+            sourceTrafficIds: info.sourceIds,
+            parameters: info.parameters,
+            evidenceClass: info.observationKind,
+          },
           source: { type: sourceType, ref: info.sourceIds[0] ?? "case" },
           confidence,
           tags,

@@ -32,6 +32,8 @@ describe("Observer critical evidence policy", () => {
     expect(observerIntervention({ ...warning, status: "escalated" }, { allowPause: false })).toEqual({
       steering: "Collect evidence first",
     });
-    expect(observerIntervention({ ...warning, status: "detected" })).toEqual({});
+    expect(observerIntervention({ ...warning, status: "detected" })).toEqual({
+      steering: "Collect evidence first",
+    });
   });
 });

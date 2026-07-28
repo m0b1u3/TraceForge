@@ -1,9 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { AgentRunRegistry } from "./agent-runs.js";
+import { AgentRunRegistry, isContinuationGoal } from "./agent-runs.js";
 import { createDb } from "./db/client.js";
 import { AgentRunStore } from "./stores/agent-run-store.js";
 
 describe("AgentRunRegistry", () => {
+  it("distinguishes continuation commands from substantive investigation goals", () => {
+    expect(isContinuationGoal("继续")).toBe(true);
+    expect(isContinuationGoal("Resume.")).toBe(true);
+    expect(isContinuationGoal("继续验证第一个候选点")).toBe(false);
+  });
+
   it("starts one active run per case and rejects a second active run", () => {
     const reg = new AgentRunRegistry();
     const first = reg.start("case_1", "goal");

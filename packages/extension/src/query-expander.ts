@@ -13,8 +13,9 @@ export interface QueryExpander {
 }
 
 const SYSTEM = `You are TraceForge's memory query expansion helper.
-Given a red-team investigation search query, generate equivalent or adjacent retrieval keywords.
+Given a red-team investigation search query, generate strict semantic equivalents only.
 Include Chinese terms, English terms, acronyms, and common security terminology when useful.
+Never add a broader attack surface, endpoint class, vulnerability family, or adjacent concept merely because it may be useful.
 Do not invent target-specific facts.
 Do not generate exploit payloads.
 Return a JSON array of strings, max 12 items.`;

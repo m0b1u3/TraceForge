@@ -30,7 +30,8 @@ export function makeReevaluateFactsTool(
     source: "builtin",
     async execute(input) {
       const { goal, focus } = input as ReevaluateFactsInput;
-      const facts = factStore.listByCase(caseId);
+      const facts = factStore.listByCase(caseId)
+        .filter((fact) => fact.validity === "valid" && !["needs_review", "rejected", "stale"].includes(fact.findingStatus ?? ""));
       const suggestion = await suggest(caseId, goal, focus, facts);
       return { ok: true, content: suggestion };
     },

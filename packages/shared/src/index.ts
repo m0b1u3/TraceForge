@@ -5,3 +5,4 @@ export * from "./finding-lifecycle.js";
 export * from "./validation-workflow.js";
 export * from "./validation-console.js";
 export * from "./hypothesis-policy.js";
+export * from "./endpoint-observation.js";

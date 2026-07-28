@@ -37,12 +37,12 @@ describe("search_facts", () => {
     expect(r.ok).toBe(true);
     expect(r.content).toContain("没有匹配");
   });
-  it("multi-keyword chinese query matches when any keyword hits (no over-filtering)", async () => {
+  it("does not return a Fact for a low-coverage partial overlap", async () => {
     const chineseFacts = { listByCase: () => [fact({ id: "f1", type: "login_endpoint", title: "登录接口" })] };
     const t = makeSearchFactsTool("c", chineseFacts);
-    const r = await t.execute({ query: "登录越权" }); // 只命中"登录"，不该被阈值砍掉
+    const r = await t.execute({ query: "登录越权" });
     expect(r.ok).toBe(true);
-    expect(r.content).toContain("f1");
+    expect(r.content).not.toContain("f1");
   });
   it("excludes conflicted facts unless deliberate re-evaluation is requested", async () => {
     const conflictedFacts = { listByCase: () => [fact({ id: "bad", title: "admin secret", validity: "conflicted" })] };

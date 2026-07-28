@@ -10,6 +10,12 @@ export async function execCommand(
   root: string,
   args: { caseId: string; command: string; timeoutMs?: number },
 ): Promise<ToolOutput> {
+  if (process.platform === "win32" && /(?:^|\s)(?:grep|sed|awk|chmod|which)(?:\s|$)|(?:^|\s)\/dev\/null(?:\s|$)|\|\||&&/.test(args.command)) {
+    return {
+      ok: false,
+      text: "command rejected before execution: this workspace uses cmd.exe on Windows; use cmd.exe-compatible commands and operators",
+    };
+  }
   let cwd: string;
   try {
     cwd = resolveInWorkspace(root, args.caseId);
@@ -70,6 +76,7 @@ export async function listDir(
 ): Promise<ToolOutput> {
   try {
     const target = resolveInWorkspace(root, args.caseId, args.path ?? ".");
+    await mkdir(resolveInWorkspace(root, args.caseId), { recursive: true });
     const entries = await readdir(target, { withFileTypes: true });
     const text = entries.map((e) => (e.isDirectory() ? `${e.name}/` : e.name)).join("\n") || "(empty)";
     return { ok: true, text };

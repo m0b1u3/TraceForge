@@ -35,6 +35,7 @@ export interface ToolExecutionReport {
   input: unknown;
   content: string;
   ok: boolean;
+  meta?: Record<string, unknown>;
   risk?: "normal" | "command";
   rejected?: boolean;
   blocked?: boolean;
@@ -565,7 +566,16 @@ export class AgentRuntime {
         : res.content;
       const result = { content, ok: effectiveOk };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, transient, failureClass, risk: tool.risk });
+        await options.onToolExecuted({
+          name: call.name,
+          input: call.input,
+          content: result.content,
+          ok: result.ok,
+          meta: res.meta,
+          transient,
+          failureClass,
+          risk: tool.risk,
+        });
       }
       return result;
     } catch (error) {

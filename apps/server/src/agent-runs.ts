@@ -16,6 +16,10 @@ function terminal(status: AgentRun["status"]): boolean {
   return status === "completed" || status === "failed" || status === "interrupted" || status === "needs_continuation";
 }
 
+export function isContinuationGoal(goal: string): boolean {
+  return /^(?:继续|继续执行|继续调查|continue|resume|go on)[.!。！\s]*$/i.test(goal.trim());
+}
+
 export class AgentRunRegistry {
   private runs = new Map<string, ActiveAgentRun>();
   private activeByCase = new Map<string, string>();
@@ -68,6 +72,13 @@ export class AgentRunRegistry {
   getLatestByCase(caseId: string): ActiveAgentRun | undefined {
     const id = this.latestByCase.get(caseId);
     return id ? this.runs.get(id) : undefined;
+  }
+
+  getLatestSubstantiveGoal(caseId: string): string | undefined {
+    return [...this.runs.values()]
+      .filter((entry) => entry.run.caseId === caseId && !isContinuationGoal(entry.run.goal))
+      .sort((left, right) => left.run.createdAt.localeCompare(right.run.createdAt))
+      .at(-1)?.run.goal;
   }
 
   addSteering(runId: string, text: string): AgentRun | undefined {

@@ -36,7 +36,7 @@ import { ObserverWarningStore } from "./stores/observer-store.js";
 import { AgentEventStore } from "./stores/agent-event-store.js";
 import { collectToolRefs } from "./agent-event-refs.js";
 import { ApprovalRegistry } from "./agent-approvals.js";
-import { AgentRunRegistry } from "./agent-runs.js";
+import { AgentRunRegistry, isContinuationGoal } from "./agent-runs.js";
 import { SessionStateStore } from "./stores/session-state-store.js";
 import { HypothesisStore } from "./stores/hypothesis-store.js";
 import { ContextSummaryStore } from "./stores/context-summary-store.js";
@@ -75,6 +75,8 @@ import { releaseValidationTaskLeases } from "./validation-task-lease.js";
 import { makeManageValidationTaskTool } from "./validation-task-control-tool.js";
 import { auditValidationWorkflow } from "./validation-workflow-audit.js";
 import { buildValidationWorkflowSnapshot, makeGetValidationWorkflowStateTool, type ValidationRuntimeSnapshot } from "./validation-workflow-snapshot.js";
+import { InvestigationOutcomePolicy, InvestigationStructurePolicy } from "./investigation-runtime-policy.js";
+import { reconcileUnsupportedEndpointFacts } from "./endpoint-fact-reconciliation.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -101,6 +103,12 @@ export function registerRoutes(
   const factStore = new FactStore(db);
   const taskStore = new TaskStore(db);
   const timelineStore = new TimelineStore(db);
+  const reconcileEndpointFacts = (caseId: string): void => {
+    const reconciliation = reconcileUnsupportedEndpointFacts(caseId, factStore, timelineStore);
+    for (const fact of reconciliation.facts) bus.emit({ type: "fact_updated", fact });
+    for (const entry of reconciliation.timelineEntries) bus.emit({ type: "timeline_appended", entry });
+  };
+  for (const item of cases.list()) reconcileEndpointFacts(item.id);
 
   // model/baseUrl/provider 全部来自 config/llm.json；无配置或无 key 直接失败，禁止静默空跑。
   const llm: LlmProvider = provider ?? createProviderFromConfig(loadLlmConfig());
@@ -678,11 +686,27 @@ export function registerRoutes(
 
     const { goal, budget } = req.body as { goal: string; budget?: Partial<AgentRunBudget> };
     if (!goal?.trim()) return reply.code(400).send({ error: "goal required" });
+    const requestedGoal = goal.trim();
+    const continuationState = isContinuationGoal(requestedGoal)
+      ? sessionStore.getLatestByCase(id)
+      : undefined;
+    const effectiveGoal = isContinuationGoal(requestedGoal)
+      ? runs.getLatestSubstantiveGoal(id) ?? continuationState?.currentGoal ?? requestedGoal
+      : requestedGoal;
+    reconcileEndpointFacts(id);
     let active;
     try {
-      active = runs.start(id, goal.trim());
+      active = runs.start(id, effectiveGoal);
     } catch (err) {
       return reply.code(409).send({ error: "active run exists", reason: (err as Error).message });
+    }
+    if (continuationState) {
+      sessionStore.upsert(id, {
+        currentGoal: continuationState.currentGoal,
+        phase: continuationState.phase,
+        focus: continuationState.focus,
+        activeHypothesisIds: continuationState.activeHypothesisIds,
+      }, active.run.id);
     }
     for (const warning of observerStore.resolveActiveFromOtherRuns(id, active.run.id)) {
       bus.emit({ type: "observer_warning_updated", warning });
@@ -738,7 +762,10 @@ export function registerRoutes(
         trigger: ObserverReviewTrigger,
       ): Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> => {
         const startedAt = Date.now();
-        const factsSummary = factStore.listByCase(id).map((f) => `${f.id} [${f.type}] ${f.title}`).join("\n") || "(无)";
+        const factsSummary = factStore.listByCase(id)
+          .filter((fact) => fact.validity === "valid")
+          .map((fact) => `${fact.id} [${fact.type}] ${fact.title}`)
+          .join("\n") || "(none)";
         const tasksSummary = taskStore.listByCase(id).map((t) => `${t.id} [${t.status}] ${t.title}`).join("\n") || "(无)";
         const result = await new Observer(llm).review(id, { goal, trajectory: reviewTrajectory, factsSummary, tasksSummary });
         if (result.usage.totalTokens > 0) recordRunUsage("observer", result.usage);
@@ -749,7 +776,9 @@ export function registerRoutes(
         let pauseReason: string | undefined;
         const steering: string[] = [];
         const observedFingerprints = new Set<string>();
-        const validFactIds = new Set(factStore.listByCase(id).map((fact) => fact.id));
+        const validFactIds = new Set(factStore.listByCase(id)
+          .filter((fact) => fact.validity === "valid")
+          .map((fact) => fact.id));
         const validTaskIds = new Set(taskStore.listByCase(id).map((task) => task.id));
         for (const w of result.warnings) {
           const level = validatedObserverLevel(w, validFactIds, validTaskIds);
@@ -1092,7 +1121,7 @@ export function registerRoutes(
 
     const runtimeProtocol = `
 [Runtime environment]
-- Host platform: ${process.platform}; shell commands must be compatible with this platform.
+- Host platform: ${process.platform}; ${process.platform === "win32" ? "exec_command uses cmd.exe. Do not use POSIX utilities, /dev/null, ||, or &&." : "shell commands must be compatible with this platform."}
 - Current case id: ${id}. Workspace tools are server-bound to this case; never invent or reuse a caseId.
 - Never print binary files to stdout. For binary artifacts, record path, byte size, hash, format and a short analysis summary.
 - Repeated non-informative attempts are grouped by objective, technique and observed outcome. Pivot after the evidence gap is no longer changing.
@@ -1119,7 +1148,7 @@ export function registerRoutes(
     // 先取历史（此时不含当前 goal），构造近期对话
     const history = agentEventStore.listByCase(id);
     const recentConvo = history
-      .filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done")
+      .filter((e) => e.kind === "user" || e.kind === "done")
       .slice(-20)
       .map((e) => ({ role: e.kind === "user" ? ("user" as const) : ("assistant" as const), text: e.text }));
     try {
@@ -1206,6 +1235,8 @@ export function registerRoutes(
     const toolRefWindows = new Map<string, number[]>();
     const pendingToolRefs = new Map<string, (AgentEventRefs | null)[]>();
     const observerScheduler = new ObserverScheduler();
+    const structurePolicy = new InvestigationStructurePolicy();
+    const outcomePolicy = new InvestigationOutcomePolicy();
     await new AgentRuntime(llm, registry, gate).run(
       `${system}\n${runtimeProtocol}\nValidation task protocol: use manage_validation_task to claim a consensus validation task before executing it, release it before pivoting, and complete it only after recording the required evidence. Do not manually change consensus validation status with record_task.\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}\n\n${getValidationMatrixPlan()}`,
       built.messages,
@@ -1293,22 +1324,20 @@ export function registerRoutes(
       onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger),
       failureMemory,
       onAuthorizeToolExecute: (call) => {
-        const taskNeutralTools = new Set([
-          "record_fact", "record_hypothesis", "resolve_hypothesis", "record_task", "manage_validation_task",
-          "list_traffic", "get_traffic", "search_traffic", "search_facts", "get_fact_detail",
-          "recall_conversation", "recall_case_knowledge", "get_validation_workflow_state",
-          "list_identities", "list_attack_paths", "list_security_reports", "update_session_state",
-        ]);
-        if (taskNeutralTools.has(call.name)) return undefined;
         const actionableTasks = taskStore.listByCase(id).filter((task) =>
           task.runId === runId && ["open", "approved", "running", "recheck_candidate"].includes(task.status));
-        if (actionableTasks.length === 0) return undefined;
         const runningTasks = actionableTasks.filter((task) => task.status === "running");
-        if (runningTasks.length === 1) return undefined;
-        if (runningTasks.length > 1) {
-          return `Run ${runId} has multiple running tasks. Resolve the invalid state before executing more investigation tools.`;
+        const decision = structurePolicy.authorize(call.name, actionableTasks.length, runningTasks.length);
+        if (decision) return decision;
+        const runningTask = runningTasks[0];
+        if (
+          structurePolicy.requiresStructuredTask(call.name)
+          && runningTask
+          && (runningTask.hypothesisIds?.length ?? 0) === 0
+        ) {
+          return `Running task ${runningTask.id} is not linked to a hypothesis. Link it before executing more active investigation tools.`;
         }
-        return `Run ${runId} has queued investigation tasks but no execution lease. Start exactly one task with record_task or manage_validation_task before executing this tool.`;
+        return undefined;
       },
       onBeforeToolExecute: (call) => {
         const windowStack = toolRefWindows.get(call.name) ?? [];
@@ -1333,6 +1362,19 @@ export function registerRoutes(
         });
       },
       onToolExecuted: (report) => {
+        structurePolicy.observe(report);
+        const lowYield = outcomePolicy.observe(report);
+        if (lowYield) {
+          runs.addSteering(runId, lowYield.steering);
+          const entry = timelineStore.append(
+            id,
+            "investigation_low_yield_detected",
+            `signature=${lowYield.signature}; consecutive=${lowYield.count}`,
+            undefined,
+            runId,
+          );
+          bus.emit({ type: "timeline_appended", entry });
+        }
         const windowStack = toolRefWindows.get(report.name) ?? [];
         const windowStart = windowStack.shift() ?? runTimelineEntries.length;
         const refsQueue = pendingToolRefs.get(report.name) ?? [];
@@ -1583,11 +1625,20 @@ export function registerRoutes(
         if (farEndIdx > alreadyCovered) {
           const farEvents = allEvents.slice(alreadyCovered, farEndIdx);
           const convoText = farEvents
-            .filter((e) => e.kind === "user" || e.kind === "text" || e.kind === "done")
-            .map((e) => `${e.kind === "user" ? "User" : "Agent"}: ${e.text}`)
+            .filter((e) => ["user", "done", "tool_call", "tool_result", "validation", "error"].includes(e.kind))
+            .map((e) => {
+              const text = e.text.length > 1_200 ? `${e.text.slice(0, 1_200)}…` : e.text;
+              return `${e.kind}${e.tool ? `(${e.tool})` : ""}: ${text}`;
+            })
             .join("\n");
           const farHistoryTokens = estimateTokens(convoText);
-          if (convoText.trim() && shouldCompressFarHistory({ farHistoryTokens, budget: contextBudget })) {
+          if (
+            convoText.trim()
+            && (
+              farEvents.length >= contextBudget.recentWindow
+              || shouldCompressFarHistory({ farHistoryTokens, budget: contextBudget })
+            )
+          ) {
             const doneTaskLines = taskStore.listByCase(id)
               .filter((t) => t.status === "done")
               .map((t) => `${t.title}：${t.reason || "完成"}`);

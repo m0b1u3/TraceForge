@@ -1,13 +1,26 @@
-// query 与 text 都做 bigram，命中数即分。支持中文连续串。单字 query 直接 includes。
-// 第一版关键词检索；预留升级：换向量时把本函数替换为 embedding 相似度，调用方不变。
+// Lightweight lexical retrieval with a minimum coverage threshold.
+// Direct substrings rank highest; fuzzy bigram matches must cover most of a token.
 export function keywordScore(query: string, text: string): number {
-  const q = query.toLowerCase().replace(/[\s,，。/]+/g, "");
-  const t = text.toLowerCase();
-  if (!q || !t) return 0;
-  if (q.length === 1) return t.includes(q) ? 1 : 0;
+  const normalizedQuery = query.toLowerCase().trim();
+  const normalizedText = text.toLowerCase();
+  if (!normalizedQuery || !normalizedText) return 0;
+
+  const tokens = normalizedQuery.split(/[\s,，、;；|/]+/).filter(Boolean);
+  let best = 0;
+  for (const token of tokens) best = Math.max(best, tokenScore(token, normalizedText));
+  return best;
+}
+
+function tokenScore(query: string, text: string): number {
+  if (query.length === 1) return text.includes(query) ? 1 : 0;
+  if (text.includes(query)) return Math.max(2, query.length);
+
   const grams = new Set<string>();
-  for (let i = 0; i < q.length - 1; i++) grams.add(q.slice(i, i + 2));
+  for (let index = 0; index < query.length - 1; index += 1) {
+    grams.add(query.slice(index, index + 2));
+  }
   let hits = 0;
-  for (const g of grams) if (t.includes(g)) hits++;
-  return hits;
+  for (const gram of grams) if (text.includes(gram)) hits += 1;
+  const minimumCoverage = Math.max(2, Math.ceil(grams.size * 0.6));
+  return hits >= minimumCoverage ? hits : 0;
 }
