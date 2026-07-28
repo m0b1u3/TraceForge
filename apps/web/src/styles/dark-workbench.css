@@ -1259,10 +1259,10 @@ textarea:focus-visible,
   flex: 0 0 auto;
 }
 
-/* Typography contract: six roles, shared by every workbench surface. */
+/* Typography contract: shared semantic roles across every workbench surface. */
 
 /* Global navigation */
-.topbar-brand strong { font-size: var(--type-title); }
+.topbar-brand strong { font-size: var(--type-heading); }
 .topbar-brand small { font-size: var(--type-meta); }
 .topbar-workspace-label,
 .topbar-workspace-separator,
@@ -1285,6 +1285,7 @@ textarea:focus-visible,
 .traffic-list-toolbar strong,
 .request-row-time,
 .request-row-url,
+.request-row-meta,
 .finding-detail-toolbar,
 .fact-value-row code { font-size: var(--type-meta); }
 
@@ -1307,7 +1308,7 @@ textarea:focus-visible,
 .agent-event-content,
 .agent-event.is-operator .agent-event-content,
 .composer textarea { font-size: var(--type-body); }
-.agent-event.is-tool .agent-event-content { font-size: var(--type-control); }
+.agent-event.is-tool .agent-event-content { font-size: var(--type-code); }
 .composer .tf-btn { font-size: var(--type-control); }
 
 /* Knowledge inspector */
@@ -1317,6 +1318,48 @@ textarea:focus-visible,
 .inspector-empty li { font-size: var(--type-control); }
 .knowledge-row .tf-row-title,
 .inspector-empty h3 { font-size: var(--type-heading); }
+
+/* Density contract: compact instrument chrome with readable analytical content. */
+.chat-panel .agent-console-header {
+  min-height: 44px;
+  padding-inline: 18px;
+}
+.traffic-filter-bar {
+  grid-template-columns: minmax(0, 1fr) 72px 72px;
+  gap: 6px;
+  padding: 8px 10px;
+}
+.traffic-search,
+.traffic-filter-bar [data-slot="select-trigger"] { height: 30px; }
+.request-row-trigger { padding-block: 12px 11px; }
+.request-row-meta { line-height: 1.45; }
+.messages { padding-bottom: 18px; }
+.agent-event { padding-block: 14px 15px; }
+.agent-event-content { margin-top: 7px; }
+.agent-event.is-tool .agent-event-content {
+  padding: 13px 14px;
+  line-height: 1.55;
+}
+.composer { margin: 0 26px 20px; }
+.knowledge-panel .panel-header {
+  min-height: 52px;
+  padding-top: 17px;
+}
+.case-overview { gap: 20px; }
+.case-overview-section { gap: 9px; }
+.case-overview-section > h3 {
+  font-family: var(--font);
+  font-size: var(--type-label);
+  font-weight: 600;
+  letter-spacing: .06em;
+}
+.case-overview-run > p,
+.case-overview-alert,
+.case-overview-finding { font-size: var(--type-meta); }
+.case-overview-finding {
+  min-height: 38px;
+  padding: 9px 10px;
+}
 
 /* Semantic icon rhythm: one marker per control group, never decorative icon noise. */
 .panel-heading {

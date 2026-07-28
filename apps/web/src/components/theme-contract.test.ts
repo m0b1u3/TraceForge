@@ -97,6 +97,7 @@ describe("Operations Canvas theme contract", () => {
   it("keeps the product type scale with a reasoning size", () => {
     expect(globals).toMatch(/--type-label:\s*11px/);
     expect(globals).toMatch(/--type-meta:\s*12px/);
+    expect(globals).toMatch(/--type-code:\s*12px/);
     expect(globals).toMatch(/--type-control:\s*13px/);
     expect(globals).toMatch(/--type-body:\s*13px/);
     expect(globals).toMatch(/--type-reasoning:\s*14px/);
