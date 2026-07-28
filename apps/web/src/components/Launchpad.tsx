@@ -11,6 +11,7 @@ import { useStore } from "../store.js";
 import { Button } from "./ui/button.js";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu.js";
 import { BrandMark } from "./design-system/BrandMark.js";
+import { AnimatePresence, m } from "motion/react";
 
 const statusPriority: Record<CaseSummary["runStatus"], number> = { waiting: 0, running: 1, failed: 2, idle: 3, completed: 4 };
 
@@ -150,14 +151,26 @@ export function Launchpad() {
         <div className="launchpad-list" role="list" aria-label="Recent engagements">
           {loading && <div className="launchpad-loading" role="status"><CircleNotch className="tf-spin" size={18} />Loading engagements…</div>}
           {!loading && visible.length === 0 && <div className="launchpad-empty"><strong>{query ? "No matching engagements" : "No engagements yet"}</strong><span>{query ? "Try a different case name or target." : "Start with a target to create the first investigation."}</span></div>}
-          {visible.map((summary, index) => <div className="launchpad-row" role="listitem" data-selected={index === 0 || undefined} key={summary.id}>
+          <AnimatePresence initial={false}>
+          {visible.map((summary, index) => <m.div
+            className="launchpad-row"
+            role="listitem"
+            data-selected={index === 0 || undefined}
+            key={summary.id}
+            layout="position"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+          >
             <button className="launchpad-row-main" type="button" onClick={() => void openCase(summary.id)} disabled={Boolean(busyId)}>
               <span className="launchpad-case-name"><strong>{summary.name}</strong>{summary.target && summary.target !== summary.name ? <small>{summary.target}</small> : null}</span>
               <span className="launchpad-row-meta"><RunStatus summary={summary} /><i aria-hidden="true" /><span className="launchpad-number">{summary.trafficCount.toLocaleString()} requests</span><i aria-hidden="true" /><FindingSummary summary={summary} /><i aria-hidden="true" /><span className="launchpad-time">{formatRelativeTime(summary.lastActivityAt)}</span></span>
             </button>
             <span className="launchpad-row-actions">{busyId === summary.id ? <CircleNotch className="tf-spin" size={15} /> : <DropdownMenu><DropdownMenuTrigger asChild><button type="button" aria-label={`Actions for ${summary.name}`}><DotsThree size={17} weight="bold" /></button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => { const name = window.prompt("Rename case", summary.name); if (name?.trim()) void mutate(summary, { name }); }}>Rename</DropdownMenuItem><DropdownMenuItem onSelect={() => void mutate(summary, { status: summary.status === "paused" ? "active" : "paused" })}>{summary.status === "paused" ? <Play size={14} /> : <Pause size={14} />}{summary.status === "paused" ? "Resume" : "Pause"}</DropdownMenuItem><DropdownMenuItem onSelect={() => void mutate(summary, { status: "archived" })}><Archive size={14} />Archive</DropdownMenuItem><DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void remove(summary)}>Delete case</DropdownMenuItem></DropdownMenuContent></DropdownMenu>}</span>
             <CaretRight size={15} className="launchpad-row-caret" aria-hidden="true" />
-          </div>)}
+          </m.div>)}
+          </AnimatePresence>
         </div>
         {!loading && visible.length > 0 && <footer className="launchpad-count">{visible.length} engagement{visible.length === 1 ? "" : "s"}</footer>}
       </section>

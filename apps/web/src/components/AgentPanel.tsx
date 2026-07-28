@@ -17,6 +17,7 @@ import { RunTimelineRuler } from "./agent/RunTimelineRuler.js";
 import { useShallow } from "zustand/react/shallow";
 import { TokenUsageDialog } from "./agent/TokenUsageDialog.js";
 import { useOlderHistory } from "../hooks/use-older-history.js";
+import { AnimatePresence, m } from "motion/react";
 
 export { buildAgentConversationItems, type AgentConversationItem } from "./agent/agent-conversation.js";
 
@@ -406,11 +407,12 @@ export function AgentPanel() {
             <div className="tf-guide-hint">Give it a target, e.g. "test example.com/login for IDOR."</div>
           </div>
         )}
+        <AnimatePresence initial={false} mode="popLayout">
         {conversationItems.map((item) => {
+          let content = null;
           if (item.type === "approval" && pendingApproval) {
-            return (
+            content = (
               <ApprovalInterventionCard
-                key={item.key}
                 tool={pendingApproval.tool}
                 input={pendingApproval.input}
                 action={interventionAction}
@@ -421,9 +423,8 @@ export function AgentPanel() {
             );
           }
           if (item.type === "scope" && pendingScope) {
-            return (
+            content = (
               <ScopeInterventionCard
-                key={item.key}
                 host={pendingScope.host}
                 reason={pendingScope.reason}
                 action={interventionAction}
@@ -434,16 +435,30 @@ export function AgentPanel() {
             );
           }
           if (item.type === "busy") {
-            return <div className="tf-agent-busy" role="status" key={item.key}><CircleNotch size={14} className="tf-spin" /> Agent is running…</div>;
+            content = <div className="tf-agent-busy" role="status"><CircleNotch size={14} className="tf-spin" /> Agent is running…</div>;
           }
           if (item.type === "event") {
-            return <AgentEventRow item={item} key={item.key} />;
+            content = <AgentEventRow item={item} />;
           }
           if (item.type === "validation_group") {
-            return <ValidationEventGroup item={item} key={item.key} />;
+            content = <ValidationEventGroup item={item} />;
           }
-          return null;
+          if (!content) return null;
+          return (
+            <m.div
+              className="agent-event-motion"
+              key={item.key}
+              layout="position"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -3 }}
+              transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+            >
+              {content}
+            </m.div>
+          );
         })}
+        </AnimatePresence>
         {continuationRun && !activeRun && (
           <RunContinuationCard
             goal={continuationRun.goal}
