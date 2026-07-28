@@ -1,0 +1,457 @@
+/*
+ * Final production cascade.
+ *
+ * This file deliberately owns cross-feature typography, floating surfaces and
+ * Settings chrome. Feature styles remain responsible for layout and semantics;
+ * these rules prevent legacy light-only declarations and utility variants from
+ * producing different type scales or theme-inverted portals.
+ */
+
+html {
+  font-family: var(--font);
+  font-size: 16px;
+}
+
+body,
+button,
+input,
+textarea,
+select,
+[data-slot="dialog-content"],
+[data-slot="select-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="tooltip-content"] {
+  font-family: var(--font);
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-size: var(--type-body);
+  line-height: 1.5;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  text-wrap: pretty;
+}
+
+code,
+pre,
+kbd,
+samp,
+.agent-event-tool-chip,
+.agent-event.is-tool .agent-event-content,
+.request-row-time,
+.request-row-meta,
+.timeline-meta time {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One control language across native controls, shadcn primitives and bespoke UI. */
+button,
+[data-slot="button"],
+[data-slot="input"],
+[data-slot="select-trigger"],
+.tf-btn,
+.tf-input,
+.tf-select-trigger {
+  font-size: var(--type-control);
+  font-weight: 500;
+}
+
+[data-slot="input"],
+[data-slot="select-trigger"],
+.tf-input,
+.tf-select-trigger {
+  min-height: 36px;
+  border-color: var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+[data-slot="input"]::placeholder,
+.tf-input::placeholder {
+  color: var(--foreground-muted);
+  opacity: 1;
+}
+
+[data-slot="input"]:hover:not(:disabled),
+[data-slot="select-trigger"]:hover:not(:disabled),
+.tf-input:hover:not(:disabled),
+.tf-select-trigger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--foreground-muted) 52%, transparent);
+}
+
+[data-slot="input"]:focus-visible,
+[data-slot="select-trigger"]:focus-visible,
+.tf-input:focus-visible,
+.tf-select-trigger:focus-visible {
+  border-color: var(--primary);
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+[data-slot="button"]:focus-visible,
+[data-slot="dropdown-menu-item"]:focus-visible,
+[data-slot="select-item"]:focus-visible,
+.settings-nav button:focus-visible,
+.settings-theme-options button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent);
+  outline-offset: 2px;
+}
+
+/* Radix portals live outside the app shell; theme them from semantic tokens. */
+[data-slot="select-content"],
+[data-slot="dropdown-menu-content"] {
+  z-index: 80;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-panel);
+}
+
+[data-slot="select-content"] {
+  min-width: var(--radix-select-trigger-width);
+  padding: 4px;
+}
+
+[data-slot="select-item"],
+[data-slot="dropdown-menu-item"] {
+  min-height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--foreground-secondary);
+  font-size: var(--type-control);
+}
+
+[data-slot="select-item"][data-highlighted],
+[data-slot="dropdown-menu-item"][data-highlighted],
+[data-slot="dropdown-menu-item"]:focus {
+  color: var(--foreground);
+  background: var(--surface-hover);
+}
+
+[data-slot="select-item"][data-state="checked"] {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--primary) 9%, var(--surface-elevated));
+}
+
+[data-slot="tooltip-content"] {
+  z-index: 90;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-panel);
+  font-size: 11.5px;
+}
+
+[data-slot="dialog-overlay"] {
+  background: color-mix(in srgb, #020507 58%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+[data-slot="dialog-content"] {
+  border: 1px solid var(--border-subtle);
+  color: var(--foreground);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+[data-slot="dialog-title"] {
+  color: var(--foreground);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+}
+
+[data-slot="dialog-description"] {
+  color: var(--foreground-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Settings is a compact product surface, not a form card stack. */
+.settings-dialog {
+  width: min(840px, calc(100vw - 32px));
+  max-width: 840px;
+  height: min(620px, calc(100dvh - 32px));
+  max-height: 620px;
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+}
+
+.settings-header {
+  min-height: 78px;
+  justify-content: center;
+  gap: 6px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface);
+}
+
+.settings-header [data-slot="dialog-title"] {
+  font-size: 18px;
+}
+
+.settings-layout {
+  grid-template-columns: 176px minmax(0, 1fr);
+}
+
+.settings-nav {
+  gap: 2px;
+  padding: 14px 10px;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+}
+
+.settings-nav button {
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 9px;
+  min-height: 48px;
+  padding: 9px 10px;
+  border-radius: var(--radius-md);
+  color: var(--foreground-secondary);
+}
+
+.settings-nav button:hover {
+  color: var(--foreground);
+  background: var(--surface-hover);
+}
+
+.settings-nav button.is-active {
+  color: var(--foreground);
+  background: var(--surface);
+  box-shadow: inset 2px 0 0 var(--primary), var(--shadow-sm);
+}
+
+.settings-nav button > svg {
+  width: 16px;
+  height: 16px;
+  color: var(--foreground-muted);
+}
+
+.settings-nav strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-nav small {
+  color: var(--foreground-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.settings-content {
+  padding: 24px 28px 30px;
+  background: var(--surface);
+}
+
+.settings-section {
+  gap: 18px;
+  max-width: 540px;
+}
+
+.settings-section + .settings-section {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top-color: var(--border-subtle);
+}
+
+.settings-section-heading {
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.settings-section-heading strong {
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.settings-section-heading span {
+  max-width: 58ch;
+  color: var(--foreground-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.settings-section label,
+.settings-section .text-sm {
+  color: var(--foreground-secondary);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.settings-section .grid.gap-2 {
+  gap: 7px;
+}
+
+.settings-key-status {
+  color: var(--success);
+  font-size: 11.5px;
+}
+
+.settings-theme-options {
+  gap: 10px;
+}
+
+.settings-theme-options button {
+  min-height: 72px;
+  padding: 13px;
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-lg);
+  color: var(--foreground-secondary);
+  background: var(--surface-elevated);
+  box-shadow: none;
+}
+
+.settings-theme-options button:hover {
+  border-color: var(--border-strong);
+  color: var(--foreground);
+  background: var(--surface-hover);
+}
+
+.settings-theme-options button.is-selected {
+  border-color: color-mix(in srgb, var(--primary) 48%, var(--border-subtle));
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface));
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.settings-theme-options strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-theme-options small {
+  color: var(--foreground-muted);
+  font-size: 11px;
+}
+
+.settings-footer {
+  min-height: 64px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-elevated);
+}
+
+/* Normalize the highest-frequency workbench text. */
+.panel-heading h2,
+.panel-header-main h2,
+.chat-panel .panel-header h2 {
+  color: var(--foreground);
+  font-size: var(--type-card);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.section-kicker {
+  color: var(--foreground-muted);
+  font-size: var(--type-label);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.agent-event-label,
+.agent-event-refs-label,
+.request-detail-label,
+.attack-path-section-label,
+.validation-group > h3,
+.hypothesis-scheduling header > span,
+.observer-group > header {
+  font-size: var(--type-label);
+  letter-spacing: 0;
+}
+
+.agent-event-content {
+  font-size: var(--type-reasoning);
+  line-height: 1.62;
+}
+
+.agent-event.is-tool .agent-event-content,
+.tf-row-detail pre,
+.request-detail pre,
+.inspector-data-block pre {
+  font-size: var(--type-code);
+  line-height: 1.58;
+}
+
+.request-row-url,
+.knowledge-row .tf-row-title,
+.observer-row-description,
+.finding-summary,
+.case-overview-run > p {
+  font-size: var(--type-control);
+  line-height: 1.5;
+}
+
+.tf-tag,
+.severity-badge,
+.method {
+  min-height: 19px;
+  border-radius: var(--radius-xs);
+  font-size: var(--type-label);
+  line-height: 1.35;
+}
+
+/* Light mode must never inherit dark portal or form surfaces. */
+:root[data-theme="light"] [data-slot="select-content"],
+:root[data-theme="light"] [data-slot="dropdown-menu-content"],
+:root[data-theme="light"] [data-slot="dialog-content"],
+:root[data-theme="light"] [data-slot="input"],
+:root[data-theme="light"] [data-slot="select-trigger"],
+:root[data-theme="light"] .tf-select-menu,
+:root[data-theme="light"] .tf-create-pop {
+  color: var(--foreground);
+  background: var(--surface);
+  border-color: var(--border-subtle);
+}
+
+:root[data-theme="light"] [data-slot="select-item"],
+:root[data-theme="light"] [data-slot="dropdown-menu-item"] {
+  color: var(--foreground-secondary);
+}
+
+:root[data-theme="light"] [data-slot="select-item"][data-highlighted],
+:root[data-theme="light"] [data-slot="dropdown-menu-item"][data-highlighted],
+:root[data-theme="light"] [data-slot="dropdown-menu-item"]:focus {
+  color: var(--foreground);
+  background: var(--surface-hover);
+}
+
+:root[data-theme="light"] [data-slot="dialog-overlay"] {
+  background: rgba(15, 23, 42, 0.38);
+}
+
+@media (max-width: 760px) {
+  .settings-dialog {
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 16px);
+    max-height: none;
+  }
+
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-content {
+    padding: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="select-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dialog-content"] {
+    animation: none;
+  }
+}

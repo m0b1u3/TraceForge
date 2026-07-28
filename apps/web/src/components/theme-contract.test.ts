@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 const globals = readFileSync(new URL("../styles/globals.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../app.css", import.meta.url), "utf8");
 const workbench = readFileSync(new URL("../styles/dark-workbench.css", import.meta.url), "utf8");
+const production = readFileSync(new URL("../styles/production-ui.css", import.meta.url), "utf8");
 const topBar = readFileSync(new URL("./TopBar.tsx", import.meta.url), "utf8");
 const graphModal = readFileSync(new URL("./GraphModal.tsx", import.meta.url), "utf8");
 const graphView = readFileSync(new URL("./GraphView.tsx", import.meta.url), "utf8");
@@ -235,5 +236,13 @@ describe("Operations Canvas theme contract", () => {
     expect(workbench).not.toMatch(/#16815f|#147657|#116d50|#7fcfb2|#8fb8aa|#e3efeb|#d8eae4|#dce9e5|#79c8aa/i);
     expect(workbench).toMatch(/\[data-theme="light"\] \.tf-btn-primary\s*\{[^}]*background:\s*var\(--cta\)[^}]*color:\s*var\(--cta-foreground\)/);
     expect(workbench).toMatch(/\[data-theme="light"\] \.traffic-panel\s*\{[^}]*background:\s*var\(--background\)/);
+  });
+
+  it("keeps typography and Radix portal surfaces consistent across themes", () => {
+    expect(production).toMatch(/body,\s*button,\s*input,\s*textarea,\s*select,[\s\S]*?font-family:\s*var\(--font\)/);
+    expect(production).toMatch(/\[data-slot="select-content"\],[\s\S]*?\[data-slot="dropdown-menu-content"\]\s*\{[\s\S]*?background:\s*var\(--surface-elevated\)/);
+    expect(production).toMatch(/:root\[data-theme="light"\]\s+\[data-slot="select-content"\],[\s\S]*?background:\s*var\(--surface\)/);
+    expect(workbenchPrimitives.Input).not.toMatch(/\bdark:/);
+    expect(workbenchPrimitives.Select).not.toMatch(/\bdark:/);
   });
 });
