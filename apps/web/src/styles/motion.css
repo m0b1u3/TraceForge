@@ -64,8 +64,15 @@
   *::before,
   *::after {
     scroll-behavior: auto !important;
-    animation-duration: .01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: .01ms !important;
+    animation: none !important;
+    transition-property: color, background-color, border-color, opacity !important;
+    transition-duration: 100ms !important;
+  }
+
+  .agent-event-actions,
+  .launchpad-create,
+  .launchpad-row,
+  .flow-card {
+    transform: none !important;
   }
 }

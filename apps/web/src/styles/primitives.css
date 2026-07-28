@@ -114,7 +114,7 @@ button,
 
 [data-slot="button"]:active:not(:disabled),
 .tf-btn:active:not(:disabled) {
-  transform: translateY(1px) scale(.99);
+  transform: scale(.98);
 }
 
 [data-slot="input"],

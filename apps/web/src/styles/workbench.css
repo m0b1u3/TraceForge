@@ -806,6 +806,141 @@
   background: var(--surface-subtle);
 }
 
+/*
+ * Agent event grammar
+ * -------------------
+ * Calls read as compact instructions, results as technical output, and prose
+ * remains visually open. The distinction is domain-level rather than tied to
+ * any particular tool or finding type.
+ */
+.agent-event-motion[data-event-kind="tool_call"] + .agent-event-motion[data-event-kind="tool_result"] {
+  margin-top: -7px;
+}
+
+.agent-event-icon {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  left: -38px;
+  top: 14px;
+  place-items: center;
+  border: 3px solid var(--surface);
+  background: var(--surface-elevated);
+  color: var(--foreground-muted);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+}
+
+.agent-event-icon svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+
+.agent-event.is-agent .agent-event-icon,
+.agent-event.is-complete .agent-event-icon {
+  background: color-mix(in srgb, var(--success) 12%, var(--surface-elevated));
+  color: var(--success);
+}
+
+.agent-event.is-reasoning .agent-event-icon {
+  background: color-mix(in srgb, var(--information) 11%, var(--surface-elevated));
+  color: var(--information);
+}
+
+.agent-event.is-tool .agent-event-icon {
+  background: var(--surface-elevated);
+  color: var(--foreground-muted);
+}
+
+.agent-event.is-tool-result .agent-event-icon {
+  color: var(--primary);
+}
+
+.agent-event.is-validation .agent-event-icon {
+  background: color-mix(in srgb, var(--information) 10%, var(--surface-elevated));
+  color: var(--information);
+}
+
+.agent-event.is-error .agent-event-icon {
+  background: color-mix(in srgb, var(--danger) 11%, var(--surface-elevated));
+  color: var(--danger);
+}
+
+.agent-event.is-tool-call {
+  padding-bottom: 10px;
+}
+
+.agent-event.is-tool-call .agent-event-label {
+  color: var(--warning);
+}
+
+.agent-event.is-tool-call .agent-event-content {
+  max-height: 112px;
+  padding: 7px 0 3px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--foreground-secondary);
+  box-shadow: none;
+}
+
+.agent-event.is-tool-result {
+  padding-top: 10px;
+}
+
+.agent-event.is-tool-result .agent-event-label {
+  color: var(--primary);
+}
+
+.agent-event.is-tool-result .agent-event-content {
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--primary) 34%, transparent);
+  background: color-mix(in srgb, var(--surface-elevated) 82%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 62%, transparent);
+}
+
+.agent-event.is-reasoning .agent-event-label {
+  color: var(--information);
+}
+
+.agent-event.is-error .agent-event-label {
+  color: var(--danger);
+}
+
+:root[data-theme="light"] .agent-event.is-tool-call .agent-event-content {
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-theme="light"] .agent-event.is-tool-result .agent-event-content {
+  background: var(--surface-subtle);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .launchpad-create:hover,
+  .launchpad-row:hover,
+  .flow-card:hover {
+    transform: translateY(-2px);
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .agent-event:hover {
+    background: transparent;
+  }
+
+  .agent-event-actions {
+    opacity: .7;
+    transform: none;
+  }
+
+  .launchpad-create:hover,
+  .launchpad-row:hover,
+  .flow-card:hover {
+    transform: none;
+  }
+}
+
 @media (max-height: 760px) {
   .launchpad-main {
     padding-block: 40px;

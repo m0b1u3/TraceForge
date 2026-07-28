@@ -635,6 +635,31 @@
   background: rgba(35, 45, 55, .42);
 }
 
+@media (prefers-reduced-transparency: reduce) {
+  [data-slot="dialog-overlay"] {
+    background: rgba(5, 7, 10, .82);
+    backdrop-filter: none;
+  }
+
+  :root[data-theme="light"] [data-slot="dialog-overlay"] {
+    background: rgba(35, 45, 55, .62);
+  }
+}
+
+@media (prefers-contrast: more) {
+  [data-slot="dialog-content"],
+  .settings-section [data-slot="input"],
+  .settings-section [data-slot="select-trigger"],
+  .mcp-server-group,
+  .usage-table-wrap {
+    border-color: var(--foreground-muted);
+  }
+
+  [data-slot="dialog-overlay"] {
+    backdrop-filter: none;
+  }
+}
+
 :root[data-theme="light"] .graph-modal-body,
 :root[data-theme="light"] .attack-path-empty,
 :root[data-theme="light"] .graph-wrapper,

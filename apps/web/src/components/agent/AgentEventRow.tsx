@@ -152,7 +152,8 @@ function eventClassName(kind: AgentConversationEventItem["kind"]): string {
   if (kind === "user") return "is-operator";
   if (kind === "error") return "is-error";
   if (kind === "reasoning") return "is-reasoning";
-  if (kind === "tool_call" || kind === "tool_result") return "is-tool";
+  if (kind === "tool_call") return "is-tool is-tool-call";
+  if (kind === "tool_result") return "is-tool is-tool-result";
   if (kind === "validation") return "is-validation";
   if (kind === "done") return "is-complete";
   return "is-agent";

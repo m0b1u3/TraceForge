@@ -447,6 +447,7 @@ export function AgentPanel() {
           return (
             <m.div
               className="agent-event-motion"
+              data-event-kind={item.type === "event" ? item.kind : item.type}
               key={item.key}
               layout="position"
               initial={{ opacity: 0, y: 6 }}
