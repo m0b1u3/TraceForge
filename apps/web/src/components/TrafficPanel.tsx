@@ -155,7 +155,7 @@ export function TrafficPanel() {
     <>
     <aside className="panel traffic-panel">
       <header className="panel-header">
-        <div className="panel-heading"><Browsers size={16} weight="duotone" aria-hidden="true" /><span className="section-kicker">Traffic capture</span></div>
+        <div className="panel-heading"><Browsers size={16} weight="duotone" aria-hidden="true" /><span className="section-kicker">Traffic capture</span><h2>Requests</h2></div>
         <div className="panel-header-actions">
           <BrowserControls onActionChange={setBrowserAction} />
         </div>

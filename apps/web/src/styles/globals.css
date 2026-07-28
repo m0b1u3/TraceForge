@@ -77,14 +77,14 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --background: #F2F4F5;
+  --background: #EDF0F2;
   --surface: #FFFFFF;
-  --surface-elevated: #F7F8F9;
-  --surface-hover: #ECEFF1;
+  --surface-elevated: #F5F7F8;
+  --surface-hover: #E9EDEF;
 
-  --foreground: #17212B;
-  --foreground-secondary: #56636F;
-  --foreground-muted: #7D8995;
+  --foreground: #182029;
+  --foreground-secondary: #52606C;
+  --foreground-muted: #788590;
 
   --primary: #087F5B;
   --primary-hover: #066A4B;
@@ -97,9 +97,9 @@
   --warning: #B45309;
   --danger: #D92D20;
 
-  --border: #DDE2E6;
-  --border-subtle: rgba(15, 23, 42, 0.06);
-  --border-strong: rgba(15, 23, 42, 0.16);
+  --border: #D9DFE3;
+  --border-subtle: rgba(15, 23, 42, 0.075);
+  --border-strong: rgba(15, 23, 42, 0.18);
 
   --accent-soft: rgba(8, 127, 91, 0.08);
   --green-soft: rgba(8, 127, 91, 0.08);

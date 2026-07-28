@@ -64,9 +64,9 @@ describe("Operations Canvas theme contract", () => {
   it("ships a light variant of the semantic tokens from the same source", () => {
     const light = globals.match(/:root\[data-theme="light"\]\s*\{([\s\S]*?)\}/)?.[1] ?? "";
     expect(light).toContain("color-scheme: light");
-    expect(light).toMatch(/--background:\s*#F2F4F5/i);
+    expect(light).toMatch(/--background:\s*#EDF0F2/i);
     expect(light).toMatch(/--surface:\s*#FFFFFF/i);
-    expect(light).toMatch(/--foreground:\s*#17212B/i);
+    expect(light).toMatch(/--foreground:\s*#182029/i);
     expect(light).toMatch(/--primary:\s*#087F5B/i);
     expect(light).toMatch(/--cta:\s*#087F5B/i);
     expect(light).toMatch(/--cta-hover:\s*#066A4B/i);
