@@ -1,5 +1,6 @@
 import { useStore } from "../store.js";
-import { Fingerprint, Gauge, LockKey, Robot, Warning } from "@phosphor-icons/react";
+import { CaretRight, Fingerprint, Gauge, LockKey, Robot, Warning } from "@phosphor-icons/react";
+import type { Fact } from "@traceforge/shared";
 import { TrafficInspector } from "./inspector/TrafficInspector.js";
 import { FindingInspector, ToolEventInspector } from "./inspector/EvidenceInspector.js";
 import { TaskInspector, TimelineEventInspector } from "./inspector/GraphInspectors.js";
@@ -35,7 +36,54 @@ function KnowledgeInspector() {
   return null;
 }
 
-const OVERVIEW_FINDING_COUNT = 8;
+const OVERVIEW_EVIDENCE_CLUSTER_COUNT = 7;
+
+export type EvidenceCluster = {
+  key: string;
+  primary: Fact;
+  count: number;
+};
+
+function evidenceClusterKey(fact: Fact): string {
+  return [
+    fact.title.trim().toLocaleLowerCase(),
+    fact.type.trim().toLocaleLowerCase(),
+    fact.findingStatus ?? fact.validity,
+  ].join("\u0000");
+}
+
+export function buildEvidenceClusters(facts: Fact[], limit = OVERVIEW_EVIDENCE_CLUSTER_COUNT): EvidenceCluster[] {
+  const clusters = new Map<string, EvidenceCluster>();
+  for (let index = facts.length - 1; index >= 0; index -= 1) {
+    const fact = facts[index];
+    const key = evidenceClusterKey(fact);
+    const existing = clusters.get(key);
+    if (existing) {
+      existing.count += 1;
+      continue;
+    }
+    if (clusters.size >= limit) continue;
+    clusters.set(key, { key, primary: fact, count: 1 });
+  }
+  return [...clusters.values()];
+}
+
+function evidenceStatus(fact: Fact): string {
+  return fact.findingStatus ?? (fact.validity === "valid" ? "observed" : fact.validity);
+}
+
+function evidenceStatusLabel(status: string): string {
+  if (status === "needs_review") return "Needs review";
+  return status.replaceAll("_", " ").replace(/^\w/, (character) => character.toUpperCase());
+}
+
+function evidenceTone(status: string): string {
+  if (status === "verified") return "verified";
+  if (status === "validating") return "active";
+  if (status === "needs_review" || status === "conflicted") return "warning";
+  if (status === "rejected" || status === "stale" || status === "superseded") return "muted";
+  return "observed";
+}
 
 function PendingInterventions() {
   const { pendingApproval, pendingScope } = useStore(useShallow((state) => ({
@@ -79,18 +127,36 @@ function RunStatusSection() {
 
 function LatestFindings() {
   const { facts, selectFact } = useStore(useShallow((state) => ({ facts: state.facts, selectFact: state.selectFact })));
-  const latest = facts.slice(-OVERVIEW_FINDING_COUNT).reverse();
-  if (latest.length === 0) return null;
+  const clusters = buildEvidenceClusters(facts);
+  if (clusters.length === 0) return null;
   return (
     <section className="case-overview-section" aria-label="Latest evidence">
-      <h3><Fingerprint size={13} aria-hidden="true" />Latest evidence</h3>
-      <div className="case-overview-findings">
-        {latest.map((fact) => (
-          <button key={fact.id} type="button" className="case-overview-finding" onClick={() => selectFact(fact.id)}>
-            <span className="case-overview-finding-title">{fact.title}</span>
-            <span className={`tf-tag tf-row-level-${fact.findingStatus === "verified" ? "critical" : "info"}`}>{fact.findingStatus ?? fact.type} · {confidencePercent(fact.confidence)}%</span>
-          </button>
-        ))}
+      <h3 className="case-overview-evidence-heading">
+        <span><Fingerprint size={13} aria-hidden="true" />Evidence</span>
+        <small>{facts.length} records · {clusters.length} groups</small>
+      </h3>
+      <div className="case-overview-evidence">
+        {clusters.map(({ key, primary, count }) => {
+          const status = evidenceStatus(primary);
+          return (
+            <button
+              key={key}
+              type="button"
+              className="case-overview-evidence-row"
+              data-tone={evidenceTone(status)}
+              aria-label={`${primary.title}. ${evidenceStatusLabel(status)}. ${confidencePercent(primary.confidence)} percent confidence${count > 1 ? `. ${count} related records` : ""}`}
+              onClick={() => selectFact(primary.id)}
+            >
+              <i aria-hidden="true" />
+              <span className="case-overview-evidence-copy">
+                <strong>{primary.title}</strong>
+                <small>{evidenceStatusLabel(status)} · {primary.source.type} · {confidencePercent(primary.confidence)}%</small>
+              </span>
+              {count > 1 && <span className="case-overview-evidence-count" title={`${count} related records`}>×{count}</span>}
+              <CaretRight size={12} aria-hidden="true" />
+            </button>
+          );
+        })}
       </div>
     </section>
   );
