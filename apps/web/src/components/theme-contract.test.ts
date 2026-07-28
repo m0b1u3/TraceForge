@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 const globals = readFileSync(new URL("../styles/globals.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../app.css", import.meta.url), "utf8");
 const workbench = readFileSync(new URL("../styles/workbench-base.css", import.meta.url), "utf8");
+const workbenchLayer = readFileSync(new URL("../styles/workbench.css", import.meta.url), "utf8");
 const production = readFileSync(new URL("../styles/primitives.css", import.meta.url), "utf8");
 const topBar = readFileSync(new URL("./TopBar.tsx", import.meta.url), "utf8");
 const graphModal = readFileSync(new URL("./GraphModal.tsx", import.meta.url), "utf8");
@@ -241,6 +242,11 @@ describe("Operations Canvas theme contract", () => {
 
   it("keeps typography and Radix portal surfaces consistent across themes", () => {
     expect(production).toMatch(/body,\s*button,\s*input,\s*textarea,\s*select,[\s\S]*?font-family:\s*var\(--font\)/);
+    expect(production).not.toContain("text-rendering: geometricPrecision");
+    expect(workbench).not.toContain("text-rendering: geometricPrecision");
+    expect(workbenchLayer).toMatch(/\.chat-panel\s*\{[^}]*grid-template-rows:\s*50px minmax\(0,\s*1fr\) auto/);
+    expect(workbenchLayer).toMatch(/\.chat-panel:has\(>\s*\.run-ruler\)\s*\{[^}]*grid-template-rows:\s*50px auto minmax\(0,\s*1fr\) auto/);
+    expect(workbenchLayer).toMatch(/\.traffic-filter-bar \[data-slot="select-trigger"\],[\s\S]*?font-family:\s*var\(--font\)/);
     expect(production).toMatch(/\[data-slot="select-content"\],[\s\S]*?\[data-slot="dropdown-menu-content"\]\s*\{[\s\S]*?background:\s*var\(--surface-elevated\)/);
     expect(production).toMatch(/:root\[data-theme="light"\]\s+\[data-slot="select-content"\],[\s\S]*?background:\s*var\(--surface\)/);
     expect(workbenchPrimitives.Input).not.toMatch(/\bdark:/);

@@ -1076,6 +1076,135 @@
   }
 }
 
+/*
+ * Workbench typography contract
+ * -----------------------------
+ * This final layer owns the visible desktop workbench scale. Legacy feature
+ * sheets may define layout, but they must not create a separate type ramp.
+ */
+.chat-panel {
+  grid-template-rows: 50px minmax(0, 1fr) auto;
+}
+
+.chat-panel:has(> .run-ruler) {
+  grid-template-rows: 50px auto minmax(0, 1fr) auto;
+}
+
+.panel-heading .section-kicker,
+.section-kicker {
+  font-family: var(--font);
+  font-size: var(--type-label);
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.panel-heading h2,
+.chat-panel .agent-console-header h2,
+.knowledge-panel .panel-header h2 {
+  display: block;
+  font-size: var(--type-card);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -.018em;
+}
+
+.capture-summary span,
+.capture-summary strong,
+.capture-readiness-block > div > span,
+.capture-readiness-block > div > strong,
+.traffic-footer,
+.console-status {
+  font-size: var(--type-meta);
+  line-height: 1.4;
+}
+
+.capture-subhead,
+.traffic-list-toolbar strong,
+.case-overview-section > h3 {
+  font-family: var(--font);
+  font-size: var(--type-meta);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.traffic-search,
+.traffic-search input,
+.traffic-filter-bar [data-slot="select-trigger"],
+.composer textarea,
+.composer .tf-btn {
+  font-family: var(--font);
+  font-size: var(--type-control);
+}
+
+.tf-guide-title {
+  font-size: var(--type-card);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.tf-guide-hint {
+  max-width: 38ch;
+  font-size: var(--type-control);
+  line-height: 1.55;
+}
+
+.agent-event-label,
+.agent-event-tool-chip {
+  font-size: var(--type-label);
+}
+
+.agent-event-content,
+.agent-event.is-reasoning .agent-event-content {
+  font-size: var(--type-reasoning);
+}
+
+.agent-event.is-tool .agent-event-content {
+  font-size: var(--type-code);
+}
+
+.validation-workflow-title span,
+.case-overview-evidence-heading > small,
+.case-overview-evidence-copy small,
+.case-overview-evidence-count {
+  font-size: var(--type-label);
+  line-height: 1.35;
+}
+
+.validation-workflow-title span {
+  font-family: var(--font);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.validation-sync {
+  font-size: var(--type-label);
+}
+
+.validation-workflow-title strong,
+.case-overview-evidence-copy strong {
+  font-size: var(--type-control);
+  line-height: 1.4;
+}
+
+.case-overview-run .console-status {
+  font-size: var(--type-control);
+}
+
+.composer {
+  min-height: 54px;
+  max-height: 132px;
+  align-self: end;
+}
+
+.composer textarea {
+  min-height: 40px;
+  max-height: 112px;
+  line-height: 1.45;
+}
+
 @media (max-height: 760px) {
   .launchpad-main {
     padding-block: 40px;

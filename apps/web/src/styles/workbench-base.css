@@ -8,7 +8,7 @@ body {
 
 body {
   font-family: var(--font);
-  text-rendering: geometricPrecision;
+  text-rendering: optimizeLegibility;
 }
 
 button,
