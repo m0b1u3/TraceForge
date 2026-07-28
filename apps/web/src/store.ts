@@ -247,8 +247,6 @@ interface State {
   validationSyncStatus: ValidationSyncStatus;
   knowledgeTarget: { kind: "task" | "finding"; id: string; requestId: number } | null;
   workspacePanelRequest: { panel: "knowledge"; requestId: number } | null;
-  dockCollapsed: boolean;
-  toggleDockCollapsed: () => void;
   navigateToKnowledge: (target: { kind: "task" | "finding"; id: string }) => void;
   clearKnowledgeTarget: (requestId: number) => void;
   refreshValidationWorkflow: () => Promise<void>;
@@ -355,8 +353,6 @@ export const useStore = create<State>((set, get) => ({
   validationSyncStatus: "stale",
   knowledgeTarget: null,
   workspacePanelRequest: null,
-  dockCollapsed: false,
-  toggleDockCollapsed: () => set((state) => ({ dockCollapsed: !state.dockCollapsed })),
   navigateToKnowledge: (target) => {
     const available = target.kind === "task"
       ? get().tasks.some((task) => task.id === target.id)

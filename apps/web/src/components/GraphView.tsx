@@ -453,7 +453,7 @@ const SpeedButton = memo(function SpeedButton({ value, speed, setSpeed }: { valu
 });
 
 function GraphInner({ interactive }: { interactive: boolean }) {
-  const { timeline, runGoal, facts, tasks, actions, hypotheses, selectedFactId, selectedTaskId, selectedTimelineNodeId, selectFact, selectTask, selectTimelineNode, setKnowledgeDialog, dockCollapsed, toggleDockCollapsed } = useStore(useShallow((state) => ({
+  const { timeline, runGoal, facts, tasks, actions, hypotheses, selectedFactId, selectedTaskId, selectedTimelineNodeId, selectFact, selectTask, selectTimelineNode, setKnowledgeDialog } = useStore(useShallow((state) => ({
     timeline: state.timeline,
     runGoal: state.activeRun?.goal ?? null,
     facts: state.facts,
@@ -467,8 +467,6 @@ function GraphInner({ interactive }: { interactive: boolean }) {
     selectTask: state.selectTask,
     selectTimelineNode: state.selectTimelineNode,
     setKnowledgeDialog: state.setKnowledgeDialog,
-    dockCollapsed: state.dockCollapsed,
-    toggleDockCollapsed: state.toggleDockCollapsed,
   })));
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -529,7 +527,6 @@ function GraphInner({ interactive }: { interactive: boolean }) {
     // Validation entries also live in the run console: surface the matching
     // console row so the operator sees both projections of the same event.
     if (entry.eventType.startsWith("validation_")) {
-      if (dockCollapsed) toggleDockCollapsed();
       globalThis.dispatchEvent(new CustomEvent("traceforge:jump-to-validation", { detail: { eventType: entry.eventType, detail: entry.detail } }));
     } else {
       // 其余实体节点走 refs 精确反查:console 里产出该实体的 tool 事件。

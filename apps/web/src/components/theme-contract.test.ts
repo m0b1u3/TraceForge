@@ -160,7 +160,7 @@ describe("Operations Canvas theme contract", () => {
   });
 
   it("fits the three-pane workbench inside the 1100px desktop breakpoint", () => {
-    expect(workbench).toMatch(/@media\s*\(max-width:\s*1250px\)\s*and\s*\(min-width:\s*1100px\)[\s\S]*?\.workspace-shell\s*\{\s*grid-template-columns:\s*240px minmax\(480px,\s*1fr\) 340px/);
+    expect(workbench).toMatch(/@media\s*\(max-width:\s*1250px\)\s*and\s*\(min-width:\s*1100px\)[\s\S]*?\.workspace-shell\s*\{\s*grid-template-columns:\s*232px minmax\(0,\s*1fr\) 320px/);
   });
 
   it("uses an accessible dialog and named graph replay controls", () => {

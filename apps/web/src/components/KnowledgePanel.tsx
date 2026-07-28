@@ -38,27 +38,23 @@ function KnowledgeInspector() {
 const OVERVIEW_FINDING_COUNT = 8;
 
 function PendingInterventions() {
-  const { pendingApproval, pendingScope, dockCollapsed, toggleDockCollapsed } = useStore(useShallow((state) => ({
+  const { pendingApproval, pendingScope } = useStore(useShallow((state) => ({
     pendingApproval: state.pendingApproval,
     pendingScope: state.pendingScope,
-    dockCollapsed: state.dockCollapsed,
-    toggleDockCollapsed: state.toggleDockCollapsed,
   })));
   if (!pendingApproval && !pendingScope) return null;
-  const openConsole = () => {
-    if (dockCollapsed) toggleDockCollapsed();
-  };
+  const focusConsole = () => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus();
   return (
     <section className="case-overview-section" aria-label="Pending interventions">
       <h3><Warning size={13} weight="fill" aria-hidden="true" />Awaiting review</h3>
       {pendingApproval && (
-        <button type="button" className="case-overview-alert" onClick={openConsole}>
+        <button type="button" className="case-overview-alert" onClick={focusConsole}>
           <LockKey size={13} aria-hidden="true" />
           <span>Approval needed: <strong>{pendingApproval.tool}</strong></span>
         </button>
       )}
       {pendingScope && (
-        <button type="button" className="case-overview-alert" onClick={openConsole}>
+        <button type="button" className="case-overview-alert" onClick={focusConsole}>
           <LockKey size={13} aria-hidden="true" />
           <span>Scope decision: <strong>{pendingScope.host}</strong></span>
         </button>

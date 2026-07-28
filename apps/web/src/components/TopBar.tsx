@@ -1,4 +1,4 @@
-import { ArrowsClockwise, Circle, Coins, DotsThree, Eye, FileText, Gear, Lightbulb, Moon, Play, Plugs, Sun, WifiHigh, WifiSlash } from "@phosphor-icons/react";
+import { ArrowsClockwise, Circle, Coins, DotsThree, Eye, FileText, Gear, GitBranch, Lightbulb, Moon, Play, Plugs, Sun, WifiHigh, WifiSlash } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { useAppTheme } from "../hooks/useAppTheme.js";
 import { CaseLauncher } from "./CaseLauncher.js";
@@ -24,7 +24,7 @@ const KNOWLEDGE_DIALOGS = [
 ] as const;
 
 export function TopBar() {
-  const { caseId, activeRun, agentBusy, tokenUsage, connectionStatus, setCase, setSettingsModalOpen, knowledgeDialog, setKnowledgeDialog } = useStore(useShallow((state) => ({ caseId: state.caseId, activeRun: state.activeRun, agentBusy: state.agentBusy, tokenUsage: state.tokenUsage, connectionStatus: state.connectionStatus, setCase: state.setCase, setSettingsModalOpen: state.setSettingsModalOpen, knowledgeDialog: state.knowledgeDialog, setKnowledgeDialog: state.setKnowledgeDialog })));
+  const { caseId, activeRun, agentBusy, tokenUsage, connectionStatus, setCase, setSettingsModalOpen, setGraphModalOpen, knowledgeDialog, setKnowledgeDialog } = useStore(useShallow((state) => ({ caseId: state.caseId, activeRun: state.activeRun, agentBusy: state.agentBusy, tokenUsage: state.tokenUsage, connectionStatus: state.connectionStatus, setCase: state.setCase, setSettingsModalOpen: state.setSettingsModalOpen, setGraphModalOpen: state.setGraphModalOpen, knowledgeDialog: state.knowledgeDialog, setKnowledgeDialog: state.setKnowledgeDialog })));
   const runStatus = getTopBarRunStatus(activeRun, agentBusy);
   const openRunLauncher = () => globalThis.dispatchEvent(new CustomEvent("traceforge:new-run"));
   const { theme, toggleTheme } = useAppTheme();
@@ -80,6 +80,10 @@ export function TopBar() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setGraphModalOpen(true)}>
+                <GitBranch size={14} />
+                <span>Attack paths</span>
+              </DropdownMenuItem>
               {KNOWLEDGE_DIALOGS.map(({ key, label, icon: Icon }) => (
                 <DropdownMenuItem key={key} onSelect={() => setKnowledgeDialog(knowledgeDialog === key ? null : key)}>
                   <Icon size={14} />

@@ -25,9 +25,8 @@ function renderWorkspace(width: number) {
     root?.render(
       createElement(WorkspaceLayout, {
         traffic: createElement("div", null, "Traffic evidence"),
-        canvas: createElement("div", null, "Evidence graph"),
+        agent: createElement("div", null, "Agent console"),
         knowledge: createElement("div", null, "Knowledge base"),
-        dock: createElement("div", null, "Run console"),
       }),
     );
   });
@@ -40,7 +39,7 @@ afterEach(() => {
   root = null;
   container = null;
   document.body.innerHTML = "";
-  useStore.setState({ workspacePanelRequest: null, dockCollapsed: false });
+  useStore.setState({ workspacePanelRequest: null });
 });
 
 describe("getWorkspaceMode", () => {
@@ -60,26 +59,26 @@ describe("desktop workspace layout", () => {
   it("fits its minimum tracks at the 1100px columns boundary while body overflow is hidden", () => {
     const css = readFileSync("apps/web/src/app.css", "utf8");
     const minimumViewportWidth = 1100;
-    const horizontalPadding = 16 * 2;
-    const columnGaps = 16 * 2;
-    const minimumTrackWidth = 240 + 430 + 340;
+    const horizontalPadding = 0;
+    const columnGaps = 0;
+    const minimumTrackWidth = 248 + 430 + 320;
 
-    expect(css).toContain("grid-template-columns: minmax(240px, 0.72fr) minmax(430px, 1.42fr) minmax(340px, 1.12fr);");
+    expect(css).toContain("grid-template-columns: clamp(248px, 18vw, 288px) minmax(0, 1fr) clamp(320px, 24vw, 380px);");
     expect(minimumTrackWidth + columnGaps + horizontalPadding).toBeLessThanOrEqual(minimumViewportWidth);
   });
 
-  it("spans the run dock across all columns below the panes", () => {
+  it("keeps the Agent console in the primary center column", () => {
     const css = readFileSync("apps/web/src/app.css", "utf8");
-    expect(css).toMatch(/\.workspace-dock\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/);
-    expect(css).toMatch(/\.workspace-shell\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s*auto/);
+    expect(css).toMatch(/\.workspace-shell\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/);
+    expect(css).not.toContain('grid-template-rows: minmax(0, 1fr) minmax(200px, 35%);');
   });
 });
 
 describe("WorkspaceLayout", () => {
-  it("defaults to the graph canvas as the active panel", () => {
+  it("defaults to the Agent console as the active panel", () => {
     const workspace = renderWorkspace(1440).querySelector(".workspace-shell");
-    expect(workspace?.getAttribute("data-active-panel")).toBe("canvas");
-    expect(document.querySelector("#workspace-canvas")?.textContent).toContain("Evidence graph");
+    expect(workspace?.getAttribute("data-active-panel")).toBe("agent");
+    expect(document.querySelector("#workspace-agent")?.textContent).toContain("Agent console");
   });
 
   it("opens the Knowledge drawer for a programmatic navigation request and restores focus", () => {
@@ -116,13 +115,13 @@ describe("WorkspaceLayout", () => {
     expect(document.activeElement).toBe(closeButton);
 
     act(() => closeButton?.click());
-    expect(workspace?.getAttribute("data-active-panel")).toBe("canvas");
+    expect(workspace?.getAttribute("data-active-panel")).toBe("agent");
     expect(document.activeElement).toBe(trafficTrigger);
 
     act(() => trafficTrigger?.click());
 
     act(() => globalThis.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
-    expect(workspace?.getAttribute("data-active-panel")).toBe("canvas");
+    expect(workspace?.getAttribute("data-active-panel")).toBe("agent");
     expect(document.activeElement).toBe(trafficTrigger);
   });
 
@@ -138,28 +137,8 @@ describe("WorkspaceLayout", () => {
     expect(workspace?.getAttribute("data-active-panel")).toBe("knowledge");
     expect(knowledgeTrigger?.getAttribute("aria-pressed")).toBe("true");
     expect(workspace?.textContent).toContain("Traffic evidence");
-    expect(workspace?.textContent).toContain("Evidence graph");
+    expect(workspace?.textContent).toContain("Agent console");
     expect(workspace?.textContent).toContain("Knowledge base");
   });
 
-  it("collapses the run dock to a slim bar and expands it back via the toggle", () => {
-    const workspace = renderWorkspace(1440).querySelector(".workspace-shell");
-    const toggle = document.querySelector<HTMLButtonElement>(".workspace-dock-toggle");
-
-    expect(workspace?.getAttribute("data-dock")).toBe("expanded");
-    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
-    expect(workspace?.textContent).toContain("Run console");
-
-    act(() => toggle?.click());
-
-    expect(workspace?.getAttribute("data-dock")).toBe("collapsed");
-    expect(useStore.getState().dockCollapsed).toBe(true);
-    expect(document.querySelector(".workspace-dock-body")).toBeNull();
-
-    act(() => toggle?.click());
-
-    expect(workspace?.getAttribute("data-dock")).toBe("expanded");
-    expect(useStore.getState().dockCollapsed).toBe(false);
-    expect(workspace?.textContent).toContain("Run console");
-  });
 });

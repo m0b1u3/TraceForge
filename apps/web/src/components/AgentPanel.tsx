@@ -150,14 +150,12 @@ export function AgentPanel() {
   }, [allAgentEvents]);
 
   // Graph entity nodes (fact/task/timeline) ask for the console row whose refs
-  // recorded them; the dock only opens when a matching row actually exists.
+  // recorded them.
   useEffect(() => {
     const handler = (raw: Event) => {
       const { refId } = (raw as CustomEvent<{ refId: string }>).detail;
       const index = findAgentEventIndexByRef(allAgentEvents, refId);
       if (index < 0) return;
-      const store = useStore.getState();
-      if (store.dockCollapsed) store.toggleDockCollapsed();
       pendingJumpRef.current = index;
       shouldAutoScrollRef.current = false;
       const end = index + 1;

@@ -1,22 +1,21 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { CaretDown, CaretUp, X } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 
-export type WorkspacePanel = "traffic" | "canvas" | "knowledge";
+export type WorkspacePanel = "traffic" | "agent" | "knowledge";
 export type WorkspaceMode = "columns" | "drawer" | "single";
 
 export interface WorkspaceLayoutProps {
   traffic: ReactNode;
-  canvas: ReactNode;
+  agent: ReactNode;
   knowledge: ReactNode;
-  dock: ReactNode;
 }
 
-const PANELS: readonly WorkspacePanel[] = ["traffic", "canvas", "knowledge"];
+const PANELS: readonly WorkspacePanel[] = ["traffic", "agent", "knowledge"];
 
 function panelLabel(panel: WorkspacePanel): string {
   if (panel === "traffic") return "Traffic";
-  if (panel === "canvas") return "Graph";
+  if (panel === "agent") return "Agent";
   return "Knowledge";
 }
 
@@ -26,19 +25,17 @@ export function getWorkspaceMode(width: number): WorkspaceMode {
   return "single";
 }
 
-export function WorkspaceLayout({ traffic, canvas, knowledge, dock }: WorkspaceLayoutProps) {
+export function WorkspaceLayout({ traffic, agent, knowledge }: WorkspaceLayoutProps) {
   const [mode, setMode] = useState<WorkspaceMode>(() => getWorkspaceMode(globalThis.innerWidth || 1440));
-  const [activePanel, setActivePanel] = useState<WorkspacePanel>("canvas");
+  const [activePanel, setActivePanel] = useState<WorkspacePanel>("agent");
   const panelRequest = useStore((state) => state.workspacePanelRequest);
-  const dockCollapsed = useStore((state) => state.dockCollapsed);
-  const toggleDockCollapsed = useStore((state) => state.toggleDockCollapsed);
   const lastTriggerRef = useRef<HTMLElement | null>(null);
   const handledRequestRef = useRef(0);
   const trafficPaneRef = useRef<HTMLDivElement | null>(null);
   const knowledgePaneRef = useRef<HTMLDivElement | null>(null);
 
   const closeDrawer = () => {
-    setActivePanel("canvas");
+    setActivePanel("agent");
     lastTriggerRef.current?.focus();
   };
 
@@ -49,7 +46,7 @@ export function WorkspaceLayout({ traffic, canvas, knowledge, dock }: WorkspaceL
   }, []);
 
   useEffect(() => {
-    if (mode === "columns") setActivePanel("canvas");
+    if (mode === "columns") setActivePanel("agent");
   }, [mode]);
 
   useEffect(() => {
@@ -61,7 +58,7 @@ export function WorkspaceLayout({ traffic, canvas, knowledge, dock }: WorkspaceL
   }, [mode, panelRequest]);
 
   useEffect(() => {
-    if (mode === "columns" || activePanel === "canvas") return;
+    if (mode === "columns" || activePanel === "agent") return;
     const pane = activePanel === "traffic" ? trafficPaneRef.current : knowledgePaneRef.current;
     const firstControl = pane?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex="0"]');
     (firstControl ?? pane)?.focus();
@@ -74,7 +71,7 @@ export function WorkspaceLayout({ traffic, canvas, knowledge, dock }: WorkspaceL
   }, [activePanel, mode]);
 
   return (
-    <section className="workspace-shell" data-mode={mode} data-active-panel={activePanel} data-dock={dockCollapsed ? "collapsed" : "expanded"}>
+    <section className="workspace-shell" data-mode={mode} data-active-panel={activePanel}>
       <nav className="workspace-switcher" aria-label="Workbench panels">
         {PANELS.map((panel) => (
           <button
@@ -96,28 +93,12 @@ export function WorkspaceLayout({ traffic, canvas, knowledge, dock }: WorkspaceL
         {mode === "drawer" && activePanel === "traffic" && <button type="button" className="workspace-drawer-close" aria-label="Close Traffic panel" onClick={closeDrawer}><X size={15} /></button>}
         {traffic}
       </div>
-      <div className="workspace-pane workspace-canvas" id="workspace-canvas">{canvas}</div>
+      <div className="workspace-pane workspace-agent" id="workspace-agent">{agent}</div>
       <div ref={knowledgePaneRef} className="workspace-pane workspace-knowledge" id="workspace-knowledge" role={mode === "drawer" && activePanel === "knowledge" ? "dialog" : undefined} aria-modal={mode === "drawer" && activePanel === "knowledge" ? true : undefined} aria-label={mode === "drawer" && activePanel === "knowledge" ? "Knowledge panel" : undefined} tabIndex={mode === "drawer" && activePanel === "knowledge" ? -1 : undefined}>
         {mode === "drawer" && activePanel === "knowledge" && <button type="button" className="workspace-drawer-close" aria-label="Close Knowledge panel" onClick={closeDrawer}><X size={15} /></button>}
         {knowledge}
       </div>
-      <div className="workspace-dock" id="workspace-dock">
-        <div className="workspace-dock-bar">
-          <span className="workspace-dock-title">Run console</span>
-          <button
-            type="button"
-            className="workspace-dock-toggle"
-            aria-expanded={!dockCollapsed}
-            aria-controls="workspace-dock-body"
-            aria-label={dockCollapsed ? "Expand run console" : "Collapse run console"}
-            onClick={toggleDockCollapsed}
-          >
-            {dockCollapsed ? <CaretUp size={14} /> : <CaretDown size={14} />}
-          </button>
-        </div>
-        {!dockCollapsed && <div className="workspace-dock-body" id="workspace-dock-body">{dock}</div>}
-      </div>
-      {mode === "drawer" && activePanel !== "canvas" && (
+      {mode === "drawer" && activePanel !== "agent" && (
         <button className="workspace-scrim" type="button" aria-label="Close side panel" onClick={closeDrawer} />
       )}
     </section>
