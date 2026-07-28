@@ -1035,6 +1035,229 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 62%, transparent);
 }
 
+/*
+ * Tool execution is an audit layer, not a second conversation.
+ * The summary stays on one quiet row; raw payloads are revealed on demand.
+ */
+.tool-activity-group {
+  position: relative;
+  min-width: 0;
+  padding: 5px 0 7px;
+}
+
+.tool-activity-group::before {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  bottom: 0;
+  left: -27px;
+  width: 1px;
+  background: color-mix(in srgb, var(--border-subtle) 88%, transparent);
+  content: "";
+}
+
+.tool-activity-summary {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 34px;
+  border-radius: var(--radius-sm);
+  color: var(--foreground-muted);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.tool-activity-trigger {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  min-height: 34px;
+  gap: 8px;
+  padding: 0 6px 0 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-activity-trigger:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid color-mix(in srgb, var(--primary) 62%, transparent);
+  outline-offset: 2px;
+}
+
+.tool-activity-icon {
+  position: absolute;
+  left: -37px;
+  display: grid;
+  width: 21px;
+  height: 21px;
+  place-items: center;
+  border: 4px solid var(--surface);
+  border-radius: 50%;
+  background: var(--surface-elevated);
+  color: var(--foreground-muted);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+}
+
+.tool-activity-group.is-evidence .tool-activity-icon {
+  color: var(--primary);
+}
+
+.tool-activity-group.is-issue .tool-activity-icon {
+  color: var(--danger);
+}
+
+.tool-activity-name {
+  overflow: hidden;
+  color: var(--foreground-secondary);
+  font-family: var(--mono);
+  font-size: var(--type-code);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-activity-count {
+  flex: none;
+  color: var(--foreground-muted);
+  font: 500 var(--type-label)/1 var(--mono);
+}
+
+.tool-activity-state {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 5px;
+  color: var(--foreground-muted);
+  font-size: var(--type-label);
+}
+
+.tool-activity-state > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.tool-activity-state.is-running,
+.tool-activity-state.is-evidence {
+  color: var(--primary);
+}
+
+.tool-activity-state.is-issue {
+  color: var(--danger);
+}
+
+.tool-activity-trigger time {
+  flex: none;
+  margin-left: auto;
+  color: var(--foreground-muted);
+  font: 400 var(--type-label)/1 var(--mono);
+}
+
+.tool-activity-chevron {
+  flex: none;
+  transition: transform 160ms var(--ease-emphasized);
+}
+
+.tool-activity-group.is-open .tool-activity-chevron {
+  transform: rotate(180deg);
+}
+
+.tool-activity-summary > [data-slot="button"] {
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.tool-activity-details {
+  display: grid;
+  gap: 8px;
+  margin: 3px 0 8px;
+  padding-left: 14px;
+  border-left: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
+}
+
+.tool-activity-details[data-state="open"] {
+  animation: tf-tool-details-in 160ms var(--ease-emphasized) both;
+}
+
+.tool-activity-detail {
+  min-width: 0;
+  padding: 9px 11px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-elevated) 80%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 58%, transparent);
+}
+
+.tool-activity-detail > header {
+  display: flex;
+  align-items: center;
+  min-height: 20px;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--foreground-muted);
+  font-size: var(--type-label);
+}
+
+.tool-activity-detail > header > [data-slot="button"] {
+  margin-left: auto;
+}
+
+.tool-activity-payload + .tool-activity-payload {
+  margin-top: 8px;
+}
+
+.tool-activity-payload > span {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--foreground-muted);
+  font-size: var(--type-label);
+}
+
+.tool-activity-payload pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  color: var(--foreground-secondary);
+  font: 400 var(--type-code)/1.58 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@keyframes tf-tool-details-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tool-activity-summary:hover {
+    background: color-mix(in srgb, var(--surface-hover) 56%, transparent);
+  }
+
+  .tool-activity-summary:hover > [data-slot="button"],
+  .tool-activity-summary:focus-within > [data-slot="button"] {
+    opacity: 1;
+  }
+}
+
+.tool-activity-group.is-evidence .tool-activity-detail {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--primary) 46%, transparent);
+}
+
+.tool-activity-group.is-issue .tool-activity-detail {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--danger) 52%, transparent);
+}
+
+:root[data-theme="light"] .tool-activity-detail {
+  background: var(--surface-subtle);
+}
+
 .agent-event.is-reasoning .agent-event-label {
   color: var(--information);
 }

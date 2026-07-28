@@ -5,6 +5,7 @@ import type { AgentEvent, AgentRun } from "@traceforge/shared";
 import { runAgent, resolveApproval, approveScope, rejectScope, steerAgentRun, interruptAgentRun, listAgentEvents } from "../api.js";
 import { AgentEventRow } from "./agent/AgentEventRow.js";
 import { ValidationEventGroup } from "./agent/ValidationEventGroup.js";
+import { ToolActivityGroup } from "./agent/ToolActivityGroup.js";
 import { buildAgentConversationItems, findAgentEventIndexByRef } from "./agent/agent-conversation.js";
 import {
   ApprovalInterventionCard,
@@ -496,6 +497,9 @@ export function AgentPanel() {
           }
           if (item.type === "validation_group") {
             content = <ValidationEventGroup item={item} />;
+          }
+          if (item.type === "tool_group") {
+            content = <ToolActivityGroup item={item} />;
           }
           if (!content) return null;
           return (

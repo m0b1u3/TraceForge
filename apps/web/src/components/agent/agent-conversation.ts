@@ -1,5 +1,6 @@
 import type { AgentUiEvent } from "../../store.js";
 import { validationTimelineConsoleEvent, type AgentEventRefs } from "@traceforge/shared";
+import { rulerToolName } from "./RunTimelineRuler.js";
 
 type PendingApproval = { approvalId: string; tool: string; input: string };
 type PendingScope = { host: string; reason: string };
@@ -17,8 +18,16 @@ export type AgentConversationEventItem = {
   createdAt?: string;
 };
 
+export type AgentToolActivity = {
+  key: string;
+  tool: string;
+  call: AgentConversationEventItem | null;
+  result: AgentConversationEventItem | null;
+};
+
 export type AgentConversationItem =
   | AgentConversationEventItem
+  | { type: "tool_group"; key: string; tool: string; activities: AgentToolActivity[] }
   | { type: "validation_group"; key: string; target: NonNullable<AgentConversationEventItem["target"]>; events: AgentConversationEventItem[] }
   | { type: "approval"; key: string }
   | { type: "scope"; key: string }
@@ -46,7 +55,9 @@ export function buildAgentConversationItems({
     if (display.kind === "done" && lastVisible?.kind === "text" && lastVisible.text === display.text) return;
     const nextItem: AgentConversationEventItem = { type: "event", key: `event-${index}`, ...display };
     const previous = items.at(-1);
-    if (nextItem.kind === "validation" && nextItem.target && previous?.type === "event" && previous.kind === "validation" && sameTarget(previous.target, nextItem.target)) {
+    if (nextItem.kind === "tool_call" || nextItem.kind === "tool_result") {
+      appendToolActivity(items, nextItem);
+    } else if (nextItem.kind === "validation" && nextItem.target && previous?.type === "event" && previous.kind === "validation" && sameTarget(previous.target, nextItem.target)) {
       items[items.length - 1] = { type: "validation_group", key: `validation-group-${previous.key}`, target: nextItem.target, events: [previous, nextItem] };
     } else if (nextItem.kind === "validation" && nextItem.target && previous?.type === "validation_group" && sameTarget(previous.target, nextItem.target)) {
       previous.events.push(nextItem);
@@ -60,6 +71,32 @@ export function buildAgentConversationItems({
   if (pendingScope) items.push({ type: "scope", key: `scope-${pendingScope.host}` });
   if (agentBusy) items.push({ type: "busy", key: "agent-busy" });
   return items;
+}
+
+function appendToolActivity(items: AgentConversationItem[], event: AgentConversationEventItem): void {
+  const tool = rulerToolName(event.text);
+  const previous = items.at(-1);
+  const group = previous?.type === "tool_group" && previous.tool === tool ? previous : null;
+
+  if (event.kind === "tool_result" && group) {
+    const latest = group.activities.at(-1);
+    if (latest && latest.result === null) {
+      latest.result = event;
+      return;
+    }
+  }
+
+  const activity: AgentToolActivity = {
+    key: `tool-activity-${event.key}`,
+    tool,
+    call: event.kind === "tool_call" ? event : null,
+    result: event.kind === "tool_result" ? event : null,
+  };
+  if (group) {
+    group.activities.push(activity);
+    return;
+  }
+  items.push({ type: "tool_group", key: `tool-group-${event.key}`, tool, activities: [activity] });
 }
 
 function sameTarget(left: AgentConversationEventItem["target"], right: AgentConversationEventItem["target"]): boolean {

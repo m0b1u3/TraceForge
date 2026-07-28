@@ -40,7 +40,33 @@ describe("tool result refs", () => {
       pendingScope: null,
       agentBusy: false,
     });
-    expect(items[0]).toEqual(expect.objectContaining({ type: "event", kind: "tool_result", refs }));
+    expect(items[0]).toEqual(expect.objectContaining({
+      type: "tool_group",
+      activities: [expect.objectContaining({ result: expect.objectContaining({ kind: "tool_result", refs }) })],
+    }));
+  });
+
+  it("pairs calls with results and groups adjacent executions of the same tool", () => {
+    const items = buildAgentConversationItems({
+      events: [
+        { kind: "tool_call", text: "http_replay({\"path\":\"/first\"})" },
+        { kind: "tool_result", text: "http_replay → completed" },
+        { kind: "tool_call", text: "http_replay({\"path\":\"/second\"})" },
+        { kind: "tool_result", text: "http_replay → completed" },
+        { kind: "text", text: "Both observations are consistent." },
+      ],
+      pendingApproval: null,
+      pendingScope: null,
+      agentBusy: false,
+    });
+
+    expect(items.map((item) => item.type)).toEqual(["tool_group", "event"]);
+    const group = items[0];
+    expect(group?.type).toBe("tool_group");
+    if (group?.type !== "tool_group") return;
+    expect(group.tool).toBe("http_replay");
+    expect(group.activities).toHaveLength(2);
+    expect(group.activities.every((activity) => activity.call && activity.result)).toBe(true);
   });
 
   it("finds the last console event whose refs mention an entity", () => {

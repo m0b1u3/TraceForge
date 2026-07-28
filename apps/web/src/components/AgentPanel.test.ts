@@ -108,11 +108,13 @@ describe("buildAgentConversationItems", () => {
       agentBusy: false,
     });
 
-    const visible = eventItems(items);
-    expect(visible[0]?.label).toBe("Tool result");
-    expect(visible[0]?.summary.length).toBeLessThan(220);
-    expect(visible[0]?.summary.endsWith("...")).toBe(true);
-    expect(visible[0]?.text).toBe(fullText);
+    const group = items[0];
+    expect(group?.type).toBe("tool_group");
+    if (group?.type !== "tool_group") return;
+    expect(group.activities[0]?.result?.label).toBe("Tool result");
+    expect(group.activities[0]?.result?.summary.length).toBeLessThan(220);
+    expect(group.activities[0]?.result?.summary.endsWith("...")).toBe(true);
+    expect(group.activities[0]?.result?.text).toBe(fullText);
   });
 
   it("hides noisy terminal and empty tool events from the chat stream", () => {

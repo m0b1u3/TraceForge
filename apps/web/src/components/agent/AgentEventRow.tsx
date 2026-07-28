@@ -80,7 +80,7 @@ export const AgentEventRow = memo(function AgentEventRow({ item }: { item: Agent
 const REF_CHIP_LIMIT = 3;
 
 // 工具产出的知识引用 chips:点击即选中图谱节点/inspector 目标,是 console → 图谱的精确联动入口。
-function RefChips({ refs }: { refs: AgentEventRefs }) {
+export function RefChips({ refs }: { refs: AgentEventRefs }) {
   const selectFact = useStore((state) => state.selectFact);
   const selectTask = useStore((state) => state.selectTask);
   const factTitles = useStore(useShallow((state) => refs.factIds.map((id) => state.facts.find((fact) => fact.id === id)?.title ?? null)));
