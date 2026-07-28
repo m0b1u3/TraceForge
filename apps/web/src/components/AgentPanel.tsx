@@ -17,7 +17,6 @@ import { RunTimelineRuler } from "./agent/RunTimelineRuler.js";
 import { useShallow } from "zustand/react/shallow";
 import { TokenUsageDialog } from "./agent/TokenUsageDialog.js";
 import { useOlderHistory } from "../hooks/use-older-history.js";
-import { AnimatePresence, m } from "motion/react";
 
 export { buildAgentConversationItems, type AgentConversationItem } from "./agent/agent-conversation.js";
 
@@ -89,6 +88,7 @@ export function AgentPanel() {
   const [eventPageEnd, setEventPageEnd] = useState<number | null>(null);
   const messagesRef = useRef<HTMLElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
+  const isAutoScrollingRef = useRef(false);
   const pendingJumpRef = useRef<number | null>(null);
   const liveHistoryEvents = useMemo(() => agentEvents.map((event, index) => ({ ...event, id: `live-${index}` })), [agentEvents]);
   const history = useOlderHistory<AgentEvent | (typeof liveHistoryEvents)[number]>({
@@ -113,10 +113,46 @@ export function AgentPanel() {
     setInterventionError(null);
   }, [pendingApproval?.approvalId, pendingScope?.host]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = messagesRef.current;
-    if (el && latestPage && shouldAutoScrollRef.current) el.scrollTop = el.scrollHeight;
+    if (!el || !latestPage || !shouldAutoScrollRef.current) return;
+    isAutoScrollingRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    let releaseFrame = 0;
+    const frame = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+      releaseFrame = requestAnimationFrame(() => {
+        isAutoScrollingRef.current = false;
+      });
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      cancelAnimationFrame(releaseFrame);
+      isAutoScrollingRef.current = false;
+    };
   }, [conversationItems.length, latestAgentText, latestPage]);
+
+  useLayoutEffect(() => {
+    const el = messagesRef.current;
+    if (!el || !latestPage || typeof ResizeObserver === "undefined") return;
+    let releaseFrame = 0;
+    const observer = new ResizeObserver(() => {
+      if (!shouldAutoScrollRef.current) return;
+      isAutoScrollingRef.current = true;
+      el.scrollTop = el.scrollHeight;
+      cancelAnimationFrame(releaseFrame);
+      releaseFrame = requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+        isAutoScrollingRef.current = false;
+      });
+    });
+    for (const child of el.children) observer.observe(child);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(releaseFrame);
+      isAutoScrollingRef.current = false;
+    };
+  }, [conversationItems.length, latestPage]);
 
   useLayoutEffect(() => {
     const el = messagesRef.current;
@@ -367,8 +403,27 @@ export function AgentPanel() {
         aria-label="Agent conversation"
         ref={messagesRef}
         onScroll={(event) => {
+          if (isAutoScrollingRef.current) {
+            setShowLatest(false);
+            return;
+          }
           shouldAutoScrollRef.current = shouldStickToBottomAfterUpdate(event.currentTarget);
           setShowLatest(!shouldAutoScrollRef.current);
+        }}
+        onWheel={(event) => {
+          if (event.deltaY < 0) {
+            isAutoScrollingRef.current = false;
+            shouldAutoScrollRef.current = false;
+          }
+        }}
+        onPointerDown={() => {
+          isAutoScrollingRef.current = false;
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home") {
+            isAutoScrollingRef.current = false;
+            shouldAutoScrollRef.current = false;
+          }
         }}
       >
         {(pageStart > 0 || !latestPage) && (
@@ -407,7 +462,6 @@ export function AgentPanel() {
             <div className="tf-guide-hint">Give it a target, e.g. "test example.com/login for IDOR."</div>
           </div>
         )}
-        <AnimatePresence initial={false} mode="popLayout">
         {conversationItems.map((item) => {
           let content = null;
           if (item.type === "approval" && pendingApproval) {
@@ -445,21 +499,15 @@ export function AgentPanel() {
           }
           if (!content) return null;
           return (
-            <m.div
+            <div
               className="agent-event-motion"
               data-event-kind={item.type === "event" ? item.kind : item.type}
               key={item.key}
-              layout="position"
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -3 }}
-              transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
             >
               {content}
-            </m.div>
+            </div>
           );
         })}
-        </AnimatePresence>
         {continuationRun && !activeRun && (
           <RunContinuationCard
             goal={continuationRun.goal}
@@ -473,12 +521,16 @@ export function AgentPanel() {
           className="console-latest"
           type="button"
           onClick={() => {
+            isAutoScrollingRef.current = true;
             shouldAutoScrollRef.current = true;
             setEventPageEnd(null);
             setShowLatest(false);
             requestAnimationFrame(() => {
               const el = messagesRef.current;
               if (el) el.scrollTop = el.scrollHeight;
+              requestAnimationFrame(() => {
+                isAutoScrollingRef.current = false;
+              });
             });
           }}
         >

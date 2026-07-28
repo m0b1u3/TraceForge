@@ -406,6 +406,7 @@
 
 .agent-event-motion {
   min-width: 0;
+  animation: tf-event-in var(--duration-base) var(--ease-emphasized) both;
 }
 
 .agent-event {

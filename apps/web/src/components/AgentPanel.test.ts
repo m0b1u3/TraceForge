@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   type AgentConversationItem,
   buildAgentConversationItems,
@@ -11,6 +12,8 @@ import {
   getAgentEventPage,
   runContinuationGoal,
 } from "./AgentPanel.js";
+
+const agentPanelSource = readFileSync(new URL("./AgentPanel.tsx", import.meta.url), "utf8");
 
 function eventItems(items: AgentConversationItem[]): Extract<AgentConversationItem, { type: "event" }>[] {
   return items.filter((item): item is Extract<AgentConversationItem, { type: "event" }> => item.type === "event");
@@ -139,6 +142,14 @@ describe("shouldStickToBottomAfterUpdate", () => {
 
   it("does not force-scroll when the user has pulled the conversation upward", () => {
     expect(shouldStickToBottomAfterUpdate({ scrollTop: 200, clientHeight: 120, scrollHeight: 1000 })).toBe(false);
+  });
+
+  it("does not run layout animation across a streaming conversation", () => {
+    expect(agentPanelSource).not.toContain("layout=\"position\"");
+    expect(agentPanelSource).not.toContain("AnimatePresence");
+    expect(agentPanelSource).toContain("requestAnimationFrame");
+    expect(agentPanelSource).toContain("isAutoScrollingRef");
+    expect(agentPanelSource).toContain("ResizeObserver");
   });
 });
 
