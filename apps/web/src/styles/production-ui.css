@@ -31,6 +31,39 @@ body {
   line-height: 1.5;
 }
 
+/* Keep global chrome and workbench columns on the same geometry. */
+.topbar {
+  display: grid;
+  grid-template-columns: clamp(260px, 18vw, 288px) minmax(0, 1fr) auto;
+  gap: 0;
+  min-height: 64px;
+  padding: 0;
+}
+
+.topbar-brand {
+  width: auto;
+  min-width: 0;
+  align-self: stretch;
+  padding: 0 20px;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.topbar-workspace {
+  min-width: 0;
+  justify-self: stretch;
+  justify-content: flex-start;
+  padding: 0 20px;
+}
+
+.topbar-meta {
+  min-width: max-content;
+  padding: 0 16px;
+}
+
+.workspace-shell {
+  grid-template-columns: clamp(260px, 18vw, 288px) minmax(0, 1fr) clamp(330px, 23vw, 368px);
+}
+
 h1,
 h2,
 h3,
@@ -163,6 +196,120 @@ button,
   color: var(--foreground);
   background: var(--surface);
   box-shadow: var(--shadow-lg);
+}
+
+/* Secondary workspaces share one compact dialog frame. */
+.knowledge-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-width: 640px;
+  max-height: min(74dvh, 680px);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+}
+
+.knowledge-dialog > [data-slot="dialog-header"] {
+  min-height: 60px;
+  justify-content: center;
+  padding: 0 52px 0 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.knowledge-dialog-body {
+  min-height: 0;
+  padding: 8px 12px 14px;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+.knowledge-dialog-body > .tf-feedback-state {
+  min-height: 260px;
+}
+
+.knowledge-dialog .tf-row {
+  margin: 0;
+  padding: 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  background: transparent;
+}
+
+.knowledge-dialog .tf-row + .tf-row {
+  margin-top: 2px;
+}
+
+.knowledge-dialog .tf-row:hover {
+  color: var(--foreground);
+  background: var(--surface-hover);
+}
+
+.mcp-tool-row {
+  gap: 7px;
+}
+
+.mcp-server-list {
+  display: grid;
+  gap: 10px;
+}
+
+.mcp-server-group {
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+}
+
+.mcp-server-group > header {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  color: var(--foreground-secondary);
+  background: color-mix(in srgb, var(--surface-hover) 56%, transparent);
+}
+
+.mcp-server-group > header > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.mcp-server-group > header svg {
+  color: var(--information);
+}
+
+.mcp-server-group > header strong {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.mcp-server-group > header small {
+  color: var(--foreground-muted);
+  font-size: 11px;
+}
+
+.mcp-server-group > div {
+  padding: 4px;
+}
+
+.mcp-tool-head {
+  gap: 8px;
+}
+
+.mcp-tool-head strong {
+  color: var(--foreground);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.mcp-tool-row p {
+  color: var(--foreground-secondary);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 [data-slot="dialog-title"] {
@@ -385,6 +532,16 @@ button,
   line-height: 1.58;
 }
 
+.agent-event {
+  border-bottom-color: transparent;
+}
+
+.agent-event.is-tool .agent-event-content {
+  border: 0;
+  background: var(--surface-elevated);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+
 .request-row-url,
 .knowledge-row .tf-row-title,
 .observer-row-description,
@@ -416,6 +573,25 @@ button,
   border-color: var(--border-subtle);
 }
 
+:root[data-theme="light"] .knowledge-dialog-body,
+:root[data-theme="light"] .knowledge-dialog .tf-row {
+  color: var(--foreground);
+  background: var(--surface);
+}
+
+:root[data-theme="light"] .knowledge-dialog .tf-row:hover {
+  color: var(--foreground);
+  background: var(--surface-hover);
+}
+
+:root[data-theme="light"] .mcp-tool-head strong {
+  color: var(--foreground);
+}
+
+:root[data-theme="light"] .mcp-tool-row p {
+  color: var(--foreground-secondary);
+}
+
 :root[data-theme="light"] [data-slot="select-item"],
 :root[data-theme="light"] [data-slot="dropdown-menu-item"] {
   color: var(--foreground-secondary);
@@ -432,6 +608,14 @@ button,
   background: rgba(15, 23, 42, 0.38);
 }
 
+.tf-toast {
+  right: 20px;
+  bottom: 20px;
+  left: auto;
+  max-width: min(420px, calc(100vw - 40px));
+  transform: none;
+}
+
 @media (max-width: 760px) {
   .settings-dialog {
     width: calc(100vw - 16px);
@@ -441,6 +625,14 @@ button,
 
   .settings-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .topbar-brand {
+    border-right: 0;
   }
 
   .settings-content {

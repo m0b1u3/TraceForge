@@ -8,6 +8,7 @@ const production = readFileSync(new URL("../styles/production-ui.css", import.me
 const topBar = readFileSync(new URL("./TopBar.tsx", import.meta.url), "utf8");
 const graphModal = readFileSync(new URL("./GraphModal.tsx", import.meta.url), "utf8");
 const graphView = readFileSync(new URL("./GraphView.tsx", import.meta.url), "utf8");
+const mcpTab = readFileSync(new URL("./knowledge/McpTab.tsx", import.meta.url), "utf8");
 const alert = readFileSync(new URL("./ui/alert.tsx", import.meta.url), "utf8");
 const workbenchPrimitives = {
   Button: readFileSync(new URL("./ui/button.tsx", import.meta.url), "utf8"),
@@ -244,5 +245,13 @@ describe("Operations Canvas theme contract", () => {
     expect(production).toMatch(/:root\[data-theme="light"\]\s+\[data-slot="select-content"\],[\s\S]*?background:\s*var\(--surface\)/);
     expect(workbenchPrimitives.Input).not.toMatch(/\bdark:/);
     expect(workbenchPrimitives.Select).not.toMatch(/\bdark:/);
+  });
+
+  it("aligns global chrome with the workbench and keeps business rows theme-safe", () => {
+    expect(production).toMatch(/\.topbar\s*\{[^}]*grid-template-columns:\s*clamp\(260px,\s*18vw,\s*288px\)\s+minmax\(0,\s*1fr\)\s+auto/);
+    expect(production).toMatch(/\.workspace-shell\s*\{[^}]*grid-template-columns:\s*clamp\(260px,\s*18vw,\s*288px\)/);
+    expect(production).toMatch(/\.knowledge-dialog\s+\.tf-row:hover\s*\{[^}]*background:\s*var\(--surface-hover\)/);
+    expect(production).toMatch(/:root\[data-theme="light"\]\s+\.knowledge-dialog\s+\.tf-row:hover\s*\{[^}]*background:\s*var\(--surface-hover\)/);
+    expect(mcpTab).toContain("mcp-server-group");
   });
 });
