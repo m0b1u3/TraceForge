@@ -28,10 +28,10 @@ describe("layeredLayout", () => {
 
     const positions = new Map(result.map((item) => [item.id, item.position]));
     expect(positions.get("root")?.x).toBe(0);
-    expect(positions.get("left")?.x).toBe(330);
-    expect(positions.get("right")?.x).toBe(330);
+    expect(positions.get("left")?.x).toBe(372);
+    expect(positions.get("right")?.x).toBe(372);
     expect(positions.get("left")?.y).not.toBe(positions.get("right")?.y);
-    expect(positions.get("end")?.x).toBe(660);
+    expect(positions.get("end")?.x).toBe(744);
   });
 
   it("returns a usable deterministic layout for cyclic imported data", () => {

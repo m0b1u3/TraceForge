@@ -6,13 +6,16 @@ export interface FeedbackStateProps {
   title: string;
   description?: string;
   action?: ReactNode;
+  icon?: ReactNode;
 }
 
-export function FeedbackState({ kind = "empty", title, description, action }: FeedbackStateProps) {
+export function FeedbackState({ kind = "empty", title, description, action, icon }: FeedbackStateProps) {
   const Icon = kind === "loading" ? CircleNotch : kind === "error" ? WarningCircle : Tray;
   return (
     <div className="tf-feedback-state" data-kind={kind} role={kind === "error" ? "alert" : "status"} aria-live={kind === "error" ? "assertive" : "polite"}>
-      <Icon size={18} className={kind === "loading" ? "tf-spin" : undefined} weight={kind === "error" ? "fill" : "duotone"} aria-hidden="true" />
+      {icon === undefined
+        ? <Icon size={18} className={kind === "loading" ? "tf-spin" : undefined} weight={kind === "error" ? "fill" : "duotone"} aria-hidden="true" />
+        : icon}
       <strong>{title}</strong>
       {description && <p>{description}</p>}
       {action && <div className="tf-feedback-action">{action}</div>}

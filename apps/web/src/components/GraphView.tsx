@@ -169,8 +169,8 @@ export function buildTimelineGraph(
       id: "__goal__",
       type: "bw",
       position: { x: 0, y: 0 },
-      width: 264,
-      height: 108,
+      width: 300,
+      height: 116,
       data: {
         entry: timeline[0],
         kind: "goal",
@@ -216,8 +216,8 @@ export function buildTimelineGraph(
       id: entry.id,
       type: "bw",
       position: { x: 0, y: 0 },
-      width: 264,
-      height: 108,
+      width: 300,
+      height: 116,
       data: {
         entry,
         kind,
@@ -283,8 +283,8 @@ export function buildTimelineGraph(
       id,
       type: "bw",
       position: { x: 0, y: 0 },
-      width: 264,
-      height: 108,
+      width: 300,
+      height: 116,
       data: {
         entry,
         kind: "hypothesis",
@@ -374,7 +374,7 @@ export function layeredLayout(nodes: Node<FlowNodeData>[], edges: Edge[], direct
     const nodeLayer = layer.get(node.id) ?? 0;
     const group = groups.get(nodeLayer) ?? [node.id];
     const lane = group.indexOf(node.id) - (group.length - 1) / 2;
-    const position = isVertical ? { x: lane * 290, y: nodeLayer * 168 } : { x: nodeLayer * 330, y: lane * 148 };
+    const position = isVertical ? { x: lane * 332, y: nodeLayer * 182 } : { x: nodeLayer * 372, y: lane * 164 };
     positions.set(node.id, position);
     return applyPosition(node, position);
   });
@@ -392,7 +392,7 @@ function FitOnChange({ focusNodeId, nodes, focusLatest, pinnedNodeId }: { focusN
         if (pinnedNodeId) {
           const pinned = nodes.find((n) => n.id === pinnedNodeId);
           if (pinned) {
-            void setCenter(pinned.position.x + (pinned.width ?? 264) / 2, pinned.position.y + (pinned.height ?? 108) / 2, { zoom: 0.8, duration: 220 });
+            void setCenter(pinned.position.x + (pinned.width ?? 300) / 2, pinned.position.y + (pinned.height ?? 116) / 2, { zoom: 0.8, duration: 220 });
             return;
           }
         }
@@ -401,7 +401,7 @@ function FitOnChange({ focusNodeId, nodes, focusLatest, pinnedNodeId }: { focusN
         if ((focusLatest || nodes.length > 30) && nodes.length > 8 && focusNodeId) {
           const focus = nodes.find((n) => n.id === focusNodeId);
           if (focus) {
-            void setCenter(focus.position.x + (focus.width ?? 264) / 2, focus.position.y + (focus.height ?? 108) / 2, { zoom: focusLatest ? 0.55 : 0.42, duration: 180 });
+            void setCenter(focus.position.x + (focus.width ?? 300) / 2, focus.position.y + (focus.height ?? 116) / 2, { zoom: focusLatest ? 0.55 : 0.42, duration: 180 });
             return;
           }
         }

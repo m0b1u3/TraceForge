@@ -326,6 +326,7 @@ export function AgentPanel() {
   return (
     <main className="panel chat-panel">
       <div className="panel-header agent-console-header">
+        <h2>Run console</h2>
         <div className="panel-header-actions">
           <span className={`console-status ${agentBusy ? "is-running" : ""}`}><span />{agentBusy ? "Running" : "Idle"}</span>
           {agentEvents.length > 0 && (

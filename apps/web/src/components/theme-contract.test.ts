@@ -37,13 +37,13 @@ const primitiveRadiusClasses = [
 describe("Operations Canvas theme contract", () => {
   it("owns all semantic color tokens in globals.css with a dark instrument palette", () => {
     expect(globals).toContain("color-scheme: dark");
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--background:\s*#0A0E13/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface:\s*#11161D/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface-elevated:\s*#171E27/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--background:\s*#0C1015/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface:\s*#12171D/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface-elevated:\s*#181F27/i);
     expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground:\s*#E6EBF0/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground-secondary:\s*#8B98A5/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--border-subtle:\s*rgba\(148,\s*163,\s*184,\s*0\.12\)/);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--primary:\s*#3DDC97/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground-secondary:\s*#9AA6B2/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--border-subtle:\s*rgba\(164,\s*176,\s*188,\s*0\.10\)/);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--primary:\s*#35C48D/i);
     expect(globals).toMatch(/:root\s*\{[\s\S]*?--warning:\s*#E5A50A/i);
     expect(globals).toMatch(/:root\s*\{[\s\S]*?--danger:\s*#F04452/i);
     expect(globals).toMatch(/:root\s*\{[\s\S]*?--information:\s*#8298FF/i);
@@ -62,9 +62,9 @@ describe("Operations Canvas theme contract", () => {
   it("ships a light variant of the semantic tokens from the same source", () => {
     const light = globals.match(/:root\[data-theme="light"\]\s*\{([\s\S]*?)\}/)?.[1] ?? "";
     expect(light).toContain("color-scheme: light");
-    expect(light).toMatch(/--background:\s*#F4F6F7/i);
+    expect(light).toMatch(/--background:\s*#F2F4F5/i);
     expect(light).toMatch(/--surface:\s*#FFFFFF/i);
-    expect(light).toMatch(/--foreground:\s*#131A22/i);
+    expect(light).toMatch(/--foreground:\s*#17212B/i);
     expect(light).toMatch(/--primary:\s*#087F5B/i);
     expect(light).toMatch(/--cta:\s*#087F5B/i);
     expect(light).toMatch(/--cta-hover:\s*#066A4B/i);
@@ -75,8 +75,8 @@ describe("Operations Canvas theme contract", () => {
 
   it("anchors calls to action on a deep professional accent in every theme", () => {
     const dark = globals.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? "";
-    expect(dark).toMatch(/--cta:\s*#0E9F6E/i);
-    expect(dark).toMatch(/--cta-hover:\s*#0C8A61/i);
+    expect(dark).toMatch(/--cta:\s*#0D8F68/i);
+    expect(dark).toMatch(/--cta-hover:\s*#0A7958/i);
     expect(dark).toMatch(/--cta-foreground:\s*#FFFFFF/i);
     expect(workbench).not.toMatch(/\.tf-btn-primary\s*\{[^}]*background:\s*var\(--primary\)/);
   });
@@ -197,7 +197,7 @@ describe("Operations Canvas theme contract", () => {
   it("gives the primary investigation call to action real weight", () => {
     expect(app).toMatch(/\.launchpad-create-primary\s*\{[^}]*height:\s*44px/);
     expect(workbenchPrimitives.Button).toMatch(/default:\s*"[^"]*bg-cta[^"]*font-semibold[^"]*hover:bg-cta-hover/);
-    expect(app).toMatch(/\.launchpad-start\s*\{[^}]*display:\s*grid[^}]*gap:\s*20px/);
+    expect(app).toMatch(/\.launchpad-start\s*\{[^}]*display:\s*grid[^}]*gap:\s*18px/);
     expect(app).toMatch(/\.launchpad-readiness\s*\{[^}]*padding:[^}]*\}(?![\s\S]*?\.launchpad-readiness\s*\{[^}]*border)/);
   });
 
@@ -214,8 +214,8 @@ describe("Operations Canvas theme contract", () => {
   it("keeps interactive states on their own tokens instead of borrowed hues", () => {
     expect(app).toMatch(/\.tf-btn-primary:hover\s*\{[^}]*background:\s*var\(--cta-hover\)/);
     expect(app).not.toMatch(/\.tf-btn-primary:hover\s*\{[^}]*#1d4ed8/i);
-    expect(app).toMatch(/\.launchpad-row\[data-selected="true"\]::before\s*\{[^}]*background:\s*var\(--information\)/);
-    expect(app).toMatch(/\.launchpad-row\[data-selected="true"\]\s*\{[^}]*color-mix\(in\s+srgb,\s*var\(--foreground\)/);
+    expect(app).toMatch(/\.launchpad-row\[data-selected="true"\]::before\s*\{[^}]*background:\s*var\(--primary\)/);
+    expect(app).toMatch(/\.launchpad-row\[data-selected="true"\]\s*\{[^}]*color-mix\(in\s+srgb,\s*var\(--primary\)/);
     expect(workbench).toMatch(/\.graph-footer\s+input\[type="range"\]\s*\{[^}]*accent-color:\s*var\(--information\)/);
     expect(workbench).toMatch(/\.request-row\.is-open::before,\s*\.request-row\.is-selected::before\s*\{[^}]*background:\s*var\(--information\)/);
   });

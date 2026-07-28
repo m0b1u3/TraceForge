@@ -584,8 +584,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .react-flow__controls-button svg { fill: #475467; }
 .react-flow__attribution { display: none; }
 
-.flow-card { width: 264px; padding: 11px 13px 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--foreground); background: var(--surface); box-shadow: var(--shadow-sm); animation: node-in 180ms ease both; cursor: pointer; transition: border-color 140ms ease, box-shadow 140ms ease; }
-.flow-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-panel); }
+.flow-card { width: 300px; min-height: 116px; padding: 14px 16px 13px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); color: var(--foreground); background: var(--surface); box-shadow: var(--shadow-sm); animation: node-in 180ms ease both; cursor: pointer; transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, transform 140ms ease; }
+.flow-card:hover { border-color: var(--border-strong); background: var(--surface-elevated); box-shadow: var(--shadow-panel); transform: translateY(-1px); }
 .flow-card.superseded { opacity: 0.55; }
 .flow-card.superseded .flow-title { text-decoration: line-through; }
 .flow-card.is-active { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); }
@@ -602,8 +602,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .flow-card.goal .flow-kind { color: var(--foreground-secondary); }
 .flow-card.goal .flow-kind i { background: var(--foreground-secondary); }
 .flow-time { flex: 0 0 auto; color: var(--foreground-muted); font: 11px var(--font-mono); }
-.flow-title { display: -webkit-box; overflow: hidden; margin-top: 7px; color: var(--foreground); font-size: 13px; font-weight: 600; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.flow-sub { display: block; overflow: hidden; margin-top: 5px; color: var(--foreground-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.flow-title { display: -webkit-box; overflow: hidden; margin-top: 9px; color: var(--foreground); font-size: 14px; font-weight: 600; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.flow-sub { display: block; overflow: hidden; margin-top: 6px; color: var(--foreground-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .edge-label { padding: 2px 6px; border: 1px solid var(--border-subtle); border-radius: 5px; color: var(--foreground-muted); background: var(--surface); box-shadow: var(--shadow-sm); font: 11px var(--font-mono); pointer-events: none; }
 @keyframes node-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
 
@@ -678,7 +678,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 /* Startup operations launcher */
 .launchpad-shell { min-height: 100vh; background: var(--background); color: var(--foreground); }
-.launchpad-topbar { height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid var(--border-subtle); background: var(--background); }
+.launchpad-topbar { height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid var(--border-subtle); background: var(--surface); }
 .launchpad-brand { display: flex; align-items: center; gap: 12px; }
 .launchpad-brand > span { display: grid; gap: 1px; }
 .launchpad-brand strong { font-size: 16px; font-weight: 600; line-height: 1.1; letter-spacing: 0; }
@@ -687,21 +687,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .launchpad-top-actions { display: flex; align-items: center; gap: 8px; }
 .launchpad-agent { display: inline-flex; align-items: center; gap: 7px; margin-right: 10px; color: var(--foreground-secondary); font-size: 12px; }
 .launchpad-agent svg { color: var(--foreground-muted); }
-.launchpad-main { width: 100%; max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(320px, .85fr); gap: 24px; padding: 28px; align-items: start; }
-.launchpad-engagements { min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--border-subtle); border-radius: var(--radius-xl); background: var(--surface); box-shadow: var(--shadow-sm); padding: 26px 24px 14px; }
-.launchpad-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 0 4px 20px; }
+.launchpad-main { width: 100%; max-width: 1360px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(340px, .78fr); gap: 36px; padding: 36px 32px; align-items: start; }
+.launchpad-engagements { min-width: 0; display: flex; flex-direction: column; padding: 4px 0 0; }
+.launchpad-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 0 2px 22px; }
 .launchpad-section-head h1, .launchpad-create h2 { margin: 0; color: var(--foreground); font-size: var(--type-title); font-weight: 600; line-height: 1.2; letter-spacing: 0; }
 .launchpad-section-head p, .launchpad-create p { margin: 8px 0 0; color: var(--foreground-secondary); font-size: 13px; line-height: 1.55; }
 .launchpad-tools { display: flex; align-items: center; gap: 8px; }
 .launchpad-tools label { width: 34px; height: 32px; display: flex; align-items: center; gap: 8px; overflow: hidden; padding: 0 9px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); color: var(--foreground-muted); transition: width 160ms ease, border-color 160ms ease, background 160ms ease; }
 .launchpad-tools label:focus-within { width: 190px; border-color: color-mix(in srgb, var(--cta) 50%, var(--border-subtle)); background: var(--surface-elevated); }
 .launchpad-tools input { min-width: 0; width: 145px; border: 0; outline: 0; background: transparent; color: var(--foreground); font: inherit; font-size: 12.5px; }
-.launchpad-list { display: flex; flex-direction: column; gap: 4px; }
-.launchpad-row { position: relative; display: flex; align-items: center; gap: 4px; border-radius: var(--radius-lg); transition: background 140ms ease; }
-.launchpad-row:hover { background: var(--surface-hover); }
-.launchpad-row[data-selected="true"] { background: color-mix(in srgb, var(--foreground) 4%, var(--surface)); }
-.launchpad-row[data-selected="true"]::before { content: ""; position: absolute; top: 13px; bottom: 13px; left: 0; width: 2.5px; border-radius: 2px; background: var(--information); }
-.launchpad-row-main { flex: 1; min-width: 0; display: grid; gap: 7px; border: 0; border-radius: inherit; padding: 13px 14px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.launchpad-list { display: flex; flex-direction: column; gap: 7px; }
+.launchpad-row { position: relative; display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease; }
+.launchpad-row:hover { border-color: var(--border-subtle); background: var(--surface); box-shadow: var(--shadow); transform: translateY(-1px); }
+.launchpad-row[data-selected="true"] { background: color-mix(in srgb, var(--primary) 4%, var(--surface)); }
+.launchpad-row[data-selected="true"]::before { content: ""; position: absolute; top: 12px; bottom: 12px; left: -1px; width: 2px; border-radius: 0 2px 2px 0; background: var(--primary); }
+.launchpad-row-main { flex: 1; min-width: 0; display: grid; gap: 8px; border: 0; border-radius: inherit; padding: 15px 16px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .launchpad-row-main:focus-visible { outline: 2px solid color-mix(in srgb, var(--cta) 65%, transparent); outline-offset: -2px; }
 .launchpad-case-name { min-width: 0; display: flex; align-items: baseline; gap: 10px; }
 .launchpad-case-name strong { overflow: hidden; text-overflow: ellipsis; color: var(--foreground); font-size: 14px; font-weight: 600; white-space: nowrap; }
@@ -729,25 +729,25 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .launchpad-row-caret { flex: 0 0 auto; margin-right: 12px; color: var(--foreground-muted); opacity: 0; transition: opacity 140ms ease, transform 140ms ease; }
 .launchpad-row:hover .launchpad-row-caret, .launchpad-row[data-selected="true"] .launchpad-row-caret { opacity: 1; }
 .launchpad-row:hover .launchpad-row-caret { transform: translateX(1px); }
-.launchpad-count { padding: 12px 6px 0; color: var(--foreground-muted); font: 11.5px var(--font-mono); }
-.launchpad-loading, .launchpad-empty { min-height: 220px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--foreground-muted); font-size: 12.5px; }
+.launchpad-count { padding: 12px 4px 0; color: var(--foreground-muted); font: 11.5px var(--font-mono); }
+.launchpad-loading, .launchpad-empty { min-height: 148px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--foreground-muted); font-size: 12.5px; }
 .launchpad-empty { flex-direction: column; }
 .launchpad-empty strong { color: var(--foreground-secondary); font-size: 13.5px; }
-.launchpad-start { min-width: 0; display: grid; gap: 20px; align-content: start; }
-.launchpad-create { border: 1px solid var(--border-subtle); border-radius: var(--radius-xl); background: var(--surface); box-shadow: var(--shadow-sm); padding: 24px; }
+.launchpad-start { min-width: 0; display: grid; gap: 18px; align-content: start; }
+.launchpad-create { border: 1px solid var(--border-subtle); border-radius: var(--radius-xl); background: var(--surface); box-shadow: var(--shadow); padding: 26px; }
 .launchpad-create h2 { font-size: var(--type-heading); }
 .launchpad-target { display: grid; gap: 7px; margin-top: 20px; }
 .launchpad-target > span { color: var(--foreground-secondary); font-size: 12px; font-weight: 600; }
 .launchpad-target input, .launchpad-empty-form input { width: 100%; height: 42px; border: 1px solid var(--border); border-radius: var(--radius-md); outline: 0; padding: 0 12px; background: var(--surface); color: var(--foreground); font: 13px var(--font-sans); transition: border-color 140ms ease, box-shadow 140ms ease; }
 .launchpad-target input:focus, .launchpad-empty-form input:focus { border-color: color-mix(in srgb, var(--cta) 55%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cta) 12%, transparent); }
 .launchpad-target input[aria-invalid="true"] { border-color: color-mix(in srgb, var(--danger) 60%, var(--border)); }
-.launchpad-create-primary { width: 100%; height: 44px; margin-top: 14px; font-size: 13.5px; }
+.launchpad-create-primary { width: 100%; height: 44px; margin-top: 14px; border-radius: var(--radius-md); font-size: 13.5px; font-weight: 600; box-shadow: 0 1px 2px rgba(8, 127, 91, .18); }
 .launchpad-empty-action { width: 100%; height: 34px; margin-top: 6px; border: 0; background: transparent; color: var(--foreground-secondary); font-size: 12px; cursor: pointer; }
 .launchpad-empty-action:hover { color: var(--foreground); }
 .launchpad-empty-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 8px; }
 .launchpad-empty-form input { height: 34px; }
-.launchpad-readiness { padding: 2px 6px 0; }
-.launchpad-readiness h3 { margin: 0 0 6px; color: var(--foreground-muted); font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: uppercase; }
+.launchpad-readiness { padding: 4px 8px 0; }
+.launchpad-readiness h3 { margin: 0 0 7px; color: var(--foreground-secondary); font-size: 13px; font-weight: 600; letter-spacing: 0; text-transform: none; }
 .launchpad-readiness button { width: 100%; min-height: 44px; display: grid; grid-template-columns: 20px minmax(0, 1fr) 8px 13px; align-items: center; gap: 10px; border: 0; border-radius: var(--radius-md); padding: 0 8px; background: transparent; color: var(--foreground-secondary); text-align: left; cursor: pointer; transition: background 140ms ease; }
 .launchpad-readiness button:hover { background: var(--surface-hover); color: var(--foreground); }
 .launchpad-readiness button > svg { color: var(--foreground-muted); }
@@ -757,8 +757,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .launchpad-readiness small { color: var(--foreground-muted); font-size: 11.5px; }
 .launchpad-readiness i { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
 .launchpad-readiness i[data-ready="true"] { background: var(--success); }
-.launchpad-resume { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 14px 16px; background: var(--surface-elevated); color: var(--foreground); text-align: left; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
-.launchpad-resume:hover { background: var(--surface-hover); border-color: var(--border); }
+.launchpad-resume { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid transparent; border-radius: var(--radius-lg); padding: 15px 16px; background: var(--surface-elevated); color: var(--foreground); text-align: left; cursor: pointer; transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease; }
+.launchpad-resume:hover { background: var(--surface); border-color: var(--border-subtle); box-shadow: var(--shadow-sm); }
 .launchpad-resume > span:first-child { display: grid; gap: 3px; min-width: 0; }
 .launchpad-resume small { color: var(--foreground-muted); font-size: 11px; font-weight: 600; }
 .launchpad-resume strong { overflow: hidden; text-overflow: ellipsis; font-size: 13px; font-weight: 600; white-space: nowrap; }

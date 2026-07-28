@@ -9,6 +9,7 @@ import {
   Globe,
   LockKey,
   ShieldCheck,
+  Target,
   UserCircle,
   WarningCircle,
   XCircle,
@@ -190,8 +191,8 @@ export function AttackPathView() {
   if (!selectedPath || !selectedStep) {
     return (
       <div className="attack-path-empty">
-        <GitBranch size={24} weight="duotone" aria-hidden="true" />
         <FeedbackState
+          icon={<GitBranch size={24} weight="duotone" aria-hidden="true" />}
           title="No attack path recorded"
           description="The Agent will create a path after it can connect a hypothesis to an identity, target, and evidence-backed step."
         />
