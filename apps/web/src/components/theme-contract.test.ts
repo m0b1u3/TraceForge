@@ -39,16 +39,16 @@ const primitiveRadiusClasses = [
 describe("Operations Canvas theme contract", () => {
   it("owns all semantic color tokens in globals.css with a dark instrument palette", () => {
     expect(globals).toContain("color-scheme: dark");
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--background:\s*#0C1015/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface:\s*#12171D/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface-elevated:\s*#181F27/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground:\s*#E6EBF0/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground-secondary:\s*#9AA6B2/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--border-subtle:\s*rgba\(164,\s*176,\s*188,\s*0\.10\)/);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--primary:\s*#35C48D/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--warning:\s*#E5A50A/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--danger:\s*#F04452/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--information:\s*#8298FF/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--background:\s*#0B0E12/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface:\s*#11161C/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface-elevated:\s*#171D25/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground:\s*#E9EDF2/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground-secondary:\s*#A0ABB7/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--border-subtle:\s*rgba\(174,\s*188,\s*202,\s*0\.09\)/);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--primary:\s*#39C796/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--warning:\s*#D99A35/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--danger:\s*#E25561/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--information:\s*#7188F5/i);
   });
 
   it("maps tailwind theme tokens to semantic variables so themes switch at runtime", () => {

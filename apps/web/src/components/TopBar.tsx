@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/components/ui/utils";
 import { useShallow } from "zustand/react/shallow";
+import { BrandMark } from "./design-system/BrandMark.js";
 
 export function getTopBarRunStatus(activeRun: { status: string } | null, agentBusy: boolean): string {
   return activeRun?.status ?? (agentBusy ? "running" : "idle");
@@ -32,6 +33,7 @@ export function TopBar() {
   return (
     <header className="topbar">
       <button type="button" className="brand topbar-brand" onClick={() => setCase(null)} aria-label="Return to TraceForge home">
+        <BrandMark size="sm" />
         <div>
           <strong>TraceForge</strong>
           <small>red-team workbench</small>

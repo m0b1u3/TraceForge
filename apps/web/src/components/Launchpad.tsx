@@ -10,6 +10,7 @@ import { useAppTheme } from "../hooks/useAppTheme.js";
 import { useStore } from "../store.js";
 import { Button } from "./ui/button.js";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu.js";
+import { BrandMark } from "./design-system/BrandMark.js";
 
 const statusPriority: Record<CaseSummary["runStatus"], number> = { waiting: 0, running: 1, failed: 2, idle: 3, completed: 4 };
 
@@ -47,10 +48,6 @@ function formatRelativeTime(value: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return days < 30 ? `${days}d ago` : new Date(value).toLocaleDateString();
-}
-
-function BrandMark() {
-  return <svg className="launchpad-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h18v5H9v13H3V3Z" /><path d="M11 10h10v5h-5v6h-5V10Z" /></svg>;
 }
 
 function RunStatus({ summary }: { summary: CaseSummary }) {
@@ -144,7 +141,7 @@ export function Launchpad() {
 
   return <div className="launchpad-shell">
     <header className="launchpad-topbar">
-      <div className="launchpad-brand"><BrandMark /><span><strong>TraceForge</strong><small>red-team workbench</small></span></div>
+      <div className="launchpad-brand"><BrandMark size="lg" /><span><strong>TraceForge</strong><small>red-team workbench</small></span></div>
       <div className="launchpad-top-actions"><span className="launchpad-agent"><Circle size={7} weight="fill" />Agent idle</span><Button variant="ghost" size="icon-sm" aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} onClick={toggleTheme}>{theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}</Button><Button variant="ghost" size="icon-sm" aria-label="Open settings" onClick={() => setSettingsModalOpen(true)}><Gear size={16} /></Button></div>
     </header>
     <main className="launchpad-main">

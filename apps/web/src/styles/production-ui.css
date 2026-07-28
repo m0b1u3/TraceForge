@@ -29,6 +29,8 @@ body {
   background: var(--background);
   font-size: var(--type-body);
   line-height: 1.5;
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
 }
 
 /* Keep global chrome and workbench columns on the same geometry. */
@@ -628,16 +630,25 @@ button,
 }
 
 .topbar-brand { padding-inline: 20px; border-right: 0; }
-.topbar-brand::before {
-  content: "";
-  width: 8px;
-  height: 8px;
+.topbar-brand::before { display: none; }
+.brand-mark {
+  display: block;
   flex: 0 0 auto;
-  margin-right: 11px;
-  border: 2px solid var(--primary);
-  border-radius: 2px;
-  transform: rotate(45deg);
+  overflow: visible;
+  color: var(--primary);
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
+.brand-mark-sm { width: 20px; height: 20px; margin-right: 10px; }
+.brand-mark-md { width: 24px; height: 24px; }
+.brand-mark-lg { width: 30px; height: 30px; }
+.brand-mark-junction {
+  fill: color-mix(in srgb, var(--primary) 14%, var(--surface));
+  stroke-width: 2;
+}
+.launchpad-mark { width: 30px; height: 30px; fill: none; }
 .topbar-brand strong { font-size: 15px; font-weight: 650; letter-spacing: -.025em; }
 .topbar-brand small { margin-top: 1px; color: var(--foreground-muted); font-size: 11px; }
 .topbar-workspace { padding-inline: 24px; }

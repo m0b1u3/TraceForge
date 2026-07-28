@@ -10,30 +10,30 @@
 :root {
   color-scheme: dark;
 
-  --background: #0C1015;
-  --surface: #12171D;
-  --surface-elevated: #181F27;
-  --surface-hover: #202832;
+  --background: #0B0E12;
+  --surface: #11161C;
+  --surface-elevated: #171D25;
+  --surface-hover: #1D2530;
 
-  --foreground: #E6EBF0;
-  --foreground-secondary: #9AA6B2;
-  --foreground-muted: #717C88;
+  --foreground: #E9EDF2;
+  --foreground-secondary: #A0ABB7;
+  --foreground-muted: #737F8C;
 
-  --primary: #35C48D;
-  --primary-hover: #49CF9B;
+  --primary: #39C796;
+  --primary-hover: #4CD2A3;
   --primary-foreground: #062015;
   --cta: #0D8F68;
   --cta-hover: #0A7958;
   --cta-foreground: #FFFFFF;
-  --success: #35C48D;
-  --information: #8298FF;
-  --warning: #E5A50A;
-  --danger: #F04452;
+  --success: #39C796;
+  --information: #7188F5;
+  --warning: #D99A35;
+  --danger: #E25561;
   --destructive: var(--danger);
 
-  --border: #222B35;
-  --border-subtle: rgba(164, 176, 188, 0.10);
-  --border-strong: rgba(164, 176, 188, 0.20);
+  --border: #222A34;
+  --border-subtle: rgba(174, 188, 202, 0.09);
+  --border-strong: rgba(174, 188, 202, 0.18);
   --ring: var(--primary);
 
   /* Aliases consumed by bespoke workbench styles. */
@@ -50,18 +50,31 @@
   --text-secondary: var(--foreground-secondary);
   --text-tertiary: var(--foreground-muted);
   --accent: var(--primary);
-  --accent-soft: rgba(53, 196, 141, 0.10);
+  --accent-soft: rgba(57, 199, 150, 0.10);
   --green: var(--success);
-  --green-soft: rgba(53, 196, 141, 0.10);
+  --green-soft: rgba(57, 199, 150, 0.10);
   --amber: var(--warning);
-  --amber-soft: rgba(229, 165, 10, 0.1);
+  --amber-soft: rgba(217, 154, 53, 0.1);
   --red: var(--danger);
-  --red-soft: rgba(240, 68, 82, 0.1);
+  --red-soft: rgba(226, 85, 97, 0.1);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
   --shadow-lg: 0 30px 80px rgba(0, 0, 0, 0.44);
   --shadow-panel: 0 8px 28px rgba(0, 0, 0, 0.32);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 220ms;
 
   --type-label: 11px;
   --type-meta: 12px;
