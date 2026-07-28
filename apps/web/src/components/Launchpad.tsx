@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CaseSummary } from "@traceforge/shared";
 import {
-  Archive, Browser, CaretRight, Circle, CircleNotch, DotsThree, FunnelSimple,
+  Archive, Browser, CaretRight, Circle, CircleNotch, DotsThree,
   Gear, MagnifyingGlass, Moon, Pause, Play, Plus, Robot, Sun, Wrench,
 } from "@phosphor-icons/react";
 import { useShallow } from "zustand/react/shallow";
@@ -146,11 +146,11 @@ export function Launchpad() {
     </header>
     <main className="launchpad-main">
       <section className="launchpad-engagements" aria-labelledby="engagements-heading">
-        <header className="launchpad-section-head"><div><h1 id="engagements-heading">Recent engagements</h1><p>Resume an investigation or review captured evidence.</p></div><div className="launchpad-tools"><label><MagnifyingGlass size={15} /><span className="sr-only">Search engagements</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search" /></label><Button variant="outline" size="icon-sm" aria-label="Filter engagements" disabled><FunnelSimple size={15} /></Button></div></header>
+        <header className="launchpad-section-head"><div><h1 id="engagements-heading">Recent engagements</h1><p>Resume an investigation or review captured evidence.</p></div><div className="launchpad-tools"><label><MagnifyingGlass size={15} /><span className="sr-only">Search engagements</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search" /></label></div></header>
         <div className="launchpad-list" role="list" aria-label="Recent engagements">
           {loading && <div className="launchpad-loading" role="status"><CircleNotch className="tf-spin" size={18} />Loading engagements…</div>}
           {!loading && visible.length === 0 && <div className="launchpad-empty"><strong>{query ? "No matching engagements" : "No engagements yet"}</strong><span>{query ? "Try a different case name or target." : "Start with a target to create the first investigation."}</span></div>}
-          {visible.map((summary, index) => <div className="launchpad-row" role="listitem" data-selected={index === 0 || undefined} key={summary.id}>
+          {visible.map((summary) => <div className="launchpad-row" role="listitem" key={summary.id}>
             <button className="launchpad-row-main" type="button" onClick={() => void openCase(summary.id)} disabled={Boolean(busyId)}>
               <span className="launchpad-case-name"><strong>{summary.name}</strong>{summary.target && summary.target !== summary.name ? <small>{summary.target}</small> : null}</span>
               <span className="launchpad-row-meta"><RunStatus summary={summary} /><i aria-hidden="true" /><span className="launchpad-number">{summary.trafficCount.toLocaleString()} requests</span><i aria-hidden="true" /><FindingSummary summary={summary} /><i aria-hidden="true" /><span className="launchpad-time">{formatRelativeTime(summary.lastActivityAt)}</span></span>

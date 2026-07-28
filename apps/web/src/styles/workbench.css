@@ -12,9 +12,9 @@
 
 .topbar {
   grid-template-columns: clamp(252px, 17.5vw, 284px) minmax(320px, 1fr) auto;
-  min-height: 62px;
+  min-height: 66px;
   border: 0;
-  background: color-mix(in srgb, var(--surface) 96%, var(--background));
+  background: color-mix(in srgb, var(--surface) 72%, var(--background));
   box-shadow: 0 1px 0 var(--border-subtle);
 }
 
@@ -106,8 +106,8 @@
 
 .workspace-shell[data-mode="columns"] {
   grid-template-columns: clamp(252px, 17.5vw, 284px) minmax(0, 1fr) clamp(324px, 22.5vw, 372px);
-  gap: 8px;
-  padding: 8px;
+  gap: 10px;
+  padding: 10px;
   background: var(--background);
 }
 
@@ -120,15 +120,15 @@
 
 .workspace-shell[data-mode="columns"] > .workspace-traffic,
 .workspace-shell[data-mode="columns"] > .workspace-knowledge {
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  background: color-mix(in srgb, var(--surface) 72%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 70%, transparent);
 }
 
 .workspace-shell[data-mode="columns"] > .workspace-agent {
   background: var(--surface);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 76%, transparent),
-    0 10px 32px color-mix(in srgb, #000 13%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 80%, transparent),
+    0 16px 44px color-mix(in srgb, #000 16%, transparent);
 }
 
 .workspace-pane + .workspace-pane {
@@ -265,15 +265,21 @@
 }
 
 .traffic-filter-bar {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   padding: 7px 8px 9px;
   border: 0;
   background: var(--surface);
 }
 
+.traffic-filter-bar .traffic-search {
+  grid-column: 1 / -1;
+}
+
 .traffic-search,
 .traffic-filter-bar [data-slot="select-trigger"] {
-  height: 31px;
+  width: 100%;
+  height: 32px;
   border-color: var(--border-subtle);
   background: var(--surface-elevated);
   color: var(--foreground-secondary);
@@ -346,7 +352,7 @@
 }
 
 .chat-panel .agent-console-header {
-  min-height: 50px;
+  min-height: 54px;
   padding: 0 22px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface);
@@ -375,7 +381,7 @@
 
 .messages {
   gap: 0;
-  padding: 8px 34px 26px 56px;
+  padding: 14px clamp(30px, 4.5vw, 68px) 30px clamp(52px, 6vw, 82px);
   background: var(--surface);
   scrollbar-gutter: stable;
 }
@@ -385,7 +391,7 @@
 }
 
 .agent-event {
-  padding: 15px 14px 17px 0;
+  padding: 17px 14px 19px 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -427,11 +433,11 @@
 
 .agent-event-content,
 .agent-event.is-reasoning .agent-event-content {
-  max-width: 82ch;
+  max-width: 76ch;
   margin-top: 7px;
   color: var(--foreground);
-  font-size: 13.5px;
-  line-height: 1.64;
+  font-size: 14px;
+  line-height: 1.72;
 }
 
 .agent-event.is-reasoning .agent-event-content {
@@ -473,12 +479,12 @@
 
 .composer {
   gap: 8px;
-  margin: 0 22px 16px;
-  padding: 6px 7px 6px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--surface-elevated) 38%, var(--surface));
-  box-shadow: 0 12px 30px color-mix(in srgb, #000 12%, transparent);
+  margin: 0 clamp(20px, 3vw, 40px) 18px;
+  padding: 7px 8px 7px 15px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 80%, transparent);
+  border-radius: 14px;
+  background: var(--surface-elevated);
+  box-shadow: 0 14px 34px color-mix(in srgb, #000 14%, transparent);
   transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
 }
 
@@ -529,36 +535,36 @@
 }
 
 .case-overview-findings {
-  gap: 2px;
-  padding: 3px;
+  gap: 0;
+  padding: 0;
   border: 0;
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--surface-elevated) 62%, var(--surface));
-  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .case-overview-finding {
-  min-height: 42px;
-  padding: 8px 8px;
-  border-radius: var(--radius-md);
+  min-height: 46px;
+  padding: 9px 5px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--border-subtle);
 }
 
 .case-overview-finding:hover {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--surface-hover) 64%, transparent);
 }
 
 /* Launchpad shares the same product shell and density. */
 .launchpad-shell {
-  background:
-    radial-gradient(circle at 72% 18%, color-mix(in srgb, var(--primary) 4%, transparent), transparent 30rem),
-    var(--background);
+  background: var(--background);
 }
 
 .launchpad-topbar {
-  min-height: 62px;
-  padding-inline: 28px;
+  min-height: 66px;
+  padding-inline: 32px;
   border-bottom: 1px solid var(--border-subtle);
-  background: color-mix(in srgb, var(--surface) 96%, var(--background));
+  background: color-mix(in srgb, var(--surface) 68%, var(--background));
 }
 
 .launchpad-brand {
@@ -576,59 +582,84 @@
 }
 
 .launchpad-main {
-  grid-template-columns: minmax(0, 1fr) minmax(324px, 370px);
-  gap: clamp(36px, 5vw, 68px);
-  width: min(1180px, calc(100% - 56px));
-  padding-block: clamp(42px, 7vh, 74px);
+  grid-template-columns: minmax(0, 1fr) minmax(328px, 368px);
+  gap: clamp(54px, 6vw, 88px);
+  width: min(1120px, calc(100% - 64px));
+  padding-block: clamp(52px, 8vh, 84px);
+}
+
+.launchpad-main > * {
+  animation: tf-surface-in var(--duration-slow) var(--ease-emphasized) both;
+}
+
+.launchpad-main > .launchpad-start {
+  animation-delay: 45ms;
 }
 
 .launchpad-section-head h1 {
   color: var(--foreground);
-  font-size: 27px;
-  font-weight: 650;
-  letter-spacing: -.04em;
+  font-size: 30px;
+  font-weight: 620;
+  letter-spacing: -.045em;
 }
 
 .launchpad-section-head p {
-  margin-top: 8px;
+  margin-top: 10px;
   color: var(--foreground-secondary);
-  font-size: 13.5px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.launchpad-tools label {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-color: transparent;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 48%, transparent);
+}
+
+.launchpad-tools label:hover,
+.launchpad-tools label:focus-within {
+  border-color: var(--border-subtle);
+  background: var(--surface);
+}
+
+.launchpad-tools label > svg {
+  flex: 0 0 auto;
 }
 
 .launchpad-list {
-  margin-top: 24px;
-  padding: 4px;
+  margin-top: 30px;
+  padding: 0;
   border: 0;
-  border-radius: var(--radius-xl);
-  background: color-mix(in srgb, var(--surface) 80%, transparent);
-  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .launchpad-row {
-  min-height: 74px;
-  border: 0;
-  border-radius: var(--radius-lg);
-  background: transparent;
+  min-height: 78px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--surface) 58%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 60%, transparent);
   transition: background var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
 }
 
 .launchpad-row:hover {
-  background: var(--surface-hover);
-  transform: translateY(-1px);
-}
-
-.launchpad-row[data-selected="true"] {
-  background: color-mix(in srgb, var(--primary) 5%, var(--surface));
-  box-shadow: inset 2px 0 0 var(--primary);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-subtle), 0 12px 34px color-mix(in srgb, #000 9%, transparent);
+  transform: translateY(-2px);
 }
 
 .launchpad-row-main {
-  padding: 15px 48px 14px 16px;
+  padding: 17px 52px 16px 18px;
 }
 
 .launchpad-case-name strong {
-  font-size: 13.5px;
-  font-weight: 640;
+  font-size: 14px;
+  font-weight: 620;
 }
 
 .launchpad-row-meta {
@@ -636,17 +667,17 @@
 }
 
 .launchpad-create {
-  padding: 24px;
+  padding: 26px;
   border: 0;
-  border-radius: var(--radius-xl);
+  border-radius: 16px;
   background: var(--surface);
-  box-shadow: var(--shadow-panel), inset 0 0 0 1px var(--border-subtle);
+  box-shadow: 0 18px 54px color-mix(in srgb, #000 13%, transparent), inset 0 0 0 1px var(--border-subtle);
 }
 
 .launchpad-create h2 {
-  font-size: 18px;
-  font-weight: 650;
-  letter-spacing: -.025em;
+  font-size: 19px;
+  font-weight: 620;
+  letter-spacing: -.03em;
 }
 
 .launchpad-create > p {
@@ -657,17 +688,17 @@
 }
 
 .launchpad-target {
-  margin-top: 20px;
+  margin-top: 24px;
 }
 
 .launchpad-target input {
-  height: 42px;
-  border-color: var(--border-subtle);
+  height: 44px;
+  border-color: var(--border-strong);
   background: var(--surface-elevated);
 }
 
 .launchpad-create-primary {
-  height: 42px;
+  height: 44px;
   margin-top: 12px;
   background: var(--primary);
   color: var(--primary-foreground);
@@ -682,7 +713,7 @@
 }
 
 .launchpad-readiness {
-  margin-top: 20px;
+  margin-top: 26px;
 }
 
 .launchpad-readiness h3 {
@@ -693,8 +724,8 @@
 }
 
 .launchpad-readiness > button {
-  min-height: 43px;
-  padding-inline: 10px;
+  min-height: 46px;
+  padding-inline: 12px;
   border-radius: var(--radius-md);
   transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
@@ -704,11 +735,12 @@
 }
 
 .launchpad-resume {
-  margin-top: 16px;
+  margin-top: 20px;
+  padding: 14px 16px;
   border: 0;
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--surface) 78%, transparent);
-  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--surface) 68%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 72%, transparent);
 }
 
 .launchpad-resume:hover {
@@ -734,6 +766,32 @@
 
 :root[data-theme="light"] .agent-event.is-tool .agent-event-content {
   background: var(--surface-subtle);
+}
+
+@media (max-height: 760px) {
+  .launchpad-main {
+    padding-block: 40px;
+  }
+
+  .launchpad-create {
+    padding: 22px;
+  }
+
+  .launchpad-target {
+    margin-top: 18px;
+  }
+
+  .launchpad-readiness {
+    margin-top: 18px;
+  }
+
+  .launchpad-readiness > button {
+    min-height: 40px;
+  }
+
+  .launchpad-resume {
+    margin-top: 12px;
+  }
 }
 
 @media (max-width: 1320px) and (min-width: 1100px) {

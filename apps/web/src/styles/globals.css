@@ -10,17 +10,17 @@
 :root {
   color-scheme: dark;
 
-  --background: #0B0E12;
-  --surface: #11161C;
-  --surface-elevated: #171D25;
-  --surface-hover: #1D2530;
+  --background: #0E100F;
+  --surface: #151817;
+  --surface-elevated: #1B1F1D;
+  --surface-hover: #222724;
 
-  --foreground: #E9EDF2;
-  --foreground-secondary: #A0ABB7;
-  --foreground-muted: #737F8C;
+  --foreground: #F0F0EB;
+  --foreground-secondary: #AAAFA9;
+  --foreground-muted: #747B76;
 
-  --primary: #39C796;
-  --primary-hover: #4CD2A3;
+  --primary: #53C49D;
+  --primary-hover: #68CEAA;
   --primary-foreground: #062015;
   --cta: #0D8F68;
   --cta-hover: #0A7958;
@@ -31,9 +31,9 @@
   --danger: #E25561;
   --destructive: var(--danger);
 
-  --border: #222A34;
-  --border-subtle: rgba(174, 188, 202, 0.09);
-  --border-strong: rgba(174, 188, 202, 0.18);
+  --border: #272C29;
+  --border-subtle: rgba(224, 229, 222, 0.075);
+  --border-strong: rgba(224, 229, 222, 0.15);
   --ring: var(--primary);
 
   /* Aliases consumed by bespoke workbench styles. */
@@ -90,17 +90,17 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --background: #EDF0F2;
-  --surface: #FFFFFF;
-  --surface-elevated: #F5F7F8;
-  --surface-hover: #E9EDEF;
+  --background: #F4F3EF;
+  --surface: #FCFBF8;
+  --surface-elevated: #F0EFEA;
+  --surface-hover: #EAE9E3;
 
-  --foreground: #182029;
-  --foreground-secondary: #52606C;
-  --foreground-muted: #788590;
+  --foreground: #252624;
+  --foreground-secondary: #626660;
+  --foreground-muted: #898D87;
 
-  --primary: #087F5B;
-  --primary-hover: #066A4B;
+  --primary: #16785B;
+  --primary-hover: #11664D;
   --primary-foreground: #FFFFFF;
   --cta: #087F5B;
   --cta-hover: #066A4B;
@@ -110,9 +110,9 @@
   --warning: #B45309;
   --danger: #D92D20;
 
-  --border: #D9DFE3;
-  --border-subtle: rgba(15, 23, 42, 0.075);
-  --border-strong: rgba(15, 23, 42, 0.18);
+  --border: #DEDDD7;
+  --border-subtle: rgba(37, 38, 36, 0.075);
+  --border-strong: rgba(37, 38, 36, 0.16);
 
   --accent-soft: rgba(8, 127, 91, 0.08);
   --green-soft: rgba(8, 127, 91, 0.08);

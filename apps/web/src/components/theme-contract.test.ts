@@ -37,15 +37,15 @@ const primitiveRadiusClasses = [
 ].sort();
 
 describe("Operations Canvas theme contract", () => {
-  it("owns all semantic color tokens in globals.css with a dark instrument palette", () => {
+  it("owns all semantic color tokens in globals.css with a warm dark instrument palette", () => {
     expect(globals).toContain("color-scheme: dark");
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--background:\s*#0B0E12/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface:\s*#11161C/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface-elevated:\s*#171D25/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground:\s*#E9EDF2/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground-secondary:\s*#A0ABB7/i);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--border-subtle:\s*rgba\(174,\s*188,\s*202,\s*0\.09\)/);
-    expect(globals).toMatch(/:root\s*\{[\s\S]*?--primary:\s*#39C796/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--background:\s*#0E100F/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface:\s*#151817/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--surface-elevated:\s*#1B1F1D/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground:\s*#F0F0EB/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--foreground-secondary:\s*#AAAFA9/i);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--border-subtle:\s*rgba\(224,\s*229,\s*222,\s*0\.075\)/);
+    expect(globals).toMatch(/:root\s*\{[\s\S]*?--primary:\s*#53C49D/i);
     expect(globals).toMatch(/:root\s*\{[\s\S]*?--warning:\s*#D99A35/i);
     expect(globals).toMatch(/:root\s*\{[\s\S]*?--danger:\s*#E25561/i);
     expect(globals).toMatch(/:root\s*\{[\s\S]*?--information:\s*#7188F5/i);
@@ -64,10 +64,10 @@ describe("Operations Canvas theme contract", () => {
   it("ships a light variant of the semantic tokens from the same source", () => {
     const light = globals.match(/:root\[data-theme="light"\]\s*\{([\s\S]*?)\}/)?.[1] ?? "";
     expect(light).toContain("color-scheme: light");
-    expect(light).toMatch(/--background:\s*#EDF0F2/i);
-    expect(light).toMatch(/--surface:\s*#FFFFFF/i);
-    expect(light).toMatch(/--foreground:\s*#182029/i);
-    expect(light).toMatch(/--primary:\s*#087F5B/i);
+    expect(light).toMatch(/--background:\s*#F4F3EF/i);
+    expect(light).toMatch(/--surface:\s*#FCFBF8/i);
+    expect(light).toMatch(/--foreground:\s*#252624/i);
+    expect(light).toMatch(/--primary:\s*#16785B/i);
     expect(light).toMatch(/--cta:\s*#087F5B/i);
     expect(light).toMatch(/--cta-hover:\s*#066A4B/i);
     expect(light).toMatch(/--warning:\s*#B45309/i);
