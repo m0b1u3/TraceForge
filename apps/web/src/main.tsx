@@ -8,6 +8,7 @@ import "./styles/motion.css";
 import "./styles/dark-workbench.css";
 import "./styles/production-ui.css";
 import "./styles/workbench.css";
+import "./styles/overlays.css";
 
 applyTheme(getStoredTheme());
 createRoot(document.getElementById("root")!).render(<App />);
