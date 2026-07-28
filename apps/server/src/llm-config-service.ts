@@ -54,6 +54,10 @@ export class LlmConfigService {
     return configView(this.parseConfig());
   }
 
+  revealApiKey(): string {
+    return this.parseConfig().apiKey ?? "";
+  }
+
   initializeFromConfig(): LlmConfigView {
     const config = this.parseConfig();
     this.currentProvider = this.createProvider(config);

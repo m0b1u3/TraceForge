@@ -21,6 +21,14 @@ describe("LlmConfigService", () => {
     expect(cfg.apiKeyMasked).toBe("••••••••");
   });
 
+  it("reveals the persisted key only through the explicit secret method", () => {
+    makeConfig(tmp, { provider: "openai", model: "m", apiKey: "sk-visible-on-demand" });
+    const svc = new LlmConfigService(join(tmp, "llm.json"));
+
+    expect(svc.load()).not.toHaveProperty("apiKey");
+    expect(svc.revealApiKey()).toBe("sk-visible-on-demand");
+  });
+
   it("throws on malformed JSON in config file", () => {
     writeFileSync(join(tmp, "llm.json"), "not json");
     const svc = new LlmConfigService(join(tmp, "llm.json"));

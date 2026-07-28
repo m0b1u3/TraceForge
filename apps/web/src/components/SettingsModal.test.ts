@@ -74,8 +74,8 @@ describe("SettingsModal", () => {
     );
 
     expect(html).toContain('value="MASKED-KEY"');
-    expect(html).toContain("Stored securely. Focus the field to replace it.");
-    expect(html).toContain('aria-label="Stored API key is masked"');
+    expect(html).toContain("Stored securely. Reveal it or focus the field to replace it.");
+    expect(html).toContain('aria-label="Show API key"');
   });
 
   it("builds a manually configured endpoint without injecting provider defaults", () => {

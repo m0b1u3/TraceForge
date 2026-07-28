@@ -109,6 +109,12 @@ export function registerRoutes(
   if (llmService) {
     app.get("/api/config/llm", async () => llmService.load());
 
+    app.post("/api/config/llm/reveal-key", async (_req, reply) => {
+      reply.header("cache-control", "no-store");
+      reply.header("pragma", "no-cache");
+      return { apiKey: llmService.revealApiKey() };
+    });
+
     app.post("/api/config/llm", async (req, reply) => {
       const body = req.body as LlmConfigDto;
       if (!body.provider || !body.model) {

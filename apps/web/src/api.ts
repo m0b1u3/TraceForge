@@ -326,6 +326,17 @@ export async function getLlmConfig(): Promise<LlmConfig> {
   return r.json();
 }
 
+export async function revealLlmApiKey(): Promise<string> {
+  const response = await fetch("/api/config/llm/reveal-key", {
+    method: "POST",
+    headers: { "cache-control": "no-store" },
+  });
+  await ensureOk(response, "Reveal API key");
+  const body = await response.json() as { apiKey?: unknown };
+  if (typeof body.apiKey !== "string") throw new Error("Reveal API key failed: invalid response");
+  return body.apiKey;
+}
+
 export async function updateLlmConfig(input: LlmConfigInput): Promise<LlmConfig> {
   const r = await fetch("/api/config/llm", {
     method: "POST",

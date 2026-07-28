@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle, Cpu, Eye, EyeSlash, Moon, Palette, SlidersHorizontal, Sun, Warning } from "@phosphor-icons/react";
+import { CheckCircle, CircleNotch, Cpu, Eye, EyeSlash, Moon, Palette, SlidersHorizontal, Sun, Warning } from "@phosphor-icons/react";
 import { useStore } from "../store.js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { LlmConfigInput, LlmConfig } from "../api.js";
+import { revealLlmApiKey, type LlmConfigInput, type LlmConfig } from "../api.js";
 import { useShallow } from "zustand/react/shallow";
 import { useAppTheme } from "../hooks/useAppTheme.js";
 
@@ -127,6 +127,7 @@ export function SettingsModal({
   const [outputPricePerMillion, setOutputPricePerMillion] = useState("");
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [revealingApiKey, setRevealingApiKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<{
@@ -140,6 +141,7 @@ export function SettingsModal({
     if (settingsModalOpen_) {
       if (!initialConfig) void loadLlmConfig();
       setShowApiKey(false);
+      setRevealingApiKey(false);
       setTestStatus({ status: "idle" });
       setFormError(null);
       setActiveSection("model");
@@ -152,6 +154,8 @@ export function SettingsModal({
     setModel(llmConfig.model);
     setApiKey(llmConfig.apiKeyMasked ?? "");
     setApiKeyDirty(false);
+    setShowApiKey(false);
+    setRevealingApiKey(false);
     setBaseUrl(llmConfig.baseUrl ?? "");
     setJsonMode(llmConfig.jsonMode ?? "default");
     setContextWindowTokens(
@@ -184,7 +188,37 @@ export function SettingsModal({
 
   const requestClose = () => {
     if (isDirty && !globalThis.confirm("Discard unsaved settings changes?")) return;
+    setShowApiKey(false);
+    setRevealingApiKey(false);
+    setApiKey(llmConfig?.apiKeyMasked ?? "");
     setSettingsModalOpen(false);
+  };
+
+  const toggleApiKeyVisibility = async () => {
+    if (revealingApiKey) return;
+    if (showApiKey) {
+      setShowApiKey(false);
+      if (!apiKeyDirty) setApiKey(llmConfig?.apiKeyMasked ?? "");
+      return;
+    }
+    if (apiKeyDirty) {
+      setShowApiKey(true);
+      return;
+    }
+    if (!llmConfig?.apiKeyMasked) return;
+    setRevealingApiKey(true);
+    setFormError(null);
+    try {
+      const storedApiKey = await revealLlmApiKey();
+      setApiKey(storedApiKey);
+      setShowApiKey(true);
+    } catch (error) {
+      setFormError((error as Error).message);
+      setApiKey(llmConfig.apiKeyMasked);
+      setShowApiKey(false);
+    } finally {
+      setRevealingApiKey(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -201,6 +235,7 @@ export function SettingsModal({
       await saveLlmConfig(input);
       setSettingsModalOpen(false);
       setApiKey("");
+      setShowApiKey(false);
       setTestStatus({ status: "idle" });
     } catch (error) {
       setFormError((error as Error).message);
@@ -290,13 +325,13 @@ export function SettingsModal({
               <div className="flex gap-2">
                 <Input
                   id="apiKey"
-                  type={showApiKey && apiKeyDirty ? "text" : "password"}
+                  type={showApiKey ? "text" : "password"}
                   value={apiKey}
                   onFocus={() => {
-                    if (!apiKeyDirty && llmConfig?.apiKeyMasked) setApiKey("");
+                    if (!apiKeyDirty && !showApiKey && llmConfig?.apiKeyMasked) setApiKey("");
                   }}
                   onBlur={() => {
-                    if (!apiKeyDirty && llmConfig?.apiKeyMasked) setApiKey(llmConfig.apiKeyMasked);
+                    if (!apiKeyDirty && !showApiKey && llmConfig?.apiKeyMasked) setApiKey(llmConfig.apiKeyMasked);
                   }}
                   onChange={(e) => {
                     setApiKeyDirty(true);
@@ -311,16 +346,16 @@ export function SettingsModal({
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setShowApiKey((v) => !v)}
-                  disabled={!apiKeyDirty}
-                  aria-label={!apiKeyDirty ? "Stored API key is masked" : showApiKey ? "Hide API key" : "Show API key"}
-                  title={!apiKeyDirty ? "Stored keys cannot be revealed" : showApiKey ? "Hide API key" : "Show API key"}
+                  onClick={() => void toggleApiKeyVisibility()}
+                  disabled={revealingApiKey || (!apiKeyDirty && !llmConfig?.apiKeyMasked)}
+                  aria-label={revealingApiKey ? "Revealing API key" : showApiKey ? "Hide API key" : "Show API key"}
+                  title={revealingApiKey ? "Revealing API key" : showApiKey ? "Hide API key" : "Show API key"}
                 >
-                  {showApiKey ? <EyeSlash size={15} /> : <Eye size={15} />}
+                  {revealingApiKey ? <CircleNotch size={15} className="tf-spin" /> : showApiKey ? <EyeSlash size={15} /> : <Eye size={15} />}
                 </Button>
               </div>
               {llmConfig?.apiKeyMasked && !apiKeyDirty && (
-                <div className="settings-key-status" role="status"><CheckCircle size={14} weight="fill" />Stored securely. Focus the field to replace it.</div>
+                <div className="settings-key-status" role="status"><CheckCircle size={14} weight="fill" />{showApiKey ? "Visible until hidden or Settings closes." : "Stored securely. Reveal it or focus the field to replace it."}</div>
               )}
             </div>
 

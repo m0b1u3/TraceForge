@@ -34,6 +34,15 @@ describe("config routes", () => {
     expect(body.apiKeyMasked).toContain("•");
   });
 
+  it("POST /api/config/llm/reveal-key returns the stored key without caching it", async () => {
+    const res = await app.inject({ method: "POST", url: "/api/config/llm/reveal-key" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ apiKey: "sk-old" });
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.headers.pragma).toBe("no-cache");
+  });
+
   it("POST /api/config/llm updates config and env", async () => {
     const res = await app.inject({
       method: "POST",
