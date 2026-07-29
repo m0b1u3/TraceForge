@@ -1246,12 +1246,30 @@ export function registerRoutes(
       `${system}\n${runtimeProtocol}\nValidation task protocol: use manage_validation_task to claim a consensus validation task before executing it, release it before pivoting, and complete it only after recording the required evidence. Do not manually change consensus validation status with record_task.\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}\n\n${getValidationMatrixPlan()}`,
       built.messages,
       (e) => {
-      if (e.type === "tool_call") { bus.emit({ type: "agent_tool_call", caseId: id, tool: e.name ?? "", input: e.content }); agentEventStore.append(id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined); trajectory.push(`[tool] ${e.name}(${e.content})`); }
+      if (e.type === "tool_call") {
+        const executionId = e.executionId ?? `exec_${randomUUID()}`;
+        bus.emit({ type: "agent_tool_call", caseId: id, runId, executionId, tool: e.name ?? "", input: e.content });
+        agentEventStore.append(
+          id, "tool_call", `${e.name}(${e.content})`, e.name ?? undefined, undefined, undefined,
+          { runId, executionId, outcome: "running" },
+        );
+        trajectory.push(`[tool] ${e.name}(${e.content})`);
+      }
       else if (e.type === "tool_result") {
         const refsQueue = pendingToolRefs.get(e.name ?? "");
         const refs = refsQueue?.shift() ?? null;
-        bus.emit({ type: "agent_tool_result", caseId: id, tool: e.name ?? "", content: e.content, refs });
-        agentEventStore.append(id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined, undefined, refs ?? undefined);
+        const executionId = e.executionId ?? `exec_${randomUUID()}`;
+        const outcome = e.outcome === "failed" ? "failed" : "succeeded";
+        const recoveredExecutionIds = e.recoveredExecutionIds ?? [];
+        agentEventStore.markRecovered(id, recoveredExecutionIds, executionId);
+        bus.emit({
+          type: "agent_tool_result", caseId: id, runId, executionId, tool: e.name ?? "",
+          content: e.content, outcome, recoveredExecutionIds, refs,
+        });
+        agentEventStore.append(
+          id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined, undefined, refs ?? undefined,
+          { runId, executionId, outcome },
+        );
         trajectory.push(`[result] ${e.name} → ${e.content}`);
       }
       else if (e.type === "tool_blocked") {
@@ -1328,6 +1346,10 @@ export function registerRoutes(
       getSteeringMessages: () => runs.consumeSteering(runId),
       onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger),
       failureMemory,
+      getExecutionScopeKey: () => {
+        const runningTask = taskStore.listByCase(id).find((task) => task.runId === runId && task.status === "running");
+        return runningTask ? `task:${runningTask.id}` : `run:${runId}:exploration`;
+      },
       onAuthorizeToolExecute: (call) => {
         const actionableTasks = taskStore.listByCase(id).filter((task) =>
           task.runId === runId && ["open", "approved", "running", "recheck_candidate"].includes(task.status));

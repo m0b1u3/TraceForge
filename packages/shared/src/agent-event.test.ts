@@ -55,4 +55,21 @@ describe("AgentEventSchema", () => {
     });
     expect(e.refs).toBeNull();
   });
+
+  it("parses persisted tool execution lifecycle", () => {
+    const e = AgentEventSchema.parse({
+      id: "ae_5",
+      caseId: "c1",
+      kind: "tool_result",
+      text: "exec_command → exit=1",
+      tool: "exec_command",
+      runId: "run_1",
+      executionId: "exec_1",
+      outcome: "recovered",
+      recoveredByExecutionId: "exec_2",
+      createdAt: "2026-06-26T00:00:00.000Z",
+    });
+    expect(e.outcome).toBe("recovered");
+    expect(e.recoveredByExecutionId).toBe("exec_2");
+  });
 });

@@ -7,8 +7,8 @@ describe("agent runtime events", () => {
     const events: RuntimeEvent[] = [
       { type: "agent_started", caseId: "c", goal: "test it" },
       { type: "agent_text", caseId: "c", content: "thinking" },
-      { type: "agent_tool_call", caseId: "c", tool: "http_replay", input: "{}" },
-      { type: "agent_tool_result", caseId: "c", tool: "http_replay", content: "status=200" },
+      { type: "agent_tool_call", caseId: "c", runId: "run_1", executionId: "exec_1", tool: "http_replay", input: "{}" },
+      { type: "agent_tool_result", caseId: "c", runId: "run_1", executionId: "exec_1", tool: "http_replay", content: "status=200", outcome: "succeeded", recoveredExecutionIds: [] },
       { type: "agent_done", caseId: "c", content: "finished" },
       { type: "agent_error", caseId: "c", content: "network error" },
       { type: "approval_requested", caseId: "c", approvalId: "a1", tool: "sqlmap", input: "{}" },

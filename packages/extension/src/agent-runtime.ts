@@ -19,6 +19,9 @@ export interface AgentEvent {
   cumulativePromptTokens?: number;
   cumulativeCompletionTokens?: number;
   cumulativeTotalTokens?: number;
+  executionId?: string;
+  outcome?: "running" | "succeeded" | "failed";
+  recoveredExecutionIds?: string[];
   content: string;
 }
 
@@ -53,6 +56,7 @@ export interface AgentRunOptions {
   getObserverReviewTrigger?: () => ObserverReviewTrigger | null;
   toolTimeoutMs?: number;
   failureMemory?: FailureMemory;
+  getExecutionScopeKey?: () => string | null;
   onAuthorizeToolExecute?: (call: { name: string; input: unknown }) => string | undefined | Promise<string | undefined>;
   onBeforeToolExecute?: (call: { name: string; input: unknown }) => string | undefined | Promise<string | undefined>;
   onToolExecuted?: (report: ToolExecutionReport) => void | Promise<void>;
@@ -283,6 +287,7 @@ export class AgentRuntime {
     let cumulativePromptTokens = 0;
     let cumulativeCompletionTokens = 0;
     let cumulativeTotalTokens = 0;
+    let consecutiveFailedExecutions: { tool: string; scopeKey: string; executionIds: string[] } | null = null;
     let lastReviewedMessageIndex = 0;
     const budgetFinite = Number.isFinite(budget.maxTurns);
     const reviewIntervalTurns = Math.max(1, Math.floor(options.reviewIntervalTurns ?? 6));
@@ -416,6 +421,7 @@ export class AgentRuntime {
           this.emitInterrupted(onEvent);
           return;
         }
+        if (batch.parallel) consecutiveFailedExecutions = null;
         const results = batch.parallel
           ? await Promise.all(batch.calls.map((call) => this.runOneTool(call, onEvent, failureMemory, options, { deferResultEvent: true })))
           : [await this.runOneTool(batch.calls[0], onEvent, failureMemory, options, { deferResultEvent: true })];
@@ -423,7 +429,32 @@ export class AgentRuntime {
           const call = batch.calls[i];
           const result = results[i];
           const safeContent = compactToolResult(result.content, budget.maxToolResultCharacters);
-          onEvent({ type: "tool_result", name: call.name, content: safeContent });
+          let recoveredExecutionIds: string[] = [];
+          if (!batch.parallel) {
+            if (
+              result.ok
+              && consecutiveFailedExecutions?.tool === call.name
+              && consecutiveFailedExecutions.scopeKey === result.scopeKey
+            ) {
+              recoveredExecutionIds = consecutiveFailedExecutions.executionIds;
+              consecutiveFailedExecutions = null;
+            } else if (!result.ok) {
+              const priorFailures = consecutiveFailedExecutions as { tool: string; scopeKey: string; executionIds: string[] } | null;
+              consecutiveFailedExecutions = priorFailures?.tool === call.name && priorFailures.scopeKey === result.scopeKey
+                ? { tool: call.name, scopeKey: result.scopeKey, executionIds: [...priorFailures.executionIds, call.id] }
+                : { tool: call.name, scopeKey: result.scopeKey, executionIds: [call.id] };
+            } else {
+              consecutiveFailedExecutions = null;
+            }
+          }
+          onEvent({
+            type: "tool_result",
+            name: call.name,
+            executionId: call.id,
+            outcome: result.ok ? "succeeded" : "failed",
+            recoveredExecutionIds,
+            content: safeContent,
+          });
           messages.push({ role: "tool", content: safeContent, toolCallId: call.id });
         }
         if (this.interrupted(options)) {
@@ -498,12 +529,13 @@ export class AgentRuntime {
     failureMemory: FailureMemory,
     options: AgentRunOptions,
     opts: { deferResultEvent?: boolean } = {},
-  ): Promise<{ content: string; ok: boolean }> {
+  ): Promise<{ content: string; ok: boolean; scopeKey: string }> {
+    const scopeKey = options.getExecutionScopeKey?.() ?? `run:${options.runId ?? "unscoped"}`;
     const tool = this.registry.get(call.name);
     if (!tool) {
       const msg = `unknown tool: ${call.name}`;
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: msg });
-      const result = { content: msg, ok: false };
+      const result = { content: msg, ok: false, scopeKey };
       if (options.onToolExecuted) {
         await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
       }
@@ -513,7 +545,7 @@ export class AgentRuntime {
     if (failureMemory.has(call.name, call.input)) {
       const content = `[tool_blocked] ${call.name}: 该调用已在本运行中失败过，使用相同输入不会再次执行。请换用其他方法，或当本地环境无法解决时使用 download_tool 下载现成工具。`;
       onEvent({ type: "tool_blocked", name: call.name, input: JSON.stringify(call.input), content });
-      const result = { content, ok: false };
+      const result = { content, ok: false, scopeKey };
       if (options.onToolExecuted) {
         await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, blocked: true, risk: tool.risk });
       }
@@ -524,7 +556,7 @@ export class AgentRuntime {
     if (blockedReason) {
       const content = `[tool_blocked] ${call.name}: ${blockedReason}`;
       onEvent({ type: "tool_blocked", name: call.name, input: JSON.stringify(call.input), content });
-      const result = { content, ok: false };
+      const result = { content, ok: false, scopeKey };
       if (options.onToolExecuted) {
         await options.onToolExecuted({
           name: call.name, input: call.input, content, ok: false, blocked: true, risk: tool.risk,
@@ -535,13 +567,13 @@ export class AgentRuntime {
 
     const advisory = await options.onBeforeToolExecute?.({ name: call.name, input: call.input });
     if (advisory) onEvent({ type: "tool_advisory", name: call.name, content: advisory });
-    onEvent({ type: "tool_call", name: call.name, content: JSON.stringify(call.input) });
+    onEvent({ type: "tool_call", name: call.name, executionId: call.id, outcome: "running", content: JSON.stringify(call.input) });
 
     const decision = await this.gate.check(tool, call.input);
     if (decision === "rejected") {
       const content = "用户拒绝执行此动作。";
       onEvent({ type: "tool_rejected", name: call.name, content });
-      const result = { content, ok: false };
+      const result = { content, ok: false, scopeKey };
       if (options.onToolExecuted) {
         await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, rejected: true, risk: tool.risk });
       }
@@ -560,11 +592,19 @@ export class AgentRuntime {
       const transient = failureClass === "transient";
       if (!effectiveOk && failureClass === "permanent") failureMemory.add(call.name, call.input);
       if (!effectiveOk && failureClass === "transient") failureMemory.add(call.name, call.input, 2);
-      if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: res.content });
+      if (!opts.deferResultEvent) {
+        onEvent({
+          type: "tool_result",
+          name: call.name,
+          executionId: call.id,
+          outcome: effectiveOk ? "succeeded" : "failed",
+          content: res.content,
+        });
+      }
       const content = advisory
         ? `[Exploration advisory issued before execution]\n${advisory}\n\n[Tool result]\n${res.content}`
         : res.content;
-      const result = { content, ok: effectiveOk };
+      const result = { content, ok: effectiveOk, scopeKey };
       if (options.onToolExecuted) {
         await options.onToolExecuted({
           name: call.name,
@@ -581,8 +621,10 @@ export class AgentRuntime {
     } catch (error) {
       failureMemory.add(call.name, call.input);
       const content = `[tool_error] ${call.name}: ${(error as Error).message}`;
-      if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content });
-      const result = { content, ok: false };
+      if (!opts.deferResultEvent) {
+        onEvent({ type: "tool_result", name: call.name, executionId: call.id, outcome: "failed", content });
+      }
+      const result = { content, ok: false, scopeKey };
       if (options.onToolExecuted) {
         await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, risk: tool.risk });
       }

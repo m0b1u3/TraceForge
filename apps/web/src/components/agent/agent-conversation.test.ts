@@ -81,6 +81,44 @@ describe("tool result refs", () => {
     expect(toolResultFailed("http_replay → status=500 bodyLength=0")).toBe(false);
   });
 
+  it("uses persisted lifecycle instead of inferring recovery from a later same-name tool", () => {
+    const items = buildAgentConversationItems({
+      events: [
+        { kind: "tool_call", text: "exec_command({\"command\":\"first\"})", executionId: "exec_1", outcome: "running" },
+        { kind: "tool_result", text: "exec_command → exit=1", executionId: "exec_1", outcome: "failed" },
+        { kind: "reasoning", text: "Moving to a separate operation." },
+        { kind: "tool_call", text: "exec_command({\"command\":\"second\"})", executionId: "exec_2", outcome: "running" },
+        { kind: "tool_result", text: "exec_command → exit=0", executionId: "exec_2", outcome: "succeeded" },
+      ],
+      pendingApproval: null,
+      pendingScope: null,
+      agentBusy: false,
+    });
+
+    const groups = items.filter((item) => item.type === "tool_group");
+    expect(groups[0].activities[0].outcome).toBe("failed");
+    expect(groups[1].activities[0].outcome).toBe("succeeded");
+  });
+
+  it("pairs persisted calls and results by execution id across interleaved events", () => {
+    const items = buildAgentConversationItems({
+      events: [
+        { kind: "tool_call", text: "first_tool({})", executionId: "exec_1", outcome: "running" },
+        { kind: "tool_call", text: "second_tool({})", executionId: "exec_2", outcome: "running" },
+        { kind: "tool_result", text: "first_tool → completed", executionId: "exec_1", outcome: "succeeded" },
+        { kind: "tool_result", text: "second_tool → completed", executionId: "exec_2", outcome: "succeeded" },
+      ],
+      pendingApproval: null,
+      pendingScope: null,
+      agentBusy: false,
+    });
+
+    const groups = items.filter((item) => item.type === "tool_group");
+    expect(groups).toHaveLength(2);
+    expect(groups[0].activities[0].result?.executionId).toBe("exec_1");
+    expect(groups[1].activities[0].result?.executionId).toBe("exec_2");
+  });
+
   it("carries refs from the source event onto the conversation item", () => {
     const refs = { factIds: ["fact_1"], taskIds: ["task_1"], timelineEntryIds: ["tl_1"] };
     const items = buildAgentConversationItems({

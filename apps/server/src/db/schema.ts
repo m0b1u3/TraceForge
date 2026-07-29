@@ -188,6 +188,10 @@ export const agentEvents = sqliteTable("agent_events", {
   text: text("text").notNull(),
   tool: text("tool"),
   refsJson: text("refs_json"),
+  runId: text("run_id"),
+  executionId: text("execution_id"),
+  outcome: text("outcome"),
+  recoveredByExecutionId: text("recovered_by_execution_id"),
   createdAt: text("created_at").notNull(),
 });
 

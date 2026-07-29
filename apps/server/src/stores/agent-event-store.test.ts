@@ -45,4 +45,21 @@ describe("AgentEventStore", () => {
     expect(list[0].refs).toEqual(refs);
     expect(list[1].refs).toBeNull();
   });
+
+  it("persists execution lifecycle and recovery across a database read", () => {
+    const store = new AgentEventStore(db);
+    store.append(
+      "case_1", "tool_result", "exec_command → exit=1", "exec_command", undefined, undefined,
+      { runId: "run_1", executionId: "exec_1", outcome: "failed" },
+    );
+    store.markRecovered("case_1", ["exec_1"], "exec_2");
+
+    const [event] = store.listByCase("case_1");
+    expect(event).toEqual(expect.objectContaining({
+      runId: "run_1",
+      executionId: "exec_1",
+      outcome: "recovered",
+      recoveredByExecutionId: "exec_2",
+    }));
+  });
 });

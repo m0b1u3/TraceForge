@@ -16,6 +16,9 @@ export type AgentConversationEventItem = {
   target?: { kind: "task" | "finding"; id: string };
   eventType?: string;
   createdAt?: string;
+  executionId?: string | null;
+  outcome?: AgentUiEvent["outcome"];
+  recoveredByExecutionId?: string | null;
 };
 
 export type AgentToolActivity = {
@@ -78,6 +81,15 @@ export function buildAgentConversationItems({
 
 function appendToolActivity(items: AgentConversationItem[], event: AgentConversationEventItem): void {
   const tool = rulerToolName(event.text);
+  if (event.kind === "tool_result" && event.executionId) {
+    const matched = findActivityByExecutionId(items, event.executionId);
+    if (matched) {
+      matched.result = event;
+      matched.outcome = event.outcome ?? (toolResultFailed(event.text) ? "failed" : "succeeded");
+      matched.recoveredByKey = event.recoveredByExecutionId ?? undefined;
+      return;
+    }
+  }
   const previous = items.at(-1);
   const group = previous?.type === "tool_group" && previous.tool === tool ? previous : null;
 
@@ -85,7 +97,8 @@ function appendToolActivity(items: AgentConversationItem[], event: AgentConversa
     const latest = group.activities.at(-1);
     if (latest && latest.result === null) {
       latest.result = event;
-      latest.outcome = toolResultFailed(event.text) ? "failed" : "succeeded";
+      latest.outcome = event.outcome ?? (toolResultFailed(event.text) ? "failed" : "succeeded");
+      latest.recoveredByKey = event.recoveredByExecutionId ?? undefined;
       markRecoveredActivities(group.activities, latest);
       return;
     }
@@ -96,9 +109,10 @@ function appendToolActivity(items: AgentConversationItem[], event: AgentConversa
     tool,
     call: event.kind === "tool_call" ? event : null,
     result: event.kind === "tool_result" ? event : null,
-    outcome: event.kind === "tool_result"
+    outcome: event.outcome ?? (event.kind === "tool_result"
       ? toolResultFailed(event.text) ? "failed" : "succeeded"
-      : "running",
+      : "running"),
+    recoveredByKey: event.recoveredByExecutionId ?? undefined,
   };
   if (group) {
     group.activities.push(activity);
@@ -116,6 +130,7 @@ export function toolResultFailed(text: string): boolean {
 
 function markRecoveredActivities(activities: AgentToolActivity[], recovery: AgentToolActivity): void {
   if (recovery.outcome !== "succeeded") return;
+  if (recovery.result?.executionId) return;
   for (let index = activities.length - 2; index >= 0; index -= 1) {
     const candidate = activities[index];
     if (candidate.outcome !== "failed") break;
@@ -129,6 +144,7 @@ function reconcileRecoveredExecutions(items: AgentConversationItem[]): void {
   for (const item of items) {
     if (item.type !== "tool_group") continue;
     for (const activity of item.activities) {
+      if (activity.result?.executionId) continue;
       if (activity.outcome === "failed") {
         const unresolved = unresolvedByTool.get(item.tool) ?? [];
         unresolved.push(activity);
@@ -145,6 +161,16 @@ function reconcileRecoveredExecutions(items: AgentConversationItem[]): void {
       unresolvedByTool.delete(item.tool);
     }
   }
+}
+
+function findActivityByExecutionId(items: AgentConversationItem[], executionId: string): AgentToolActivity | null {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.type !== "tool_group") continue;
+    const activity = item.activities.find((candidate) => candidate.call?.executionId === executionId);
+    if (activity) return activity;
+  }
+  return null;
 }
 
 function sameTarget(left: AgentConversationEventItem["target"], right: AgentConversationEventItem["target"]): boolean {
@@ -166,8 +192,19 @@ function formatAgentEvent(event: AgentUiEvent): Omit<AgentConversationEventItem,
   if (!text || event.kind === "started") return null;
   if (event.kind === "user") return { kind: event.kind, label: "You", text, summary: text };
   if (event.kind === "error") return { kind: event.kind, label: "Error", text, summary: text };
-  if (event.kind === "tool_call") return { kind: event.kind, label: "Tool call", text, summary: compactToolText(text) };
-  if (event.kind === "tool_result") return { kind: event.kind, label: "Tool result", text, summary: compactToolText(text), refs: event.refs ?? null };
+  if (event.kind === "tool_call") {
+    return {
+      kind: event.kind, label: "Tool call", text, summary: compactToolText(text),
+      executionId: event.executionId, outcome: event.outcome,
+    };
+  }
+  if (event.kind === "tool_result") {
+    return {
+      kind: event.kind, label: "Tool result", text, summary: compactToolText(text), refs: event.refs ?? null,
+      executionId: event.executionId, outcome: event.outcome,
+      recoveredByExecutionId: event.recoveredByExecutionId,
+    };
+  }
   if (event.kind === "validation") {
     const validation = validationTimelineConsoleEvent({ eventType: event.tool ?? "", detail: text });
     if (!validation) return null;

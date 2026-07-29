@@ -13,6 +13,10 @@ export interface AgentUiEvent {
   text: string;
   tool?: string | null;
   refs?: AgentEventRefs | null;
+  runId?: string | null;
+  executionId?: string | null;
+  outcome?: "running" | "succeeded" | "failed" | "recovered" | null;
+  recoveredByExecutionId?: string | null;
   createdAt?: string;
 }
 
@@ -471,7 +475,11 @@ export const useStore = create<State>((set, get) => ({
       timeline: takeRecent(timeline, CLIENT_TIMELINE_LIMIT),
       mcpTools,
       warnings,
-      agentEvents: takeRecent(agentEvents.map((e) => ({ id: e.id, kind: e.kind, text: e.text, tool: e.tool, refs: e.refs, createdAt: e.createdAt })), CLIENT_AGENT_EVENT_LIMIT),
+      agentEvents: takeRecent(agentEvents.map((e) => ({
+        id: e.id, kind: e.kind, text: e.text, tool: e.tool, refs: e.refs,
+        runId: e.runId, executionId: e.executionId, outcome: e.outcome,
+        recoveredByExecutionId: e.recoveredByExecutionId, createdAt: e.createdAt,
+      })), CLIENT_AGENT_EVENT_LIMIT),
       activeRun,
       continuationRun: latestRun?.status === "needs_continuation" ? latestRun : null,
       agentBusy: isRunBusy(activeRun),
@@ -823,7 +831,12 @@ export const useStore = create<State>((set, get) => ({
       const last = get().agentEvents.at(-1);
       if (!(last?.kind === "reasoning" && last.text === event.content)) get().addAgentEvent({ kind: "reasoning", text: event.content });
     }
-    else if (event.type === "agent_tool_call" && event.caseId === cid) get().addAgentEvent({ kind: "tool_call", text: `${event.tool}(${event.input})` });
+    else if (event.type === "agent_tool_call" && event.caseId === cid) {
+      get().addAgentEvent({
+        kind: "tool_call", text: `${event.tool}(${event.input})`, tool: event.tool,
+        runId: event.runId, executionId: event.executionId, outcome: "running",
+      });
+    }
     else if ((event.type === "hypothesis_created" || event.type === "hypothesis_updated") && event.hypothesis.caseId === cid) {
       set((state) => {
         const exists = state.hypotheses.some((item) => item.id === event.hypothesis.id);
@@ -835,7 +848,17 @@ export const useStore = create<State>((set, get) => ({
       });
     }
     else if (event.type === "agent_tool_result" && event.caseId === cid) {
-      get().addAgentEvent({ kind: "tool_result", text: `${event.tool} → ${event.content}`, refs: event.refs ?? null });
+      set((state) => ({
+        agentEvents: state.agentEvents.map((item) =>
+          item.executionId && event.recoveredExecutionIds.includes(item.executionId)
+            ? { ...item, outcome: "recovered" as const, recoveredByExecutionId: event.executionId }
+            : item),
+      }));
+      get().addAgentEvent({
+        kind: "tool_result", text: `${event.tool} → ${event.content}`, tool: event.tool,
+        refs: event.refs ?? null, runId: event.runId, executionId: event.executionId,
+        outcome: event.outcome,
+      });
     }
     else if (event.type === "agent_tool_blocked" && event.caseId === cid) get().addAgentEvent({ kind: "tool_result", text: `${event.tool} blocked → ${event.reason}\n${event.input}` });
     else if (event.type === "agent_done" && event.caseId === cid) { get().setAgentBusy(false); get().addAgentEvent({ kind: "done", text: event.content }); }

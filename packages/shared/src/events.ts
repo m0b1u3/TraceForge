@@ -29,8 +29,8 @@ export type RuntimeEvent =
   | { type: "agent_started"; caseId: string; goal: string }
   | { type: "agent_text"; caseId: string; content: string }
   | { type: "agent_reasoning"; caseId: string; content: string }
-  | { type: "agent_tool_call"; caseId: string; tool: string; input: string }
-  | { type: "agent_tool_result"; caseId: string; tool: string; content: string; refs?: AgentEventRefs | null }
+  | { type: "agent_tool_call"; caseId: string; runId: string; executionId: string; tool: string; input: string }
+  | { type: "agent_tool_result"; caseId: string; runId: string; executionId: string; tool: string; content: string; outcome: "succeeded" | "failed"; recoveredExecutionIds: string[]; refs?: AgentEventRefs | null }
   | { type: "agent_tool_blocked"; caseId: string; runId: string; tool: string; input: string; reason: string }
   | { type: "agent_done"; caseId: string; content: string }
   | { type: "agent_error"; caseId: string; content: string }

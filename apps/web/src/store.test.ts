@@ -94,11 +94,25 @@ describe("validation workflow realtime state", () => {
 
   it("keeps refs from live tool result events for console to graph linking", () => {
     const refs = { factIds: ["fact_1"], taskIds: [], timelineEntryIds: ["tl_1"] };
-    useStore.getState().handleRuntimeEvent({ type: "agent_tool_result", caseId: "case_1", tool: "record_fact", content: "ok", refs });
-    useStore.getState().handleRuntimeEvent({ type: "agent_tool_result", caseId: "case_1", tool: "get_traffic", content: "[]" });
+    useStore.getState().handleRuntimeEvent({ type: "agent_tool_result", caseId: "case_1", runId: "run_1", executionId: "exec_1", tool: "record_fact", content: "ok", outcome: "succeeded", recoveredExecutionIds: [], refs });
+    useStore.getState().handleRuntimeEvent({ type: "agent_tool_result", caseId: "case_1", runId: "run_1", executionId: "exec_2", tool: "get_traffic", content: "[]", outcome: "succeeded", recoveredExecutionIds: [] });
     const events = useStore.getState().agentEvents;
     expect(events[0]).toEqual(expect.objectContaining({ kind: "tool_result", refs }));
     expect(events[1]).toEqual(expect.objectContaining({ kind: "tool_result", refs: null }));
+  });
+
+  it("applies server recovery updates to an earlier live execution", () => {
+    useStore.getState().handleRuntimeEvent({ type: "agent_tool_call", caseId: "case_1", runId: "run_1", executionId: "exec_1", tool: "exec_command", input: "{\"command\":\"first\"}" });
+    useStore.getState().handleRuntimeEvent({ type: "agent_tool_result", caseId: "case_1", runId: "run_1", executionId: "exec_1", tool: "exec_command", content: "exit=1", outcome: "failed", recoveredExecutionIds: [] });
+    useStore.getState().handleRuntimeEvent({ type: "agent_tool_call", caseId: "case_1", runId: "run_1", executionId: "exec_2", tool: "exec_command", input: "{\"command\":\"second\"}" });
+    useStore.getState().handleRuntimeEvent({ type: "agent_tool_result", caseId: "case_1", runId: "run_1", executionId: "exec_2", tool: "exec_command", content: "exit=0", outcome: "succeeded", recoveredExecutionIds: ["exec_1"] });
+
+    const events = useStore.getState().agentEvents;
+    expect(events.filter((event) => event.executionId === "exec_1")).toEqual([
+      expect.objectContaining({ outcome: "recovered", recoveredByExecutionId: "exec_2" }),
+      expect.objectContaining({ outcome: "recovered", recoveredByExecutionId: "exec_2" }),
+    ]);
+    expect(events.at(-1)).toEqual(expect.objectContaining({ executionId: "exec_2", outcome: "succeeded" }));
   });
 
   it("uses one knowledge navigation action for panel requests, inspector cleanup, and stale targets", () => {

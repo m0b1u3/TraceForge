@@ -348,6 +348,10 @@ export const AgentEventSchema = z.object({
   text: z.string(),
   tool: z.string().nullable().default(null),
   refs: AgentEventRefsSchema.nullable().default(null),
+  runId: z.string().nullable().optional(),
+  executionId: z.string().nullable().optional(),
+  outcome: z.enum(["running", "succeeded", "failed", "recovered"]).nullable().optional(),
+  recoveredByExecutionId: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 export type AgentEvent = z.infer<typeof AgentEventSchema>;
