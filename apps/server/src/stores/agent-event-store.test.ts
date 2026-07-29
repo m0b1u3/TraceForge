@@ -50,7 +50,17 @@ describe("AgentEventStore", () => {
     const store = new AgentEventStore(db);
     store.append(
       "case_1", "tool_result", "exec_command → exit=1", "exec_command", undefined, undefined,
-      { runId: "run_1", executionId: "exec_1", outcome: "failed" },
+      {
+        runId: "run_1",
+        executionId: "exec_1",
+        outcome: "failed",
+        failureDiagnostic: {
+          category: "command_exit",
+          retryable: false,
+          summary: "The command completed with a non-zero exit status.",
+          recommendation: "Correct the command before retrying.",
+        },
+      },
     );
     store.markRecovered("case_1", ["exec_1"], "exec_2");
 
@@ -60,6 +70,7 @@ describe("AgentEventStore", () => {
       executionId: "exec_1",
       outcome: "recovered",
       recoveredByExecutionId: "exec_2",
+      failureDiagnostic: expect.objectContaining({ category: "command_exit", retryable: false }),
     }));
   });
 });

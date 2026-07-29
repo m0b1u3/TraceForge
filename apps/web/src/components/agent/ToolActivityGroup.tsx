@@ -69,7 +69,13 @@ export function ToolActivityGroup({ item }: { item: ToolGroup }) {
             size="icon-xs"
             aria-label={`Inspect ${item.tool} activity`}
             title="Inspect raw event"
-            onClick={() => selectAgentEvent({ kind: latestEvent.kind as "tool_call" | "tool_result", label: latestEvent.label, text: latestEvent.text })}
+            onClick={() => selectAgentEvent({
+              kind: latestEvent.kind as "tool_call" | "tool_result",
+              label: latestEvent.label,
+              text: latestEvent.text,
+              outcome: latestEvent.outcome,
+              failureDiagnostic: latestEvent.failureDiagnostic,
+            })}
           >
             <MagnifyingGlass size={13} />
           </Button>
@@ -86,6 +92,7 @@ export function ToolActivityGroup({ item }: { item: ToolGroup }) {
 
 function ToolActivityDetail({ activity, index, count }: { activity: AgentToolActivity; index: number; count: number }) {
   const [copied, setCopied] = useState(false);
+  const selectAgentEvent = useStore((state) => state.selectAgentEvent);
   const callText = activity.call?.text ?? "";
   const resultText = activity.result?.text ?? "";
   const raw = [callText, resultText].filter(Boolean).join("\n\n");
@@ -100,6 +107,17 @@ function ToolActivityDetail({ activity, index, count }: { activity: AgentToolAct
       <header>
         <span>{count > 1 ? `Execution ${index + 1}` : "Execution detail"}</span>
         <span className={`tool-activity-state is-${toolActivityTone(activity)}`}>{toneLabel(toolActivityTone(activity), 1)}</span>
+        {activity.result && (
+          <Button type="button" variant="ghost" size="icon-xs" aria-label="Inspect tool result" title="Inspect result" onClick={() => selectAgentEvent({
+            kind: "tool_result",
+            label: activity.result!.label,
+            text: activity.result!.text,
+            outcome: activity.result!.outcome,
+            failureDiagnostic: activity.result!.failureDiagnostic,
+          })}>
+            <MagnifyingGlass size={13} />
+          </Button>
+        )}
         <Button type="button" variant="ghost" size="icon-xs" aria-label="Copy tool activity" title="Copy" onClick={() => void copy()}>
           {copied ? <Check size={13} /> : <Copy size={13} />}
         </Button>

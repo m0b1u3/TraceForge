@@ -341,6 +341,27 @@ export const AgentEventRefsSchema = z.object({
 });
 export type AgentEventRefs = z.infer<typeof AgentEventRefsSchema>;
 
+export const ToolFailureDiagnosticSchema = z.object({
+  category: z.enum([
+    "command_exit",
+    "timeout",
+    "permission",
+    "incompatible_environment",
+    "authorization",
+    "rejected",
+    "policy_block",
+    "unavailable_dependency",
+    "network",
+    "invalid_input",
+    "internal",
+    "unknown",
+  ]),
+  retryable: z.boolean(),
+  summary: z.string(),
+  recommendation: z.string(),
+});
+export type ToolFailureDiagnostic = z.infer<typeof ToolFailureDiagnosticSchema>;
+
 export const AgentEventSchema = z.object({
   id: z.string(),
   caseId: z.string(),
@@ -352,6 +373,7 @@ export const AgentEventSchema = z.object({
   executionId: z.string().nullable().optional(),
   outcome: z.enum(["running", "succeeded", "failed", "recovered"]).nullable().optional(),
   recoveredByExecutionId: z.string().nullable().optional(),
+  failureDiagnostic: ToolFailureDiagnosticSchema.nullable().optional(),
   createdAt: z.string(),
 });
 export type AgentEvent = z.infer<typeof AgentEventSchema>;

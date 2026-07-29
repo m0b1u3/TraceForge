@@ -3,6 +3,8 @@ import type { LlmProvider, TurnMessage, ToolCall, UsageSnapshot } from "./provid
 import type { ToolRegistry } from "./registry.js";
 import type { ApprovalGate } from "./approval-gate.js";
 import { FailureMemory } from "./failure-memory.js";
+import type { ToolFailureDiagnostic } from "@traceforge/shared";
+import { diagnoseToolFailure } from "./tool-failure-diagnostic.js";
 
 export interface AgentEvent {
   type: "tool_call" | "tool_result" | "tool_rejected" | "tool_blocked" | "tool_advisory" | "text" | "reasoning" | "done" |
@@ -22,6 +24,7 @@ export interface AgentEvent {
   executionId?: string;
   outcome?: "running" | "succeeded" | "failed";
   recoveredExecutionIds?: string[];
+  failureDiagnostic?: ToolFailureDiagnostic;
   content: string;
 }
 
@@ -44,6 +47,7 @@ export interface ToolExecutionReport {
   blocked?: boolean;
   transient?: boolean;
   failureClass?: ToolFailureClass;
+  failureDiagnostic?: ToolFailureDiagnostic;
 }
 
 export interface AgentRunOptions {
@@ -429,6 +433,16 @@ export class AgentRuntime {
           const call = batch.calls[i];
           const result = results[i];
           const safeContent = compactToolResult(result.content, budget.maxToolResultCharacters);
+          const agentContent = result.failureDiagnostic
+            ? [
+                safeContent,
+                "",
+                "[Execution diagnostic]",
+                `category=${result.failureDiagnostic.category}`,
+                `retryable=${result.failureDiagnostic.retryable}`,
+                `recommendation=${result.failureDiagnostic.recommendation}`,
+              ].join("\n")
+            : safeContent;
           let recoveredExecutionIds: string[] = [];
           if (!batch.parallel) {
             if (
@@ -453,9 +467,10 @@ export class AgentRuntime {
             executionId: call.id,
             outcome: result.ok ? "succeeded" : "failed",
             recoveredExecutionIds,
+            failureDiagnostic: result.failureDiagnostic,
             content: safeContent,
           });
-          messages.push({ role: "tool", content: safeContent, toolCallId: call.id });
+          messages.push({ role: "tool", content: agentContent, toolCallId: call.id });
         }
         if (this.interrupted(options)) {
           this.emitInterrupted(onEvent);
@@ -529,15 +544,15 @@ export class AgentRuntime {
     failureMemory: FailureMemory,
     options: AgentRunOptions,
     opts: { deferResultEvent?: boolean } = {},
-  ): Promise<{ content: string; ok: boolean; scopeKey: string }> {
+  ): Promise<{ content: string; ok: boolean; scopeKey: string; failureDiagnostic?: ToolFailureDiagnostic }> {
     const scopeKey = options.getExecutionScopeKey?.() ?? `run:${options.runId ?? "unscoped"}`;
     const tool = this.registry.get(call.name);
     if (!tool) {
       const msg = `unknown tool: ${call.name}`;
-      if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, content: msg });
-      const result = { content: msg, ok: false, scopeKey };
+      const result = { content: msg, ok: false, scopeKey, failureDiagnostic: diagnoseToolFailure(msg, "unavailable_dependency") };
+      if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, executionId: call.id, outcome: "failed", failureDiagnostic: result.failureDiagnostic, content: msg });
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, failureDiagnostic: result.failureDiagnostic });
       }
       return result;
     }
@@ -545,9 +560,9 @@ export class AgentRuntime {
     if (failureMemory.has(call.name, call.input)) {
       const content = `[tool_blocked] ${call.name}: 该调用已在本运行中失败过，使用相同输入不会再次执行。请换用其他方法，或当本地环境无法解决时使用 download_tool 下载现成工具。`;
       onEvent({ type: "tool_blocked", name: call.name, input: JSON.stringify(call.input), content });
-      const result = { content, ok: false, scopeKey };
+      const result = { content, ok: false, scopeKey, failureDiagnostic: diagnoseToolFailure(content, "policy_block") };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, blocked: true, risk: tool.risk });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, blocked: true, failureDiagnostic: result.failureDiagnostic, risk: tool.risk });
       }
       return result;
     }
@@ -556,10 +571,10 @@ export class AgentRuntime {
     if (blockedReason) {
       const content = `[tool_blocked] ${call.name}: ${blockedReason}`;
       onEvent({ type: "tool_blocked", name: call.name, input: JSON.stringify(call.input), content });
-      const result = { content, ok: false, scopeKey };
+      const result = { content, ok: false, scopeKey, failureDiagnostic: diagnoseToolFailure(content, "authorization") };
       if (options.onToolExecuted) {
         await options.onToolExecuted({
-          name: call.name, input: call.input, content, ok: false, blocked: true, risk: tool.risk,
+          name: call.name, input: call.input, content, ok: false, blocked: true, failureDiagnostic: result.failureDiagnostic, risk: tool.risk,
         });
       }
       return result;
@@ -573,9 +588,9 @@ export class AgentRuntime {
     if (decision === "rejected") {
       const content = "用户拒绝执行此动作。";
       onEvent({ type: "tool_rejected", name: call.name, content });
-      const result = { content, ok: false, scopeKey };
+      const result = { content, ok: false, scopeKey, failureDiagnostic: diagnoseToolFailure(content, "rejected") };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, rejected: true, risk: tool.risk });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, rejected: true, failureDiagnostic: result.failureDiagnostic, risk: tool.risk });
       }
       return result;
     }
@@ -589,6 +604,7 @@ export class AgentRuntime {
       const effectiveOk = res.ok;
       if (effectiveOk && changesWorkspace(call.name)) failureMemory.clear();
       const failureClass = effectiveOk ? undefined : classifyToolFailure(res.content);
+      const failureDiagnostic = effectiveOk ? undefined : diagnoseToolFailure(res.content);
       const transient = failureClass === "transient";
       if (!effectiveOk && failureClass === "permanent") failureMemory.add(call.name, call.input);
       if (!effectiveOk && failureClass === "transient") failureMemory.add(call.name, call.input, 2);
@@ -598,13 +614,14 @@ export class AgentRuntime {
           name: call.name,
           executionId: call.id,
           outcome: effectiveOk ? "succeeded" : "failed",
+          failureDiagnostic,
           content: res.content,
         });
       }
       const content = advisory
         ? `[Exploration advisory issued before execution]\n${advisory}\n\n[Tool result]\n${res.content}`
         : res.content;
-      const result = { content, ok: effectiveOk, scopeKey };
+      const result = { content, ok: effectiveOk, scopeKey, failureDiagnostic };
       if (options.onToolExecuted) {
         await options.onToolExecuted({
           name: call.name,
@@ -614,6 +631,7 @@ export class AgentRuntime {
           meta: res.meta,
           transient,
           failureClass,
+          failureDiagnostic,
           risk: tool.risk,
         });
       }
@@ -621,12 +639,13 @@ export class AgentRuntime {
     } catch (error) {
       failureMemory.add(call.name, call.input);
       const content = `[tool_error] ${call.name}: ${(error as Error).message}`;
+      const failureDiagnostic = diagnoseToolFailure(content, "internal");
       if (!opts.deferResultEvent) {
-        onEvent({ type: "tool_result", name: call.name, executionId: call.id, outcome: "failed", content });
+        onEvent({ type: "tool_result", name: call.name, executionId: call.id, outcome: "failed", failureDiagnostic, content });
       }
-      const result = { content, ok: false, scopeKey };
+      const result = { content, ok: false, scopeKey, failureDiagnostic };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, risk: tool.risk });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, failureDiagnostic: result.failureDiagnostic, risk: tool.risk });
       }
       return result;
     }

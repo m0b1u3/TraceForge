@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, ValidationWorkflowSnapshot, Hypothesis, AgentEventRefs } from "@traceforge/shared";
+import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, ValidationWorkflowSnapshot, Hypothesis, AgentEventRefs, ToolFailureDiagnostic } from "@traceforge/shared";
 import { validationTimelineConsoleEvent } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listHypotheses, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities, listSecurityReports, getValidationWorkflow } from "./api.js";
@@ -17,6 +17,7 @@ export interface AgentUiEvent {
   executionId?: string | null;
   outcome?: "running" | "succeeded" | "failed" | "recovered" | null;
   recoveredByExecutionId?: string | null;
+  failureDiagnostic?: ToolFailureDiagnostic | null;
   createdAt?: string;
 }
 
@@ -238,7 +239,7 @@ interface State {
   selectedFactId: string | null;
   selectedTaskId: string | null;
   selectedTimelineNodeId: string | null;
-  selectedAgentEvent: { kind: "tool_call" | "tool_result"; label: string; text: string } | null;
+  selectedAgentEvent: { kind: "tool_call" | "tool_result"; label: string; text: string; outcome?: AgentUiEvent["outcome"]; failureDiagnostic?: ToolFailureDiagnostic | null } | null;
   inspectorMode: "overview" | "traffic" | "finding" | "task" | "timeline";
   cases: Case[];
   knowledgeDialog: "hypotheses" | "mcp" | "observer" | "reports" | null;
@@ -478,7 +479,8 @@ export const useStore = create<State>((set, get) => ({
       agentEvents: takeRecent(agentEvents.map((e) => ({
         id: e.id, kind: e.kind, text: e.text, tool: e.tool, refs: e.refs,
         runId: e.runId, executionId: e.executionId, outcome: e.outcome,
-        recoveredByExecutionId: e.recoveredByExecutionId, createdAt: e.createdAt,
+        recoveredByExecutionId: e.recoveredByExecutionId,
+        failureDiagnostic: e.failureDiagnostic, createdAt: e.createdAt,
       })), CLIENT_AGENT_EVENT_LIMIT),
       activeRun,
       continuationRun: latestRun?.status === "needs_continuation" ? latestRun : null,
@@ -857,7 +859,7 @@ export const useStore = create<State>((set, get) => ({
       get().addAgentEvent({
         kind: "tool_result", text: `${event.tool} → ${event.content}`, tool: event.tool,
         refs: event.refs ?? null, runId: event.runId, executionId: event.executionId,
-        outcome: event.outcome,
+        outcome: event.outcome, failureDiagnostic: event.failureDiagnostic ?? null,
       });
     }
     else if (event.type === "agent_tool_blocked" && event.caseId === cid) get().addAgentEvent({ kind: "tool_result", text: `${event.tool} blocked → ${event.reason}\n${event.input}` });

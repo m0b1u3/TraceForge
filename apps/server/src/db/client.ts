@@ -136,7 +136,7 @@ export function createDb(path: string) {
       seq INTEGER PRIMARY KEY AUTOINCREMENT,
       id TEXT NOT NULL, case_id TEXT NOT NULL, kind TEXT NOT NULL,
       text TEXT NOT NULL, tool TEXT, refs_json TEXT, run_id TEXT, execution_id TEXT,
-      outcome TEXT, recovered_by_execution_id TEXT, created_at TEXT NOT NULL
+      outcome TEXT, recovered_by_execution_id TEXT, failure_diagnostic_json TEXT, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_agent_events_case ON agent_events(case_id);
     CREATE TABLE IF NOT EXISTS hypotheses (
@@ -217,6 +217,7 @@ export function createDb(path: string) {
     { name: "execution_id", definition: "TEXT" },
     { name: "outcome", definition: "TEXT" },
     { name: "recovered_by_execution_id", definition: "TEXT" },
+    { name: "failure_diagnostic_json", definition: "TEXT" },
   ]);
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_agent_events_execution ON agent_events(case_id, execution_id)");
   ensureColumns("facts", [

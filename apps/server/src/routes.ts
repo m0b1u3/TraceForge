@@ -1264,11 +1264,11 @@ export function registerRoutes(
         agentEventStore.markRecovered(id, recoveredExecutionIds, executionId);
         bus.emit({
           type: "agent_tool_result", caseId: id, runId, executionId, tool: e.name ?? "",
-          content: e.content, outcome, recoveredExecutionIds, refs,
+          content: e.content, outcome, recoveredExecutionIds, failureDiagnostic: e.failureDiagnostic ?? null, refs,
         });
         agentEventStore.append(
           id, "tool_result", `${e.name} → ${e.content}`, e.name ?? undefined, undefined, refs ?? undefined,
-          { runId, executionId, outcome },
+          { runId, executionId, outcome, failureDiagnostic: e.failureDiagnostic },
         );
         trajectory.push(`[result] ${e.name} → ${e.content}`);
       }

@@ -1,5 +1,5 @@
 import { Check, Copy, Eye, EyeSlash, Fingerprint, TerminalWindow, X } from "@phosphor-icons/react";
-import type { Fact } from "@traceforge/shared";
+import type { Fact, ToolFailureDiagnostic } from "@traceforge/shared";
 import { confidencePercent } from "../knowledge/knowledge-window.js";
 import { Button } from "../ui/button.js";
 import { useStore } from "../../store.js";
@@ -46,9 +46,25 @@ export function FindingInspector({ fact, targetRequestId = null, onTargetHandled
   </InspectorShell>;
 }
 
-export function ToolEventInspector({ event }: { event: { kind: "tool_call" | "tool_result"; label: string; text: string } }) {
+export function ToolEventInspector({ event }: { event: { kind: "tool_call" | "tool_result"; label: string; text: string; outcome?: "running" | "succeeded" | "failed" | "recovered" | null; failureDiagnostic?: ToolFailureDiagnostic | null } }) {
   const close = useStore((state) => state.selectAgentEvent);
-  return <InspectorShell kicker="Agent trace" title={event.label} icon={<TerminalWindow size={15} />} onClose={() => close(null)}><InspectorCode label={event.kind === "tool_call" ? "Arguments" : "Result"} value={event.text} /></InspectorShell>;
+  const diagnostic = event.failureDiagnostic;
+  return <InspectorShell kicker="Agent trace" title={event.label} icon={<TerminalWindow size={15} />} onClose={() => close(null)}>
+    {(event.outcome || diagnostic) && <dl className="inspector-meta">
+      {event.outcome && <div><dt>Status</dt><dd>{formatDiagnosticLabel(event.outcome)}</dd></div>}
+      {diagnostic && <div><dt>Failure type</dt><dd>{formatDiagnosticLabel(diagnostic.category)}</dd></div>}
+      {diagnostic && <div><dt>Retry</dt><dd>{diagnostic.retryable ? "Safe to retry with limits" : "Change required before retry"}</dd></div>}
+    </dl>}
+    {diagnostic && <section className="inspector-diagnostic">
+      <strong>{diagnostic.summary}</strong>
+      <p>{diagnostic.recommendation}</p>
+    </section>}
+    <InspectorCode label={event.kind === "tool_call" ? "Arguments" : "Result"} value={event.text} />
+  </InspectorShell>;
+}
+
+function formatDiagnosticLabel(value: string): string {
+  return value.split("_").map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join(" ");
 }
 
 export function InspectorShell({ elementRef, targeted = false, kicker, title, icon, onClose, children }: { elementRef?: Ref<HTMLDivElement>; targeted?: boolean; kicker: string; title: string; icon: ReactNode; onClose: () => void; children: ReactNode }) {

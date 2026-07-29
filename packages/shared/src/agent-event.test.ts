@@ -67,9 +67,16 @@ describe("AgentEventSchema", () => {
       executionId: "exec_1",
       outcome: "recovered",
       recoveredByExecutionId: "exec_2",
+      failureDiagnostic: {
+        category: "command_exit",
+        retryable: false,
+        summary: "The command completed with a non-zero exit status.",
+        recommendation: "Correct the command before retrying.",
+      },
       createdAt: "2026-06-26T00:00:00.000Z",
     });
     expect(e.outcome).toBe("recovered");
     expect(e.recoveredByExecutionId).toBe("exec_2");
+    expect(e.failureDiagnostic?.category).toBe("command_exit");
   });
 });

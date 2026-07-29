@@ -19,6 +19,7 @@ export type AgentConversationEventItem = {
   executionId?: string | null;
   outcome?: AgentUiEvent["outcome"];
   recoveredByExecutionId?: string | null;
+  failureDiagnostic?: AgentUiEvent["failureDiagnostic"];
 };
 
 export type AgentToolActivity = {
@@ -203,6 +204,7 @@ function formatAgentEvent(event: AgentUiEvent): Omit<AgentConversationEventItem,
       kind: event.kind, label: "Tool result", text, summary: compactToolText(text), refs: event.refs ?? null,
       executionId: event.executionId, outcome: event.outcome,
       recoveredByExecutionId: event.recoveredByExecutionId,
+      failureDiagnostic: event.failureDiagnostic,
     };
   }
   if (event.kind === "validation") {

@@ -54,6 +54,9 @@
 .inspector-meta > div { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border-subtle); font-size: 11px; }
 .inspector-meta dt { color: var(--foreground-muted); }
 .inspector-meta dd { min-width: 0; margin: 0; color: var(--foreground-secondary); overflow-wrap: anywhere; }
+.inspector-diagnostic { margin: 0 0 16px; padding: 12px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--warning) 7%, var(--surface-subtle)); box-shadow: inset 2px 0 0 color-mix(in srgb, var(--warning) 52%, transparent); }
+.inspector-diagnostic strong { display: block; color: var(--foreground); font-size: 12px; font-weight: 600; line-height: 1.5; }
+.inspector-diagnostic p { margin: 6px 0 0; color: var(--foreground-secondary); font-size: 12px; line-height: 1.55; }
 .inspector-data-block { margin-top: 18px; }
 .inspector-data-block > header { display: flex; justify-content: space-between; margin-bottom: 8px; color: var(--foreground-muted); font-family: var(--mono); font-size: 9px; letter-spacing: .07em; text-transform: uppercase; }
 .inspector-data-actions { display: inline-flex; align-items: center; gap: 4px; }

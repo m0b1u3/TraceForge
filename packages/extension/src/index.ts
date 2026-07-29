@@ -15,6 +15,7 @@ export {
   type ToolExecutionReport,
 } from "./agent-runtime.js";
 export type { ObserverReviewTrigger } from "./agent-runtime.js";
+export { diagnoseToolFailure, type ToolFailureHint } from "./tool-failure-diagnostic.js";
 export { compareTrafficResponses, makeCompareIdentityTrafficTool, makeHttpReplayTool, makeProposeScopeExpansionTool, makeReplayTrafficTool } from "./builtin-tools.js";
 export {
   assessValidationExperiment,

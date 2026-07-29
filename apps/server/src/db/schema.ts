@@ -192,6 +192,7 @@ export const agentEvents = sqliteTable("agent_events", {
   executionId: text("execution_id"),
   outcome: text("outcome"),
   recoveredByExecutionId: text("recovered_by_execution_id"),
+  failureDiagnosticJson: text("failure_diagnostic_json"),
   createdAt: text("created_at").notNull(),
 });
 

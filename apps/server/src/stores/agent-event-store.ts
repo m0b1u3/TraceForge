@@ -19,6 +19,7 @@ export class AgentEventStore {
       executionId?: string;
       outcome?: NonNullable<AgentEvent["outcome"]>;
       recoveredByExecutionId?: string;
+      failureDiagnostic?: NonNullable<AgentEvent["failureDiagnostic"]>;
     } = {},
   ): AgentEvent {
     const id = `ae_${randomUUID()}`;
@@ -29,12 +30,15 @@ export class AgentEventStore {
       executionId: lifecycle.executionId ?? null,
       outcome: lifecycle.outcome ?? null,
       recoveredByExecutionId: lifecycle.recoveredByExecutionId ?? null,
+      failureDiagnostic: lifecycle.failureDiagnostic ?? null,
       createdAt,
     });
     this.db.insert(agentEvents).values({
       id, caseId, kind, text, tool: e.tool, refsJson: e.refs ? JSON.stringify(e.refs) : null,
       runId: e.runId, executionId: e.executionId, outcome: e.outcome,
-      recoveredByExecutionId: e.recoveredByExecutionId, createdAt,
+      recoveredByExecutionId: e.recoveredByExecutionId,
+      failureDiagnosticJson: e.failureDiagnostic ? JSON.stringify(e.failureDiagnostic) : null,
+      createdAt,
     }).run();
     return e;
   }
@@ -70,6 +74,7 @@ export class AgentEventStore {
           executionId: row.executionId,
           outcome: row.outcome,
           recoveredByExecutionId: row.recoveredByExecutionId,
+          failureDiagnostic: row.failureDiagnosticJson ? JSON.parse(row.failureDiagnosticJson) : null,
         }),
       );
   }

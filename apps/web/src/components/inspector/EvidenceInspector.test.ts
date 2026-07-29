@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Fact } from "@traceforge/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { useStore } from "../../store.js";
-import { FindingInspector } from "./EvidenceInspector.js";
+import { FindingInspector, ToolEventInspector } from "./EvidenceInspector.js";
 
 // @ts-expect-error enable React act in jsdom tests
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -64,5 +64,30 @@ describe("FindingInspector", () => {
     expect(target?.classList.contains("is-targeted")).toBe(true);
     expect(target?.getAttribute("aria-current")).toBe("location");
     expect(document.activeElement).toBe(target);
+  });
+
+  it("explains a structured tool failure without hiding the raw result", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root?.render(createElement(ToolEventInspector, {
+      event: {
+        kind: "tool_result",
+        label: "Tool result",
+        text: "analysis_tool → exit=2",
+        outcome: "failed",
+        failureDiagnostic: {
+          category: "command_exit",
+          retryable: false,
+          summary: "The command completed with a non-zero exit status.",
+          recommendation: "Correct the command before retrying.",
+        },
+      },
+    })));
+
+    expect(container.textContent).toContain("Command Exit");
+    expect(container.textContent).toContain("Change required before retry");
+    expect(container.textContent).toContain("Correct the command before retrying.");
+    expect(container.textContent).toContain("analysis_tool → exit=2");
   });
 });
