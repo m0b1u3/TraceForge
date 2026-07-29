@@ -1162,7 +1162,7 @@ export function registerRoutes(
     });
     let validationFeedback = recoverValidationFeedback(timelineStore.listByCase(id));
     const captureValidationOutcome = (): ValidationOutcomeSnapshot => {
-      const evidenceFacts = factStore.listByCase(id).filter((fact) => fact.type !== "failed_attempt");
+      const evidenceFacts = factStore.listByCase(id);
       const evidenceTraffic = traffic.listByCase(id);
       return {
       evidenceCount: evidenceFacts.length + evidenceTraffic.length,
@@ -1378,7 +1378,6 @@ export function registerRoutes(
           input: call.input,
           referencedKnowledge,
           usageScores: knowledgeUsageStore.scores(id, runId),
-          failedAttempts: [],
           alternatives,
         });
       },

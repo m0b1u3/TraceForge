@@ -36,8 +36,6 @@ describe("cross-run shared knowledge with real SQLite", () => {
     facts.update(unrelatedFinding.id, { findingStatus: "verified", verificationSummary: "TLS configuration observed.", observations: [{ id: "obs_tls", sourceType: "traffic", sourceRef: "traffic_1", runId: "run_1", condition: "TLS", summary: "configuration observed", observedAt: "now" }] });
     const conflicted = facts.create("case_1", { sourceRunId: "run_1", type: "credential", title: "Conflicted admin password", value: { password: "wrong" }, source: { type: "manual", ref: "note" }, confidence: 0.5, tags: [] });
     facts.update(conflicted.id, { validity: "conflicted" });
-    facts.create("case_1", { sourceRunId: "run_1", type: "failed_attempt", title: "Old failure", value: { tool: "http_replay", input: { url: "/api/orders/42" } }, source: { type: "agent", ref: "run_1" }, confidence: 1, tags: ["failure-memory"] });
-    facts.create("case_1", { sourceRunId: "run_2", type: "failed_attempt", title: "Current failure", value: { tool: "http_replay", input: { url: "/current" } }, source: { type: "agent", ref: "run_2" }, confidence: 1, tags: ["failure-memory"] });
     const activeIdentity = identities.create("case_1", { name: "alice", kind: "user", status: "active", credentials: { username: "alice", password: "plain" }, headers: {}, cookies: [] });
     identities.create("case_1", { name: "unrelated-service", kind: "service", status: "active", credentials: {}, headers: {}, cookies: [] });
     identities.create("case_1", { name: "old", kind: "admin", status: "revoked", credentials: {}, headers: {}, cookies: [] });
@@ -50,7 +48,6 @@ describe("cross-run shared knowledge with real SQLite", () => {
     expect(knowledge.identities.join(" ")).not.toContain("old");
     expect(knowledge.identities[0]).toContain("alice");
     expect(knowledge.attackPaths[0]).toContain("User to order");
-    expect(knowledge.failedAttempts).toEqual([]);
     expect(knowledge.excludedConflictCount).toBeGreaterThanOrEqual(1);
     expect(knowledge.injectedFactIds).toContain(finding.id);
     expect(knowledge.injectedKnowledgeRefs).toEqual(expect.arrayContaining([

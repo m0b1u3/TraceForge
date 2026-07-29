@@ -32,12 +32,12 @@ describe("buildContext", () => {
   it("injects a bounded trusted cross-run summary and reports injected ids", () => {
     const r = buildContext({ ...base, sharedKnowledge: {
       verifiedFindings: ["fact_verified Verified IDOR"], identities: ["identity_1 user alice"],
-      attackPaths: ["path_1 validated"], failedAttempts: ["fact_fail do not repeat"],
-      excludedConflictCount: 2, injectedFactIds: ["fact_verified", "fact_fail"],
+      attackPaths: ["path_1 validated"],
+      excludedConflictCount: 2, injectedFactIds: ["fact_verified"],
     } }, budget);
     expect(r.messages[0].content).toContain("Verified IDOR");
     expect(r.messages[0].content).toContain("已隔离 2");
-    expect(r.injectedFactIds).toEqual(["fact_verified", "fact_fail"]);
+    expect(r.injectedFactIds).toEqual(["fact_verified"]);
   });
   it("degrades when over budget", () => {
     const huge = { ...base, doneTaskSummaries: Array.from({ length: 200 }, (_, i) => `task ${i} 结论很长很长很长很长`), farSummary: "x".repeat(5000) };

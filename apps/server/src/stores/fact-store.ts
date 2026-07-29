@@ -32,6 +32,9 @@ export class FactStore {
   constructor(private db: Db) {}
 
   create(caseId: string, input: FactInput): Fact {
+    if (input.type === "failed_attempt") {
+      throw new Error("operational failures belong to agent execution events, not facts");
+    }
     const id = `fact_${randomUUID()}`;
     const createdAt = new Date().toISOString();
     const f = FactSchema.parse({
@@ -69,6 +72,9 @@ export class FactStore {
   update(id: string, patch: Partial<Pick<Fact, "type" | "title" | "value" | "confidence" | "tags" | "validity" | "findingStatus" | "evidenceRefs" | "hypothesisIds" | "taskIds" | "actionIds" | "verificationSummary" | "observations">>): Fact | undefined {
     const cur = this.getById(id);
     if (!cur) return undefined;
+    if (patch.type === "failed_attempt") {
+      throw new Error("operational failures belong to agent execution events, not facts");
+    }
     const updatedAt = new Date().toISOString();
     const requestedStatus = patch.findingStatus ?? cur.findingStatus;
     if (cur.type === "finding" && cur.findingStatus && requestedStatus

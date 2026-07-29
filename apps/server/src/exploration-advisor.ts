@@ -1,4 +1,3 @@
-import type { Fact } from "@traceforge/shared";
 import type { KnowledgeRef, KnowledgeUsageScore } from "./stores/knowledge-usage-store.js";
 
 export interface ExplorationAdviceInput {
@@ -6,7 +5,6 @@ export interface ExplorationAdviceInput {
   input: unknown;
   referencedKnowledge: KnowledgeRef[];
   usageScores: Map<string, KnowledgeUsageScore>;
-  failedAttempts: Fact[];
   alternatives: string[];
 }
 
@@ -22,29 +20,9 @@ const META_TOOLS = new Set([
   "recall_case_knowledge",
 ]);
 
-function tokens(value: unknown): Set<string> {
-  const text = JSON.stringify(value).toLowerCase();
-  return new Set(text.match(/[a-z0-9_./:-]{3,}/g) ?? []);
-}
-
-export function inputSimilarity(left: unknown, right: unknown): number {
-  const a = tokens(left);
-  const b = tokens(right);
-  if (!a.size || !b.size) return 0;
-  let intersection = 0;
-  for (const token of a) if (b.has(token)) intersection += 1;
-  return intersection / (a.size + b.size - intersection);
-}
-
 export function buildExplorationAdvisory(input: ExplorationAdviceInput): string | undefined {
   if (META_TOOLS.has(input.tool)) return undefined;
   const reasons: string[] = [];
-
-  const similarFailure = input.failedAttempts.find((fact) => {
-    const value = fact.value as { tool?: string; input?: unknown };
-    return value?.tool === input.tool && inputSimilarity(value.input, input.input) >= 0.72;
-  });
-  if (similarFailure) reasons.push(`A highly similar ${input.tool} attempt already failed (${similarFailure.id}).`);
 
   const lowYield = input.referencedKnowledge.filter((ref) => {
     const score = input.usageScores.get(ref.id);

@@ -49,7 +49,7 @@ function usageBoost(id: string, sources: SharedKnowledgeSources): number {
     - (usage.used === 0 ? Math.min(5, usage.injected) : 0);
 }
 
-export function buildSharedKnowledge(sources: SharedKnowledgeSources, currentRunId: string, focus: SharedKnowledgeFocus = { goal: "" }): SharedKnowledgeContext {
+export function buildSharedKnowledge(sources: SharedKnowledgeSources, _currentRunId: string, focus: SharedKnowledgeFocus = { goal: "" }): SharedKnowledgeContext {
   const excluded = sources.facts.filter((fact) =>
     fact.validity !== "valid" || ["needs_review", "rejected", "stale"].includes(fact.findingStatus ?? ""));
   const pathScores = new Map(sources.attackPaths.map((path) => [path.id, focusScore(`${path.title} ${path.objective} ${path.breakpoint ?? ""} ${path.steps.map((step) => `${step.title} ${step.description} ${step.validation}`).join(" ")}`, focus)]));
@@ -98,7 +98,6 @@ export function buildSharedKnowledge(sources: SharedKnowledgeSources, currentRun
       return `${identity.id} [${identity.kind}] ${identity.name} v${identity.version}${credentials}`;
     }),
     attackPaths: attackPaths.map((path) => `${path.id} [${path.status}] ${path.title}; objective=${clip(path.objective)}${path.breakpoint ? `; breakpoint=${clip(path.breakpoint)}` : ""}`),
-    failedAttempts: [],
     excludedConflictCount: excluded.length,
     injectedFactIds: verifiedFindings.map((fact) => fact.id),
     injectedKnowledgeRefs: [

@@ -22,6 +22,18 @@ describe("FactStore", () => {
     expect(list[0].tags).toEqual(["auth"]);
     expect(store.listByCase("other")).toHaveLength(0);
   });
+
+  it("rejects operational failures as facts", () => {
+    const store = new FactStore(db);
+    expect(() => store.create("case_1", {
+      type: "failed_attempt",
+      title: "tool failed",
+      value: { tool: "analyze" },
+      source: { type: "agent", ref: "run_1" },
+      confidence: 1,
+      tags: [],
+    })).toThrow("operational failures belong to agent execution events");
+  });
 });
 
 describe("TaskStore", () => {

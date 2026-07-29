@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
+import { applyDataMigrations } from "./data-migrations.js";
 
 export function createDb(path: string) {
   const sqlite = new Database(path);
@@ -255,6 +256,7 @@ export function createDb(path: string) {
   if (!hasUsageColumn("output_cost_micros")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN output_cost_micros INTEGER");
   if (!hasUsageColumn("total_cost_micros")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN total_cost_micros INTEGER");
   if (!hasUsageColumn("source")) sqlite.exec("ALTER TABLE agent_run_usage ADD COLUMN source TEXT NOT NULL DEFAULT 'agent'");
+  applyDataMigrations(sqlite);
   return drizzle(sqlite);
 }
 
