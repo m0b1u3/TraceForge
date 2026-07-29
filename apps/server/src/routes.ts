@@ -78,7 +78,6 @@ import { buildValidationWorkflowSnapshot, makeGetValidationWorkflowStateTool, ty
 import {
   InvestigationOutcomePolicy,
   InvestigationStructurePolicy,
-  isInvestigationStructureTool,
 } from "./investigation-runtime-policy.js";
 import { reconcileUnsupportedEndpointFacts } from "./endpoint-fact-reconciliation.js";
 
@@ -1140,13 +1139,9 @@ export function registerRoutes(
 - This protocol organizes exploration; it does not forbid related targets already inside the authorized scope or suppress useful plaintext clues.
 `;
 
-    const failedAttempts = factStore.listByCase(id)
-      .filter((f) => f.type === "failed_attempt" && f.validity === "valid")
-      .map((f) => {
-        const v = f.value as { tool?: string; input?: unknown } | undefined;
-        return { tool: v?.tool ?? f.title, input: v?.input ?? {} };
-      });
-    const failureMemory = new FailureMemory(failedAttempts);
+    // Failed executions are Run-local operational state. They remain available
+    // through persisted agent events, but must not become cross-Run knowledge.
+    const failureMemory = new FailureMemory();
 
     const trajectory: string[] = [];
 
@@ -1383,8 +1378,7 @@ export function registerRoutes(
           input: call.input,
           referencedKnowledge,
           usageScores: knowledgeUsageStore.scores(id, runId),
-          failedAttempts: factStore.listByCase(id).filter((fact) =>
-            fact.type === "failed_attempt" && fact.validity === "valid" && fact.sourceRunId !== runId),
+          failedAttempts: [],
           alternatives,
         });
       },
@@ -1611,25 +1605,8 @@ export function registerRoutes(
           }
           return;
         }
-        if (report.ok) return;
-        if (report.rejected) return;
-        if (report.blocked) return;
-        if (report.transient) return;
-        if (report.failureClass && report.failureClass !== "permanent") return;
-        // Control-plane schema and lifecycle corrections belong to runtime failure
-        // memory. They are not durable security evidence.
-        if (isInvestigationStructureTool(report.name)) return;
-        const fact = factStore.create(id, {
-          type: "failed_attempt",
-          title: `Failed attempt: ${report.name}`,
-          value: { tool: report.name, input: report.input, reason: report.content },
-          source: { type: "agent", ref: runId },
-          confidence: 1,
-          tags: ["failure-memory"],
-        });
-        const entry = timelineStore.append(id, "fact_created", `Failed attempt: ${report.name}`, fact.id);
-        bus.emit({ type: "fact_created", fact });
-        bus.emit({ type: "timeline_appended", entry });
+        // Execution failures are already persisted as scoped agent events with
+        // diagnostics. They are not observations and must never become Facts.
       },
     }).finally(offTimelineCollect);
 

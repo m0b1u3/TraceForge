@@ -76,6 +76,17 @@ export function diagnoseToolFailure(content: string, hint?: ToolFailureHint): To
   return { category, ...DIAGNOSTICS[category] };
 }
 
+export type ToolFailureClass = "permanent" | "transient" | "policy" | "environment";
+
+export function failureClassFromDiagnostic(diagnostic: ToolFailureDiagnostic): ToolFailureClass {
+  if (diagnostic.retryable) return "transient";
+  if (["authorization", "rejected", "policy_block"].includes(diagnostic.category)) return "policy";
+  if (["permission", "incompatible_environment", "unavailable_dependency"].includes(diagnostic.category)) {
+    return "environment";
+  }
+  return "permanent";
+}
+
 function classifyCategory(text: string): ToolFailureDiagnostic["category"] {
   if (/\bexit=(?!(?:0)(?:\D|$))-?\d+\b/i.test(text)) return "command_exit";
   if (hasAny(text, ["timeout", "timed out", "etimedout", "gateway timeout"])) return "timeout";
@@ -95,7 +106,7 @@ function classifyCategory(text: string): ToolFailureDiagnostic["category"] {
     "too many requests", "rate limit", "empty reply from server",
   ])) return "network";
   if (hasAny(text, [
-    "browser not started", "no browser session", "unknown mcp server", "mcp server",
+    "browser not started", "浏览器未启动", "no browser session", "unknown mcp server", "mcp server",
     "command not found", "module not found", "tool not found", "enoent", "cannot find", "missing dependency",
   ])) return "unavailable_dependency";
   if (hasAny(text, ["tool_error", "spawn failed", "exception", "internal error"])) return "internal";

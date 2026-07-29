@@ -28,20 +28,69 @@ describe("FailureMemory", () => {
       .toBe(computeFailureFingerprint("t", { b: 2, a: 1 }));
   });
 
-  it("clusters equivalent injection variants semantically", () => {
-    const first = { url: "http://target/article?id=1%20OR%201=1", method: "GET" };
-    const second = { method: "GET", url: "http://target/article?id=2%27%20or%20%271%27=%271" };
-    expect(computeFailureFingerprint("http_replay", first))
-      .toBe(computeFailureFingerprint("http_replay", second));
+  it("does not collapse changed investigation inputs into one product rule", () => {
+    const first = { target: "https://target.test/resource?candidate=first", method: "GET" };
+    const second = { method: "GET", target: "https://target.test/resource?candidate=second" };
+    expect(computeFailureFingerprint("request", first))
+      .not.toBe(computeFailureFingerprint("request", second));
   });
 
-  it("blocks a transient semantic cluster after two failures", () => {
+  it("allows one bounded retry for a retryable failure", () => {
     const memory = new FailureMemory();
-    const first = { url: "http://target/article?id=1 OR 1=1", method: "GET" };
-    const second = { url: "http://target/article?id=2' OR '1'='1", method: "GET" };
-    memory.add("http_replay", first, 2);
-    expect(memory.has("http_replay", second)).toBe(false);
-    memory.add("http_replay", second, 2);
-    expect(memory.has("http_replay", first)).toBe(true);
+    const input = { target: "https://target.test/resource" };
+    const diagnostic = {
+      category: "network" as const,
+      retryable: true,
+      summary: "Transport failed.",
+      recommendation: "Retry once.",
+    };
+    memory.recordFailure("request", input, diagnostic);
+    expect(memory.has("request", input)).toBe(false);
+    memory.recordFailure("request", input, diagnostic);
+    expect(memory.getBlocked("request", input)).toMatchObject({
+      observations: 2,
+      diagnostic: { category: "network", retryable: true },
+    });
+  });
+
+  it("blocks an identical non-retryable call but permits a corrected input", () => {
+    const memory = new FailureMemory();
+    const diagnostic = {
+      category: "invalid_input" as const,
+      retryable: false,
+      summary: "Input was rejected.",
+      recommendation: "Correct the input.",
+    };
+    memory.recordFailure("analyze", { path: "missing" }, diagnostic);
+    expect(memory.has("analyze", { path: "missing" })).toBe(true);
+    expect(memory.has("analyze", { path: "available" })).toBe(false);
+  });
+
+  it("clears only a resolved environmental precondition category", () => {
+    const memory = new FailureMemory([
+      {
+        tool: "analyze",
+        input: { path: "artifact.bin" },
+        diagnostic: {
+          category: "unavailable_dependency",
+          retryable: false,
+          summary: "Analyzer unavailable.",
+          recommendation: "Install an analyzer.",
+        },
+      },
+      {
+        tool: "request",
+        input: { target: "https://target.test" },
+        diagnostic: {
+          category: "invalid_input",
+          retryable: false,
+          summary: "Input rejected.",
+          recommendation: "Correct the input.",
+        },
+      },
+    ]);
+    memory.clearCategory("unavailable_dependency");
+    expect(memory.has("analyze", { path: "artifact.bin" })).toBe(false);
+    expect(memory.has("request", { target: "https://target.test" })).toBe(true);
   });
 });

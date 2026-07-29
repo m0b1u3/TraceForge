@@ -1,7 +1,12 @@
 export type { ToolResult, ToolDescriptor, NativeToolDef } from "./tool.js";
 export { ToolRegistry } from "./registry.js";
 export { ApprovalGate, type ApprovalDecision, type ApprovalAsker } from "./approval-gate.js";
-export { FailureMemory, computeFailureFingerprint, type FailureRecord } from "./failure-memory.js";
+export {
+  FailureMemory,
+  computeFailureFingerprint,
+  type BlockedFailure,
+  type FailureRecord,
+} from "./failure-memory.js";
 export type {
   LlmProvider, ExtractJsonArgs, ToolCall, TurnMessage, RunTurn, RunToolsArgs, StreamToolsHandlers, UsageSnapshot,
 } from "./provider.js";
@@ -15,7 +20,12 @@ export {
   type ToolExecutionReport,
 } from "./agent-runtime.js";
 export type { ObserverReviewTrigger } from "./agent-runtime.js";
-export { diagnoseToolFailure, type ToolFailureHint } from "./tool-failure-diagnostic.js";
+export {
+  diagnoseToolFailure,
+  failureClassFromDiagnostic,
+  type ToolFailureClass,
+  type ToolFailureHint,
+} from "./tool-failure-diagnostic.js";
 export { compareTrafficResponses, makeCompareIdentityTrafficTool, makeHttpReplayTool, makeProposeScopeExpansionTool, makeReplayTrafficTool } from "./builtin-tools.js";
 export {
   assessValidationExperiment,

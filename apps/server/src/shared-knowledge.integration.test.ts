@@ -50,8 +50,7 @@ describe("cross-run shared knowledge with real SQLite", () => {
     expect(knowledge.identities.join(" ")).not.toContain("old");
     expect(knowledge.identities[0]).toContain("alice");
     expect(knowledge.attackPaths[0]).toContain("User to order");
-    expect(knowledge.failedAttempts.join(" ")).toContain("/api/orders/42");
-    expect(knowledge.failedAttempts.join(" ")).not.toContain("/current");
+    expect(knowledge.failedAttempts).toEqual([]);
     expect(knowledge.excludedConflictCount).toBeGreaterThanOrEqual(1);
     expect(knowledge.injectedFactIds).toContain(finding.id);
     expect(knowledge.injectedKnowledgeRefs).toEqual(expect.arrayContaining([

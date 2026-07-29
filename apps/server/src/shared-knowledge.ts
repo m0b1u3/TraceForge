@@ -91,16 +91,6 @@ export function buildSharedKnowledge(sources: SharedKnowledgeSources, currentRun
       return score(b) - score(a) || b.updatedAt.localeCompare(a.updatedAt);
     })
     .slice(0, 5);
-  const failedAttempts = sources.facts
-    .filter((fact) => fact.type === "failed_attempt" && fact.validity === "valid" && fact.sourceRunId !== currentRunId)
-    .sort((a, b) => {
-      const score = (fact: Fact) => focusScore(`${fact.title} ${JSON.stringify(fact.value)}`, focus) + freshness(fact.updatedAt)
-        + usageBoost(fact.id, sources)
-        + (["test", "validate"].includes(phase) ? 8 : 0);
-      return score(b) - score(a) || b.updatedAt.localeCompare(a.updatedAt);
-    })
-    .slice(0, 5);
-
   return {
     verifiedFindings: verifiedFindings.map((fact) => `${fact.id} ${fact.title} — ${clip(fact.verificationSummary ?? JSON.stringify(fact.value))}`),
     identities: identities.map((identity) => {
@@ -108,12 +98,11 @@ export function buildSharedKnowledge(sources: SharedKnowledgeSources, currentRun
       return `${identity.id} [${identity.kind}] ${identity.name} v${identity.version}${credentials}`;
     }),
     attackPaths: attackPaths.map((path) => `${path.id} [${path.status}] ${path.title}; objective=${clip(path.objective)}${path.breakpoint ? `; breakpoint=${clip(path.breakpoint)}` : ""}`),
-    failedAttempts: failedAttempts.map((fact) => `${fact.id} ${clip(JSON.stringify(fact.value))}`),
+    failedAttempts: [],
     excludedConflictCount: excluded.length,
-    injectedFactIds: [...verifiedFindings.map((fact) => fact.id), ...failedAttempts.map((fact) => fact.id)],
+    injectedFactIds: verifiedFindings.map((fact) => fact.id),
     injectedKnowledgeRefs: [
       ...verifiedFindings.map((fact) => ({ id: fact.id, kind: "fact" as const })),
-      ...failedAttempts.map((fact) => ({ id: fact.id, kind: "fact" as const })),
       ...identities.map((identity) => ({ id: identity.id, kind: "identity" as const })),
       ...attackPaths.map((path) => ({ id: path.id, kind: "attack_path" as const })),
     ],

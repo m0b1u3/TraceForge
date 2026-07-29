@@ -59,7 +59,7 @@ afterEach(async () => {
 });
 
 describe("agent failure memory with real LLM", () => {
-  it("records a failed command attempt from a real LLM tool call", async () => {
+  it("keeps a failed command in execution events instead of security facts", async () => {
     const res = await app.inject({
       method: "POST",
       url: `/api/cases/${caseId}/agent/run`,
@@ -74,8 +74,7 @@ describe("agent failure memory with real LLM", () => {
     const failedAttempts = (factsRes.json() as Fact[]).filter((f) => f.type === "failed_attempt" && f.tags.includes("failure-memory"));
 
     expect(toolResults.length).toBeGreaterThanOrEqual(1);
-    expect(failedAttempts.length).toBeGreaterThanOrEqual(1);
-    expect(failedAttempts[0].value).toMatchObject({ tool: "exec_command" });
+    expect(failedAttempts).toHaveLength(0);
     await app.inject({ method: "POST", url: `/api/agent/runs/${res.json().run.id}/interrupt`, payload: { reason: "assertions complete" } });
   }, 120000);
 });

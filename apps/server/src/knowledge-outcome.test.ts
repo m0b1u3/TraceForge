@@ -39,7 +39,7 @@ describe("knowledge outcome classification", () => {
     })).toMatchObject({ positive: 2, negative: 0 });
   });
 
-  it("penalizes only permanent failures", () => {
+  it("does not treat operational failures as knowledge outcomes", () => {
     expect(classifyKnowledgeOutcome({
       name: "http_replay", input: {}, content: "timeout", ok: false, transient: true,
       failureClass: "transient",
@@ -47,7 +47,7 @@ describe("knowledge outcome classification", () => {
     expect(classifyKnowledgeOutcome({
       name: "http_replay", input: {}, content: "invalid request", ok: false,
       failureClass: "permanent",
-    })).toMatchObject({ positive: 0, negative: 1 });
+    })).toMatchObject({ positive: 0, negative: 0 });
   });
 
   it("links a later verified result to knowledge used earlier in the investigation", () => {

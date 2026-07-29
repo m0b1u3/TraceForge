@@ -4,7 +4,11 @@ import type { ToolRegistry } from "./registry.js";
 import type { ApprovalGate } from "./approval-gate.js";
 import { FailureMemory } from "./failure-memory.js";
 import type { ToolFailureDiagnostic } from "@traceforge/shared";
-import { diagnoseToolFailure } from "./tool-failure-diagnostic.js";
+import {
+  diagnoseToolFailure,
+  failureClassFromDiagnostic,
+  type ToolFailureClass,
+} from "./tool-failure-diagnostic.js";
 
 export interface AgentEvent {
   type: "tool_call" | "tool_result" | "tool_rejected" | "tool_blocked" | "tool_advisory" | "text" | "reasoning" | "done" |
@@ -200,63 +204,8 @@ const RUN_BUDGET_NOTICE = `[Run budget notice]
 3. 如果缺少证据、权限、输入或外部条件，请记录 blocked task 或明确说明阻塞原因。
 不要为了消耗轮次而继续调用无关工具。`;
 
-export type ToolFailureClass = "permanent" | "transient" | "policy" | "environment";
-
 export function classifyToolFailure(content: string): ToolFailureClass {
-  const text = content.toLowerCase();
-  if (
-    text.includes("out of scope")
-    || text.includes("scope guard")
-    || text.includes("approval pending")
-    || text.includes("user rejected")
-    || text.includes("human control")
-    || text.includes("handoff")
-    || text.includes("not authorized")
-  ) {
-    return "policy";
-  }
-  if (
-    text.includes("浏览器未启动")
-    || text.includes("browser not started")
-    || text.includes("no browser session")
-    || text.includes("unknown mcp server")
-    || text.includes("mcp call failed")
-    || text.includes("mcp server")
-    || text.includes("resource temporarily unavailable")
-    || text.includes("spawn eagain")
-    || text.includes("emfile")
-    || text.includes("enomem")
-    || text.includes("too many open files")
-  ) {
-    return "environment";
-  }
-  if (
-    text.includes("timeout")
-    || text.includes("timed out")
-    || text.includes("etimedout")
-    || text.includes("econnreset")
-    || text.includes("econnrefused")
-    || text.includes("enotfound")
-    || text.includes("eai_again")
-    || text.includes("network")
-    || text.includes("socket hang up")
-    || text.includes("temporary failure in name resolution")
-    || text.includes("http 408")
-    || text.includes("http 429")
-    || text.includes("http 500")
-    || text.includes("http 502")
-    || text.includes("http 503")
-    || text.includes("http 504")
-    || text.includes("too many requests")
-    || text.includes("rate limit")
-    || text.includes("service unavailable")
-    || text.includes("bad gateway")
-    || text.includes("gateway timeout")
-    || text.includes("empty reply from server")
-  ) {
-    return "transient";
-  }
-  return "permanent";
+  return failureClassFromDiagnostic(diagnoseToolFailure(content));
 }
 
 function changesWorkspace(toolName: string): boolean {
@@ -557,10 +506,21 @@ export class AgentRuntime {
       return result;
     }
 
-    if (failureMemory.has(call.name, call.input)) {
-      const content = `[tool_blocked] ${call.name}: 该调用已在本运行中失败过，使用相同输入不会再次执行。请换用其他方法，或当本地环境无法解决时使用 download_tool 下载现成工具。`;
+    const blockedFailure = failureMemory.getBlocked(call.name, call.input);
+    if (blockedFailure) {
+      const retryNote = blockedFailure.diagnostic.retryable
+        ? "The bounded retry allowance for this exact call is exhausted."
+        : "Repeating this exact call cannot resolve the recorded failure.";
+      const content = [
+        `[tool_blocked: repeated_identical_failure] ${call.name}`,
+        `Previous category: ${blockedFailure.diagnostic.category}`,
+        `Observed failures: ${blockedFailure.observations}`,
+        retryNote,
+        `Recommendation: ${blockedFailure.diagnostic.recommendation}`,
+        "A changed input, another tool, or a different execution approach remains allowed.",
+      ].join("\n");
       onEvent({ type: "tool_blocked", name: call.name, input: JSON.stringify(call.input), content });
-      const result = { content, ok: false, scopeKey, failureDiagnostic: diagnoseToolFailure(content, "policy_block") };
+      const result = { content, ok: false, scopeKey, failureDiagnostic: blockedFailure.diagnostic };
       if (options.onToolExecuted) {
         await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, blocked: true, failureDiagnostic: result.failureDiagnostic, risk: tool.risk });
       }
@@ -602,12 +562,15 @@ export class AgentRuntime {
         options.signal,
       );
       const effectiveOk = res.ok;
-      if (effectiveOk && changesWorkspace(call.name)) failureMemory.clear();
-      const failureClass = effectiveOk ? undefined : classifyToolFailure(res.content);
       const failureDiagnostic = effectiveOk ? undefined : diagnoseToolFailure(res.content);
-      const transient = failureClass === "transient";
-      if (!effectiveOk && failureClass === "permanent") failureMemory.add(call.name, call.input);
-      if (!effectiveOk && failureClass === "transient") failureMemory.add(call.name, call.input, 2);
+      const failureClass = failureDiagnostic ? failureClassFromDiagnostic(failureDiagnostic) : undefined;
+      const transient = failureDiagnostic?.retryable === true;
+      if (effectiveOk) {
+        failureMemory.resolve(call.name, call.input);
+        if (changesWorkspace(call.name)) failureMemory.clearCategory("unavailable_dependency");
+      } else if (failureDiagnostic) {
+        failureMemory.recordFailure(call.name, call.input, failureDiagnostic);
+      }
       if (!opts.deferResultEvent) {
         onEvent({
           type: "tool_result",
@@ -637,9 +600,9 @@ export class AgentRuntime {
       }
       return result;
     } catch (error) {
-      failureMemory.add(call.name, call.input);
       const content = `[tool_error] ${call.name}: ${(error as Error).message}`;
-      const failureDiagnostic = diagnoseToolFailure(content, "internal");
+      const failureDiagnostic = diagnoseToolFailure(content);
+      failureMemory.recordFailure(call.name, call.input, failureDiagnostic);
       if (!opts.deferResultEvent) {
         onEvent({ type: "tool_result", name: call.name, executionId: call.id, outcome: "failed", failureDiagnostic, content });
       }

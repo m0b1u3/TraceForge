@@ -11,10 +11,7 @@ const neutral = (reason: string): KnowledgeOutcome => ({ positive: 0, negative: 
 
 export function classifyKnowledgeOutcome(report: ToolExecutionReport): KnowledgeOutcome {
   if (!report.ok) {
-    if (report.rejected || report.blocked || report.transient || report.failureClass !== "permanent") {
-      return neutral("non-conclusive tool result");
-    }
-    return { positive: 0, negative: 1, reason: "permanent tool failure" };
+    return neutral("operational failure is not a knowledge outcome");
   }
 
   const input = (report.input ?? {}) as Record<string, unknown>;
