@@ -86,7 +86,7 @@ export interface ReferenceReader {
 export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: TimelineWriter, emit: Emit, runId?: string): ToolDescriptor {
   return {
     name: "record_fact",
-    description: "把一个发现记录为 Fact。type 用最贴切的英文标识（如 api_endpoint、graphql_endpoint、credential、finding 等，不限于预设）。要更新已有 Fact（如证据增强、置信度变化、标记 validity=superseded）时带上它的 id；新建则不带 id。",
+    description: "Record an investigation fact. Use a precise domain-independent type such as api_endpoint, credential, error_signal, or finding. A new finding must start with findingStatus=candidate and must reference an existing evidence Fact, Hypothesis, Task, and Action through evidenceRefs, hypothesisIds, taskIds, and actionIds. Record preliminary observations as non-finding Facts first, then build the traceable chain before creating a finding. Include id only when updating an existing Fact.",
     inputSchema: {
       type: "object",
       properties: {
@@ -401,10 +401,15 @@ export function makeRecordActionTool(
         steps: Array.isArray(i.steps) ? i.steps : [],
         expectedResults: Array.isArray(i.expectedResults) ? i.expectedResults : [],
         riskNotes: Array.isArray(i.riskNotes) ? i.riskNotes : [],
-        tool: i.tool, priority: typeof i.priority === "string" ? i.priority : "medium",
+        tool: i.tool, priority: normalizePriority(i.priority),
         status: "approved", createdAt: now, updatedAt: now,
       });
-      if (!parsed.success) return { ok: false, content: "动作结构不合法。" };
+      if (!parsed.success) {
+        const issues = parsed.error.issues
+          .map((issue) => `${issue.path.join(".") || "action"}: ${issue.message}`)
+          .join("; ");
+        return { ok: false, content: `Action structure is invalid: ${issues}` };
+      }
       const action = actions.create(parsed.data);
       decisions.create(caseId, {
         decision: action.title, basedOn: action.evidenceRefs, reasoning: action.reasoning,

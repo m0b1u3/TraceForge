@@ -29,6 +29,10 @@ const STRUCTURE_TOOLS = new Set([
   "propose_scope_expansion",
 ]);
 
+export function isInvestigationStructureTool(toolName: string): boolean {
+  return STRUCTURE_TOOLS.has(toolName);
+}
+
 const TERMINAL_TASK_STATUSES = new Set(["done", "blocked", "rejected", "cancelled"]);
 
 export class InvestigationStructurePolicy {
@@ -37,11 +41,11 @@ export class InvestigationStructurePolicy {
   constructor(private readonly maxUnstructuredActions = 8) {}
 
   requiresStructuredTask(toolName: string): boolean {
-    return !PASSIVE_TOOLS.has(toolName) && !STRUCTURE_TOOLS.has(toolName);
+    return !PASSIVE_TOOLS.has(toolName) && !isInvestigationStructureTool(toolName);
   }
 
   authorize(toolName: string, actionableTaskCount: number, runningTaskCount: number): string | undefined {
-    if (PASSIVE_TOOLS.has(toolName) || STRUCTURE_TOOLS.has(toolName)) return undefined;
+    if (PASSIVE_TOOLS.has(toolName) || isInvestigationStructureTool(toolName)) return undefined;
     if (actionableTaskCount > 0) {
       if (runningTaskCount === 1) return undefined;
       if (runningTaskCount > 1) {
@@ -90,7 +94,7 @@ export class InvestigationOutcomePolicy {
   observe(report: ToolExecutionReport): LowYieldSignal | undefined {
     const signature = lowYieldSignature(report);
     if (!signature) {
-      if (report.ok && STRUCTURE_TOOLS.has(report.name)) this.reset();
+      if (report.ok && isInvestigationStructureTool(report.name)) this.reset();
       return undefined;
     }
     if (signature === this.lastSignature) this.consecutive += 1;

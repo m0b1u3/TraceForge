@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { buildEvidenceClusters, KnowledgePanel } from "./KnowledgePanel.js";
+import { buildEvidenceClusters, isPresentableEvidence, KnowledgePanel } from "./KnowledgePanel.js";
 import { useStore } from "../store.js";
 
 // @ts-expect-error enable React act in jsdom tests
@@ -45,6 +45,22 @@ const fact = {
 };
 
 describe("KnowledgePanel", () => {
+  it("keeps internal failure memory out of security evidence", () => {
+    const failedAttempt = {
+      ...fact,
+      id: "failure_1",
+      type: "failed_attempt",
+      title: "Failed attempt: record_fact",
+      tags: ["failure-memory"],
+      findingStatus: undefined,
+    };
+
+    expect(isPresentableEvidence(failedAttempt)).toBe(false);
+    expect(buildEvidenceClusters([fact, failedAttempt])).toEqual([
+      expect.objectContaining({ primary: expect.objectContaining({ id: fact.id }) }),
+    ]);
+  });
+
   it("groups only equivalent evidence records and keeps the newest record selectable", () => {
     const clusters = buildEvidenceClusters([
       { ...fact, id: "fact_1" },

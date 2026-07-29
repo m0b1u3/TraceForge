@@ -44,6 +44,13 @@ export type EvidenceCluster = {
   count: number;
 };
 
+export function isPresentableEvidence(fact: Fact): boolean {
+  return fact.type !== "failed_attempt"
+    && !fact.tags.includes("failure-memory")
+    && fact.validity !== "superseded"
+    && fact.validity !== "stale";
+}
+
 function evidenceClusterKey(fact: Fact): string {
   return [
     fact.title.trim().toLocaleLowerCase(),
@@ -56,6 +63,7 @@ export function buildEvidenceClusters(facts: Fact[], limit = OVERVIEW_EVIDENCE_C
   const clusters = new Map<string, EvidenceCluster>();
   for (let index = facts.length - 1; index >= 0; index -= 1) {
     const fact = facts[index];
+    if (!isPresentableEvidence(fact)) continue;
     const key = evidenceClusterKey(fact);
     const existing = clusters.get(key);
     if (existing) {
@@ -128,12 +136,13 @@ function RunStatusSection() {
 function LatestFindings() {
   const { facts, selectFact } = useStore(useShallow((state) => ({ facts: state.facts, selectFact: state.selectFact })));
   const clusters = buildEvidenceClusters(facts);
+  const evidenceCount = facts.filter(isPresentableEvidence).length;
   if (clusters.length === 0) return null;
   return (
     <section className="case-overview-section" aria-label="Latest evidence">
       <h3 className="case-overview-evidence-heading">
         <span><Fingerprint size={13} aria-hidden="true" />Evidence</span>
-        <small>{facts.length} records · {clusters.length} groups</small>
+        <small>{evidenceCount} records · {clusters.length} groups</small>
       </h3>
       <div className="case-overview-evidence">
         {clusters.map(({ key, primary, count }) => {

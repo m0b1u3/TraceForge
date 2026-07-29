@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { InvestigationOutcomePolicy, InvestigationStructurePolicy } from "./investigation-runtime-policy.js";
+import {
+  InvestigationOutcomePolicy,
+  InvestigationStructurePolicy,
+  isInvestigationStructureTool,
+} from "./investigation-runtime-policy.js";
 
 describe("investigation runtime policy", () => {
+  it("classifies control-plane tools separately from active investigation", () => {
+    expect(isInvestigationStructureTool("record_fact")).toBe(true);
+    expect(isInvestigationStructureTool("record_task")).toBe(true);
+    expect(isInvestigationStructureTool("record_action")).toBe(true);
+    expect(isInvestigationStructureTool("http_replay")).toBe(false);
+  });
+
   it("converts open exploration into a structured task without ending the Run", () => {
     const policy = new InvestigationStructurePolicy(2);
     expect(policy.authorize("http_replay", 0, 0)).toBeUndefined();

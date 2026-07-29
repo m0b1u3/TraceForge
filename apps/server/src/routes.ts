@@ -75,7 +75,11 @@ import { releaseValidationTaskLeases } from "./validation-task-lease.js";
 import { makeManageValidationTaskTool } from "./validation-task-control-tool.js";
 import { auditValidationWorkflow } from "./validation-workflow-audit.js";
 import { buildValidationWorkflowSnapshot, makeGetValidationWorkflowStateTool, type ValidationRuntimeSnapshot } from "./validation-workflow-snapshot.js";
-import { InvestigationOutcomePolicy, InvestigationStructurePolicy } from "./investigation-runtime-policy.js";
+import {
+  InvestigationOutcomePolicy,
+  InvestigationStructurePolicy,
+  isInvestigationStructureTool,
+} from "./investigation-runtime-policy.js";
 import { reconcileUnsupportedEndpointFacts } from "./endpoint-fact-reconciliation.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
@@ -1115,7 +1119,8 @@ export function registerRoutes(
 3. 若上述尝试均失败，记录一条说明阻塞原因的 Fact，然后再 pivot 到相邻攻击面（注册接口、找回密码、OAuth、会话管理、越权等）。
 完成后用一句话总结。
 失败记忆与在线工具回退：
-- 禁止用完全相同的输入重复调用任何已经执行失败的工具（尤其是 exec_command 和脚本类调用）。如果一次调用返回错误、非零退出码或失败结果，立即用 record_fact 记录一条 type=failed_attempt 的 Fact，然后换用其他方法。
+- 禁止用完全相同的输入重复调用任何已经执行失败的工具（尤其是 exec_command 和脚本类调用）。运行时会自动记忆工具失败；不要把参数校验、生命周期或引用错误手工记录为安全 Fact。应修正输入或更新当前 Task/Hypothesis 后换用其他方法。
+- 如果流量响应是二进制且 get_traffic 只返回元数据或 body=null，使用 download_tool 将原始授权 URL 保存到本 Case 的 downloads 目录，再通过文件分析工具处理；不要反复读取不存在的 body。
 - 如果当前环境无法解决问题，调用 download_tool(url, filename, executable=true) 从网络下载现成工具，保存到 workspace/<caseId>/downloads/，然后通过 exec_command 执行（仍需用户批准）。
 - 重试相同失败输入会被 runtime 自动拒绝，不要一直重复尝试，不要浪费轮次。`;
 
@@ -1589,6 +1594,9 @@ export function registerRoutes(
         if (report.blocked) return;
         if (report.transient) return;
         if (report.failureClass && report.failureClass !== "permanent") return;
+        // Control-plane schema and lifecycle corrections belong to runtime failure
+        // memory. They are not durable security evidence.
+        if (isInvestigationStructureTool(report.name)) return;
         const fact = factStore.create(id, {
           type: "failed_attempt",
           title: `Failed attempt: ${report.name}`,
