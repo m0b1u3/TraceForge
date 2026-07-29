@@ -27,12 +27,37 @@ afterEach(() => {
   container = null;
 });
 
+describe("recovered tool execution", () => {
+  it("collapses a recovered failure while retaining its audit detail", async () => {
+    const recovered = {
+      ...activity("exec_command → exit=1"),
+      outcome: "recovered" as const,
+      recoveredByKey: "activity-2",
+    };
+    const succeeded = {
+      ...activity("exec_command → exit=0"),
+      key: "activity-2",
+    };
+    const row = await renderGroup({
+      type: "tool_group",
+      key: "group-recovered",
+      tool: "exec_command",
+      activities: [recovered, succeeded],
+    });
+
+    expect(row.textContent).toContain("Recovered execution");
+    expect(row.textContent).not.toContain("Arguments");
+    expect(row.querySelector('button[aria-label="Expand exec_command activity"]')).not.toBeNull();
+  });
+});
+
 function activity(resultText: string, refs: AgentEventRefs | null = null): AgentToolActivity {
   return {
     key: "activity-1",
     tool: "http_replay",
     call: { type: "event", key: "event-1", kind: "tool_call", label: "Tool call", text: "http_replay({})", summary: "http_replay({})" },
     result: { type: "event", key: "event-2", kind: "tool_result", label: "Tool result", text: resultText, summary: resultText, refs },
+    outcome: "succeeded",
   };
 }
 

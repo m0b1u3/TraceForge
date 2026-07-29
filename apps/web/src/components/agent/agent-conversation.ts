@@ -23,6 +23,8 @@ export type AgentToolActivity = {
   tool: string;
   call: AgentConversationEventItem | null;
   result: AgentConversationEventItem | null;
+  outcome: "running" | "succeeded" | "failed" | "recovered";
+  recoveredByKey?: string;
 };
 
 export type AgentConversationItem =
@@ -67,6 +69,7 @@ export function buildAgentConversationItems({
     lastVisible = { kind: display.kind, text: display.text };
   });
 
+  reconcileRecoveredExecutions(items);
   if (pendingApproval) items.push({ type: "approval", key: `approval-${pendingApproval.approvalId}` });
   if (pendingScope) items.push({ type: "scope", key: `scope-${pendingScope.host}` });
   if (agentBusy) items.push({ type: "busy", key: "agent-busy" });
@@ -82,6 +85,8 @@ function appendToolActivity(items: AgentConversationItem[], event: AgentConversa
     const latest = group.activities.at(-1);
     if (latest && latest.result === null) {
       latest.result = event;
+      latest.outcome = toolResultFailed(event.text) ? "failed" : "succeeded";
+      markRecoveredActivities(group.activities, latest);
       return;
     }
   }
@@ -91,12 +96,55 @@ function appendToolActivity(items: AgentConversationItem[], event: AgentConversa
     tool,
     call: event.kind === "tool_call" ? event : null,
     result: event.kind === "tool_result" ? event : null,
+    outcome: event.kind === "tool_result"
+      ? toolResultFailed(event.text) ? "failed" : "succeeded"
+      : "running",
   };
   if (group) {
     group.activities.push(activity);
+    markRecoveredActivities(group.activities, activity);
     return;
   }
   items.push({ type: "tool_group", key: `tool-group-${event.key}`, tool, activities: [activity] });
+}
+
+export function toolResultFailed(text: string): boolean {
+  return /\bexit=(?!(?:0)(?:\D|$))(?:-?\d+|timeout|null)\b/i.test(text)
+    || /\b(?:spawn failed|command rejected|permission denied|timed?\s*out)\b/i.test(text)
+    || /(?:→|->)\s*(?:error|failed|blocked|denied|timeout|exception)\b/i.test(text);
+}
+
+function markRecoveredActivities(activities: AgentToolActivity[], recovery: AgentToolActivity): void {
+  if (recovery.outcome !== "succeeded") return;
+  for (let index = activities.length - 2; index >= 0; index -= 1) {
+    const candidate = activities[index];
+    if (candidate.outcome !== "failed") break;
+    candidate.outcome = "recovered";
+    candidate.recoveredByKey = recovery.key;
+  }
+}
+
+function reconcileRecoveredExecutions(items: AgentConversationItem[]): void {
+  const unresolvedByTool = new Map<string, AgentToolActivity[]>();
+  for (const item of items) {
+    if (item.type !== "tool_group") continue;
+    for (const activity of item.activities) {
+      if (activity.outcome === "failed") {
+        const unresolved = unresolvedByTool.get(item.tool) ?? [];
+        unresolved.push(activity);
+        unresolvedByTool.set(item.tool, unresolved);
+        continue;
+      }
+      if (activity.outcome !== "succeeded") continue;
+      const unresolved = unresolvedByTool.get(item.tool);
+      if (!unresolved) continue;
+      for (const failed of unresolved) {
+        failed.outcome = "recovered";
+        failed.recoveredByKey = activity.key;
+      }
+      unresolvedByTool.delete(item.tool);
+    }
+  }
 }
 
 function sameTarget(left: AgentConversationEventItem["target"], right: AgentConversationEventItem["target"]): boolean {

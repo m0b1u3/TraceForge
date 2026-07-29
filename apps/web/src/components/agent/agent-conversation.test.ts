@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAgentConversationItems, findAgentEventIndexByRef } from "./agent-conversation.js";
+import { buildAgentConversationItems, findAgentEventIndexByRef, toolResultFailed } from "./agent-conversation.js";
 
 describe("Agent validation conversation events", () => {
   it("renders a concise validation event with its semantic label", () => {
@@ -32,6 +32,55 @@ describe("Agent validation conversation events", () => {
 });
 
 describe("tool result refs", () => {
+  it("marks a failed execution recovered when the agent successfully changes approach", () => {
+    const items = buildAgentConversationItems({
+      events: [
+        { kind: "tool_call", text: "exec_command({\"command\":\"first approach\"})" },
+        { kind: "tool_result", text: "exec_command → exit=1\nunsupported option" },
+        { kind: "tool_call", text: "exec_command({\"command\":\"alternative approach\"})" },
+        { kind: "tool_result", text: "exec_command → exit=0\nresult saved" },
+      ],
+      pendingApproval: null,
+      pendingScope: null,
+      agentBusy: false,
+    });
+
+    expect(items).toHaveLength(1);
+    const group = items[0];
+    expect(group?.type).toBe("tool_group");
+    if (group?.type !== "tool_group") return;
+    expect(group.activities.map((activity) => activity.outcome)).toEqual(["recovered", "succeeded"]);
+    expect(group.activities[0].recoveredByKey).toBe(group.activities[1].key);
+  });
+
+  it("links recovery across intervening reasoning without hiding the audit trail", () => {
+    const items = buildAgentConversationItems({
+      events: [
+        { kind: "tool_call", text: "exec_command({\"command\":\"first approach\"})" },
+        { kind: "tool_result", text: "exec_command → exit=1\nunsupported option" },
+        { kind: "reasoning", text: "The first execution mechanism is unavailable, so I will use a compatible alternative." },
+        { kind: "tool_call", text: "exec_command({\"command\":\"compatible alternative\"})" },
+        { kind: "tool_result", text: "exec_command → exit=0\nresult saved" },
+      ],
+      pendingApproval: null,
+      pendingScope: null,
+      agentBusy: false,
+    });
+
+    const groups = items.filter((item) => item.type === "tool_group");
+    expect(groups).toHaveLength(2);
+    expect(groups[0].activities[0].outcome).toBe("recovered");
+    expect(groups[0].activities[0].recoveredByKey).toBe(groups[1].activities[0].key);
+    expect(groups[1].activities[0].outcome).toBe("succeeded");
+  });
+
+  it("distinguishes command failure from successful execution and HTTP observations", () => {
+    expect(toolResultFailed("exec_command → exit=1\nbad parameter")).toBe(true);
+    expect(toolResultFailed("exec_command → exit=timeout(60000ms)")).toBe(true);
+    expect(toolResultFailed("exec_command → exit=0")).toBe(false);
+    expect(toolResultFailed("http_replay → status=500 bodyLength=0")).toBe(false);
+  });
+
   it("carries refs from the source event onto the conversation item", () => {
     const refs = { factIds: ["fact_1"], taskIds: ["task_1"], timelineEntryIds: ["tl_1"] };
     const items = buildAgentConversationItems({

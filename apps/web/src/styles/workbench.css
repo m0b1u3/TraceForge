@@ -1110,6 +1110,10 @@
   color: var(--danger);
 }
 
+.tool-activity-group.is-recovered .tool-activity-icon {
+  color: var(--information);
+}
+
 .tool-activity-name {
   overflow: hidden;
   color: var(--foreground-secondary);
@@ -1149,6 +1153,10 @@
 
 .tool-activity-state.is-issue {
   color: var(--danger);
+}
+
+.tool-activity-state.is-recovered {
+  color: var(--information);
 }
 
 .tool-activity-trigger time {
@@ -1252,6 +1260,10 @@
 
 .tool-activity-group.is-issue .tool-activity-detail {
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--danger) 52%, transparent);
+}
+
+.tool-activity-group.is-recovered .tool-activity-detail {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--information) 42%, transparent);
 }
 
 :root[data-theme="light"] .tool-activity-detail {

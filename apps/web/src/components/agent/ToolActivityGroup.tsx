@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CaretDown, Check, Copy, MagnifyingGlass, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
+import { ArrowClockwise, CaretDown, Check, Copy, MagnifyingGlass, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useStore } from "../../store.js";
@@ -7,10 +7,12 @@ import type { AgentConversationItem, AgentToolActivity } from "./agent-conversat
 import { RefChips } from "./AgentEventRow.js";
 
 type ToolGroup = Extract<AgentConversationItem, { type: "tool_group" }>;
-type ActivityTone = "running" | "complete" | "evidence" | "issue";
+type ActivityTone = "running" | "complete" | "evidence" | "issue" | "recovered";
 
 export function toolActivityTone(activity: AgentToolActivity): ActivityTone {
   if (!activity.result) return "running";
+  if (activity.outcome === "recovered") return "recovered";
+  if (activity.outcome === "failed") return "issue";
   const refs = activity.result.refs;
   if (refs && (refs.factIds.length > 0 || refs.taskIds.length > 0 || refs.timelineEntryIds.length > 0)) return "evidence";
   if (/^\s*[A-Za-z0-9_:-]+\s*(?:(?:→|->)\s*)?(?:error|failed|blocked|denied|timeout|exception)\b/i.test(activity.result.text)) return "issue";
@@ -43,7 +45,11 @@ export function ToolActivityGroup({ item }: { item: ToolGroup }) {
         <CollapsibleTrigger asChild>
           <button type="button" className="tool-activity-trigger" aria-label={open ? `Collapse ${item.tool} activity` : `Expand ${item.tool} activity`}>
             <span className="tool-activity-icon" aria-hidden="true">
-              {tone === "issue" ? <WarningCircle size={14} weight="fill" /> : <TerminalWindow size={14} />}
+              {tone === "issue"
+                ? <WarningCircle size={14} weight="fill" />
+                : tone === "recovered"
+                  ? <ArrowClockwise size={14} weight="bold" />
+                  : <TerminalWindow size={14} />}
             </span>
             <code className="tool-activity-name">{item.tool}</code>
             {item.activities.length > 1 && <span className="tool-activity-count">×{item.activities.length}</span>}
@@ -119,11 +125,13 @@ function groupTone(activities: AgentToolActivity[]): ActivityTone {
   if (tones.includes("issue")) return "issue";
   if (tones.includes("evidence")) return "evidence";
   if (tones.includes("running")) return "running";
+  if (tones.includes("recovered")) return "recovered";
   return "complete";
 }
 
 function toneLabel(tone: ActivityTone, count: number): string {
   if (tone === "issue") return "Needs attention";
+  if (tone === "recovered") return count > 1 ? "Recovered execution" : "Recovered";
   if (tone === "evidence") return "Produced evidence";
   if (tone === "running") return "Running";
   return count > 1 ? `${count} completed` : "Completed";
