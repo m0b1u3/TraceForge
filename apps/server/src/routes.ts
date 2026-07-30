@@ -63,6 +63,7 @@ import { securityReportExport, securityReportMarkdown } from "./security-report-
 import { ObserverScheduler } from "./observer-scheduler.js";
 import { ObserverCadence, observerCadenceSnapshot } from "./observer-cadence.js";
 import { ObserverCorrectionAttribution } from "./observer-correction-attribution.js";
+import { verifiedObserverRecoveryStrategiesSummary } from "./observer-recovery-strategies.js";
 import { buildSharedKnowledge } from "./shared-knowledge.js";
 import { KnowledgeUsageStore, type KnowledgeRef } from "./stores/knowledge-usage-store.js";
 import { KnowledgeOutcomeTracker } from "./knowledge-outcome.js";
@@ -860,12 +861,17 @@ export function registerRoutes(
             `previousActions=${audit?.actions.map((action) => `${action.tool}:${action.outcome}`).join(",") || "none"}`,
           ].join("; ");
         }).join("\n") || "(none)";
+        const recoveryStrategiesSummary = verifiedObserverRecoveryStrategiesSummary(
+          observerStore.listByCase(id).warnings,
+          { excludeRunId: reviewRunId },
+        );
         const result = await new Observer(llm).review(id, {
           goal,
           trajectory: reviewTrajectory,
           factsSummary,
           tasksSummary,
           activeWarningsSummary,
+          recoveryStrategiesSummary,
           reviewReason: trigger,
         });
         if (result.usage.totalTokens > 0) recordRunUsage("observer", result.usage);
