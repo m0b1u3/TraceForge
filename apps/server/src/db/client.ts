@@ -133,6 +133,7 @@ export function createDb(path: string) {
       correction_resolved_count INTEGER NOT NULL DEFAULT 0,
       correction_failed_count INTEGER NOT NULL DEFAULT 0,
       correction_outcome TEXT NOT NULL DEFAULT 'none',
+      correction_evidence TEXT,
       last_correction_at TEXT, last_correction_trigger TEXT,
       escalation_reason TEXT,
       related_run_id TEXT, suggested_goal TEXT NOT NULL DEFAULT '',
@@ -202,6 +203,7 @@ export function createDb(path: string) {
   if (!hasWarningColumn("correction_resolved_count")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_resolved_count INTEGER NOT NULL DEFAULT 0");
   if (!hasWarningColumn("correction_failed_count")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_failed_count INTEGER NOT NULL DEFAULT 0");
   if (!hasWarningColumn("correction_outcome")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_outcome TEXT NOT NULL DEFAULT 'none'");
+  if (!hasWarningColumn("correction_evidence")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_evidence TEXT");
   if (!hasWarningColumn("last_correction_at")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN last_correction_at TEXT");
   if (!hasWarningColumn("last_correction_trigger")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN last_correction_trigger TEXT");
   if (!hasWarningColumn("escalation_reason")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN escalation_reason TEXT");

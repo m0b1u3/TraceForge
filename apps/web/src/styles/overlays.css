@@ -640,6 +640,10 @@
   color: var(--success);
 }
 
+.observer-correction-outcome.is-unattributed > span:first-child {
+  color: var(--foreground-muted);
+}
+
 .observer-correction-outcome.is-persisted > span:first-child,
 .observer-correction-outcome.is-escalated > span:first-child {
   color: var(--warning);

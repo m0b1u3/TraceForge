@@ -187,6 +187,7 @@ const warning = {
   correctionResolvedCount: 0,
   correctionFailedCount: 0,
   correctionOutcome: "pending" as const,
+  correctionEvidence: null,
   lastCorrectionAt: new Date().toISOString(),
   lastCorrectionTrigger: "interval",
   escalationReason: null,

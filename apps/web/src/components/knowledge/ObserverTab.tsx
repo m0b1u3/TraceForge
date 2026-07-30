@@ -22,6 +22,7 @@ const OUTCOME_LABEL: Record<ObserverWarning["correctionOutcome"], string> = {
   none: "Not issued",
   pending: "Awaiting verification",
   resolved: "Recovered",
+  unattributed: "Ended · not attributed",
   persisted: "Still present",
   escalated: "Escalated",
 };

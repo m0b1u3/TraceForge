@@ -60,6 +60,7 @@ import { SecurityReportStore } from "./stores/security-report-store.js";
 import { securityReportExport, securityReportMarkdown } from "./security-report-export.js";
 import { ObserverScheduler } from "./observer-scheduler.js";
 import { ObserverCadence, observerCadenceSnapshot } from "./observer-cadence.js";
+import { ObserverCorrectionAttribution } from "./observer-correction-attribution.js";
 import { buildSharedKnowledge } from "./shared-knowledge.js";
 import { KnowledgeUsageStore, type KnowledgeRef } from "./stores/knowledge-usage-store.js";
 import { KnowledgeOutcomeTracker } from "./knowledge-outcome.js";
@@ -763,6 +764,7 @@ export function registerRoutes(
         });
         return recorded;
       };
+      const correctionAttribution = new ObserverCorrectionAttribution();
 
       const runObserverReviewUnsafe = async (
         reviewRunId: string,
@@ -841,6 +843,7 @@ export function registerRoutes(
             warning = observerStore.settleCorrection(
               warning.id,
               warning.status === "escalated" ? "escalated" : "persisted",
+              "The same warning was observed again after the correction window.",
             ) ?? warning;
             const intervention = observerIntervention(warning, {
               allowPause: trigger === "high_risk" || trigger === "evidence_conflict",
@@ -851,6 +854,7 @@ export function registerRoutes(
             } else if (intervention.steering) {
               steering.push(intervention.steering);
               warning = observerStore.recordCorrection(warning.id, trigger) ?? warning;
+              correctionAttribution.issue(warning);
             }
             bus.emit({ type: "observer_warning_updated", warning });
             continue;
@@ -872,12 +876,18 @@ export function registerRoutes(
           if (intervention.steering) {
             steering.push(intervention.steering);
             warning = observerStore.recordCorrection(warning.id, trigger) ?? warning;
+            correctionAttribution.issue(warning);
           }
           bus.emit({ type: "observer_warning", warning });
         }
         for (const warning of activeBeforeReview) {
           if (observedFingerprints.has(warning.fingerprint)) continue;
-          const settled = observerStore.settleCorrection(warning.id, "resolved") ?? warning;
+          const attribution = correctionAttribution.assess(warning.id);
+          const settled = observerStore.settleCorrection(
+            warning.id,
+            attribution.attributed ? "resolved" : "unattributed",
+            attribution.evidence,
+          ) ?? warning;
           const resolved = observerStore.updateStatus(settled.id, "resolved");
           if (resolved) bus.emit({ type: "observer_warning_updated", warning: resolved });
         }
@@ -1448,8 +1458,15 @@ export function registerRoutes(
         const windowStack = toolRefWindows.get(report.name) ?? [];
         const windowStart = windowStack.shift() ?? runTimelineEntries.length;
         const refsQueue = pendingToolRefs.get(report.name) ?? [];
-        refsQueue.push(collectToolRefs(runTimelineEntries.slice(windowStart)));
+        const toolRefs = collectToolRefs(runTimelineEntries.slice(windowStart));
+        refsQueue.push(toolRefs);
         pendingToolRefs.set(report.name, refsQueue);
+        correctionAttribution.observe({
+          tool: report.name,
+          args: report.input,
+          ok: report.ok,
+          refs: toolRefs,
+        });
         if (executingTaskId && !["record_task", "manage_validation_task"].includes(report.name)) {
           const taskEntry = timelineStore.append(
             id,

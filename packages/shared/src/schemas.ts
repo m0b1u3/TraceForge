@@ -345,7 +345,10 @@ export const ObserverWarningSchema = z.object({
   correctionCount: z.number().int().nonnegative().default(0),
   correctionResolvedCount: z.number().int().nonnegative().default(0),
   correctionFailedCount: z.number().int().nonnegative().default(0),
-  correctionOutcome: z.enum(["none", "pending", "resolved", "persisted", "escalated"]).default("none"),
+  correctionOutcome: z.enum([
+    "none", "pending", "resolved", "unattributed", "persisted", "escalated",
+  ]).default("none"),
+  correctionEvidence: z.string().nullable().default(null),
   lastCorrectionAt: z.string().nullable().default(null),
   lastCorrectionTrigger: z.string().nullable().default(null),
   escalationReason: z.string().nullable().default(null),

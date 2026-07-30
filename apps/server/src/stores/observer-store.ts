@@ -17,6 +17,7 @@ function rowToWarning(row: typeof observerWarnings.$inferSelect): ObserverWarnin
     correctionResolvedCount: row.correctionResolvedCount,
     correctionFailedCount: row.correctionFailedCount,
     correctionOutcome: row.correctionOutcome,
+    correctionEvidence: row.correctionEvidence,
     lastCorrectionAt: row.lastCorrectionAt,
     lastCorrectionTrigger: row.lastCorrectionTrigger,
     resolvedAt: row.resolvedAt, createdAt: row.createdAt,
@@ -41,6 +42,7 @@ export class ObserverWarningStore {
       correctionResolvedCount: parsed.correctionResolvedCount,
       correctionFailedCount: parsed.correctionFailedCount,
       correctionOutcome: parsed.correctionOutcome,
+      correctionEvidence: parsed.correctionEvidence,
       lastCorrectionAt: parsed.lastCorrectionAt,
       lastCorrectionTrigger: parsed.lastCorrectionTrigger,
       escalationReason: parsed.escalationReason,
@@ -153,6 +155,7 @@ export class ObserverWarningStore {
     this.db.update(observerWarnings).set({
       correctionCount,
       correctionOutcome: "pending",
+      correctionEvidence: null,
       lastCorrectionAt,
       lastCorrectionTrigger: trigger,
     }).where(eq(observerWarnings.id, id)).run();
@@ -160,6 +163,7 @@ export class ObserverWarningStore {
       ...current,
       correctionCount,
       correctionOutcome: "pending",
+      correctionEvidence: null,
       lastCorrectionAt,
       lastCorrectionTrigger: trigger,
     });
@@ -167,23 +171,27 @@ export class ObserverWarningStore {
 
   settleCorrection(
     id: string,
-    outcome: Extract<ObserverWarning["correctionOutcome"], "resolved" | "persisted" | "escalated">,
+    outcome: Extract<ObserverWarning["correctionOutcome"], "resolved" | "unattributed" | "persisted" | "escalated">,
+    correctionEvidence?: string | null,
   ): ObserverWarning | undefined {
     const current = this.getById(id);
     if (!current) return undefined;
     if (current.correctionOutcome !== "pending") return current;
     const correctionResolvedCount = current.correctionResolvedCount + (outcome === "resolved" ? 1 : 0);
-    const correctionFailedCount = current.correctionFailedCount + (outcome === "resolved" ? 0 : 1);
+    const correctionFailedCount = current.correctionFailedCount
+      + (outcome === "persisted" || outcome === "escalated" ? 1 : 0);
     this.db.update(observerWarnings).set({
       correctionOutcome: outcome,
       correctionResolvedCount,
       correctionFailedCount,
+      correctionEvidence: correctionEvidence ?? null,
     }).where(eq(observerWarnings.id, id)).run();
     return ObserverWarningSchema.parse({
       ...current,
       correctionOutcome: outcome,
       correctionResolvedCount,
       correctionFailedCount,
+      correctionEvidence: correctionEvidence ?? null,
     });
   }
 

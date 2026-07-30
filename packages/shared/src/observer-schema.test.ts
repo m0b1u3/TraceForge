@@ -13,6 +13,7 @@ describe("ObserverWarningSchema", () => {
     expect(w.relatedTasks).toEqual([]);
     expect(w.correctionCount).toBe(0);
     expect(w.correctionOutcome).toBe("none");
+    expect(w.correctionEvidence).toBeNull();
   });
 
   it("defaults workflow fields for older warning payloads", () => {
@@ -55,6 +56,7 @@ describe("ObserverWarningSchema", () => {
         correctionResolvedCount: 0,
         correctionFailedCount: 0,
         correctionOutcome: "pending",
+        correctionEvidence: null,
         lastCorrectionAt: "t",
         lastCorrectionTrigger: "interval",
         escalationReason: null,

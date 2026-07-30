@@ -49,6 +49,7 @@ function createOpenWarning() {
     correctionResolvedCount: 0,
     correctionFailedCount: 0,
     correctionOutcome: "none",
+    correctionEvidence: null,
     lastCorrectionAt: null,
     lastCorrectionTrigger: null,
     escalationReason: null,
@@ -111,6 +112,7 @@ describe("observer integration", () => {
       correctionResolvedCount: 0,
       correctionFailedCount: 0,
       correctionOutcome: "none",
+      correctionEvidence: null,
       lastCorrectionAt: null,
       lastCorrectionTrigger: null,
       escalationReason: null,
@@ -195,12 +197,23 @@ describe("observer integration", () => {
     });
 
     store.recordCorrection(warning.id, "interval");
-    const resolved = store.settleCorrection(warning.id, "resolved");
+    const resolved = store.settleCorrection(warning.id, "resolved", "correction-linked evidence recorded");
     expect(resolved).toMatchObject({
       correctionCount: 2,
       correctionResolvedCount: 1,
       correctionFailedCount: 1,
       correctionOutcome: "resolved",
+      correctionEvidence: "correction-linked evidence recorded",
+    });
+
+    store.recordCorrection(warning.id, "interval");
+    const unattributed = store.settleCorrection(warning.id, "unattributed", "warning disappeared without linked evidence");
+    expect(unattributed).toMatchObject({
+      correctionCount: 3,
+      correctionResolvedCount: 1,
+      correctionFailedCount: 1,
+      correctionOutcome: "unattributed",
+      correctionEvidence: "warning disappeared without linked evidence",
     });
   });
 

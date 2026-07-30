@@ -215,6 +215,7 @@ export const observerWarnings = sqliteTable("observer_warnings", {
   correctionResolvedCount: integer("correction_resolved_count").notNull().default(0),
   correctionFailedCount: integer("correction_failed_count").notNull().default(0),
   correctionOutcome: text("correction_outcome").notNull().default("none"),
+  correctionEvidence: text("correction_evidence"),
   lastCorrectionAt: text("last_correction_at"),
   lastCorrectionTrigger: text("last_correction_trigger"),
   escalationReason: text("escalation_reason"),
