@@ -2,7 +2,10 @@ import { createProviderFromConfig, loadLlmConfig } from "../packages/llm/src/ind
 import { Observer } from "../packages/extension/src/index.js";
 import { createDb } from "../apps/server/src/db/client.js";
 import { ObserverWarningStore } from "../apps/server/src/stores/observer-store.js";
-import { verifiedObserverRecoveryStrategiesSummary } from "../apps/server/src/observer-recovery-strategies.js";
+import {
+  selectVerifiedObserverRecoveryStrategies,
+  verifiedObserverRecoveryStrategiesSummary,
+} from "../apps/server/src/observer-recovery-strategies.js";
 import { serializeObserverCorrectionAudit } from "../packages/shared/src/index.js";
 import {
   initialObserverStatus,
@@ -105,7 +108,7 @@ if (!persistedRecovery || observerHumanRecoveryWindowIsOpen(persistedRecovery)) 
 }
 const resolved = store.updateStatus(persistedRecovery.id, "resolved");
 if (resolved?.status !== "resolved") throw new Error("Escalated warning could not be resolved");
-store.create({
+const verifiedRecovery = store.create({
   ...critical,
   id: "warn_verified_human_recovery",
   status: "resolved",
@@ -133,15 +136,46 @@ store.create({
   suggestedGoal: "Use an independent evidence source and preserve its references.",
   resolvedAt: critical.createdAt,
 });
-const verifiedRecoverySummary = verifiedObserverRecoveryStrategiesSummary(
+store.create({
+  ...verifiedRecovery,
+  id: "warn_unrelated_verified_recovery",
+  issueType: "repeated_failure",
+  subject: "task:unrelated-historical-branch",
+  title: "An unrelated historical branch stopped progressing",
+  description: "This prior issue belongs to a different investigation branch.",
+  fingerprint: "unrelated-historical-fingerprint",
+  correctionEvidence: serializeObserverCorrectionAudit({
+    version: 1,
+    attributed: true,
+    reason: "execution_recovered",
+    trigger: "human_direction",
+    instruction: "Rebuild the unrelated historical branch from its initial action.",
+    actions: [{ tool: "inspect", outcome: "succeeded", evidenceRefs: ["fact_historical"] }],
+    evidenceRefs: ["fact_historical"],
+    summary: "The unrelated historical execution recovered.",
+  }),
+  relatedRunId: "run_unrelated_verified_recovery",
+});
+const verifiedRecoverySelection = selectVerifiedObserverRecoveryStrategies(
   store.listByCase(caseId).warnings,
-  { excludeRunId: "run_future" },
+  {
+    excludeRunId: "run_future",
+    maxCharacters: 600,
+    focus: {
+      goal: "Review the next evidence checkpoint without constraining independent investigation.",
+      trajectory: "The current evidence gap still needs an independent traceable source.",
+      activeWarnings: [verifiedRecovery],
+    },
+  },
 );
+const verifiedRecoverySummary = verifiedRecoverySelection.summary;
 if (
   !verifiedRecoverySummary.includes("candidate=Use an independent evidence source")
   || !verifiedRecoverySummary.includes(`evidenceRefs=${factId}`)
+  || verifiedRecoverySummary.includes("warn_unrelated_verified_recovery")
+  || verifiedRecoverySelection.characterCount > 600
 ) {
-  throw new Error("An attributed human recovery was not exposed as project candidate context");
+  throw new Error("Recovery candidate context was not relevant, bounded, and attributable");
 }
 const candidateReview = await new Observer(provider).review(caseId, {
   goal: "Review the next evidence checkpoint without constraining independent investigation.",
@@ -149,7 +183,7 @@ const candidateReview = await new Observer(provider).review(caseId, {
   tasksSummary: "(none)",
   activeWarningsSummary: "(none)",
   recoveryStrategiesSummary: verifiedRecoverySummary,
-  recoveryStrategyIds: ["warn_verified_human_recovery"],
+  recoveryStrategyIds: verifiedRecoverySelection.strategies.map((strategy) => strategy.warningId),
   reviewReason: "interval",
   trajectory: "assistant: I recorded the current observation and will select the next evidence-producing action from the live state.",
 });
@@ -228,6 +262,8 @@ console.log(JSON.stringify({
   verifiedRecoveryCandidateExposed: true,
   verifiedRecoveryCandidateReviewedByModel: true,
   invalidRecoveryReferencesRejected: true,
+  irrelevantRecoveryCandidatesRejected: true,
+  recoveryCandidateBudgetEnforced: true,
   failedRecoveryCandidateDegraded: true,
   repeatedFailureCandidateWithdrawn: true,
   correctionMetrics: {

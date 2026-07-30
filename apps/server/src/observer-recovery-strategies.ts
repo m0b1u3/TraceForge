@@ -18,10 +18,55 @@ export interface VerifiedObserverRecoveryStrategy {
   failureCount: number;
   effectiveness: "active" | "degraded";
   score: number;
+  relevanceScore: number;
 }
 
 function normalizedInstruction(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizedIdentity(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s:_-]+/g, " ");
+}
+
+function lexicalTerms(value: string): Set<string> {
+  const normalized = value.toLowerCase();
+  const terms = new Set(normalized.match(/[a-z0-9]{4,}/g) ?? []);
+  for (const segment of normalized.match(/\p{Script=Han}+/gu) ?? []) {
+    for (let index = 0; index < segment.length - 1; index += 1) {
+      terms.add(segment.slice(index, index + 2));
+    }
+  }
+  return terms;
+}
+
+function lexicalOverlapScore(left: string, right: string): number {
+  const leftTerms = lexicalTerms(left);
+  const rightTerms = lexicalTerms(right);
+  let score = 0;
+  for (const term of leftTerms) {
+    if (rightTerms.has(term)) score += /\p{Script=Han}/u.test(term) ? 2 : Math.min(12, term.length);
+  }
+  return score;
+}
+
+export interface ObserverRecoveryStrategyFocus {
+  goal: string;
+  trajectory: string;
+  activeWarnings: ObserverWarning[];
+}
+
+export interface ObserverRecoveryStrategyOptions {
+  excludeRunId?: string;
+  limit?: number;
+  maxCharacters?: number;
+  focus?: ObserverRecoveryStrategyFocus;
+}
+
+export interface ObserverRecoveryStrategySelection {
+  strategies: VerifiedObserverRecoveryStrategy[];
+  summary: string;
+  characterCount: number;
 }
 
 export interface ObserverRecoveryStrategyEffect {
@@ -75,9 +120,58 @@ export function observerRecoveryStrategyEffects(
   return effects;
 }
 
+function recoveryStrategyRelevance(
+  strategy: Pick<
+    VerifiedObserverRecoveryStrategy,
+    "fingerprint" | "issueType" | "subject" | "instruction" | "evidenceRefs"
+  >,
+  focus: ObserverRecoveryStrategyFocus,
+): number {
+  const activeEvidence = new Set(focus.activeWarnings.flatMap((warning) => [
+    ...warning.relatedFacts,
+    ...warning.relatedTasks,
+  ]));
+  const normalizedSubject = normalizedIdentity(strategy.subject);
+  let score = 0;
+  for (const warning of focus.activeWarnings) {
+    if (strategy.fingerprint === warning.fingerprint) score += 100;
+    if (strategy.issueType === warning.issueType) score += 24;
+    if (
+      normalizedSubject
+      && normalizedSubject === normalizedIdentity(warning.subject)
+    ) {
+      score += 40;
+    }
+  }
+  const evidenceMatches = strategy.evidenceRefs.filter((reference) =>
+    activeEvidence.has(reference)).length;
+  score += Math.min(36, evidenceMatches * 18);
+
+  const focusText = [
+    focus.goal,
+    focus.trajectory,
+    ...focus.activeWarnings.flatMap((warning) => [
+      warning.subject,
+      warning.title,
+      warning.description,
+      warning.evidence ?? "",
+      warning.suggestedAction,
+      warning.suggestedGoal ?? "",
+    ]),
+  ].join("\n");
+  const lexicalSubject = strategy.subject.replace(/^[a-z][\w-]*:/i, "");
+  const lexicalScore = Math.max(
+    lexicalOverlapScore(lexicalSubject, focusText),
+    lexicalOverlapScore(strategy.instruction, focusText),
+  );
+  const lexicalThreshold = focus.activeWarnings.length > 0 ? 8 : 4;
+  if (lexicalScore >= lexicalThreshold) score += Math.min(24, lexicalScore);
+  return score;
+}
+
 export function verifiedObserverRecoveryStrategies(
   warnings: ObserverWarning[],
-  options: { excludeRunId?: string; limit?: number } = {},
+  options: ObserverRecoveryStrategyOptions = {},
 ): VerifiedObserverRecoveryStrategy[] {
   const effects = observerRecoveryStrategyEffects(warnings);
   const eligible = warnings.flatMap((warning): VerifiedObserverRecoveryStrategy[] => {
@@ -123,31 +217,73 @@ export function verifiedObserverRecoveryStrategies(
       failureCount: effect.failureCount,
       effectiveness: effect.failureCount > effect.successCount ? "degraded" : "active",
       score: effect.score,
+      relevanceScore: 0,
     }];
   });
 
-  eligible.sort((left, right) =>
-    right.score - left.score
+  for (const strategy of eligible) {
+    strategy.relevanceScore = options.focus
+      ? recoveryStrategyRelevance(strategy, options.focus)
+      : 0;
+  }
+  const relevant = options.focus
+    ? eligible.filter((strategy) => strategy.relevanceScore > 0)
+    : eligible;
+  relevant.sort((left, right) =>
+    right.relevanceScore - left.relevanceScore
+    || right.score - left.score
     || right.verifiedAt.localeCompare(left.verifiedAt));
   const unique = new Map<string, VerifiedObserverRecoveryStrategy>();
-  for (const strategy of eligible) {
+  for (const strategy of relevant) {
     const key = `${strategy.fingerprint}:${normalizedInstruction(strategy.instruction)}`;
     if (!unique.has(key)) unique.set(key, strategy);
   }
   return [...unique.values()].slice(0, Math.max(0, options.limit ?? 6));
 }
 
+function compactSummaryValue(value: string, limit: number): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length <= limit ? compact : `${compact.slice(0, limit - 1)}…`;
+}
+
+function strategySummary(strategy: VerifiedObserverRecoveryStrategy): string {
+  return [
+    `${strategy.warningId} [${strategy.issueType}; subject=${compactSummaryValue(strategy.subject || "unspecified", 160)}]`,
+    `candidate=${compactSummaryValue(strategy.instruction, 420)}`,
+    `attribution=${strategy.attributionReason}`,
+    `evidenceRefs=${compactSummaryValue(strategy.evidenceRefs.join(",") || "recovered_execution", 240)}`,
+    `reuse=${strategy.effectiveness}; uses=${strategy.usageCount}; successes=${strategy.successCount}; failures=${strategy.failureCount}`,
+  ].join("; ");
+}
+
+export function selectVerifiedObserverRecoveryStrategies(
+  warnings: ObserverWarning[],
+  options: ObserverRecoveryStrategyOptions = {},
+): ObserverRecoveryStrategySelection {
+  const strategies = verifiedObserverRecoveryStrategies(warnings, options);
+  const maxCharacters = Math.max(6, options.maxCharacters ?? 2_400);
+  const included: VerifiedObserverRecoveryStrategy[] = [];
+  const lines: string[] = [];
+  let characterCount = 0;
+  for (const strategy of strategies) {
+    const line = strategySummary(strategy);
+    const separatorLength = lines.length > 0 ? 1 : 0;
+    if (characterCount + separatorLength + line.length > maxCharacters) continue;
+    included.push(strategy);
+    lines.push(line);
+    characterCount += separatorLength + line.length;
+  }
+  const summary = lines.join("\n") || "(none)";
+  return {
+    strategies: included,
+    summary,
+    characterCount: summary.length,
+  };
+}
+
 export function verifiedObserverRecoveryStrategiesSummary(
   warnings: ObserverWarning[],
-  options: { excludeRunId?: string; limit?: number } = {},
+  options: ObserverRecoveryStrategyOptions = {},
 ): string {
-  const strategies = verifiedObserverRecoveryStrategies(warnings, options);
-  if (strategies.length === 0) return "(none)";
-  return strategies.map((strategy) => [
-    `${strategy.warningId} [${strategy.issueType}; subject=${strategy.subject || "unspecified"}]`,
-    `candidate=${strategy.instruction}`,
-    `attribution=${strategy.attributionReason}`,
-    `evidenceRefs=${strategy.evidenceRefs.join(",") || "recovered_execution"}`,
-    `reuse=${strategy.effectiveness}; uses=${strategy.usageCount}; successes=${strategy.successCount}; failures=${strategy.failureCount}`,
-  ].join("; ")).join("\n");
+  return selectVerifiedObserverRecoveryStrategies(warnings, options).summary;
 }

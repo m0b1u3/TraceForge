@@ -64,8 +64,7 @@ import { ObserverScheduler } from "./observer-scheduler.js";
 import { ObserverCadence, observerCadenceSnapshot } from "./observer-cadence.js";
 import { ObserverCorrectionAttribution } from "./observer-correction-attribution.js";
 import {
-  verifiedObserverRecoveryStrategies,
-  verifiedObserverRecoveryStrategiesSummary,
+  selectVerifiedObserverRecoveryStrategies,
 } from "./observer-recovery-strategies.js";
 import { buildSharedKnowledge } from "./shared-knowledge.js";
 import { KnowledgeUsageStore, type KnowledgeRef } from "./stores/knowledge-usage-store.js";
@@ -865,14 +864,17 @@ export function registerRoutes(
           ].join("; ");
         }).join("\n") || "(none)";
         const caseWarnings = observerStore.listByCase(id).warnings;
-        const recoveryStrategyOptions = { excludeRunId: reviewRunId };
-        const recoveryStrategies = verifiedObserverRecoveryStrategies(
+        const recoveryStrategySelection = selectVerifiedObserverRecoveryStrategies(
           caseWarnings,
-          recoveryStrategyOptions,
-        );
-        const recoveryStrategiesSummary = verifiedObserverRecoveryStrategiesSummary(
-          caseWarnings,
-          recoveryStrategyOptions,
+          {
+            excludeRunId: reviewRunId,
+            maxCharacters: 2_400,
+            focus: {
+              goal,
+              trajectory: reviewTrajectory,
+              activeWarnings: activeBeforeReview,
+            },
+          },
         );
         const result = await new Observer(llm).review(id, {
           goal,
@@ -880,8 +882,10 @@ export function registerRoutes(
           factsSummary,
           tasksSummary,
           activeWarningsSummary,
-          recoveryStrategiesSummary,
-          recoveryStrategyIds: recoveryStrategies.map((strategy) => strategy.warningId),
+          recoveryStrategiesSummary: recoveryStrategySelection.summary,
+          recoveryStrategyIds: recoveryStrategySelection.strategies.map(
+            (strategy) => strategy.warningId,
+          ),
           reviewReason: trigger,
         });
         if (result.usage.totalTokens > 0) recordRunUsage("observer", result.usage);

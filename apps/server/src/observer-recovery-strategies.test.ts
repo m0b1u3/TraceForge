@@ -6,6 +6,7 @@ import {
 } from "@traceforge/shared";
 import {
   observerRecoveryStrategyEffects,
+  selectVerifiedObserverRecoveryStrategies,
   verifiedObserverRecoveryStrategies,
   verifiedObserverRecoveryStrategiesSummary,
 } from "./observer-recovery-strategies.js";
@@ -164,5 +165,95 @@ describe("verified Observer recovery strategies", () => {
       effectiveness: "active",
       score: 2,
     })]);
+  });
+
+  it("ranks matching issue identity and excludes unrelated project history", () => {
+    const relevant = warning("warn_relevant", {
+      fingerprint: "current-fingerprint",
+      issueType: "evidence_gap",
+      subject: "task:current-candidate",
+      resolvedAt: "2026-07-30T01:00:00.000Z",
+    });
+    const unrelated = warning("warn_unrelated", {
+      fingerprint: "unrelated-fingerprint",
+      issueType: "repeated_failure",
+      subject: "task:historical-branch",
+      correctionEvidence: serializeObserverCorrectionAudit({
+        version: 1,
+        attributed: true,
+        reason: "execution_recovered",
+        trigger: "human_direction",
+        instruction: "Rebuild an unrelated historical branch.",
+        actions: [{ tool: "inspect", outcome: "succeeded", evidenceRefs: ["fact_old"] }],
+        evidenceRefs: ["fact_old"],
+        summary: "A historical execution recovered.",
+      }),
+      resolvedAt: "2026-07-30T03:00:00.000Z",
+    });
+    const current = warning("warn_current", {
+      status: "open",
+      correctionOutcome: "pending",
+      fingerprint: "current-fingerprint",
+      subject: "task:current-candidate",
+      relatedFacts: ["fact_1"],
+      resolvedAt: null,
+    });
+
+    const selection = selectVerifiedObserverRecoveryStrategies(
+      [unrelated, relevant, current],
+      {
+        focus: {
+          goal: "Complete the current candidate with traceable evidence.",
+          trajectory: "The current candidate still lacks an independent evidence source.",
+          activeWarnings: [current],
+        },
+      },
+    );
+
+    expect(selection.strategies.map((strategy) => strategy.warningId)).toEqual([
+      relevant.id,
+    ]);
+    expect(selection.summary).toContain(relevant.id);
+    expect(selection.summary).not.toContain(unrelated.id);
+    expect(selection.strategies[0]?.relevanceScore).toBeGreaterThan(0);
+  });
+
+  it("uses one character-budgeted selection for both summary and allowed ids", () => {
+    const first = warning("warn_first", {
+      fingerprint: "first-fingerprint",
+      subject: "evidence checkpoint",
+    });
+    const second = warning("warn_second", {
+      fingerprint: "second-fingerprint",
+      subject: "evidence checkpoint two",
+      correctionEvidence: serializeObserverCorrectionAudit({
+        version: 1,
+        attributed: true,
+        reason: "correction_linked_result",
+        trigger: "human_direction",
+        instruction: "Use a second independent source and preserve every resulting reference.",
+        actions: [{ tool: "inspect", outcome: "succeeded", evidenceRefs: ["fact_2"] }],
+        evidenceRefs: ["fact_2"],
+        summary: "A second source produced traceable evidence.",
+      }),
+    });
+
+    const selection = selectVerifiedObserverRecoveryStrategies(
+      [first, second],
+      {
+        maxCharacters: 420,
+        focus: {
+          goal: "Review the evidence checkpoint.",
+          trajectory: "An evidence checkpoint needs another traceable source.",
+          activeWarnings: [],
+        },
+      },
+    );
+
+    expect(selection.characterCount).toBeLessThanOrEqual(420);
+    expect(selection.strategies).toHaveLength(1);
+    expect(selection.summary).toContain(selection.strategies[0]!.warningId);
+    expect([first.id, second.id].filter((id) => selection.summary.includes(id)))
+      .toEqual(selection.strategies.map((strategy) => strategy.warningId));
   });
 });
