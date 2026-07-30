@@ -285,6 +285,26 @@ describe("observer integration", () => {
     expect(store.getById(warning.id)).toEqual(warning);
   });
 
+  it("persists and accumulates only declared recovery strategy references", () => {
+    const store = new ObserverWarningStore(db);
+    const warning = store.create({
+      ...createOpenWarning(),
+      id: "warn_reused_strategy",
+      recoveryStrategyRefs: ["warn_strategy_1"],
+    });
+
+    const observed = store.observeAgain(warning.id, {
+      level: "warning",
+      recoveryStrategyRefs: ["warn_strategy_1", "warn_strategy_2"],
+    });
+
+    expect(observed?.recoveryStrategyRefs).toEqual(["warn_strategy_1", "warn_strategy_2"]);
+    expect(store.getById(warning.id)?.recoveryStrategyRefs).toEqual([
+      "warn_strategy_1",
+      "warn_strategy_2",
+    ]);
+  });
+
   it("isolates fingerprints by run and resolves warnings superseded by a new run", () => {
     const store = new ObserverWarningStore(db);
     const previous = createOpenWarning();

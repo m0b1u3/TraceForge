@@ -226,6 +226,12 @@ export function ObserverTab() {
           <span>{w.correctionResolvedCount} recovered · {w.correctionFailedCount} unresolved · {w.correctionCount} issued</span>
         </div>
       )}
+      {w.recoveryStrategyRefs.length > 0 && (
+        <div className="observer-strategy-reference">
+          <span>Recovery candidates used</span>
+          <code>{w.recoveryStrategyRefs.join(" · ")}</code>
+        </div>
+      )}
       <CorrectionAudit warning={w} />
       <div className="observer-row-suggestion"><span>Suggested next step</span>{w.suggestedAction}</div>
       {recoveryWarningId === w.id && (

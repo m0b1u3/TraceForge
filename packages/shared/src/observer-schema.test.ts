@@ -59,6 +59,7 @@ describe("ObserverWarningSchema", () => {
         correctionEvidence: null,
         lastCorrectionAt: "t",
         lastCorrectionTrigger: "interval",
+        recoveryStrategyRefs: [],
         escalationReason: null,
         relatedRunId: "run_1",
         suggestedGoal: "[Observer correction]\n继续检查 admin/login",

@@ -14,6 +14,7 @@ export interface ReviewInput {
   tasksSummary: string;
   activeWarningsSummary: string;
   recoveryStrategiesSummary: string;
+  recoveryStrategyIds: string[];
   reviewReason: string;
 }
 
@@ -70,9 +71,14 @@ const SCHEMA = {
           relatedTasks: { type: "array", items: { type: "string" } },
           suggestedAction: { type: "string" },
           suggestedGoal: { type: "string" },
+          recoveryStrategyRefs: {
+            type: "array",
+            items: { type: "string" },
+            description: "IDs of supplied verified recovery candidates that materially shaped this warning; otherwise empty",
+          },
           evidence: { type: "string", description: "判定依据，引用具体 Fact/Task/trajectory" },
         },
-        required: ["level", "issueType", "subject", "title", "description", "relatedFacts", "relatedTasks", "suggestedAction", "evidence"],
+        required: ["level", "issueType", "subject", "title", "description", "relatedFacts", "relatedTasks", "suggestedAction", "recoveryStrategyRefs", "evidence"],
       },
     },
   },
@@ -101,6 +107,7 @@ const VERIFIED_RECOVERY_POLICY = [
   "- Reuse a candidate only when the current issue identity, evidence state, and causal obstacle materially match.",
   "- Never treat prior success as proof that the same action is correct now, and never suppress a novel investigation direction because it is absent from this list.",
   "- If a candidate is relevant, adapt it to the current evidence gap and state the new traceable result required.",
+  "- Put a candidate warning ID in recoveryStrategyRefs only when it materially shaped the proposed correction; otherwise return an empty array.",
 ].join("\n");
 
 export class Observer {
@@ -132,6 +139,7 @@ export class Observer {
       const arr = (raw as { warnings?: unknown }).warnings;
       if (!Array.isArray(arr)) return { warnings: [], usage };
       const now = new Date().toISOString();
+      const allowedRecoveryStrategyIds = new Set(input.recoveryStrategyIds);
       const warnings = arr.map((w) => {
         const x = w as Record<string, unknown>;
         const level = typeof x.level === "string" && LEVELS.has(x.level) ? (x.level as ObserverWarning["level"]) : "info";
@@ -148,6 +156,10 @@ export class Observer {
           relatedTasks: Array.isArray(x.relatedTasks) ? (x.relatedTasks as unknown[]).filter((r): r is string => typeof r === "string") : [],
           suggestedAction: typeof x.suggestedAction === "string" ? x.suggestedAction : "",
           suggestedGoal: typeof x.suggestedGoal === "string" ? x.suggestedGoal : "",
+          recoveryStrategyRefs: Array.isArray(x.recoveryStrategyRefs)
+            ? [...new Set((x.recoveryStrategyRefs as unknown[])
+              .filter((id): id is string => typeof id === "string" && allowedRecoveryStrategyIds.has(id)))]
+            : [],
           evidence: typeof x.evidence === "string" ? x.evidence : undefined,
           createdAt: now,
         });

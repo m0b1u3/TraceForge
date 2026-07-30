@@ -1,7 +1,11 @@
 import { eq, and, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { observerWarnings } from "../db/schema.js";
-import { type ObserverWarning, ObserverWarningSchema } from "@traceforge/shared";
+import {
+  type ObserverWarning,
+  type ObserverWarningInput,
+  ObserverWarningSchema,
+} from "@traceforge/shared";
 import { nextObserverStatus } from "../observer-policy.js";
 
 function rowToWarning(row: typeof observerWarnings.$inferSelect): ObserverWarning {
@@ -20,6 +24,7 @@ function rowToWarning(row: typeof observerWarnings.$inferSelect): ObserverWarnin
     correctionEvidence: row.correctionEvidence,
     lastCorrectionAt: row.lastCorrectionAt,
     lastCorrectionTrigger: row.lastCorrectionTrigger,
+    recoveryStrategyRefs: JSON.parse(row.recoveryStrategyRefsJson),
     resolvedAt: row.resolvedAt, createdAt: row.createdAt,
   });
 }
@@ -27,7 +32,7 @@ function rowToWarning(row: typeof observerWarnings.$inferSelect): ObserverWarnin
 export class ObserverWarningStore {
   constructor(private db: Db) {}
 
-  create(w: ObserverWarning): ObserverWarning {
+  create(w: ObserverWarningInput): ObserverWarning {
     const parsed = ObserverWarningSchema.parse(w);
     this.db.insert(observerWarnings).values({
       id: parsed.id, caseId: parsed.caseId, level: parsed.level,
@@ -45,6 +50,7 @@ export class ObserverWarningStore {
       correctionEvidence: parsed.correctionEvidence,
       lastCorrectionAt: parsed.lastCorrectionAt,
       lastCorrectionTrigger: parsed.lastCorrectionTrigger,
+      recoveryStrategyRefsJson: JSON.stringify(parsed.recoveryStrategyRefs),
       escalationReason: parsed.escalationReason,
       relatedRunId: parsed.relatedRunId, suggestedGoal: parsed.suggestedGoal,
       evidence: parsed.evidence ?? null,
@@ -129,6 +135,7 @@ export class ObserverWarningStore {
     suggestedAction?: string;
     suggestedGoal?: string;
     evidence?: string;
+    recoveryStrategyRefs?: string[];
   }): ObserverWarning | undefined {
     const current = this.getById(id);
     if (!current) return undefined;
@@ -136,6 +143,10 @@ export class ObserverWarningStore {
     const occurrenceCount = current.occurrenceCount + 1;
     const lastObservedAt = new Date().toISOString();
     const status = nextObserverStatus(current.status, input.level);
+    const recoveryStrategyRefs = [...new Set([
+      ...current.recoveryStrategyRefs,
+      ...(input.recoveryStrategyRefs ?? []),
+    ])];
     this.db.update(observerWarnings).set({
       level: input.level,
       status,
@@ -145,6 +156,7 @@ export class ObserverWarningStore {
       suggestedAction: input.suggestedAction ?? current.suggestedAction,
       suggestedGoal: input.suggestedGoal ?? current.suggestedGoal,
       evidence: input.evidence ?? current.evidence ?? null,
+      recoveryStrategyRefsJson: JSON.stringify(recoveryStrategyRefs),
     }).where(eq(observerWarnings.id, id)).run();
     return ObserverWarningSchema.parse({
       ...current,
@@ -156,6 +168,7 @@ export class ObserverWarningStore {
       suggestedAction: input.suggestedAction ?? current.suggestedAction,
       suggestedGoal: input.suggestedGoal ?? current.suggestedGoal,
       evidence: input.evidence ?? current.evidence,
+      recoveryStrategyRefs,
     });
   }
 

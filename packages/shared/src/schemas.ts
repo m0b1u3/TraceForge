@@ -351,6 +351,7 @@ export const ObserverWarningSchema = z.object({
   correctionEvidence: z.string().nullable().default(null),
   lastCorrectionAt: z.string().nullable().default(null),
   lastCorrectionTrigger: z.string().nullable().default(null),
+  recoveryStrategyRefs: z.array(z.string()).default([]),
   escalationReason: z.string().nullable().default(null),
   relatedRunId: z.string().nullable().default(null),
   suggestedGoal: z.string().default(""),
@@ -358,6 +359,7 @@ export const ObserverWarningSchema = z.object({
   resolvedAt: z.string().nullable().default(null),
   createdAt: z.string(),
 });
+export type ObserverWarningInput = z.input<typeof ObserverWarningSchema>;
 export type ObserverWarning = z.infer<typeof ObserverWarningSchema>;
 
 export const AgentEventRefsSchema = z.object({

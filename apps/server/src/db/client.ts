@@ -135,6 +135,7 @@ export function createDb(path: string) {
       correction_outcome TEXT NOT NULL DEFAULT 'none',
       correction_evidence TEXT,
       last_correction_at TEXT, last_correction_trigger TEXT,
+      recovery_strategy_refs_json TEXT NOT NULL DEFAULT '[]',
       escalation_reason TEXT,
       related_run_id TEXT, suggested_goal TEXT NOT NULL DEFAULT '',
       evidence TEXT, resolved_at TEXT, created_at TEXT NOT NULL
@@ -206,6 +207,7 @@ export function createDb(path: string) {
   if (!hasWarningColumn("correction_evidence")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_evidence TEXT");
   if (!hasWarningColumn("last_correction_at")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN last_correction_at TEXT");
   if (!hasWarningColumn("last_correction_trigger")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN last_correction_trigger TEXT");
+  if (!hasWarningColumn("recovery_strategy_refs_json")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN recovery_strategy_refs_json TEXT NOT NULL DEFAULT '[]'");
   if (!hasWarningColumn("escalation_reason")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN escalation_reason TEXT");
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_warnings_fingerprint ON observer_warnings(case_id, fingerprint)");
   const trafficColumns = sqlite.prepare("PRAGMA table_info(traffic_entries)").all() as Array<{ name: string }>;

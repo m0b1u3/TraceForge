@@ -5,6 +5,7 @@ import {
   type ObserverWarning,
 } from "@traceforge/shared";
 import {
+  observerRecoveryStrategyEffects,
   verifiedObserverRecoveryStrategies,
   verifiedObserverRecoveryStrategiesSummary,
 } from "./observer-recovery-strategies.js";
@@ -90,5 +91,78 @@ describe("verified Observer recovery strategies", () => {
     expect(summary).toContain("attribution=correction_linked_result");
     expect(summary).toContain("evidenceRefs=fact_1");
     expect(verifiedObserverRecoveryStrategiesSummary([])).toBe("(none)");
+  });
+
+  it("degrades after one failed reuse and withdraws after repeated failures", () => {
+    const source = warning("warn_source");
+    const other = warning("warn_other", {
+      fingerprint: "other-fingerprint",
+      subject: "task:task_2",
+      resolvedAt: "2026-07-30T00:30:00.000Z",
+    });
+    const firstFailure = warning("warn_failure_1", {
+      lastCorrectionTrigger: "interval",
+      correctionOutcome: "persisted",
+      correctionResolvedCount: 0,
+      correctionFailedCount: 1,
+      recoveryStrategyRefs: [source.id],
+    });
+    const oneFailure = verifiedObserverRecoveryStrategies([source, other, firstFailure]);
+    expect(oneFailure.map((strategy) => strategy.warningId)).toEqual([other.id, source.id]);
+    expect(oneFailure.find((strategy) => strategy.warningId === source.id)).toMatchObject({
+      effectiveness: "degraded",
+      failureCount: 1,
+      score: 0,
+    });
+
+    const secondFailure = warning("warn_failure_2", {
+      lastCorrectionTrigger: "interval",
+      correctionOutcome: "stalled",
+      correctionResolvedCount: 0,
+      correctionFailedCount: 1,
+      recoveryStrategyRefs: [source.id],
+    });
+    expect(verifiedObserverRecoveryStrategies([
+      source,
+      other,
+      firstFailure,
+      secondFailure,
+    ]).map((strategy) => strategy.warningId)).toEqual([other.id]);
+    expect(observerRecoveryStrategyEffects([
+      firstFailure,
+      secondFailure,
+    ]).get(source.id)).toMatchObject({
+      usageCount: 2,
+      successCount: 0,
+      failureCount: 2,
+      withdrawn: true,
+    });
+  });
+
+  it("retains a reused strategy when later evidence confirms it", () => {
+    const source = warning("warn_source");
+    const failed = warning("warn_failed", {
+      lastCorrectionTrigger: "interval",
+      correctionOutcome: "persisted",
+      correctionResolvedCount: 0,
+      correctionFailedCount: 1,
+      recoveryStrategyRefs: [source.id],
+    });
+    const succeeded = warning("warn_succeeded", {
+      lastCorrectionTrigger: "interval",
+      recoveryStrategyRefs: [source.id],
+    });
+
+    expect(verifiedObserverRecoveryStrategies([
+      source,
+      failed,
+      succeeded,
+    ])).toEqual([expect.objectContaining({
+      warningId: source.id,
+      successCount: 1,
+      failureCount: 1,
+      effectiveness: "active",
+      score: 2,
+    })]);
   });
 });

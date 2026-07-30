@@ -218,6 +218,7 @@ export const observerWarnings = sqliteTable("observer_warnings", {
   correctionEvidence: text("correction_evidence"),
   lastCorrectionAt: text("last_correction_at"),
   lastCorrectionTrigger: text("last_correction_trigger"),
+  recoveryStrategyRefsJson: text("recovery_strategy_refs_json").notNull().default("[]"),
   escalationReason: text("escalation_reason"),
   relatedRunId: text("related_run_id"),
   suggestedGoal: text("suggested_goal").notNull().default(""),

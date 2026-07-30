@@ -63,7 +63,10 @@ import { securityReportExport, securityReportMarkdown } from "./security-report-
 import { ObserverScheduler } from "./observer-scheduler.js";
 import { ObserverCadence, observerCadenceSnapshot } from "./observer-cadence.js";
 import { ObserverCorrectionAttribution } from "./observer-correction-attribution.js";
-import { verifiedObserverRecoveryStrategiesSummary } from "./observer-recovery-strategies.js";
+import {
+  verifiedObserverRecoveryStrategies,
+  verifiedObserverRecoveryStrategiesSummary,
+} from "./observer-recovery-strategies.js";
 import { buildSharedKnowledge } from "./shared-knowledge.js";
 import { KnowledgeUsageStore, type KnowledgeRef } from "./stores/knowledge-usage-store.js";
 import { KnowledgeOutcomeTracker } from "./knowledge-outcome.js";
@@ -861,9 +864,15 @@ export function registerRoutes(
             `previousActions=${audit?.actions.map((action) => `${action.tool}:${action.outcome}`).join(",") || "none"}`,
           ].join("; ");
         }).join("\n") || "(none)";
+        const caseWarnings = observerStore.listByCase(id).warnings;
+        const recoveryStrategyOptions = { excludeRunId: reviewRunId };
+        const recoveryStrategies = verifiedObserverRecoveryStrategies(
+          caseWarnings,
+          recoveryStrategyOptions,
+        );
         const recoveryStrategiesSummary = verifiedObserverRecoveryStrategiesSummary(
-          observerStore.listByCase(id).warnings,
-          { excludeRunId: reviewRunId },
+          caseWarnings,
+          recoveryStrategyOptions,
         );
         const result = await new Observer(llm).review(id, {
           goal,
@@ -872,6 +881,7 @@ export function registerRoutes(
           tasksSummary,
           activeWarningsSummary,
           recoveryStrategiesSummary,
+          recoveryStrategyIds: recoveryStrategies.map((strategy) => strategy.warningId),
           reviewReason: trigger,
         });
         if (result.usage.totalTokens > 0) recordRunUsage("observer", result.usage);
@@ -908,6 +918,7 @@ export function registerRoutes(
               suggestedAction: w.suggestedAction,
               suggestedGoal: w.suggestedGoal || w.suggestedAction,
               evidence: w.evidence,
+              recoveryStrategyRefs: w.recoveryStrategyRefs,
             });
             if (!warning) continue;
             warning = observerStore.settleCorrection(
