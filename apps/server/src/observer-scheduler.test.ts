@@ -1,5 +1,29 @@
 import { describe, expect, it } from "vitest";
+import type { ToolExecutionReport } from "@traceforge/extension";
 import { ObserverScheduler } from "./observer-scheduler.js";
+
+const failureDiagnostic = {
+  category: "invalid_input" as const,
+  retryable: false,
+  summary: "The input is invalid.",
+  recommendation: "Change the input.",
+};
+
+function failure(
+  input: unknown,
+  executionScopeKey = "task:first",
+  extra: Partial<ToolExecutionReport> = {},
+): ToolExecutionReport {
+  return {
+    name: "probe",
+    input,
+    content: "invalid input",
+    ok: false,
+    executionScopeKey,
+    failureDiagnostic,
+    ...extra,
+  };
+}
 
 describe("ObserverScheduler event policy", () => {
   it("does not review ordinary successful tool turns", () => {
@@ -8,25 +32,72 @@ describe("ObserverScheduler event policy", () => {
     expect(scheduler.consume()).toBeNull();
   });
 
-  it("waits for repeated permanent failures instead of interrupting on the first failure", () => {
+  it("reviews only after the same task repeats an identical failed call three times", () => {
     const scheduler = new ObserverScheduler();
-    scheduler.observe({
-      name: "probe",
-      input: { path: "/a" },
-      content: "invalid payload",
-      ok: false,
-      failureClass: "permanent",
-    });
+    scheduler.observe(failure({ candidate: "first" }));
+    scheduler.observe(failure({ candidate: "first" }, "task:first", { blocked: true }));
+    expect(scheduler.consume()).toBeNull();
+
+    scheduler.observe(failure({ candidate: "first" }, "task:first", { blocked: true }));
+    expect(scheduler.consume()).toBe("repeated_failure");
+    expect(scheduler.consume()).toBeNull();
+  });
+
+  it("allows changed inputs and tools to pivot before unresolved work is reviewed", () => {
+    const scheduler = new ObserverScheduler();
+    scheduler.observe(failure({ candidate: "first" }));
+    scheduler.observe(failure({ candidate: "second" }));
+    scheduler.observe({ ...failure({ path: "artifact" }), name: "analyze" });
+    expect(scheduler.consume()).toBeNull();
+  });
+
+  it("reviews a task after five unresolved failures even when calls changed", () => {
+    const scheduler = new ObserverScheduler();
+    for (let index = 0; index < 4; index += 1) {
+      scheduler.observe(failure({ candidate: index }));
+    }
+    expect(scheduler.consume()).toBeNull();
+    scheduler.observe(failure({ candidate: 4 }));
+    expect(scheduler.consume()).toBe("repeated_failure");
+
+    scheduler.observe(failure({ candidate: "new strategy" }));
+    expect(scheduler.consume()).toBeNull();
+  });
+
+  it("isolates failure sequences by task and clears them after recovery", () => {
+    const scheduler = new ObserverScheduler();
+    scheduler.observe(failure({ candidate: "first" }, "task:first"));
+    scheduler.observe(failure({ candidate: "first" }, "task:first", { blocked: true }));
+    scheduler.observe(failure({ candidate: "second" }, "task:second"));
+    scheduler.observe(failure({ candidate: "second" }, "task:second", { blocked: true }));
     expect(scheduler.consume()).toBeNull();
 
     scheduler.observe({
       name: "probe",
-      input: { path: "/b" },
-      content: "invalid payload",
-      ok: false,
-      failureClass: "permanent",
+      input: { candidate: "first" },
+      content: "recovered",
+      ok: true,
+      executionScopeKey: "task:first",
     });
-    expect(scheduler.consume()).toBe("repeated_failure");
+    scheduler.observe(failure({ candidate: "first" }, "task:first"));
+    expect(scheduler.consume()).toBeNull();
+  });
+
+  it("does not turn authorization decisions into repeated execution failures", () => {
+    const scheduler = new ObserverScheduler();
+    const authorization = {
+      category: "authorization" as const,
+      retryable: false,
+      summary: "Authorization required.",
+      recommendation: "Resolve authorization.",
+    };
+    for (let index = 0; index < 6; index += 1) {
+      scheduler.observe(failure({ candidate: index }, "task:first", {
+        blocked: true,
+        failureDiagnostic: authorization,
+      }));
+    }
+    expect(scheduler.consume()).toBeNull();
   });
 
   it("prioritizes evidence conflict over lower priority events in the same turn", () => {
@@ -47,12 +118,6 @@ describe("ObserverScheduler event policy", () => {
     });
     expect(scheduler.consume()).toBe("evidence_conflict");
     expect(scheduler.consume()).toBeNull();
-  });
-
-  it("marks successful command execution as a high-risk review event", () => {
-    const scheduler = new ObserverScheduler();
-    scheduler.observe({ name: "exec_command", input: {}, content: "done", ok: true, risk: "command" });
-    expect(scheduler.consume()).toBe(null);
   });
 
   it("reviews validated and invalidated attack paths as evidence events", () => {

@@ -1,4 +1,8 @@
-import type { ObserverReviewTrigger, ToolExecutionReport } from "@traceforge/extension";
+import {
+  computeFailureFingerprint,
+  type ObserverReviewTrigger,
+  type ToolExecutionReport,
+} from "@traceforge/extension";
 
 const PRIORITY: Record<Exclude<ObserverReviewTrigger, "interval" | "final">, number> = {
   finding_verification: 1,
@@ -7,7 +11,17 @@ const PRIORITY: Record<Exclude<ObserverReviewTrigger, "interval" | "final">, num
   evidence_conflict: 4,
 };
 
+const IDENTICAL_FAILURE_THRESHOLD = 3;
+const UNRESOLVED_FAILURE_THRESHOLD = 5;
+
 type EventTrigger = keyof typeof PRIORITY;
+
+interface FailureSequence {
+  fingerprint: string;
+  identicalCount: number;
+  unresolvedCount: number;
+  reviewed: boolean;
+}
 
 function inputRecord(input: unknown): Record<string, unknown> {
   return typeof input === "object" && input !== null ? input as Record<string, unknown> : {};
@@ -34,22 +48,30 @@ function recordedAttackPathStatus(content: string): string | null {
   }
 }
 
+function countsAsUnresolvedFailure(report: ToolExecutionReport): boolean {
+  if (report.ok || report.rejected) return false;
+  const category = report.failureDiagnostic?.category;
+  return category !== "authorization"
+    && category !== "rejected"
+    && category !== "policy_block";
+}
+
 export class ObserverScheduler {
   private pending: EventTrigger | null = null;
-  private consecutivePermanentFailures = 0;
+  private readonly failuresByScope = new Map<string, FailureSequence>();
   private successfulCommandsSinceReview = 0;
 
   observe(report: ToolExecutionReport): void {
     const input = inputRecord(report.input);
+    const scopeKey = report.executionScopeKey ?? "run:unscoped";
 
-    if (report.blocked || (!report.ok && report.failureClass === "permanent")) {
-      this.consecutivePermanentFailures += 1;
-      if (report.blocked || this.consecutivePermanentFailures >= 2) this.mark("repeated_failure");
+    if (countsAsUnresolvedFailure(report)) {
+      this.observeFailure(scopeKey, report);
       return;
     }
 
     if (!report.ok) return;
-    this.consecutivePermanentFailures = 0;
+    this.failuresByScope.delete(scopeKey);
 
     if (report.risk === "command") {
       this.successfulCommandsSinceReview += 1;
@@ -88,6 +110,31 @@ export class ObserverScheduler {
     this.pending = null;
     if (trigger) this.successfulCommandsSinceReview = 0;
     return trigger;
+  }
+
+  private observeFailure(scopeKey: string, report: ToolExecutionReport): void {
+    const fingerprint = computeFailureFingerprint(report.name, report.input);
+    const previous = this.failuresByScope.get(scopeKey);
+    const sameCall = previous?.fingerprint === fingerprint;
+    const pivotedAfterReview = previous?.reviewed === true && !sameCall;
+    const next: FailureSequence = {
+      fingerprint,
+      identicalCount: sameCall ? previous.identicalCount + 1 : 1,
+      unresolvedCount: pivotedAfterReview ? 1 : (previous?.unresolvedCount ?? 0) + 1,
+      reviewed: sameCall ? previous.reviewed : false,
+    };
+    this.failuresByScope.set(scopeKey, next);
+
+    if (
+      !next.reviewed
+      && (
+        next.identicalCount >= IDENTICAL_FAILURE_THRESHOLD
+        || next.unresolvedCount >= UNRESOLVED_FAILURE_THRESHOLD
+      )
+    ) {
+      next.reviewed = true;
+      this.mark("repeated_failure");
+    }
   }
 
   private mark(trigger: EventTrigger): void {

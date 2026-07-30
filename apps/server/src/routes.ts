@@ -76,7 +76,6 @@ import { makeManageValidationTaskTool } from "./validation-task-control-tool.js"
 import { auditValidationWorkflow } from "./validation-workflow-audit.js";
 import { buildValidationWorkflowSnapshot, makeGetValidationWorkflowStateTool, type ValidationRuntimeSnapshot } from "./validation-workflow-snapshot.js";
 import {
-  InvestigationOutcomePolicy,
   InvestigationStructurePolicy,
 } from "./investigation-runtime-policy.js";
 import { reconcileUnsupportedEndpointFacts } from "./endpoint-fact-reconciliation.js";
@@ -1236,7 +1235,6 @@ export function registerRoutes(
     const pendingToolRefs = new Map<string, (AgentEventRefs | null)[]>();
     const observerScheduler = new ObserverScheduler();
     const structurePolicy = new InvestigationStructurePolicy();
-    const outcomePolicy = new InvestigationOutcomePolicy();
     await new AgentRuntime(llm, registry, gate).run(
       `${system}\n${runtimeProtocol}\nValidation task protocol: use manage_validation_task to claim a consensus validation task before executing it, release it before pivoting, and complete it only after recording the required evidence. Do not manually change consensus validation status with record_task.\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}\n\n${getValidationMatrixPlan()}`,
       built.messages,
@@ -1383,18 +1381,6 @@ export function registerRoutes(
       },
       onToolExecuted: (report) => {
         structurePolicy.observe(report);
-        const lowYield = outcomePolicy.observe(report);
-        if (lowYield) {
-          runs.addSteering(runId, lowYield.steering);
-          const entry = timelineStore.append(
-            id,
-            "investigation_low_yield_detected",
-            `signature=${lowYield.signature}; consecutive=${lowYield.count}`,
-            undefined,
-            runId,
-          );
-          bus.emit({ type: "timeline_appended", entry });
-        }
         const windowStack = toolRefWindows.get(report.name) ?? [];
         const windowStart = windowStack.shift() ?? runTimelineEntries.length;
         const refsQueue = pendingToolRefs.get(report.name) ?? [];

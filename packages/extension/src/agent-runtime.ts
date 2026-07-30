@@ -45,6 +45,7 @@ export interface ToolExecutionReport {
   input: unknown;
   content: string;
   ok: boolean;
+  executionScopeKey?: string;
   meta?: Record<string, unknown>;
   risk?: "normal" | "command";
   rejected?: boolean;
@@ -501,7 +502,7 @@ export class AgentRuntime {
       const result = { content: msg, ok: false, scopeKey, failureDiagnostic: diagnoseToolFailure(msg, "unavailable_dependency") };
       if (!opts.deferResultEvent) onEvent({ type: "tool_result", name: call.name, executionId: call.id, outcome: "failed", failureDiagnostic: result.failureDiagnostic, content: msg });
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, failureDiagnostic: result.failureDiagnostic });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, executionScopeKey: scopeKey, failureDiagnostic: result.failureDiagnostic });
       }
       return result;
     }
@@ -522,7 +523,7 @@ export class AgentRuntime {
       onEvent({ type: "tool_blocked", name: call.name, input: JSON.stringify(call.input), content });
       const result = { content, ok: false, scopeKey, failureDiagnostic: blockedFailure.diagnostic };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, blocked: true, failureDiagnostic: result.failureDiagnostic, risk: tool.risk });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, executionScopeKey: scopeKey, blocked: true, failureDiagnostic: result.failureDiagnostic, risk: tool.risk });
       }
       return result;
     }
@@ -534,7 +535,7 @@ export class AgentRuntime {
       const result = { content, ok: false, scopeKey, failureDiagnostic: diagnoseToolFailure(content, "authorization") };
       if (options.onToolExecuted) {
         await options.onToolExecuted({
-          name: call.name, input: call.input, content, ok: false, blocked: true, failureDiagnostic: result.failureDiagnostic, risk: tool.risk,
+          name: call.name, input: call.input, content, ok: false, executionScopeKey: scopeKey, blocked: true, failureDiagnostic: result.failureDiagnostic, risk: tool.risk,
         });
       }
       return result;
@@ -550,7 +551,7 @@ export class AgentRuntime {
       onEvent({ type: "tool_rejected", name: call.name, content });
       const result = { content, ok: false, scopeKey, failureDiagnostic: diagnoseToolFailure(content, "rejected") };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, rejected: true, failureDiagnostic: result.failureDiagnostic, risk: tool.risk });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, executionScopeKey: scopeKey, rejected: true, failureDiagnostic: result.failureDiagnostic, risk: tool.risk });
       }
       return result;
     }
@@ -591,6 +592,7 @@ export class AgentRuntime {
           input: call.input,
           content: result.content,
           ok: result.ok,
+          executionScopeKey: scopeKey,
           meta: res.meta,
           transient,
           failureClass,
@@ -608,7 +610,7 @@ export class AgentRuntime {
       }
       const result = { content, ok: false, scopeKey, failureDiagnostic };
       if (options.onToolExecuted) {
-        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, failureDiagnostic: result.failureDiagnostic, risk: tool.risk });
+        await options.onToolExecuted({ name: call.name, input: call.input, content: result.content, ok: result.ok, executionScopeKey: scopeKey, failureDiagnostic: result.failureDiagnostic, risk: tool.risk });
       }
       return result;
     }

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  InvestigationOutcomePolicy,
   InvestigationStructurePolicy,
   isInvestigationStructureTool,
 } from "./investigation-runtime-policy.js";
@@ -28,19 +27,5 @@ describe("investigation runtime policy", () => {
     expect(policy.authorize("http_replay", 1, 1)).toBeUndefined();
     expect(policy.authorize("http_replay", 2, 2)).toContain("Multiple investigation tasks");
     expect(policy.authorize("search_facts", 2, 0)).toBeUndefined();
-  });
-
-  it("emits non-blocking steering after repeated low-yield HTTP outcomes", () => {
-    const policy = new InvestigationOutcomePolicy(3);
-    const report = {
-      name: "http_replay",
-      input: {},
-      content: "not found",
-      ok: true,
-      meta: { status: 404 },
-    };
-    expect(policy.observe(report)).toBeUndefined();
-    expect(policy.observe(report)).toBeUndefined();
-    expect(policy.observe(report)?.steering).toContain("Stop issuing equivalent variants");
   });
 });
