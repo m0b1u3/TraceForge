@@ -59,6 +59,7 @@ import { AttackPathStore } from "./stores/attack-path-store.js";
 import { SecurityReportStore } from "./stores/security-report-store.js";
 import { securityReportExport, securityReportMarkdown } from "./security-report-export.js";
 import { ObserverScheduler } from "./observer-scheduler.js";
+import { ObserverCadence, observerCadenceSnapshot } from "./observer-cadence.js";
 import { buildSharedKnowledge } from "./shared-knowledge.js";
 import { KnowledgeUsageStore, type KnowledgeRef } from "./stores/knowledge-usage-store.js";
 import { KnowledgeOutcomeTracker } from "./knowledge-outcome.js";
@@ -767,6 +768,7 @@ export function registerRoutes(
         reviewRunId: string,
         reviewTrajectory: string,
         trigger: ObserverReviewTrigger,
+        reviewTurn: number,
       ): Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> => {
         const startedAt = Date.now();
         const compact = (value: string | null | undefined, limit = 320) =>
@@ -808,6 +810,7 @@ export function registerRoutes(
         });
         if (result.usage.totalTokens > 0) recordRunUsage("observer", result.usage);
         if (result.error) {
+          observerCadence.recordFailedReview(reviewTurn);
           bus.emit({ type: "observer_review_failed", caseId: id, runId: reviewRunId, error: result.error });
           return { action: "continue" };
         }
@@ -878,6 +881,10 @@ export function registerRoutes(
           const resolved = observerStore.updateStatus(settled.id, "resolved");
           if (resolved) bus.emit({ type: "observer_warning_updated", warning: resolved });
         }
+        observerCadence.recordSuccessfulReview(reviewTurn, {
+          warningCount: result.warnings.length,
+          correctionCount: steering.length,
+        });
         bus.emit({
           type: "observer_review_completed",
           caseId: id,
@@ -898,16 +905,18 @@ export function registerRoutes(
         reviewRunId: string,
         reviewTrajectory: string,
         trigger: ObserverReviewTrigger,
+        reviewTurn: number,
       ): Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> => {
         const normalizedTrajectory = reviewTrajectory.trim();
         if (!normalizedTrajectory) return { action: "continue" };
         const digest = createHash("sha256").update(normalizedTrajectory).digest("hex");
         if (digest === lastObserverReviewDigest || observerReviewInFlight) return { action: "continue" };
         lastObserverReviewDigest = digest;
-        observerReviewInFlight = runObserverReviewUnsafe(reviewRunId, normalizedTrajectory, trigger);
+        observerReviewInFlight = runObserverReviewUnsafe(reviewRunId, normalizedTrajectory, trigger, reviewTurn);
         try {
           return await observerReviewInFlight;
         } catch (error) {
+          observerCadence.recordFailedReview(reviewTurn);
           bus.emit({
             type: "observer_review_failed",
             caseId: id,
@@ -1279,6 +1288,7 @@ export function registerRoutes(
     const toolRefWindows = new Map<string, number[]>();
     const pendingToolRefs = new Map<string, (AgentEventRefs | null)[]>();
     const observerScheduler = new ObserverScheduler();
+    const observerCadence = new ObserverCadence();
     const structurePolicy = new InvestigationStructurePolicy();
     await new AgentRuntime(llm, registry, gate).run(
       `${system}\n${runtimeProtocol}\nValidation task protocol: use manage_validation_task to claim a consensus validation task before executing it, release it before pivoting, and complete it only after recording the required evidence. Do not manually change consensus validation status with record_task.\n\n${getAttackPathPlan()}\n\n${getEvidenceGapPlan()}\n\n${getValidationMatrixPlan()}`,
@@ -1379,10 +1389,19 @@ export function registerRoutes(
       signal: running.abortController.signal,
       runId,
       budget,
-      reviewIntervalTurns: 12,
+      shouldReviewAtCheckpoint: (turnCount) => observerCadence.shouldReview(
+        turnCount,
+        observerCadenceSnapshot(observerStore.listByCase(id).warnings.filter((warning) =>
+          warning.relatedRunId === runId)),
+      ),
       getObserverReviewTrigger: () => observerScheduler.consume(),
       getSteeringMessages: () => runs.consumeSteering(runId),
-      onTurnComplete: async (summary) => runObserverReview(summary.runId, summary.trajectory, summary.trigger),
+      onTurnComplete: async (summary) => runObserverReview(
+        summary.runId,
+        summary.trajectory,
+        summary.trigger,
+        summary.turnCount,
+      ),
       failureMemory,
       getExecutionScopeKey: () => {
         const runningTask = taskStore.listByCase(id).find((task) => task.runId === runId && task.status === "running");

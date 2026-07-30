@@ -62,6 +62,7 @@ export interface AgentRunOptions {
   budget?: Partial<AgentRunBudget>;
   onTurnComplete?: (summary: TurnSummary) => Promise<ObserverReviewDecision>;
   reviewIntervalTurns?: number;
+  shouldReviewAtCheckpoint?: (turnCount: number) => boolean;
   getObserverReviewTrigger?: () => ObserverReviewTrigger | null;
   toolTimeoutMs?: number;
   failureMemory?: FailureMemory;
@@ -435,7 +436,10 @@ export class AgentRuntime {
 
       turnCount += 1;
       const eventTrigger = options.getObserverReviewTrigger?.() ?? null;
-      if (eventTrigger || shouldReviewAtCheckpoint(turnCount, reviewIntervalTurns)) {
+      const checkpointDue = options.shouldReviewAtCheckpoint
+        ? options.shouldReviewAtCheckpoint(turnCount)
+        : shouldReviewAtCheckpoint(turnCount, reviewIntervalTurns);
+      if (eventTrigger || checkpointDue) {
         const decision = await review(eventTrigger ?? "interval", turnCount);
         if (decision?.action === "pause") {
           onEvent({ type: "interrupted", content: decision.reason ?? "paused by observer" });
