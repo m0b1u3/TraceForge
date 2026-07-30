@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
-import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions, validationConsensus } from "./db/schema.js";
+import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, observerStrategyAudits, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions, validationConsensus } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -66,6 +66,8 @@ import { ObserverCorrectionAttribution } from "./observer-correction-attribution
 import {
   selectVerifiedObserverRecoveryStrategies,
 } from "./observer-recovery-strategies.js";
+import { buildObserverStrategyAudit } from "./observer-strategy-audit.js";
+import { ObserverStrategyAuditStore } from "./stores/observer-strategy-audit-store.js";
 import { buildSharedKnowledge } from "./shared-knowledge.js";
 import { KnowledgeUsageStore, type KnowledgeRef } from "./stores/knowledge-usage-store.js";
 import { KnowledgeOutcomeTracker } from "./knowledge-outcome.js";
@@ -161,6 +163,7 @@ export function registerRoutes(
   const actionStore = new ActionCardStore(db);
   const decisionStore = new DecisionStore(db);
   const observerStore = new ObserverWarningStore(db);
+  const observerStrategyAuditStore = new ObserverStrategyAuditStore(db);
   const agentEventStore = new AgentEventStore(db);
   bus.subscribe((event) => {
     if (event.type !== "timeline_appended") return;
@@ -370,6 +373,7 @@ export function registerRoutes(
     db.delete(validationConsensus).where(eq(validationConsensus.caseId, id)).run();
     db.delete(agentEvents).where(eq(agentEvents.caseId, id)).run();
     db.delete(observerWarnings).where(eq(observerWarnings.caseId, id)).run();
+    db.delete(observerStrategyAudits).where(eq(observerStrategyAudits.caseId, id)).run();
     db.delete(runCognitiveState).where(eq(runCognitiveState.caseId, id)).run();
     db.delete(hypotheses).where(eq(hypotheses.caseId, id)).run();
     db.delete(contextSummaries).where(eq(contextSummaries.caseId, id)).run();
@@ -588,6 +592,15 @@ export function registerRoutes(
       limit: limit ? Number(limit) : undefined,
       offset: offset ? Number(offset) : undefined,
     });
+  });
+
+  app.get("/api/cases/:id/observer/strategy-audits", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    const { limit } = (req.query ?? {}) as { limit?: string };
+    return {
+      audits: observerStrategyAuditStore.listByCase(id, limit ? Number(limit) : 100),
+    };
   });
 
   app.post("/api/observer/warnings/:warningId/accept", async (req, reply) => {
@@ -889,9 +902,33 @@ export function registerRoutes(
           reviewReason: trigger,
         });
         if (result.usage.totalTokens > 0) recordRunUsage("observer", result.usage);
+        const warningIdsByStrategy = new Map<string, Set<string>>();
+        const trackStrategyAdoptions = (strategyIds: string[], warningId: string) => {
+          for (const strategyId of strategyIds) {
+            const warningIds = warningIdsByStrategy.get(strategyId) ?? new Set<string>();
+            warningIds.add(warningId);
+            warningIdsByStrategy.set(strategyId, warningIds);
+          }
+        };
+        const persistStrategyAudit = () => observerStrategyAuditStore.create(
+          buildObserverStrategyAudit({
+            caseId: id,
+            runId: reviewRunId,
+            trigger,
+            selection: recoveryStrategySelection,
+            warningIdsByStrategy,
+          }),
+        );
         if (result.error) {
           observerCadence.recordFailedReview(reviewTurn);
-          bus.emit({ type: "observer_review_failed", caseId: id, runId: reviewRunId, error: result.error });
+          const strategyAudit = persistStrategyAudit();
+          bus.emit({
+            type: "observer_review_failed",
+            caseId: id,
+            runId: reviewRunId,
+            error: result.error,
+            strategyAudit,
+          });
           return { action: "continue" };
         }
         let pauseReason: string | undefined;
@@ -925,6 +962,7 @@ export function registerRoutes(
               recoveryStrategyRefs: w.recoveryStrategyRefs,
             });
             if (!warning) continue;
+            trackStrategyAdoptions(w.recoveryStrategyRefs, warning.id);
             warning = observerStore.settleCorrection(
               warning.id,
               warning.status === "escalated" ? "escalated" : "persisted",
@@ -1004,6 +1042,7 @@ export function registerRoutes(
             suggestedGoal: w.suggestedGoal || w.suggestedAction,
             resolvedAt: null,
           });
+          trackStrategyAdoptions(w.recoveryStrategyRefs, warning.id);
           const intervention = observerIntervention(warning, { allowPause: false });
           if (intervention.steering) {
             steering.push(intervention.steering);
@@ -1027,6 +1066,7 @@ export function registerRoutes(
           warningCount: result.warnings.length,
           correctionCount: steering.length,
         });
+        const strategyAudit = persistStrategyAudit();
         bus.emit({
           type: "observer_review_completed",
           caseId: id,
@@ -1036,6 +1076,7 @@ export function registerRoutes(
           correctionCount: steering.length,
           durationMs: Date.now() - startedAt,
           totalTokens: result.usage.totalTokens,
+          strategyAudit,
         });
         return pauseReason
           ? { action: "pause", reason: pauseReason }

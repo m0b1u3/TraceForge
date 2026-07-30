@@ -1,6 +1,7 @@
 import {
   parseObserverCorrectionAudit,
   type ObserverIssueType,
+  type ObserverRecoveryRelevanceReason,
   type ObserverWarning,
 } from "@traceforge/shared";
 
@@ -19,6 +20,7 @@ export interface VerifiedObserverRecoveryStrategy {
   effectiveness: "active" | "degraded";
   score: number;
   relevanceScore: number;
+  relevanceReasons: ObserverRecoveryRelevanceReason[];
 }
 
 function normalizedInstruction(value: string): string {
@@ -126,26 +128,35 @@ function recoveryStrategyRelevance(
     "fingerprint" | "issueType" | "subject" | "instruction" | "evidenceRefs"
   >,
   focus: ObserverRecoveryStrategyFocus,
-): number {
+): { score: number; reasons: ObserverRecoveryRelevanceReason[] } {
   const activeEvidence = new Set(focus.activeWarnings.flatMap((warning) => [
     ...warning.relatedFacts,
     ...warning.relatedTasks,
   ]));
   const normalizedSubject = normalizedIdentity(strategy.subject);
   let score = 0;
+  const reasons = new Set<ObserverRecoveryRelevanceReason>();
   for (const warning of focus.activeWarnings) {
-    if (strategy.fingerprint === warning.fingerprint) score += 100;
-    if (strategy.issueType === warning.issueType) score += 24;
+    if (strategy.fingerprint === warning.fingerprint) {
+      score += 100;
+      reasons.add("fingerprint_match");
+    }
+    if (strategy.issueType === warning.issueType) {
+      score += 24;
+      reasons.add("issue_type_match");
+    }
     if (
       normalizedSubject
       && normalizedSubject === normalizedIdentity(warning.subject)
     ) {
       score += 40;
+      reasons.add("subject_match");
     }
   }
   const evidenceMatches = strategy.evidenceRefs.filter((reference) =>
     activeEvidence.has(reference)).length;
   score += Math.min(36, evidenceMatches * 18);
+  if (evidenceMatches > 0) reasons.add("evidence_reference_match");
 
   const focusText = [
     focus.goal,
@@ -165,8 +176,11 @@ function recoveryStrategyRelevance(
     lexicalOverlapScore(strategy.instruction, focusText),
   );
   const lexicalThreshold = focus.activeWarnings.length > 0 ? 8 : 4;
-  if (lexicalScore >= lexicalThreshold) score += Math.min(24, lexicalScore);
-  return score;
+  if (lexicalScore >= lexicalThreshold) {
+    score += Math.min(24, lexicalScore);
+    reasons.add("lexical_context_match");
+  }
+  return { score, reasons: [...reasons] };
 }
 
 export function verifiedObserverRecoveryStrategies(
@@ -218,13 +232,16 @@ export function verifiedObserverRecoveryStrategies(
       effectiveness: effect.failureCount > effect.successCount ? "degraded" : "active",
       score: effect.score,
       relevanceScore: 0,
+      relevanceReasons: [],
     }];
   });
 
   for (const strategy of eligible) {
-    strategy.relevanceScore = options.focus
+    const relevance = options.focus
       ? recoveryStrategyRelevance(strategy, options.focus)
-      : 0;
+      : { score: 0, reasons: [] };
+    strategy.relevanceScore = relevance.score;
+    strategy.relevanceReasons = relevance.reasons;
   }
   const relevant = options.focus
     ? eligible.filter((strategy) => strategy.relevanceScore > 0)

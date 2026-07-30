@@ -7,6 +7,7 @@ import { registerRoutes } from "./routes.js";
 import { realLlmProviderForTest } from "./real-llm-test-provider.js";
 import type { RuntimeEvent } from "@traceforge/shared";
 import { ObserverWarningStore } from "./stores/observer-store.js";
+import { ObserverStrategyAuditStore } from "./stores/observer-strategy-audit-store.js";
 
 let app: FastifyInstance;
 let caseId: string;
@@ -86,6 +87,38 @@ describe("observer integration", () => {
     const body = res.json();
     expect(body.warnings).toEqual([]);
     expect(body.total).toBe(0);
+  });
+
+  it("returns persisted recovery strategy decision audits", async () => {
+    new ObserverStrategyAuditStore(db).create({
+      id: "audit_route",
+      caseId,
+      runId: "run_audit",
+      trigger: "interval",
+      offeredCandidates: [{
+        strategyId: "warn_strategy",
+        relevanceScore: 124,
+        relevanceReasons: ["fingerprint_match", "issue_type_match"],
+        effectiveness: "active",
+        usageCount: 1,
+        successCount: 1,
+        failureCount: 0,
+      }],
+      adoptions: [{ strategyId: "warn_strategy", warningIds: ["warn_result"] }],
+      ignoredStrategyIds: [],
+      contextCharacters: 312,
+      createdAt: "2026-07-30T04:00:00.000Z",
+    });
+
+    const response = await app.inject({
+      url: `/api/cases/${caseId}/observer/strategy-audits`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().audits).toEqual([expect.objectContaining({
+      id: "audit_route",
+      adoptions: [{ strategyId: "warn_strategy", warningIds: ["warn_result"] }],
+    })]);
   });
 
   it("supports pagination and status filter", async () => {

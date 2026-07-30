@@ -141,6 +141,14 @@ export function createDb(path: string) {
       evidence TEXT, resolved_at TEXT, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_warnings_case ON observer_warnings(case_id);
+    CREATE TABLE IF NOT EXISTS observer_strategy_audits (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT NOT NULL,
+      trigger TEXT NOT NULL, offered_candidates_json TEXT NOT NULL,
+      adoptions_json TEXT NOT NULL, ignored_strategy_ids_json TEXT NOT NULL,
+      context_characters INTEGER NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_observer_strategy_audits_case
+      ON observer_strategy_audits(case_id, created_at);
     CREATE TABLE IF NOT EXISTS agent_events (
       seq INTEGER PRIMARY KEY AUTOINCREMENT,
       id TEXT NOT NULL, case_id TEXT NOT NULL, kind TEXT NOT NULL,

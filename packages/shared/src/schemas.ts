@@ -324,6 +324,46 @@ export const ObserverIssueTypeSchema = z.enum([
 ]);
 export type ObserverIssueType = z.infer<typeof ObserverIssueTypeSchema>;
 
+export const ObserverRecoveryRelevanceReasonSchema = z.enum([
+  "fingerprint_match",
+  "issue_type_match",
+  "subject_match",
+  "evidence_reference_match",
+  "lexical_context_match",
+]);
+export type ObserverRecoveryRelevanceReason = z.infer<typeof ObserverRecoveryRelevanceReasonSchema>;
+
+export const ObserverStrategyAuditSchema = z.object({
+  id: z.string(),
+  caseId: z.string(),
+  runId: z.string(),
+  trigger: z.enum([
+    "interval",
+    "final",
+    "repeated_failure",
+    "high_risk",
+    "evidence_conflict",
+    "finding_verification",
+  ]),
+  offeredCandidates: z.array(z.object({
+    strategyId: z.string(),
+    relevanceScore: z.number().nonnegative(),
+    relevanceReasons: z.array(ObserverRecoveryRelevanceReasonSchema),
+    effectiveness: z.enum(["active", "degraded"]),
+    usageCount: z.number().int().nonnegative(),
+    successCount: z.number().int().nonnegative(),
+    failureCount: z.number().int().nonnegative(),
+  })),
+  adoptions: z.array(z.object({
+    strategyId: z.string(),
+    warningIds: z.array(z.string()),
+  })),
+  ignoredStrategyIds: z.array(z.string()),
+  contextCharacters: z.number().int().nonnegative(),
+  createdAt: z.string(),
+});
+export type ObserverStrategyAudit = z.infer<typeof ObserverStrategyAuditSchema>;
+
 export const ObserverWarningSchema = z.object({
   id: z.string(),
   caseId: z.string(),

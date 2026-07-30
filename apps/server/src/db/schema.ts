@@ -227,6 +227,18 @@ export const observerWarnings = sqliteTable("observer_warnings", {
   createdAt: text("created_at").notNull(),
 });
 
+export const observerStrategyAudits = sqliteTable("observer_strategy_audits", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  runId: text("run_id").notNull(),
+  trigger: text("trigger").notNull(),
+  offeredCandidatesJson: text("offered_candidates_json").notNull(),
+  adoptionsJson: text("adoptions_json").notNull(),
+  ignoredStrategyIdsJson: text("ignored_strategy_ids_json").notNull(),
+  contextCharacters: integer("context_characters").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 export const knowledgeUsage = sqliteTable("knowledge_usage", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

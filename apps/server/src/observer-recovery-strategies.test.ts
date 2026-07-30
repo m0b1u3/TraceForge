@@ -10,6 +10,9 @@ import {
   verifiedObserverRecoveryStrategies,
   verifiedObserverRecoveryStrategiesSummary,
 } from "./observer-recovery-strategies.js";
+import { buildObserverStrategyAudit } from "./observer-strategy-audit.js";
+import { createDb } from "./db/client.js";
+import { ObserverStrategyAuditStore } from "./stores/observer-strategy-audit-store.js";
 
 function warning(id: string, patch: Partial<ObserverWarning> = {}): ObserverWarning {
   return ObserverWarningSchema.parse({
@@ -216,6 +219,11 @@ describe("verified Observer recovery strategies", () => {
     expect(selection.summary).toContain(relevant.id);
     expect(selection.summary).not.toContain(unrelated.id);
     expect(selection.strategies[0]?.relevanceScore).toBeGreaterThan(0);
+    expect(selection.strategies[0]?.relevanceReasons).toEqual(expect.arrayContaining([
+      "fingerprint_match",
+      "issue_type_match",
+      "subject_match",
+    ]));
   });
 
   it("uses one character-budgeted selection for both summary and allowed ids", () => {
@@ -255,5 +263,48 @@ describe("verified Observer recovery strategies", () => {
     expect(selection.summary).toContain(selection.strategies[0]!.warningId);
     expect([first.id, second.id].filter((id) => selection.summary.includes(id)))
       .toEqual(selection.strategies.map((strategy) => strategy.warningId));
+  });
+
+  it("persists which offered strategy was adopted and which warning used it", () => {
+    const source = warning("warn_source", {
+      fingerprint: "audit-fingerprint",
+      subject: "task:audit-candidate",
+    });
+    const current = warning("warn_current", {
+      status: "open",
+      correctionOutcome: "pending",
+      fingerprint: "audit-fingerprint",
+      subject: "task:audit-candidate",
+      resolvedAt: null,
+    });
+    const selection = selectVerifiedObserverRecoveryStrategies([source, current], {
+      focus: {
+        goal: "Resolve the current evidence gap.",
+        trajectory: "The current candidate still needs traceable evidence.",
+        activeWarnings: [current],
+      },
+    });
+    const audit = buildObserverStrategyAudit({
+      id: "audit_1",
+      caseId: "case_1",
+      runId: "run_1",
+      trigger: "interval",
+      selection,
+      warningIdsByStrategy: new Map([[source.id, new Set([current.id])]]),
+      createdAt: "2026-07-30T04:00:00.000Z",
+    });
+    const store = new ObserverStrategyAuditStore(createDb(":memory:"));
+    store.create(audit);
+
+    expect(store.listByCase("case_1")).toEqual([expect.objectContaining({
+      id: "audit_1",
+      offeredCandidates: [expect.objectContaining({
+        strategyId: source.id,
+        relevanceReasons: expect.arrayContaining(["fingerprint_match"]),
+      })],
+      adoptions: [{ strategyId: source.id, warningIds: [current.id] }],
+      ignoredStrategyIds: [],
+      contextCharacters: selection.characterCount,
+    })]);
   });
 });

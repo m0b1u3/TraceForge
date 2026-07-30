@@ -2,6 +2,8 @@ import { createProviderFromConfig, loadLlmConfig } from "../packages/llm/src/ind
 import { Observer } from "../packages/extension/src/index.js";
 import { createDb } from "../apps/server/src/db/client.js";
 import { ObserverWarningStore } from "../apps/server/src/stores/observer-store.js";
+import { ObserverStrategyAuditStore } from "../apps/server/src/stores/observer-strategy-audit-store.js";
+import { buildObserverStrategyAudit } from "../apps/server/src/observer-strategy-audit.js";
 import {
   selectVerifiedObserverRecoveryStrategies,
   verifiedObserverRecoveryStrategiesSummary,
@@ -48,7 +50,9 @@ if (!critical) {
   throw new Error("The real Observer did not produce a Critical warning with a valid Fact reference");
 }
 
-const store = new ObserverWarningStore(createDb(":memory:"));
+const acceptanceDb = createDb(":memory:");
+const store = new ObserverWarningStore(acceptanceDb);
+const strategyAuditStore = new ObserverStrategyAuditStore(acceptanceDb);
 let correcting = store.create({
   ...critical,
   level: "critical",
@@ -194,6 +198,34 @@ if (candidateReview.warnings.some((warning) =>
   warning.recoveryStrategyRefs.some((id) => id !== "warn_verified_human_recovery"))) {
   throw new Error("The real Observer returned a recovery strategy reference that was not supplied");
 }
+const warningIdsByStrategy = new Map<string, Set<string>>();
+for (const warning of candidateReview.warnings) {
+  for (const strategyId of warning.recoveryStrategyRefs) {
+    const warningIds = warningIdsByStrategy.get(strategyId) ?? new Set<string>();
+    warningIds.add(warning.id);
+    warningIdsByStrategy.set(strategyId, warningIds);
+  }
+}
+const strategyAudit = strategyAuditStore.create(buildObserverStrategyAudit({
+  id: "audit_real_candidate_review",
+  caseId,
+  runId: "run_real_candidate_review",
+  trigger: "interval",
+  selection: verifiedRecoverySelection,
+  warningIdsByStrategy,
+  createdAt: critical.createdAt,
+}));
+const candidateWasAdopted = warningIdsByStrategy.has("warn_verified_human_recovery");
+if (
+  strategyAudit.offeredCandidates.length !== 1
+  || strategyAudit.offeredCandidates[0]?.strategyId !== "warn_verified_human_recovery"
+  || (candidateWasAdopted
+    ? strategyAudit.adoptions[0]?.strategyId !== "warn_verified_human_recovery"
+    : !strategyAudit.ignoredStrategyIds.includes("warn_verified_human_recovery"))
+  || strategyAuditStore.listByCase(caseId)[0]?.id !== strategyAudit.id
+) {
+  throw new Error("The real Observer recovery decision was not persisted as a traceable audit");
+}
 store.create({
   ...critical,
   id: "warn_reuse_failed_once",
@@ -264,6 +296,8 @@ console.log(JSON.stringify({
   invalidRecoveryReferencesRejected: true,
   irrelevantRecoveryCandidatesRejected: true,
   recoveryCandidateBudgetEnforced: true,
+  recoveryDecisionAuditPersisted: true,
+  recoveryDecisionRecordedAs: candidateWasAdopted ? "adopted" : "ignored",
   failedRecoveryCandidateDegraded: true,
   repeatedFailureCandidateWithdrawn: true,
   correctionMetrics: {

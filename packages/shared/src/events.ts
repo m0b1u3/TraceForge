@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, AgentRun, IdentityContext, AttackPath, SecurityReport, Hypothesis, HypothesisTransition, AgentEventRefs, ToolFailureDiagnostic } from "./schemas.js";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, ObserverStrategyAudit, AgentRun, IdentityContext, AttackPath, SecurityReport, Hypothesis, HypothesisTransition, AgentEventRefs, ToolFailureDiagnostic } from "./schemas.js";
 import type { ValidationWorkflowSnapshot } from "./validation-workflow.js";
 
 export type RuntimeEvent =
@@ -66,6 +66,7 @@ export type RuntimeEvent =
       correctionCount: number;
       durationMs: number;
       totalTokens: number;
+      strategyAudit: ObserverStrategyAudit;
     }
-  | { type: "observer_review_failed"; caseId: string; runId: string | null; error: string }
+  | { type: "observer_review_failed"; caseId: string; runId: string | null; error: string; strategyAudit?: ObserverStrategyAudit }
   | { type: "scope_updated"; caseId: string; allowHosts: string[] };
