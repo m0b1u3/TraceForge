@@ -122,6 +122,7 @@ export function createDb(path: string) {
     CREATE INDEX IF NOT EXISTS idx_validation_consensus_case ON validation_consensus(case_id, updated_at);
     CREATE TABLE IF NOT EXISTS observer_warnings (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, level TEXT NOT NULL,
+      issue_type TEXT NOT NULL DEFAULT 'other', subject TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL, description TEXT NOT NULL,
       related_facts_json TEXT NOT NULL, related_tasks_json TEXT NOT NULL,
       suggested_action TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
@@ -183,6 +184,8 @@ export function createDb(path: string) {
   const warningColumns = sqlite.prepare("PRAGMA table_info(observer_warnings)").all() as Array<{ name: string }>;
   const hasWarningColumn = (name: string) => warningColumns.some((column) => column.name === name);
   if (!hasWarningColumn("status")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");
+  if (!hasWarningColumn("issue_type")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN issue_type TEXT NOT NULL DEFAULT 'other'");
+  if (!hasWarningColumn("subject")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN subject TEXT NOT NULL DEFAULT ''");
   if (!hasWarningColumn("related_run_id")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN related_run_id TEXT");
   if (!hasWarningColumn("suggested_goal")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN suggested_goal TEXT NOT NULL DEFAULT ''");
   if (!hasWarningColumn("evidence")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN evidence TEXT");

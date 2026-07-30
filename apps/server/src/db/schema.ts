@@ -200,6 +200,8 @@ export const observerWarnings = sqliteTable("observer_warnings", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),
   level: text("level").notNull(),
+  issueType: text("issue_type").notNull().default("other"),
+  subject: text("subject").notNull().default(""),
   title: text("title").notNull(),
   description: text("description").notNull(),
   relatedFactsJson: text("related_facts_json").notNull(),

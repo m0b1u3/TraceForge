@@ -1,24 +1,29 @@
 import { createHash } from "node:crypto";
-import type { ObserverWarning } from "@traceforge/shared";
+import type { ObserverIssueType, ObserverWarning } from "@traceforge/shared";
 
 export type ObserverActiveStatus = Extract<ObserverWarning["status"], "detected" | "correcting" | "escalated">;
 
 export function observerFingerprint(
-  warning: Pick<ObserverWarning, "title" | "relatedFacts" | "relatedTasks">,
+  warning: Pick<ObserverWarning, "issueType" | "subject" | "title" | "relatedFacts" | "relatedTasks">,
 ): string {
-  const semanticTitle = warning.title
+  const normalize = (value: string) => value
     .trim()
     .toLowerCase()
-    .replace(/\b(?:the|a|an|agent|warning|pending|unresolved|repeated|multiple)\b/g, " ")
-    .replace(/\b(?:sql injection|sqli)\b/g, "sql_injection")
-    .replace(/\b(?:heap dump|heapdump)\b/g, "heapdump")
-    .replace(/\b(?:jolokia endpoint|jolokia)\b/g, "jolokia")
-    .replace(/\b(?:http\s*)?(?:4\d\d|5\d\d)\b/g, "http_error")
     .replace(/[^a-z0-9_\u4e00-\u9fff]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const material = semanticTitle;
+  const issueType = warning.issueType || "other";
+  const subject = normalize(warning.subject) || normalize(warning.title);
+  const references = [
+    ...warning.relatedFacts.map((id) => `fact:${id}`),
+    ...warning.relatedTasks.map((id) => `task:${id}`),
+  ].sort();
+  const material = JSON.stringify({ issueType, subject, references });
   return createHash("sha256").update(material).digest("hex").slice(0, 24);
+}
+
+export function initialObserverStatus(level: ObserverWarning["level"]): ObserverActiveStatus {
+  return level === "critical" ? "correcting" : "detected";
 }
 
 export function validatedObserverLevel(
@@ -44,18 +49,22 @@ export function nextObserverStatus(
 }
 
 export function observerIntervention(
-  warning: Pick<ObserverWarning, "status" | "title" | "suggestedGoal" | "suggestedAction">,
+  warning: Pick<ObserverWarning, "level" | "status" | "title" | "suggestedGoal" | "suggestedAction">,
   options: { allowPause?: boolean } = {},
 ): { steering?: string; pauseReason?: string } {
+  if (warning.level === "info") return {};
+  const steering = (warning.suggestedGoal || warning.suggestedAction)
+    .replace(/^\s*\[Observer correction\]\s*/i, "")
+    .trim();
   if (warning.status === "detected") {
-    return { steering: warning.suggestedGoal || warning.suggestedAction };
+    return steering ? { steering } : {};
   }
   if (warning.status === "correcting") {
-    return { steering: warning.suggestedGoal || warning.suggestedAction };
+    return steering ? { steering } : {};
   }
   if (warning.status === "escalated") {
     if (options.allowPause === false) {
-      return { steering: warning.suggestedGoal || warning.suggestedAction };
+      return steering ? { steering } : {};
     }
     return { pauseReason: `escalated observer warning: ${warning.title}` };
   }

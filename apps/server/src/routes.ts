@@ -46,7 +46,12 @@ import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
 import { calculateUsageCost } from "./llm-cost.js";
 import { PendingInterventionRegistry } from "./pending-interventions.js";
 import { AgentRunStore } from "./stores/agent-run-store.js";
-import { observerFingerprint, observerIntervention, validatedObserverLevel } from "./observer-policy.js";
+import {
+  initialObserverStatus,
+  observerFingerprint,
+  observerIntervention,
+  validatedObserverLevel,
+} from "./observer-policy.js";
 import { HypothesisScheduler } from "./hypothesis-scheduler.js";
 import { HypothesisFeedbackCoordinator } from "./hypothesis-feedback.js";
 import { IdentityStore } from "./stores/identity-store.js";
@@ -764,12 +769,43 @@ export function registerRoutes(
         trigger: ObserverReviewTrigger,
       ): Promise<{ action: "continue" | "pause"; reason?: string; steering?: string[] }> => {
         const startedAt = Date.now();
-        const factsSummary = factStore.listByCase(id)
+        const compact = (value: string | null | undefined, limit = 320) =>
+          (value ?? "").replace(/\s+/g, " ").trim().slice(0, limit);
+        const currentFacts = factStore.listByCase(id);
+        const currentTasks = taskStore.listByCase(id);
+        const activeBeforeReview = observerStore.listByCase(id).warnings.filter((warning) =>
+          warning.relatedRunId === reviewRunId
+          && ["open", "detected", "correcting", "escalated"].includes(warning.status));
+        const factsSummary = currentFacts
           .filter((fact) => fact.validity === "valid")
-          .map((fact) => `${fact.id} [${fact.type}] ${fact.title}`)
+          .map((fact) => [
+            `${fact.id} [${fact.type}; validity=${fact.validity}; finding=${fact.findingStatus ?? "n/a"}] ${fact.title}`,
+            `evidenceRefs=${fact.evidenceRefs?.join(",") || "none"}`,
+            `verification=${compact(fact.verificationSummary) || "none"}`,
+            `observations=${fact.observations?.length ?? 0}`,
+          ].join("; "))
           .join("\n") || "(none)";
-        const tasksSummary = taskStore.listByCase(id).map((t) => `${t.id} [${t.status}] ${t.title}`).join("\n") || "(无)";
-        const result = await new Observer(llm).review(id, { goal, trajectory: reviewTrajectory, factsSummary, tasksSummary });
+        const tasksSummary = currentTasks.map((task) => [
+          `${task.id} [${task.status}; priority=${task.priority}] ${task.title}`,
+          `hypotheses=${task.hypothesisIds?.join(",") || "none"}`,
+          `facts=${task.relatedFacts.join(",") || "none"}`,
+          `blockedBy=${task.blockedBy.join(",") || "none"}`,
+          `reason=${compact(task.reason) || "none"}`,
+        ].join("; ")).join("\n") || "(none)";
+        const activeWarningsSummary = activeBeforeReview.map((warning) => [
+          `${warning.id} [${warning.status}; ${warning.level}; occurrences=${warning.occurrenceCount}]`,
+          `identity=${warning.issueType}:${warning.subject || warning.title}`,
+          `title=${warning.title}`,
+          `evidence=${compact(warning.evidence) || "none"}`,
+        ].join("; ")).join("\n") || "(none)";
+        const result = await new Observer(llm).review(id, {
+          goal,
+          trajectory: reviewTrajectory,
+          factsSummary,
+          tasksSummary,
+          activeWarningsSummary,
+          reviewReason: trigger,
+        });
         if (result.usage.totalTokens > 0) recordRunUsage("observer", result.usage);
         if (result.error) {
           bus.emit({ type: "observer_review_failed", caseId: id, runId: reviewRunId, error: result.error });
@@ -778,10 +814,10 @@ export function registerRoutes(
         let pauseReason: string | undefined;
         const steering: string[] = [];
         const observedFingerprints = new Set<string>();
-        const validFactIds = new Set(factStore.listByCase(id)
+        const validFactIds = new Set(currentFacts
           .filter((fact) => fact.validity === "valid")
           .map((fact) => fact.id));
-        const validTaskIds = new Set(taskStore.listByCase(id).map((task) => task.id));
+        const validTaskIds = new Set(currentTasks.map((task) => task.id));
         for (const w of result.warnings) {
           const level = validatedObserverLevel(w, validFactIds, validTaskIds);
           const fingerprint = observerFingerprint(w);
@@ -816,20 +852,24 @@ export function registerRoutes(
           const warning = observerStore.create({
             ...w,
             level,
-            status: "detected",
+            status: initialObserverStatus(level),
             fingerprint,
             occurrenceCount: 1,
             lastObservedAt: now,
             escalationReason: null,
             relatedRunId: reviewRunId,
-            suggestedGoal: w.suggestedGoal || `[Observer correction]\n${w.suggestedAction}`,
+            suggestedGoal: w.suggestedGoal || w.suggestedAction,
             resolvedAt: null,
           });
           bus.emit({ type: "observer_warning", warning });
+          const intervention = observerIntervention(warning, { allowPause: false });
+          if (intervention.steering) steering.push(intervention.steering);
         }
-        const correcting = observerStore.listByCase(id, { status: "correcting" }).warnings;
-        for (const warning of correcting) {
-          if (warning.relatedRunId !== reviewRunId || observedFingerprints.has(warning.fingerprint)) continue;
+        for (const warning of activeBeforeReview) {
+          if (
+            !["open", "detected", "correcting"].includes(warning.status)
+            || observedFingerprints.has(warning.fingerprint)
+          ) continue;
           const resolved = observerStore.updateStatus(warning.id, "resolved");
           if (resolved) bus.emit({ type: "observer_warning_updated", warning: resolved });
         }

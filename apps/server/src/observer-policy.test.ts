@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { nextObserverStatus, observerIntervention, validatedObserverLevel } from "./observer-policy.js";
+import {
+  initialObserverStatus,
+  nextObserverStatus,
+  observerFingerprint,
+  observerIntervention,
+  validatedObserverLevel,
+} from "./observer-policy.js";
 
 describe("Observer critical evidence policy", () => {
   const base = {
@@ -17,6 +23,9 @@ describe("Observer critical evidence policy", () => {
   });
 
   it("opens one correction window before escalation", () => {
+    expect(initialObserverStatus("info")).toBe("detected");
+    expect(initialObserverStatus("warning")).toBe("detected");
+    expect(initialObserverStatus("critical")).toBe("correcting");
     expect(nextObserverStatus("detected", "critical")).toBe("correcting");
     expect(nextObserverStatus("correcting", "critical")).toBe("escalated");
     expect(nextObserverStatus("escalated", "critical")).toBe("escalated");
@@ -24,7 +33,12 @@ describe("Observer critical evidence policy", () => {
   });
 
   it("maps lifecycle states to steering and pause decisions", () => {
-    const warning = { title: "Unsafe destructive action", suggestedGoal: "Collect evidence first", suggestedAction: "Stop deletion" };
+    const warning = {
+      level: "critical" as const,
+      title: "Unsafe destructive action",
+      suggestedGoal: "[Observer correction]\nCollect evidence first",
+      suggestedAction: "Stop deletion",
+    };
     expect(observerIntervention({ ...warning, status: "correcting" })).toEqual({ steering: "Collect evidence first" });
     expect(observerIntervention({ ...warning, status: "escalated" })).toEqual({
       pauseReason: "escalated observer warning: Unsafe destructive action",
@@ -35,5 +49,22 @@ describe("Observer critical evidence policy", () => {
     expect(observerIntervention({ ...warning, status: "detected" })).toEqual({
       steering: "Collect evidence first",
     });
+    expect(observerIntervention({ ...warning, level: "info", status: "detected" })).toEqual({});
+  });
+
+  it("uses a generic structured identity instead of sample-specific title rewriting", () => {
+    const first = {
+      issueType: "repeated_failure" as const,
+      subject: "task:task_1/tool:analyze",
+      title: "First wording",
+      relatedFacts: [],
+      relatedTasks: ["task_1"],
+    };
+    expect(observerFingerprint(first)).toBe(observerFingerprint({ ...first, title: "Completely different wording" }));
+    expect(observerFingerprint(first)).not.toBe(observerFingerprint({
+      ...first,
+      subject: "task:task_2/tool:analyze",
+      relatedTasks: ["task_2"],
+    }));
   });
 });

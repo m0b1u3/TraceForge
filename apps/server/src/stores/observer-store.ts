@@ -7,6 +7,7 @@ import { nextObserverStatus } from "../observer-policy.js";
 function rowToWarning(row: typeof observerWarnings.$inferSelect): ObserverWarning {
   return ObserverWarningSchema.parse({
     id: row.id, caseId: row.caseId, level: row.level, title: row.title, description: row.description,
+    issueType: row.issueType, subject: row.subject,
     relatedFacts: JSON.parse(row.relatedFactsJson), relatedTasks: JSON.parse(row.relatedTasksJson),
     suggestedAction: row.suggestedAction, status: row.status, relatedRunId: row.relatedRunId,
     suggestedGoal: row.suggestedGoal, evidence: row.evidence ?? undefined,
@@ -23,6 +24,7 @@ export class ObserverWarningStore {
     const parsed = ObserverWarningSchema.parse(w);
     this.db.insert(observerWarnings).values({
       id: parsed.id, caseId: parsed.caseId, level: parsed.level,
+      issueType: parsed.issueType, subject: parsed.subject,
       title: parsed.title, description: parsed.description,
       relatedFactsJson: JSON.stringify(parsed.relatedFacts),
       relatedTasksJson: JSON.stringify(parsed.relatedTasks),

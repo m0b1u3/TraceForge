@@ -38,6 +38,8 @@ describe("ObserverWarningSchema", () => {
         id: "w1",
         caseId: "c",
         level: "warning",
+        issueType: "premature_completion",
+        subject: "run:run_1",
         title: "过早结束",
         description: "还有重要线索没有检查",
         relatedFacts: ["fact_1"],

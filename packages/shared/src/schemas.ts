@@ -309,10 +309,27 @@ export const DecisionSchema = z.object({
 });
 export type Decision = z.infer<typeof DecisionSchema>;
 
+export const ObserverIssueTypeSchema = z.enum([
+  "evidence_gap",
+  "unsupported_conclusion",
+  "ignored_context",
+  "task_lifecycle",
+  "repeated_failure",
+  "stalled_execution",
+  "goal_drift",
+  "premature_completion",
+  "unsafe_action",
+  "evidence_conflict",
+  "other",
+]);
+export type ObserverIssueType = z.infer<typeof ObserverIssueTypeSchema>;
+
 export const ObserverWarningSchema = z.object({
   id: z.string(),
   caseId: z.string(),
   level: z.enum(["info", "warning", "critical"]),
+  issueType: ObserverIssueTypeSchema.default("other"),
+  subject: z.string().default(""),
   title: z.string(),
   description: z.string(),
   relatedFacts: z.array(z.string()).default([]),
