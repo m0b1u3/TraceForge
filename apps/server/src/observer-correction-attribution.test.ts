@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import { ObserverCorrectionAttribution } from "./observer-correction-attribution.js";
 
 function issue(tracker: ObserverCorrectionAttribution, relatedFacts: string[] = [], relatedTasks: string[] = []) {
-  tracker.issue({ id: "warning_1", relatedFacts, relatedTasks });
+  tracker.issue({
+    id: "warning_1",
+    relatedFacts,
+    relatedTasks,
+    lastCorrectionTrigger: "interval",
+    suggestedAction: "Collect a traceable result.",
+  });
 }
 
 describe("Observer correction attribution", () => {
@@ -59,8 +65,20 @@ describe("Observer correction attribution", () => {
 
   it("does not credit one material result to multiple unrelated corrections", () => {
     const tracker = new ObserverCorrectionAttribution();
-    tracker.issue({ id: "warning_1", relatedFacts: [], relatedTasks: [] });
-    tracker.issue({ id: "warning_2", relatedFacts: [], relatedTasks: [] });
+    tracker.issue({
+      id: "warning_1",
+      relatedFacts: [],
+      relatedTasks: [],
+      lastCorrectionTrigger: "interval",
+      suggestedAction: "Test the first candidate.",
+    });
+    tracker.issue({
+      id: "warning_2",
+      relatedFacts: [],
+      relatedTasks: [],
+      lastCorrectionTrigger: "interval",
+      suggestedAction: "Test another candidate.",
+    });
     tracker.observe({
       tool: "record_fact",
       args: { title: "one result" },

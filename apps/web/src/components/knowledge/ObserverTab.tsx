@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { ArrowBendDownRight, CheckCircle, Clock, Eye, ListPlus, Play, Pulse, Warning, X } from "@phosphor-icons/react";
-import type { AgentRun, ObserverWarning } from "@traceforge/shared";
+import { ArrowBendDownRight, CaretRight, CheckCircle, Clock, Eye, ListPlus, Play, Pulse, Warning, X } from "@phosphor-icons/react";
+import { parseObserverCorrectionAudit, type AgentRun, type ObserverWarning } from "@traceforge/shared";
 import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWarning, runAgent } from "../../api.js";
 import { useStore } from "../../store.js";
 import { useShallow } from "zustand/react/shallow";
@@ -37,6 +37,46 @@ export function observerWarningRunGoal(warning: Pick<ObserverWarning, "suggested
 
 export function observerWarningContinueDisabled(activeRun: Pick<AgentRun, "status"> | null, agentBusy: boolean, busy: string | null): boolean {
   return busy !== null || agentBusy || activeRun !== null;
+}
+
+function CorrectionAudit({ warning }: { warning: ObserverWarning }) {
+  const audit = parseObserverCorrectionAudit(warning.correctionEvidence);
+  if (!audit) return null;
+  return (
+    <details className="observer-correction-audit">
+      <summary>
+        <CaretRight size={12} weight="bold" />
+        <span>Attribution trail</span>
+        <small>{audit.attributed ? "Evidence linked" : "Not credited"}</small>
+      </summary>
+      <div className="observer-correction-audit-body">
+        {audit.instruction && (
+          <div>
+            <span>Correction{audit.trigger ? ` · ${audit.trigger}` : ""}</span>
+            <p>{audit.instruction}</p>
+          </div>
+        )}
+        {audit.actions.length > 0 && (
+          <div>
+            <span>Observed after correction</span>
+            <ol>
+              {audit.actions.map((action, index) => (
+                <li key={`${action.tool}-${index}`}>
+                  <code>{action.tool}</code>
+                  <em className={`is-${action.outcome}`}>{action.outcome}</em>
+                  {action.evidenceRefs.length > 0 && <small>{action.evidenceRefs.join(" · ")}</small>}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+        <div>
+          <span>Decision</span>
+          <p>{audit.summary}</p>
+        </div>
+      </div>
+    </details>
+  );
 }
 
 type ObserverGroup = "action" | "monitoring" | "history";
@@ -160,6 +200,7 @@ export function ObserverTab() {
           <span>{w.correctionResolvedCount} recovered · {w.correctionFailedCount} unresolved · {w.correctionCount} issued</span>
         </div>
       )}
+      <CorrectionAudit warning={w} />
       <div className="observer-row-suggestion"><span>Suggested next step</span>{w.suggestedAction}</div>
       {(w.status === "open" || w.status === "detected" || w.status === "correcting" || w.status === "escalated") && (
         <div className="tf-row-actions">

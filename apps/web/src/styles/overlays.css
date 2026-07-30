@@ -649,6 +649,116 @@
   color: var(--warning);
 }
 
+.observer-correction-audit {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.observer-correction-audit > summary {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 30px;
+  gap: 6px;
+  color: var(--foreground-secondary);
+  font-size: var(--type-label);
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.observer-correction-audit > summary::-webkit-details-marker {
+  display: none;
+}
+
+.observer-correction-audit > summary:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid color-mix(in srgb, var(--primary) 48%, transparent);
+  outline-offset: 2px;
+}
+
+.observer-correction-audit > summary svg {
+  color: var(--foreground-muted);
+  transition: transform 150ms ease;
+}
+
+.observer-correction-audit[open] > summary svg {
+  transform: rotate(90deg);
+}
+
+.observer-correction-audit > summary small {
+  color: var(--foreground-muted);
+  font-size: var(--type-meta);
+  font-weight: 500;
+}
+
+.observer-correction-audit-body {
+  display: grid;
+  gap: 10px;
+  padding: 2px 0 10px 20px;
+}
+
+.observer-correction-audit-body > div {
+  display: grid;
+  gap: 4px;
+}
+
+.observer-correction-audit-body > div > span {
+  color: var(--foreground-muted);
+  font-size: var(--type-meta);
+  font-weight: 600;
+}
+
+.observer-correction-audit-body p {
+  color: var(--foreground-secondary);
+  font-size: var(--type-label);
+  line-height: 1.5;
+}
+
+.observer-correction-audit-body ol {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.observer-correction-audit-body li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.observer-correction-audit-body code {
+  overflow: hidden;
+  color: var(--foreground);
+  font: 500 var(--type-meta)/1.4 var(--mono);
+  text-overflow: ellipsis;
+}
+
+.observer-correction-audit-body em {
+  color: var(--foreground-muted);
+  font-size: var(--type-meta);
+  font-style: normal;
+}
+
+.observer-correction-audit-body em.is-succeeded {
+  color: var(--success);
+}
+
+.observer-correction-audit-body em.is-failed {
+  color: var(--danger);
+}
+
+.observer-correction-audit-body li > small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--foreground-muted);
+  font: 400 var(--type-meta)/1.4 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .observer-row-status,
 .observer-row-suggestion > span {
   font-size: var(--type-label);

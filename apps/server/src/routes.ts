@@ -11,7 +11,7 @@ import { FactStore } from "./stores/fact-store.js";
 import { TaskStore } from "./stores/task-store.js";
 import { TimelineStore } from "./stores/timeline-store.js";
 import { EventBus } from "./event-bus.js";
-import { validationTimelineConsoleEvent, type Task, type ObserverWarning, type CaseSummary, type Fact, type TimelineEntry, type AgentEventRefs } from "@traceforge/shared";
+import { serializeObserverCorrectionAudit, validationTimelineConsoleEvent, type Task, type ObserverWarning, type CaseSummary, type Fact, type TimelineEntry, type AgentEventRefs } from "@traceforge/shared";
 import type { LlmProvider } from "@traceforge/llm";
 import { loadLlmConfig, createProviderFromConfig } from "@traceforge/llm";
 import { ActionCardStore } from "./stores/action-store.js";
@@ -843,7 +843,16 @@ export function registerRoutes(
             warning = observerStore.settleCorrection(
               warning.id,
               warning.status === "escalated" ? "escalated" : "persisted",
-              "The same warning was observed again after the correction window.",
+              serializeObserverCorrectionAudit({
+                version: 1,
+                attributed: false,
+                reason: "warning_reobserved",
+                trigger: warning.lastCorrectionTrigger,
+                instruction: warning.suggestedAction,
+                actions: [],
+                evidenceRefs: [],
+                summary: "The same warning was observed again after the correction window.",
+              }),
             ) ?? warning;
             const intervention = observerIntervention(warning, {
               allowPause: trigger === "high_risk" || trigger === "evidence_conflict",
@@ -886,7 +895,7 @@ export function registerRoutes(
           const settled = observerStore.settleCorrection(
             warning.id,
             attribution.attributed ? "resolved" : "unattributed",
-            attribution.evidence,
+            serializeObserverCorrectionAudit(attribution.audit),
           ) ?? warning;
           const resolved = observerStore.updateStatus(settled.id, "resolved");
           if (resolved) bus.emit({ type: "observer_warning_updated", warning: resolved });

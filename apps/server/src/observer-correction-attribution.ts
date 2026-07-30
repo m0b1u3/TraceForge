@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
-import type { AgentEventRefs, ObserverWarning } from "@traceforge/shared";
+import type {
+  AgentEventRefs,
+  ObserverCorrectionAudit,
+  ObserverWarning,
+} from "@traceforge/shared";
 
 interface ToolObservation {
+  tool: string;
   signature: string;
   inputText: string;
   ok: boolean;
@@ -12,11 +17,13 @@ interface PendingCorrection {
   observationIndex: number;
   priorSuccessfulSignatures: Set<string>;
   relatedRefs: Set<string>;
+  trigger: string | null;
+  instruction: string;
 }
 
 export interface CorrectionAttribution {
   attributed: boolean;
-  evidence: string;
+  audit: ObserverCorrectionAudit;
 }
 
 function stableValue(value: unknown): unknown {
@@ -49,13 +56,18 @@ export class ObserverCorrectionAttribution {
   private readonly pending = new Map<string, PendingCorrection>();
   private readonly claimedObservationIndexes = new Set<number>();
 
-  issue(warning: Pick<ObserverWarning, "id" | "relatedFacts" | "relatedTasks">): void {
+  issue(warning: Pick<
+    ObserverWarning,
+    "id" | "relatedFacts" | "relatedTasks" | "lastCorrectionTrigger" | "suggestedAction"
+  >): void {
     this.pending.set(warning.id, {
       observationIndex: this.observations.length,
       priorSuccessfulSignatures: new Set(
         this.observations.filter((observation) => observation.ok).map((observation) => observation.signature),
       ),
       relatedRefs: new Set([...warning.relatedFacts, ...warning.relatedTasks]),
+      trigger: warning.lastCorrectionTrigger,
+      instruction: warning.suggestedAction,
     });
   }
 
@@ -66,6 +78,7 @@ export class ObserverCorrectionAttribution {
     refs?: AgentEventRefs | null;
   }): void {
     this.observations.push({
+      tool: input.tool,
       signature: executionSignature(input.tool, input.args),
       inputText: JSON.stringify(stableValue(input.args)) ?? "null",
       ok: input.ok,
@@ -78,7 +91,16 @@ export class ObserverCorrectionAttribution {
     if (!correction) {
       return {
         attributed: false,
-        evidence: "No tracked Observer correction preceded the warning transition.",
+        audit: {
+          version: 1,
+          attributed: false,
+          reason: "no_tracked_correction",
+          trigger: null,
+          instruction: "",
+          actions: [],
+          evidenceRefs: [],
+          summary: "No tracked Observer correction preceded the warning transition.",
+        },
       };
     }
 
@@ -103,20 +125,37 @@ export class ObserverCorrectionAttribution {
     const attributed = withMaterialResult.length > 0 || Boolean(recovered);
     const attributedObservation = withMaterialResult[0] ?? recovered;
     if (attributedObservation) this.claimedObservationIndexes.add(attributedObservation.index);
-    const evidence = attributed
-      ? [
-          `behaviorChange=${changed.length}`,
-          `relevantActions=${relevant.length}`,
-          `materialResults=${withMaterialResult.length}`,
-          `recoveredExecution=${Boolean(recovered)}`,
-        ].join("; ")
-      : [
-          `successfulActions=${successful.length}`,
-          `behaviorChange=${changed.length}`,
-          `relevantActions=${relevant.length}`,
-          "No correction-linked evidence or recovered execution was observed.",
-        ].join("; ");
+    const summary = withMaterialResult.length > 0
+      ? `The correction was followed by ${changed.length} changed action(s); ${withMaterialResult.length} relevant action(s) produced traceable evidence.`
+      : recovered
+        ? "An execution that failed after the correction subsequently succeeded with the same scope and input."
+        : `The warning ended, but ${successful.length} successful action(s) produced no correction-linked evidence or recovered execution.`;
+    const auditActions = after.slice(0, 6).map(({ observation }) => ({
+      tool: observation.tool,
+      outcome: observation.ok ? "succeeded" as const : "failed" as const,
+      evidenceRefs: [...observation.refs].slice(0, 12),
+    }));
+    const evidenceRefs = [...new Set(
+      (attributedObservation ? [...attributedObservation.observation.refs] : [])
+        .filter(Boolean),
+    )].slice(0, 12);
     this.pending.delete(warningId);
-    return { attributed, evidence };
+    return {
+      attributed,
+      audit: {
+        version: 1,
+        attributed,
+        reason: withMaterialResult.length > 0
+          ? "correction_linked_result"
+          : recovered
+            ? "execution_recovered"
+            : "no_linked_result",
+        trigger: correction.trigger,
+        instruction: correction.instruction,
+        actions: auditActions,
+        evidenceRefs,
+        summary,
+      },
+    };
   }
 }
