@@ -11,7 +11,7 @@ import { FactStore } from "./stores/fact-store.js";
 import { TaskStore } from "./stores/task-store.js";
 import { TimelineStore } from "./stores/timeline-store.js";
 import { EventBus } from "./event-bus.js";
-import { serializeObserverCorrectionAudit, validationTimelineConsoleEvent, type Task, type ObserverWarning, type CaseSummary, type Fact, type TimelineEntry, type AgentEventRefs } from "@traceforge/shared";
+import { parseObserverCorrectionAudit, serializeObserverCorrectionAudit, validationTimelineConsoleEvent, type Task, type ObserverWarning, type CaseSummary, type Fact, type TimelineEntry, type AgentEventRefs } from "@traceforge/shared";
 import type { LlmProvider } from "@traceforge/llm";
 import { loadLlmConfig, createProviderFromConfig } from "@traceforge/llm";
 import { ActionCardStore } from "./stores/action-store.js";
@@ -48,6 +48,7 @@ import { PendingInterventionRegistry } from "./pending-interventions.js";
 import { AgentRunStore } from "./stores/agent-run-store.js";
 import {
   initialObserverStatus,
+  observerCorrectionStrategyIsNovel,
   observerFingerprint,
   observerIntervention,
   validatedObserverLevel,
@@ -796,12 +797,23 @@ export function registerRoutes(
           `blockedBy=${task.blockedBy.join(",") || "none"}`,
           `reason=${compact(task.reason) || "none"}`,
         ].join("; ")).join("\n") || "(none)";
-        const activeWarningsSummary = activeBeforeReview.map((warning) => [
-          `${warning.id} [${warning.status}; ${warning.level}; occurrences=${warning.occurrenceCount}]`,
-          `identity=${warning.issueType}:${warning.subject || warning.title}`,
-          `title=${warning.title}`,
-          `evidence=${compact(warning.evidence) || "none"}`,
-        ].join("; ")).join("\n") || "(none)";
+        const activeWarningsSummary = activeBeforeReview.map((warning) => {
+          const audit = parseObserverCorrectionAudit(warning.correctionEvidence);
+          const previousCorrection = warning.suggestedGoal
+            || warning.suggestedAction
+            || audit?.instruction
+            || "";
+          return [
+            `${warning.id} [${warning.status}; ${warning.level}; occurrences=${warning.occurrenceCount}]`,
+            `identity=${warning.issueType}:${warning.subject || warning.title}`,
+            `title=${warning.title}`,
+            `evidence=${compact(warning.evidence) || "none"}`,
+            `previousCorrection=${compact(previousCorrection) || "none"}`,
+            `previousOutcome=${warning.correctionOutcome}`,
+            `previousAttribution=${audit ? `${audit.reason}: ${compact(audit.summary)}` : compact(warning.correctionEvidence) || "none"}`,
+            `previousActions=${audit?.actions.map((action) => `${action.tool}:${action.outcome}`).join(",") || "none"}`,
+          ].join("; ");
+        }).join("\n") || "(none)";
         const result = await new Observer(llm).review(id, {
           goal,
           trajectory: reviewTrajectory,
@@ -833,11 +845,15 @@ export function registerRoutes(
               && ["open", "detected", "correcting", "escalated"].includes(candidate.status)
               && observerFingerprint(candidate) === fingerprint);
           if (existing) {
+            const previousCorrection = existing.suggestedGoal || existing.suggestedAction;
             let warning = observerStore.observeAgain(existing.id, {
               level,
               escalationReason: level === "critical"
                 ? "Critical evidence remained unresolved after the Observer correction window."
                 : null,
+              suggestedAction: w.suggestedAction,
+              suggestedGoal: w.suggestedGoal || w.suggestedAction,
+              evidence: w.evidence,
             });
             if (!warning) continue;
             warning = observerStore.settleCorrection(
@@ -847,8 +863,8 @@ export function registerRoutes(
                 version: 1,
                 attributed: false,
                 reason: "warning_reobserved",
-                trigger: warning.lastCorrectionTrigger,
-                instruction: warning.suggestedAction,
+                trigger: existing.lastCorrectionTrigger,
+                instruction: previousCorrection,
                 actions: [],
                 evidenceRefs: [],
                 summary: "The same warning was observed again after the correction window.",
@@ -861,9 +877,14 @@ export function registerRoutes(
               pauseReason = intervention.pauseReason;
               bus.emit({ type: "agent_run_needs_confirmation", caseId: id, runId: reviewRunId, warning });
             } else if (intervention.steering) {
-              steering.push(intervention.steering);
-              warning = observerStore.recordCorrection(warning.id, trigger) ?? warning;
-              correctionAttribution.issue(warning);
+              if (
+                existing.correctionCount === 0
+                || observerCorrectionStrategyIsNovel(previousCorrection, intervention.steering)
+              ) {
+                steering.push(intervention.steering);
+                warning = observerStore.recordCorrection(warning.id, trigger) ?? warning;
+                correctionAttribution.issue(warning);
+              }
             }
             bus.emit({ type: "observer_warning_updated", warning });
             continue;

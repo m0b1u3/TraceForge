@@ -4,6 +4,7 @@ import {
   nextObserverStatus,
   observerFingerprint,
   observerIntervention,
+  observerCorrectionStrategyIsNovel,
   validatedObserverLevel,
 } from "./observer-policy.js";
 
@@ -66,5 +67,20 @@ describe("Observer critical evidence policy", () => {
       subject: "task:task_2/tool:analyze",
       relatedTasks: ["task_2"],
     }));
+  });
+
+  it("blocks repeated correction wording while allowing a materially different strategy", () => {
+    expect(observerCorrectionStrategyIsNovel(
+      "Inspect the current evidence chain before continuing.",
+      "Inspect the current evidence chain before continuing.",
+    )).toBe(false);
+    expect(observerCorrectionStrategyIsNovel(
+      "Inspect the current evidence chain before continuing.",
+      "Inspect the current evidence chain before continuing, then record the result.",
+    )).toBe(false);
+    expect(observerCorrectionStrategyIsNovel(
+      "Repeat the same execution with the same input.",
+      "Create an independent causal check and compare the resulting evidence.",
+    )).toBe(true);
   });
 });

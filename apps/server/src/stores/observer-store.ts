@@ -123,7 +123,13 @@ export class ObserverWarningStore {
     }));
   }
 
-  observeAgain(id: string, input: { level: ObserverWarning["level"]; escalationReason?: string | null }): ObserverWarning | undefined {
+  observeAgain(id: string, input: {
+    level: ObserverWarning["level"];
+    escalationReason?: string | null;
+    suggestedAction?: string;
+    suggestedGoal?: string;
+    evidence?: string;
+  }): ObserverWarning | undefined {
     const current = this.getById(id);
     if (!current) return undefined;
     if (current.status === "escalated") return current;
@@ -136,6 +142,9 @@ export class ObserverWarningStore {
       occurrenceCount,
       lastObservedAt,
       escalationReason: input.escalationReason ?? null,
+      suggestedAction: input.suggestedAction ?? current.suggestedAction,
+      suggestedGoal: input.suggestedGoal ?? current.suggestedGoal,
+      evidence: input.evidence ?? current.evidence ?? null,
     }).where(eq(observerWarnings.id, id)).run();
     return ObserverWarningSchema.parse({
       ...current,
@@ -144,6 +153,9 @@ export class ObserverWarningStore {
       occurrenceCount,
       lastObservedAt,
       escalationReason: input.escalationReason ?? null,
+      suggestedAction: input.suggestedAction ?? current.suggestedAction,
+      suggestedGoal: input.suggestedGoal ?? current.suggestedGoal,
+      evidence: input.evidence ?? current.evidence,
     });
   }
 

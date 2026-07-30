@@ -85,6 +85,15 @@ const CRITICAL_REFERENCE_POLICY = [
   "- If no valid current ID supports the warning, use level=warning instead of critical.",
 ].join("\n");
 
+const CORRECTION_MEMORY_POLICY = [
+  "Correction memory policy:",
+  "- Active warnings include the previous correction, its outcome, attribution summary, and observed post-correction actions.",
+  "- If a previous correction persisted, escalated, or ended without attribution, do not repeat or paraphrase the same advice.",
+  "- A replacement suggestedAction must change the causal test, evidence source, execution approach, or decision boundary.",
+  "- State what is different from the previous correction and what traceable result should demonstrate progress.",
+  "- If no materially different useful intervention exists, keep the warning but leave suggestedAction and suggestedGoal empty.",
+].join("\n");
+
 export class Observer {
   constructor(private provider: LlmProvider) {}
 
@@ -101,7 +110,7 @@ export class Observer {
     const usage: UsageSnapshot = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     try {
       const raw = await this.provider.extractJson({
-        system: `${SYSTEM}\n\n${CRITICAL_REFERENCE_POLICY}`,
+        system: `${SYSTEM}\n\n${CRITICAL_REFERENCE_POLICY}\n\n${CORRECTION_MEMORY_POLICY}`,
         user,
         schema: SCHEMA,
         onUsage: (snapshot) => {

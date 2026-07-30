@@ -70,3 +70,50 @@ export function observerIntervention(
   }
   return {};
 }
+
+function correctionStrategyTokens(value: string): Set<string> {
+  const normalized = value
+    .replace(/^\s*\[Observer correction\]\s*/i, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_\u4e00-\u9fff]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const tokens = normalized.match(/[a-z0-9_]+|[\u4e00-\u9fff]+/g) ?? [];
+  const result = new Set<string>();
+  for (const token of tokens) {
+    if (/^[\u4e00-\u9fff]+$/.test(token)) {
+      if (token.length === 1) result.add(token);
+      for (let index = 0; index < token.length - 1; index += 1) {
+        result.add(token.slice(index, index + 2));
+      }
+    } else if (token.length > 2) {
+      result.add(token);
+    }
+  }
+  return result;
+}
+
+export function observerCorrectionStrategyIsNovel(previous: string, proposed: string): boolean {
+  const left = previous.trim();
+  const right = proposed.trim();
+  if (!right) return false;
+  if (!left) return true;
+  const comparable = (value: string) => value
+    .toLowerCase()
+    .replace(/[^a-z0-9_\u4e00-\u9fff]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const normalizedLeft = comparable(left);
+  const normalizedRight = comparable(right);
+  if (normalizedLeft === normalizedRight) return false;
+  if (
+    Math.min(normalizedLeft.length, normalizedRight.length) >= 12
+    && (normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft))
+  ) return false;
+  const leftTokens = correctionStrategyTokens(left);
+  const rightTokens = correctionStrategyTokens(right);
+  if (leftTokens.size === 0 || rightTokens.size === 0) return true;
+  const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  const union = new Set([...leftTokens, ...rightTokens]).size;
+  return intersection / Math.max(1, union) < 0.72;
+}

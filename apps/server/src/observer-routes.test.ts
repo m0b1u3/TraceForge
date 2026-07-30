@@ -154,12 +154,18 @@ describe("observer integration", () => {
     const correcting = store.observeAgain(first.id, {
       level: "critical",
       escalationReason: "Critical evidence remained unresolved across two Observer checkpoints.",
+      suggestedAction: "Use an independent evidence source.",
+      suggestedGoal: "Collect a causally independent result.",
+      evidence: "The previous correction did not change the recorded evidence.",
     });
 
     expect(correcting).toMatchObject({
       status: "correcting",
       occurrenceCount: 2,
       escalationReason: "Critical evidence remained unresolved across two Observer checkpoints.",
+      suggestedAction: "Use an independent evidence source.",
+      suggestedGoal: "Collect a causally independent result.",
+      evidence: "The previous correction did not change the recorded evidence.",
     });
 
     const escalated = store.observeAgain(first.id, {
