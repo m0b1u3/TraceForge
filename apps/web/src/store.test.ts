@@ -26,6 +26,7 @@ function resetStore() {
     streamedAgentTexts: [],
     toast: null,
     warnings: [],
+    observerStrategyAudits: [],
     observerTelemetry: {
       reviewCount: 0,
       correctionCount: 0,
@@ -397,6 +398,25 @@ describe("store context inspector", () => {
       correctionCount: 1,
       durationMs: 42,
       totalTokens: 120,
+      strategyAudit: {
+        id: "audit_1",
+        caseId: "case_1",
+        runId: "run_1",
+        trigger: "interval",
+        offeredCandidates: [{
+          strategyId: "warn_strategy",
+          relevanceScore: 124,
+          relevanceReasons: ["fingerprint_match"],
+          effectiveness: "active",
+          usageCount: 0,
+          successCount: 0,
+          failureCount: 0,
+        }],
+        adoptions: [{ strategyId: "warn_strategy", warningIds: [warning.id] }],
+        ignoredStrategyIds: [],
+        contextCharacters: 284,
+        createdAt: "now",
+      },
     });
     useStore.getState().handleRuntimeEvent({
       type: "observer_review_failed",
@@ -415,6 +435,9 @@ describe("store context inspector", () => {
       lastTrigger: "interval",
       lastDurationMs: 42,
     });
+    expect(useStore.getState().observerStrategyAudits).toEqual([
+      expect.objectContaining({ id: "audit_1", contextCharacters: 284 }),
+    ]);
   });
 
   it("restores Observer review counts and tokens from persisted run usage", () => {

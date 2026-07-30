@@ -1,8 +1,8 @@
 import { create } from "zustand";
-import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, ValidationWorkflowSnapshot, Hypothesis, AgentEventRefs, ToolFailureDiagnostic } from "@traceforge/shared";
+import type { TrafficEntry, Fact, Task, TimelineEntry, ActionCard, Decision, RuntimeEvent, Case, ObserverWarning, ObserverStrategyAudit, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, ValidationWorkflowSnapshot, Hypothesis, AgentEventRefs, ToolFailureDiagnostic } from "@traceforge/shared";
 import { validationTimelineConsoleEvent } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
-import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listHypotheses, listTimeline, listMcpTools, listWarnings, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities, listSecurityReports, getValidationWorkflow } from "./api.js";
+import { listTraffic, clearTraffic as clearTrafficApi, listFacts, listTasks, listHypotheses, listTimeline, listMcpTools, listWarnings, listObserverStrategyAudits, listAgentEvents, getLlmConfig, updateLlmConfig, testLlmConfig, deleteCase as deleteCaseApi, getActiveAgentRun, getLatestAgentRun, getPendingInterventions, getAgentRunUsage, getBrowserState, listAttackPaths, listIdentities, listSecurityReports, getValidationWorkflow } from "./api.js";
 import type { LlmConfig, LlmConfigInput } from "./api.js";
 import type { ValidationSyncState } from "./lib/validation-presentation.js";
 import { unavailableKnowledgeTarget } from "./lib/validation-feedback.js";
@@ -262,6 +262,7 @@ interface State {
   graphModalOpen: boolean;
   mcpTools: McpToolHandle[];
   warnings: ObserverWarning[];
+  observerStrategyAudits: ObserverStrategyAudit[];
   observerTelemetry: ObserverTelemetry;
   validationWorkflow: ValidationWorkflowSnapshot | null;
   validationWorkflowDelta: ValidationWorkflowDelta | null;
@@ -280,6 +281,7 @@ interface State {
   testLlmConfig: (input: LlmConfigInput) => Promise<{ ok: boolean; message?: string; error?: string }>;
   addWarning: (w: ObserverWarning) => void;
   upsertWarning: (w: ObserverWarning) => void;
+  upsertObserverStrategyAudit: (audit: ObserverStrategyAudit) => void;
   pendingConfirmation: { runId: string; warning: ObserverWarning } | null;
   setPendingConfirmation: (p: { runId: string; warning: ObserverWarning }) => void;
   clearPendingConfirmation: () => void;
@@ -368,6 +370,7 @@ export const useStore = create<State>((set, get) => ({
   graphModalOpen: false,
   mcpTools: [],
   warnings: [],
+  observerStrategyAudits: [],
   observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY },
   validationWorkflow: null,
   validationWorkflowDelta: null,
@@ -462,6 +465,12 @@ export const useStore = create<State>((set, get) => ({
         observerTelemetry: { ...s.observerTelemetry, ...observerCorrectionMetrics(warnings) },
       };
     }),
+  upsertObserverStrategyAudit: (audit) => set((state) => ({
+    observerStrategyAudits: [
+      audit,
+      ...state.observerStrategyAudits.filter((item) => item.id !== audit.id),
+    ].slice(0, 100),
+  })),
   pendingConfirmation: null,
   setPendingConfirmation: (p) => set({ pendingConfirmation: p }),
   clearPendingConfirmation: () => set({ pendingConfirmation: null }),
@@ -472,16 +481,16 @@ export const useStore = create<State>((set, get) => ({
   )),
   setCase: (id) => {
     cancelPendingStreamDeltas();
-    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], hypotheses: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedTaskId: null, selectedTimelineNodeId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationWorkflowDelta: null, validationSyncStatus: id ? "recovering" : "stale", knowledgeTarget: null, workspacePanelRequest: null, pendingScope: null, pendingConfirmation: null, knowledgeDialog: null });
+    set({ caseId: id, traffic: [], identities: [], attackPaths: [], securityReports: [], facts: [], tasks: [], hypotheses: [], timeline: [], actions: [], decisions: [], agentEvents: [], agentBusy: false, activeRun: null, continuationRun: null, streamingMessages: {}, streamedAgentTexts: [], tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, tokenUsageHistory: [], pendingApproval: null, browserController: null, browserUrl: "", selectedTrafficId: null, selectedTrafficSnapshot: null, selectedFactId: null, selectedTaskId: null, selectedTimelineNodeId: null, selectedAgentEvent: null, inspectorMode: "overview", warnings: [], observerStrategyAudits: [], observerTelemetry: { ...EMPTY_OBSERVER_TELEMETRY }, validationWorkflow: null, validationWorkflowDelta: null, validationSyncStatus: id ? "recovering" : "stale", knowledgeTarget: null, workspacePanelRequest: null, pendingScope: null, pendingConfirmation: null, knowledgeDialog: null });
   },
   setCases: (list) => set({ cases: list }),
   setKnowledgeDialog: (dialog) => set({ knowledgeDialog: dialog }),
   setGraphModalOpen: (open) => set({ graphModalOpen: open }),
   enterCase: async (id) => {
     get().setCase(id);
-    const [traffic, identities, attackPaths, securityReports, facts, tasks, hypotheses, timeline, mcpTools, warnings, agentEvents, activeRun, pendingInterventions, browserState, validationWorkflow] = await Promise.all([
+    const [traffic, identities, attackPaths, securityReports, facts, tasks, hypotheses, timeline, mcpTools, warnings, observerStrategyAudits, agentEvents, activeRun, pendingInterventions, browserState, validationWorkflow] = await Promise.all([
       listTraffic(id, { limit: CLIENT_TRAFFIC_LIMIT }), listIdentities(id), listAttackPaths(id), listSecurityReports(id), listFacts(id), listTasks(id), listHypotheses(id),
-      listTimeline(id, { limit: CLIENT_TIMELINE_LIMIT }), listMcpTools(), listWarnings(id),
+      listTimeline(id, { limit: CLIENT_TIMELINE_LIMIT }), listMcpTools(), listWarnings(id), listObserverStrategyAudits(id),
       listAgentEvents(id, { limit: CLIENT_AGENT_EVENT_LIMIT }), getActiveAgentRun(id),
       getPendingInterventions(id), getBrowserState(id), getValidationWorkflow(id),
     ]);
@@ -499,6 +508,7 @@ export const useStore = create<State>((set, get) => ({
       timeline: takeRecent(timeline, CLIENT_TIMELINE_LIMIT),
       mcpTools,
       warnings,
+      observerStrategyAudits,
       agentEvents: takeRecent(agentEvents.map((e) => ({
         id: e.id, kind: e.kind, text: e.text, tool: e.tool, refs: e.refs,
         runId: e.runId, executionId: e.executionId, outcome: e.outcome,
@@ -539,6 +549,7 @@ export const useStore = create<State>((set, get) => ({
             decisions: [],
             agentEvents: [],
             warnings: [],
+            observerStrategyAudits: [],
             activeRun: null,
             agentBusy: false,
             browserController: null,
@@ -901,6 +912,7 @@ export const useStore = create<State>((set, get) => ({
     else if (event.type === "observer_warning" && event.warning.caseId === cid) get().addWarning(event.warning);
     else if (event.type === "observer_warning_updated" && event.warning.caseId === cid) get().upsertWarning(event.warning);
     else if (event.type === "observer_review_completed" && event.caseId === cid) {
+      get().upsertObserverStrategyAudit(event.strategyAudit);
       set((state) => ({
         observerTelemetry: {
           reviewCount: state.observerTelemetry.reviewCount + 1,
@@ -915,6 +927,7 @@ export const useStore = create<State>((set, get) => ({
       }));
     }
     else if (event.type === "observer_review_failed" && event.caseId === cid) {
+      if (event.strategyAudit) get().upsertObserverStrategyAudit(event.strategyAudit);
       set((state) => ({
         observerTelemetry: {
           ...state.observerTelemetry,

@@ -1,4 +1,4 @@
-import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision, ValidationWorkflowSnapshot, Hypothesis } from "@traceforge/shared";
+import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, ObserverStrategyAudit, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision, ValidationWorkflowSnapshot, Hypothesis } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 export interface LlmConfig {
@@ -318,6 +318,15 @@ export async function approveScope(caseId: string, host: string): Promise<void> 
   await ensureOk(await fetch(`/api/cases/${caseId}/scope/approve`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ host }),
   }), "Approve scope");
+}
+
+export async function listObserverStrategyAudits(caseId: string): Promise<ObserverStrategyAudit[]> {
+  const response = await ensureOk(
+    await fetch(`/api/cases/${caseId}/observer/strategy-audits`),
+    "Load Observer strategy audits",
+  );
+  const body = await response.json() as { audits?: ObserverStrategyAudit[] };
+  return body.audits ?? [];
 }
 
 export async function rejectScope(caseId: string, host: string): Promise<void> {

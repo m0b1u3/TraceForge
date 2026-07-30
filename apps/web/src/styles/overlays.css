@@ -781,6 +781,201 @@
   white-space: nowrap;
 }
 
+.observer-strategy-audits {
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.observer-strategy-audits > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  color: var(--foreground-secondary);
+  font-size: var(--type-label);
+  font-weight: 600;
+}
+
+.observer-strategy-audits > header span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.observer-strategy-audits > header svg {
+  color: var(--information);
+}
+
+.observer-strategy-audits > header strong {
+  color: var(--foreground-muted);
+  font: 500 var(--type-meta)/1 var(--mono);
+}
+
+.observer-strategy-audit {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.observer-strategy-audit > summary {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 42px;
+  gap: 7px;
+  color: var(--foreground-secondary);
+  cursor: pointer;
+  list-style: none;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.observer-strategy-audit > summary::-webkit-details-marker {
+  display: none;
+}
+
+.observer-strategy-audit > summary:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
+}
+
+.observer-strategy-audit > summary:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid color-mix(in srgb, var(--primary) 48%, transparent);
+  outline-offset: -2px;
+}
+
+.observer-strategy-audit > summary > svg {
+  color: var(--foreground-muted);
+  transition: transform 150ms ease;
+}
+
+.observer-strategy-audit[open] > summary > svg {
+  transform: rotate(90deg);
+}
+
+.observer-strategy-audit > summary > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.observer-strategy-audit > summary strong {
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: var(--type-label);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.observer-strategy-audit > summary small,
+.observer-strategy-audit > summary time {
+  color: var(--foreground-muted);
+  font-size: var(--type-meta);
+}
+
+.observer-strategy-audit > summary time {
+  font-family: var(--mono);
+}
+
+.observer-strategy-audit-body {
+  display: grid;
+  gap: 8px;
+  padding: 2px 0 12px 21px;
+}
+
+.observer-strategy-candidate {
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+
+.observer-strategy-candidate > div:first-child {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.observer-strategy-candidate code {
+  overflow: hidden;
+  color: var(--foreground-secondary);
+  font: 500 var(--type-meta)/1.4 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.observer-strategy-outcome {
+  flex: none;
+  color: var(--foreground-muted);
+  font-size: var(--type-meta);
+  font-weight: 600;
+}
+
+.observer-strategy-outcome.is-recovered {
+  color: var(--success);
+}
+
+.observer-strategy-outcome.is-pending {
+  color: var(--information);
+}
+
+.observer-strategy-outcome.is-persisted,
+.observer-strategy-outcome.is-stalled {
+  color: var(--warning);
+}
+
+.observer-strategy-outcome.is-escalated {
+  color: var(--danger);
+}
+
+.observer-strategy-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.observer-strategy-reasons span {
+  padding: 2px 5px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--information) 9%, transparent);
+  color: var(--information);
+  font-size: var(--type-meta);
+}
+
+.observer-strategy-reasons small {
+  align-self: center;
+  color: var(--foreground-muted);
+  font: 500 var(--type-meta)/1.3 var(--mono);
+}
+
+.observer-strategy-candidate p,
+.observer-strategy-warning-refs,
+.observer-strategy-empty,
+.observer-strategy-audit-body > footer {
+  color: var(--foreground-muted);
+  font-size: var(--type-meta);
+  line-height: 1.45;
+}
+
+.observer-strategy-warning-refs {
+  overflow: hidden;
+  font-family: var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.observer-strategy-empty {
+  margin: 0;
+  padding: 4px 0;
+}
+
+.observer-strategy-audit-body > footer {
+  text-align: right;
+}
+
 .observer-row-status,
 .observer-row-suggestion > span {
   font-size: var(--type-label);

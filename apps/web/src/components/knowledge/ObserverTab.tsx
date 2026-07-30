@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { ArrowBendDownRight, CaretRight, CheckCircle, Clock, Eye, ListPlus, Play, Pulse, Warning, X } from "@phosphor-icons/react";
-import { parseObserverCorrectionAudit, type AgentRun, type ObserverWarning } from "@traceforge/shared";
+import {
+  parseObserverCorrectionAudit,
+  type AgentRun,
+  type ObserverRecoveryRelevanceReason,
+  type ObserverStrategyAudit,
+  type ObserverWarning,
+} from "@traceforge/shared";
 import { acceptObserverWarning, convertObserverWarningToTask, dismissObserverWarning, runAgent } from "../../api.js";
 import { useStore } from "../../store.js";
 import { useShallow } from "zustand/react/shallow";
@@ -27,6 +33,127 @@ const OUTCOME_LABEL: Record<ObserverWarning["correctionOutcome"], string> = {
   stalled: "Awaiting new strategy",
   escalated: "Escalated",
 };
+const RELEVANCE_LABEL: Record<ObserverRecoveryRelevanceReason, string> = {
+  fingerprint_match: "Same issue identity",
+  issue_type_match: "Same issue type",
+  subject_match: "Same subject",
+  evidence_reference_match: "Shared evidence",
+  lexical_context_match: "Context match",
+};
+
+export type ObserverStrategyOutcome =
+  | "ignored"
+  | "pending"
+  | "recovered"
+  | "persisted"
+  | "stalled"
+  | "escalated"
+  | "unattributed";
+
+const STRATEGY_OUTCOME_LABEL: Record<ObserverStrategyOutcome, string> = {
+  ignored: "Not adopted",
+  pending: "Awaiting outcome",
+  recovered: "Recovered",
+  persisted: "Issue persisted",
+  stalled: "Strategy stalled",
+  escalated: "Escalated",
+  unattributed: "Ended, not attributed",
+};
+
+export function observerStrategyOutcome(
+  audit: ObserverStrategyAudit,
+  strategyId: string,
+  warnings: ObserverWarning[],
+): ObserverStrategyOutcome {
+  const adoption = audit.adoptions.find((item) => item.strategyId === strategyId);
+  if (!adoption) return "ignored";
+  const linked = adoption.warningIds
+    .map((warningId) => warnings.find((warning) => warning.id === warningId))
+    .filter((warning): warning is ObserverWarning => Boolean(warning));
+  if (linked.some((warning) => warning.correctionOutcome === "escalated")) return "escalated";
+  if (linked.some((warning) => warning.correctionOutcome === "stalled")) return "stalled";
+  if (linked.some((warning) => warning.correctionOutcome === "persisted")) return "persisted";
+  if (linked.some((warning) => warning.correctionOutcome === "resolved")) return "recovered";
+  if (linked.length > 0 && linked.every((warning) =>
+    warning.correctionOutcome === "unattributed"
+    || (warning.status === "resolved" && warning.correctionOutcome === "none"))) {
+    return "unattributed";
+  }
+  return "pending";
+}
+
+function StrategyDecisionAudit({
+  audits,
+  warnings,
+}: {
+  audits: ObserverStrategyAudit[];
+  warnings: ObserverWarning[];
+}) {
+  const visibleAudits = audits.slice(0, 8);
+  if (visibleAudits.length === 0) return null;
+  return (
+    <section className="observer-strategy-audits" aria-label="Recovery strategy decisions">
+      <header>
+        <span><Eye size={12} />Recovery decisions</span>
+        <strong>{audits.length}</strong>
+      </header>
+      {visibleAudits.map((audit) => {
+        const adoptedCount = audit.adoptions.length;
+        return (
+          <details className="observer-strategy-audit" key={audit.id}>
+            <summary>
+              <CaretRight size={12} weight="bold" />
+              <span>
+                <strong>{audit.trigger.replaceAll("_", " ")}</strong>
+                <small>{audit.offeredCandidates.length > 0
+                  ? `${audit.offeredCandidates.length} offered · ${adoptedCount} adopted`
+                  : "No relevant candidate"}</small>
+              </span>
+              <time dateTime={audit.createdAt}>
+                {new Date(audit.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </time>
+            </summary>
+            <div className="observer-strategy-audit-body">
+              {audit.offeredCandidates.length === 0 ? (
+                <p className="observer-strategy-empty">
+                  Observer continued with independent reasoning; no project recovery strategy matched this review.
+                </p>
+              ) : audit.offeredCandidates.map((candidate) => {
+                const outcome = observerStrategyOutcome(audit, candidate.strategyId, warnings);
+                const adoption = audit.adoptions.find((item) => item.strategyId === candidate.strategyId);
+                return (
+                  <article className="observer-strategy-candidate" key={candidate.strategyId}>
+                    <div>
+                      <code title={candidate.strategyId}>{candidate.strategyId}</code>
+                      <span className={`observer-strategy-outcome is-${outcome}`}>
+                        {STRATEGY_OUTCOME_LABEL[outcome]}
+                      </span>
+                    </div>
+                    <div className="observer-strategy-reasons">
+                      {candidate.relevanceReasons.map((reason) => (
+                        <span key={reason}>{RELEVANCE_LABEL[reason]}</span>
+                      ))}
+                      <small>score {candidate.relevanceScore}</small>
+                    </div>
+                    <p>
+                      {candidate.successCount} recovered · {candidate.failureCount} failed · {candidate.usageCount} prior uses
+                    </p>
+                    {adoption && adoption.warningIds.length > 0 && (
+                      <small className="observer-strategy-warning-refs">
+                        Warning {adoption.warningIds.join(" · ")}
+                      </small>
+                    )}
+                  </article>
+                );
+              })}
+              <footer>{audit.contextCharacters.toLocaleString()} context characters</footer>
+            </div>
+          </details>
+        );
+      })}
+    </section>
+  );
+}
 
 export function observerWarningStatusLabel(status: ObserverWarning["status"]): string {
   return STATUS_LABEL[status];
@@ -97,13 +224,13 @@ export function observerWarningGroup(status: ObserverWarning["status"]): Observe
 export function ObserverTab() {
   const {
     caseId, warnings, showToast, addAgentEvent, setAgentBusy, setActiveRun,
-    upsertWarning, upsertTask, activeRun, agentBusy, observerTelemetry,
+    upsertWarning, upsertTask, activeRun, agentBusy, observerTelemetry, observerStrategyAudits,
   } = useStore(useShallow((state) => ({
     caseId: state.caseId, warnings: state.warnings, showToast: state.showToast,
     addAgentEvent: state.addAgentEvent, setAgentBusy: state.setAgentBusy,
     setActiveRun: state.setActiveRun, upsertWarning: state.upsertWarning,
     upsertTask: state.upsertTask, activeRun: state.activeRun, agentBusy: state.agentBusy,
-    observerTelemetry: state.observerTelemetry,
+    observerTelemetry: state.observerTelemetry, observerStrategyAudits: state.observerStrategyAudits,
   })));
   const [busy, setBusy] = useState<string | null>(null);
   const [recoveryWarningId, setRecoveryWarningId] = useState<string | null>(null);
@@ -141,7 +268,10 @@ export function ObserverTab() {
       </div>
     </div>
   );
-  if (warnings.length === 0) return <>{telemetry}{observerTelemetry.failureCount > 0 && <div className="observer-review-failure" role="status"><Warning size={14} /><span><strong>{observerTelemetry.failureCount} review failed</strong>Agent continued normally. Check the LLM connection if this repeats.</span></div>}<FeedbackState title="No intervention required" description="No unsupported conclusions or unresolved critical evidence were detected." /></>;
+  const strategyAudits = (
+    <StrategyDecisionAudit audits={observerStrategyAudits} warnings={warnings} />
+  );
+  if (warnings.length === 0) return <>{telemetry}{strategyAudits}{observerTelemetry.failureCount > 0 && <div className="observer-review-failure" role="status"><Warning size={14} /><span><strong>{observerTelemetry.failureCount} review failed</strong>Agent continued normally. Check the LLM connection if this repeats.</span></div>}<FeedbackState title="No intervention required" description="No unsupported conclusions or unresolved critical evidence were detected." /></>;
 
   const continueRun = async (w: ObserverWarning, direction?: string) => {
     if (!caseId) return;
@@ -280,7 +410,7 @@ export function ObserverTab() {
       );
   };
 
-  return <>{telemetry}{observerTelemetry.failureCount > 0 && <div className="observer-review-failure" role="status"><Warning size={14} /><span><strong>{observerTelemetry.failureCount} review failed</strong>Agent continued normally. Check the LLM connection if this repeats.</span></div>}
+  return <>{telemetry}{strategyAudits}{observerTelemetry.failureCount > 0 && <div className="observer-review-failure" role="status"><Warning size={14} /><span><strong>{observerTelemetry.failureCount} review failed</strong>Agent continued normally. Check the LLM connection if this repeats.</span></div>}
     <div className="observer-groups">
       {groups.filter((group) => group.items.length > 0).map((group) => {
         const Icon = group.icon;
