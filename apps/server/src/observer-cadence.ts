@@ -5,6 +5,7 @@ export interface ObserverCadenceSnapshot {
   pendingCorrectionCount: number;
   resolvedCorrectionCount: number;
   failedCorrectionCount: number;
+  stalledCorrectionCount: number;
 }
 
 export interface ObserverReviewOutcome {
@@ -28,6 +29,7 @@ export function observerCadenceSnapshot(warnings: ObserverWarning[]): ObserverCa
     pendingCorrectionCount: active.filter((warning) => warning.correctionOutcome === "pending").length,
     resolvedCorrectionCount: active.reduce((sum, warning) => sum + warning.correctionResolvedCount, 0),
     failedCorrectionCount: active.reduce((sum, warning) => sum + warning.correctionFailedCount, 0),
+    stalledCorrectionCount: active.filter((warning) => warning.correctionOutcome === "stalled").length,
   };
 }
 
@@ -60,6 +62,7 @@ export class ObserverCadence {
   interval(snapshot: ObserverCadenceSnapshot): number {
     if (snapshot.pendingCorrectionCount > 0) return PENDING_CORRECTION_INTERVAL;
     if (this.failedReviewStreak > 0) return FAILED_REVIEW_RETRY_INTERVAL;
+    if (snapshot.stalledCorrectionCount > 0) return SUSTAINED_QUIET_INTERVAL;
     if (
       snapshot.activeWarningCount > 0
       && snapshot.failedCorrectionCount > snapshot.resolvedCorrectionCount

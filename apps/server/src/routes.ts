@@ -48,7 +48,7 @@ import { PendingInterventionRegistry } from "./pending-interventions.js";
 import { AgentRunStore } from "./stores/agent-run-store.js";
 import {
   initialObserverStatus,
-  observerCorrectionStrategyIsNovel,
+  observerCorrectionStallDecision,
   observerFingerprint,
   observerIntervention,
   validatedObserverLevel,
@@ -846,6 +846,7 @@ export function registerRoutes(
               && observerFingerprint(candidate) === fingerprint);
           if (existing) {
             const previousCorrection = existing.suggestedGoal || existing.suggestedAction;
+            const previousAudit = parseObserverCorrectionAudit(existing.correctionEvidence);
             let warning = observerStore.observeAgain(existing.id, {
               level,
               escalationReason: level === "critical"
@@ -870,6 +871,40 @@ export function registerRoutes(
                 summary: "The same warning was observed again after the correction window.",
               }),
             ) ?? warning;
+            const proposedCorrection = warning.suggestedGoal || warning.suggestedAction;
+            const stall = observerCorrectionStallDecision(
+              existing,
+              previousCorrection,
+              proposedCorrection,
+            );
+            if (stall.stalled) {
+              warning = observerStore.markCorrectionStalled(
+                warning.id,
+                serializeObserverCorrectionAudit({
+                  version: 1,
+                  attributed: false,
+                  reason: "no_novel_strategy",
+                  trigger: existing.lastCorrectionTrigger,
+                  instruction: previousCorrection,
+                  actions: previousAudit?.actions ?? [],
+                  evidenceRefs: previousAudit?.evidenceRefs ?? [],
+                  summary: stall.pauseReason
+                    ? "The issue remains Critical, but the Observer produced no materially new correction. Human direction is required."
+                    : "The issue remains active, but the Observer produced no materially new correction. Periodic review was reduced.",
+                }),
+              ) ?? warning;
+              if (stall.pauseReason && !pauseReason) {
+                pauseReason = stall.pauseReason;
+                bus.emit({
+                  type: "agent_run_needs_confirmation",
+                  caseId: id,
+                  runId: reviewRunId,
+                  warning,
+                });
+              }
+              bus.emit({ type: "observer_warning_updated", warning });
+              continue;
+            }
             const intervention = observerIntervention(warning, {
               allowPause: trigger === "high_risk" || trigger === "evidence_conflict",
             });
@@ -877,14 +912,9 @@ export function registerRoutes(
               pauseReason = intervention.pauseReason;
               bus.emit({ type: "agent_run_needs_confirmation", caseId: id, runId: reviewRunId, warning });
             } else if (intervention.steering) {
-              if (
-                existing.correctionCount === 0
-                || observerCorrectionStrategyIsNovel(previousCorrection, intervention.steering)
-              ) {
-                steering.push(intervention.steering);
-                warning = observerStore.recordCorrection(warning.id, trigger) ?? warning;
-                correctionAttribution.issue(warning);
-              }
+              steering.push(intervention.steering);
+              warning = observerStore.recordCorrection(warning.id, trigger) ?? warning;
+              correctionAttribution.issue(warning);
             }
             bus.emit({ type: "observer_warning_updated", warning });
             continue;

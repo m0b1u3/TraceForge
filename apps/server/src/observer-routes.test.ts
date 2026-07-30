@@ -223,6 +223,25 @@ describe("observer integration", () => {
     });
   });
 
+  it("marks a correction stalled without double-counting it as another failure", () => {
+    const store = new ObserverWarningStore(db);
+    const warning = store.create({
+      ...createOpenWarning(),
+      id: "warn_stalled",
+      status: "detected",
+    });
+    store.recordCorrection(warning.id, "interval");
+    const persisted = store.settleCorrection(warning.id, "persisted", "warning reobserved");
+    const stalled = store.markCorrectionStalled(warning.id, "no materially new strategy");
+
+    expect(persisted?.correctionFailedCount).toBe(1);
+    expect(stalled).toMatchObject({
+      correctionOutcome: "stalled",
+      correctionFailedCount: 1,
+      correctionEvidence: "no materially new strategy",
+    });
+  });
+
   it("isolates fingerprints by run and resolves warnings superseded by a new run", () => {
     const store = new ObserverWarningStore(db);
     const previous = createOpenWarning();

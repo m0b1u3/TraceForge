@@ -6,6 +6,7 @@ const quiet = {
   pendingCorrectionCount: 0,
   resolvedCorrectionCount: 0,
   failedCorrectionCount: 0,
+  stalledCorrectionCount: 0,
 };
 
 describe("Observer adaptive cadence", () => {
@@ -60,5 +61,13 @@ describe("Observer adaptive cadence", () => {
     expect(cadence.shouldReview(18, quiet)).toBe(true);
     cadence.recordSuccessfulReview(18, { warningCount: 0, correctionCount: 0 });
     expect(cadence.interval(quiet)).toBe(18);
+  });
+
+  it("tracks a stalled ordinary correction at low frequency", () => {
+    const cadence = new ObserverCadence();
+    const stalled = { ...quiet, activeWarningCount: 1, stalledCorrectionCount: 1 };
+    expect(cadence.interval(stalled)).toBe(24);
+    expect(cadence.shouldReview(23, stalled)).toBe(false);
+    expect(cadence.shouldReview(24, stalled)).toBe(true);
   });
 });

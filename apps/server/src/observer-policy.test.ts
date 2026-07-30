@@ -5,6 +5,7 @@ import {
   observerFingerprint,
   observerIntervention,
   observerCorrectionStrategyIsNovel,
+  observerCorrectionStallDecision,
   validatedObserverLevel,
 } from "./observer-policy.js";
 
@@ -82,5 +83,27 @@ describe("Observer critical evidence policy", () => {
       "Repeat the same execution with the same input.",
       "Create an independent causal check and compare the resulting evidence.",
     )).toBe(true);
+  });
+
+  it("tracks ordinary stalls in the background and escalates only critical stalls", () => {
+    const previous = "Collect an independent evidence source.";
+    expect(observerCorrectionStallDecision(
+      { level: "warning", title: "Unresolved evidence gap", correctionCount: 1 },
+      previous,
+      previous,
+    )).toEqual({ stalled: true });
+    expect(observerCorrectionStallDecision(
+      { level: "critical", title: "Unsafe action", correctionCount: 1 },
+      previous,
+      previous,
+    )).toEqual({
+      stalled: true,
+      pauseReason: "observer requires human direction: no materially new correction is available for Unsafe action",
+    });
+    expect(observerCorrectionStallDecision(
+      { level: "critical", title: "First review", correctionCount: 0 },
+      previous,
+      previous,
+    )).toEqual({ stalled: false });
   });
 });

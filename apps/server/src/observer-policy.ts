@@ -117,3 +117,20 @@ export function observerCorrectionStrategyIsNovel(previous: string, proposed: st
   const union = new Set([...leftTokens, ...rightTokens]).size;
   return intersection / Math.max(1, union) < 0.72;
 }
+
+export function observerCorrectionStallDecision(
+  warning: Pick<ObserverWarning, "level" | "title" | "correctionCount">,
+  previous: string,
+  proposed: string,
+): { stalled: boolean; pauseReason?: string } {
+  if (warning.correctionCount === 0 || observerCorrectionStrategyIsNovel(previous, proposed)) {
+    return { stalled: false };
+  }
+  if (warning.level === "critical") {
+    return {
+      stalled: true,
+      pauseReason: `observer requires human direction: no materially new correction is available for ${warning.title}`,
+    };
+  }
+  return { stalled: true };
+}

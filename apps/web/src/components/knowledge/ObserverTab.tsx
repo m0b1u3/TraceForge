@@ -24,6 +24,7 @@ const OUTCOME_LABEL: Record<ObserverWarning["correctionOutcome"], string> = {
   resolved: "Recovered",
   unattributed: "Ended · not attributed",
   persisted: "Still present",
+  stalled: "Awaiting new strategy",
   escalated: "Escalated",
 };
 

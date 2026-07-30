@@ -207,6 +207,20 @@ export class ObserverWarningStore {
     });
   }
 
+  markCorrectionStalled(id: string, correctionEvidence: string): ObserverWarning | undefined {
+    const current = this.getById(id);
+    if (!current) return undefined;
+    this.db.update(observerWarnings).set({
+      correctionOutcome: "stalled",
+      correctionEvidence,
+    }).where(eq(observerWarnings.id, id)).run();
+    return ObserverWarningSchema.parse({
+      ...current,
+      correctionOutcome: "stalled",
+      correctionEvidence,
+    });
+  }
+
   updateStatus(id: string, status: ObserverWarning["status"]): ObserverWarning | undefined {
     const cur = this.getById(id);
     if (!cur) return undefined;

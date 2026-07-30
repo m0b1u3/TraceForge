@@ -8,6 +8,7 @@ export const ObserverCorrectionAuditSchema = z.object({
     "execution_recovered",
     "no_linked_result",
     "warning_reobserved",
+    "no_novel_strategy",
     "no_tracked_correction",
   ]),
   trigger: z.string().nullable(),
