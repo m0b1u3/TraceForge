@@ -242,6 +242,49 @@ describe("observer integration", () => {
     });
   });
 
+  it("binds a human direction to the recovery run and reopens attribution", () => {
+    const store = new ObserverWarningStore(db);
+    const warning = store.create({
+      ...createOpenWarning(),
+      id: "warn_human_recovery",
+      level: "critical",
+      status: "escalated",
+      correctionCount: 2,
+      correctionFailedCount: 1,
+      correctionOutcome: "stalled",
+      correctionEvidence: "no materially new strategy",
+      escalationReason: "human direction required",
+    });
+
+    const recovered = store.beginHumanRecovery(
+      warning.id,
+      "run_recovery",
+      "Compare the candidate through an independent evidence source.",
+    );
+
+    expect(recovered).toMatchObject({
+      status: "detected",
+      relatedRunId: "run_recovery",
+      suggestedGoal: "Compare the candidate through an independent evidence source.",
+      correctionCount: 3,
+      correctionFailedCount: 1,
+      correctionOutcome: "pending",
+      correctionEvidence: null,
+      lastCorrectionTrigger: "human_direction",
+      escalationReason: null,
+      resolvedAt: null,
+    });
+    expect(recovered?.lastCorrectionAt).toEqual(expect.any(String));
+  });
+
+  it("does not reopen a warning that is not awaiting human direction", () => {
+    const store = new ObserverWarningStore(db);
+    const warning = createOpenWarning();
+
+    expect(store.beginHumanRecovery(warning.id, "run_recovery", "Use a different strategy.")).toBeUndefined();
+    expect(store.getById(warning.id)).toEqual(warning);
+  });
+
   it("isolates fingerprints by run and resolves warnings superseded by a new run", () => {
     const store = new ObserverWarningStore(db);
     const previous = createOpenWarning();

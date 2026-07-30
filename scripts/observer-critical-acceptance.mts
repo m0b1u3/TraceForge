@@ -4,7 +4,9 @@ import { createDb } from "../apps/server/src/db/client.js";
 import { ObserverWarningStore } from "../apps/server/src/stores/observer-store.js";
 import {
   initialObserverStatus,
+  observerCorrectionStallDecision,
   observerFingerprint,
+  observerHumanRecoveryWindowIsOpen,
   observerIntervention,
   validatedObserverLevel,
 } from "../apps/server/src/observer-policy.js";
@@ -64,16 +66,58 @@ if (escalated) escalated = store.settleCorrection(escalated.id, "escalated");
 if (!escalated || observerIntervention(escalated).pauseReason === undefined) {
   throw new Error("Correcting did not transition to an escalated pause");
 }
-const resolved = store.updateStatus(escalated.id, "resolved");
+const stalled = store.markCorrectionStalled(escalated.id, "no materially new strategy");
+if (!stalled || observerCorrectionStallDecision(
+  stalled,
+  stalled.suggestedGoal,
+  stalled.suggestedGoal,
+).pauseReason === undefined) {
+  throw new Error("The unresolved Critical correction did not request human direction");
+}
+const recovering = store.beginHumanRecovery(
+  stalled.id,
+  "run_observer_human_recovery",
+  "Use an independent evidence source and preserve the resulting references.",
+);
+if (!recovering || !observerHumanRecoveryWindowIsOpen(recovering)) {
+  throw new Error("Human direction did not open a recovery attribution window");
+}
+const observedDuringRecovery = store.observeAgain(recovering.id, {
+  level: "critical",
+  suggestedAction: recovering.suggestedAction,
+  suggestedGoal: recovering.suggestedGoal,
+  evidence: recovering.evidence,
+});
+if (!observedDuringRecovery || observedDuringRecovery.status !== "correcting") {
+  throw new Error("The first recovery review did not remain inside the correction window");
+}
+const persistedRecovery = store.settleCorrection(
+  observedDuringRecovery.id,
+  "persisted",
+  "The warning remained present during the first human recovery review.",
+);
+if (!persistedRecovery || observerHumanRecoveryWindowIsOpen(persistedRecovery)) {
+  throw new Error("The human recovery window did not close after its first review");
+}
+const resolved = store.updateStatus(persistedRecovery.id, "resolved");
 if (resolved?.status !== "resolved") throw new Error("Escalated warning could not be resolved");
 
 console.log(JSON.stringify({
   realModel: config.model,
   observerTokens: result.usage.totalTokens,
   validCriticalReference: true,
-  lifecycle: [correcting.status, escalated.status, resolved.status],
+  lifecycle: [
+    correcting.status,
+    escalated.status,
+    stalled.correctionOutcome,
+    recovering.correctionOutcome,
+    persistedRecovery.correctionOutcome,
+    resolved.status,
+  ],
   steeringProduced: true,
   pauseProduced: true,
+  humanRecoveryBound: recovering.relatedRunId === "run_observer_human_recovery",
+  immediateRepausePrevented: observedDuringRecovery.status === "correcting",
   correctionMetrics: {
     issued: resolved.correctionCount,
     resolved: resolved.correctionResolvedCount,

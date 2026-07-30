@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { observerWarningContinueDisabled, observerWarningGroup, observerWarningRunGoal, observerWarningStatusLabel } from "./ObserverTab.js";
+import {
+  observerRecoveryRequiresDirection,
+  observerWarningContinueDisabled,
+  observerWarningGroup,
+  observerWarningRunGoal,
+  observerWarningStatusLabel,
+} from "./ObserverTab.js";
 
 describe("ObserverTab helpers", () => {
   it("labels observer warning workflow states", () => {
@@ -25,6 +31,12 @@ describe("ObserverTab helpers", () => {
     expect(observerWarningContinueDisabled({ status: "running" }, false, null)).toBe(true);
     expect(observerWarningContinueDisabled(null, true, null)).toBe(true);
     expect(observerWarningContinueDisabled(null, false, "warn_1:task")).toBe(true);
+  });
+
+  it("requires explicit human direction only for stalled corrections", () => {
+    expect(observerRecoveryRequiresDirection({ correctionOutcome: "stalled" })).toBe(true);
+    expect(observerRecoveryRequiresDirection({ correctionOutcome: "persisted" })).toBe(false);
+    expect(observerRecoveryRequiresDirection({ correctionOutcome: "pending" })).toBe(false);
   });
 
   it("groups warnings by intervention priority", () => {

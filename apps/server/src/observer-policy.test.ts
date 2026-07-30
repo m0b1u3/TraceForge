@@ -6,6 +6,7 @@ import {
   observerIntervention,
   observerCorrectionStrategyIsNovel,
   observerCorrectionStallDecision,
+  observerHumanRecoveryWindowIsOpen,
   validatedObserverLevel,
 } from "./observer-policy.js";
 
@@ -105,5 +106,20 @@ describe("Observer critical evidence policy", () => {
       previous,
       previous,
     )).toEqual({ stalled: false });
+  });
+
+  it("opens exactly one recovery window for a pending human direction", () => {
+    expect(observerHumanRecoveryWindowIsOpen({
+      lastCorrectionTrigger: "human_direction",
+      correctionOutcome: "pending",
+    })).toBe(true);
+    expect(observerHumanRecoveryWindowIsOpen({
+      lastCorrectionTrigger: "human_direction",
+      correctionOutcome: "persisted",
+    })).toBe(false);
+    expect(observerHumanRecoveryWindowIsOpen({
+      lastCorrectionTrigger: "interval",
+      correctionOutcome: "pending",
+    })).toBe(false);
   });
 });

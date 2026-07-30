@@ -59,7 +59,7 @@ export class ObserverCorrectionAttribution {
   issue(warning: Pick<
     ObserverWarning,
     "id" | "relatedFacts" | "relatedTasks" | "lastCorrectionTrigger" | "suggestedAction"
-  >): void {
+  > & Partial<Pick<ObserverWarning, "suggestedGoal">>): void {
     this.pending.set(warning.id, {
       observationIndex: this.observations.length,
       priorSuccessfulSignatures: new Set(
@@ -67,7 +67,7 @@ export class ObserverCorrectionAttribution {
       ),
       relatedRefs: new Set([...warning.relatedFacts, ...warning.relatedTasks]),
       trigger: warning.lastCorrectionTrigger,
-      instruction: warning.suggestedAction,
+      instruction: warning.suggestedGoal || warning.suggestedAction,
     });
   }
 

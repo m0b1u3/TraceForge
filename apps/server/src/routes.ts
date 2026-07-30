@@ -50,6 +50,7 @@ import {
   initialObserverStatus,
   observerCorrectionStallDecision,
   observerFingerprint,
+  observerHumanRecoveryWindowIsOpen,
   observerIntervention,
   validatedObserverLevel,
 } from "./observer-policy.js";
@@ -694,9 +695,28 @@ export function registerRoutes(
     const c = cases.get(id);
     if (!c) return reply.code(404).send({ error: "case not found" });
 
-    const { goal, budget } = req.body as { goal: string; budget?: Partial<AgentRunBudget> };
+    const { goal, budget, observerRecovery } = req.body as {
+      goal: string;
+      budget?: Partial<AgentRunBudget>;
+      observerRecovery?: { warningId?: string; direction?: string };
+    };
     if (!goal?.trim()) return reply.code(400).send({ error: "goal required" });
-    const requestedGoal = goal.trim();
+    const recoveryDirection = observerRecovery?.direction?.trim();
+    const recoveryWarning = observerRecovery?.warningId
+      ? observerStore.getById(observerRecovery.warningId)
+      : undefined;
+    if (observerRecovery) {
+      if (!observerRecovery.warningId || !recoveryDirection) {
+        return reply.code(400).send({ error: "observer recovery requires warningId and direction" });
+      }
+      if (!recoveryWarning || recoveryWarning.caseId !== id) {
+        return reply.code(404).send({ error: "observer warning not found" });
+      }
+      if (recoveryWarning.correctionOutcome !== "stalled") {
+        return reply.code(409).send({ error: "observer warning is not awaiting human direction" });
+      }
+    }
+    const requestedGoal = recoveryDirection ?? goal.trim();
     const continuationState = isContinuationGoal(requestedGoal)
       ? sessionStore.getLatestByCase(id)
       : undefined;
@@ -717,6 +737,24 @@ export function registerRoutes(
         focus: continuationState.focus,
         activeHypothesisIds: continuationState.activeHypothesisIds,
       }, active.run.id);
+    }
+    if (recoveryWarning && recoveryDirection) {
+      const warning = observerStore.beginHumanRecovery(
+        recoveryWarning.id,
+        active.run.id,
+        recoveryDirection,
+      );
+      if (warning) {
+        const entry = timelineStore.append(
+          id,
+          "observer_human_recovery_started",
+          `Human direction opened a new Observer recovery window: ${recoveryDirection}`,
+          warning.id,
+          active.run.id,
+        );
+        bus.emit({ type: "observer_warning_updated", warning });
+        bus.emit({ type: "timeline_appended", entry });
+      }
     }
     for (const warning of observerStore.resolveActiveFromOtherRuns(id, active.run.id)) {
       bus.emit({ type: "observer_warning_updated", warning });
@@ -766,6 +804,14 @@ export function registerRoutes(
         return recorded;
       };
       const correctionAttribution = new ObserverCorrectionAttribution();
+      for (const warning of observerStore.listByCase(id).warnings) {
+        if (
+          warning.relatedRunId === runId
+          && observerHumanRecoveryWindowIsOpen(warning)
+        ) {
+          correctionAttribution.issue(warning);
+        }
+      }
 
       const runObserverReviewUnsafe = async (
         reviewRunId: string,
@@ -847,6 +893,7 @@ export function registerRoutes(
           if (existing) {
             const previousCorrection = existing.suggestedGoal || existing.suggestedAction;
             const previousAudit = parseObserverCorrectionAudit(existing.correctionEvidence);
+            const humanRecoveryWindowOpen = observerHumanRecoveryWindowIsOpen(existing);
             let warning = observerStore.observeAgain(existing.id, {
               level,
               escalationReason: level === "critical"
@@ -877,6 +924,10 @@ export function registerRoutes(
               previousCorrection,
               proposedCorrection,
             );
+            if (stall.stalled && humanRecoveryWindowOpen) {
+              bus.emit({ type: "observer_warning_updated", warning });
+              continue;
+            }
             if (stall.stalled) {
               warning = observerStore.markCorrectionStalled(
                 warning.id,

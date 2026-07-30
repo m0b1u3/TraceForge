@@ -213,9 +213,15 @@ export async function listTimeline(caseId: string, page?: HistoryPage): Promise<
   return response.json();
 }
 
-export async function runAgent(caseId: string, goal: string): Promise<AgentRun> {
+export async function runAgent(
+  caseId: string,
+  goal: string,
+  options: { observerRecovery?: { warningId: string; direction: string } } = {},
+): Promise<AgentRun> {
   const r = await ensureOk(await fetch(`/api/cases/${caseId}/agent/run`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ goal }),
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal, ...options }),
   }), "Run Agent");
   return (await r.json()).run;
 }

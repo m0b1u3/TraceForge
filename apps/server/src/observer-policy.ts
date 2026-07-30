@@ -134,3 +134,10 @@ export function observerCorrectionStallDecision(
   }
   return { stalled: true };
 }
+
+export function observerHumanRecoveryWindowIsOpen(
+  warning: Pick<ObserverWarning, "lastCorrectionTrigger" | "correctionOutcome">,
+): boolean {
+  return warning.lastCorrectionTrigger === "human_direction"
+    && warning.correctionOutcome === "pending";
+}

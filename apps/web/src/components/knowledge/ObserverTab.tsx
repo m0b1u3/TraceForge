@@ -40,6 +40,12 @@ export function observerWarningContinueDisabled(activeRun: Pick<AgentRun, "statu
   return busy !== null || agentBusy || activeRun !== null;
 }
 
+export function observerRecoveryRequiresDirection(
+  warning: Pick<ObserverWarning, "correctionOutcome">,
+): boolean {
+  return warning.correctionOutcome === "stalled";
+}
+
 function CorrectionAudit({ warning }: { warning: ObserverWarning }) {
   const audit = parseObserverCorrectionAudit(warning.correctionEvidence);
   if (!audit) return null;
@@ -100,6 +106,8 @@ export function ObserverTab() {
     observerTelemetry: state.observerTelemetry,
   })));
   const [busy, setBusy] = useState<string | null>(null);
+  const [recoveryWarningId, setRecoveryWarningId] = useState<string | null>(null);
+  const [recoveryDirection, setRecoveryDirection] = useState("");
   const window = useKnowledgeWindow(warnings.length);
   const visibleWarnings = warnings.slice(0, window.count);
   const groups: Array<{ id: ObserverGroup; label: string; icon: typeof Warning; items: ObserverWarning[] }> = [
@@ -135,21 +143,38 @@ export function ObserverTab() {
   );
   if (warnings.length === 0) return <>{telemetry}{observerTelemetry.failureCount > 0 && <div className="observer-review-failure" role="status"><Warning size={14} /><span><strong>{observerTelemetry.failureCount} review failed</strong>Agent continued normally. Check the LLM connection if this repeats.</span></div>}<FeedbackState title="No intervention required" description="No unsupported conclusions or unresolved critical evidence were detected." /></>;
 
-  const continueRun = async (w: ObserverWarning) => {
+  const continueRun = async (w: ObserverWarning, direction?: string) => {
     if (!caseId) return;
     if (observerWarningContinueDisabled(activeRun, agentBusy, busy)) {
       showToast("An Agent run is already in progress. Wait for it to finish before resuming an Observer warning.");
       return;
     }
-    const goal = observerWarningRunGoal(w);
+    const humanDirection = direction?.trim();
+    if (observerRecoveryRequiresDirection(w) && !humanDirection) {
+      setRecoveryWarningId(w.id);
+      setRecoveryDirection("");
+      return;
+    }
+    const goal = humanDirection || observerWarningRunGoal(w);
     setBusy(`${w.id}:continue`);
     try {
       addAgentEvent({ kind: "user", text: goal });
       setAgentBusy(true);
-      const run = await runAgent(caseId, goal);
+      const run = await runAgent(
+        caseId,
+        goal,
+        humanDirection
+          ? { observerRecovery: { warningId: w.id, direction: humanDirection } }
+          : {},
+      );
       setActiveRun(run);
-      const warning = await acceptObserverWarning(w.id);
-      upsertWarning(warning);
+      if (humanDirection) {
+        setRecoveryWarningId(null);
+        setRecoveryDirection("");
+      } else {
+        const warning = await acceptObserverWarning(w.id);
+        upsertWarning(warning);
+      }
     } catch (e) {
       showToast((e as Error).message);
       if (!activeRun) setAgentBusy(false);
@@ -203,10 +228,39 @@ export function ObserverTab() {
       )}
       <CorrectionAudit warning={w} />
       <div className="observer-row-suggestion"><span>Suggested next step</span>{w.suggestedAction}</div>
+      {recoveryWarningId === w.id && (
+        <div className="observer-recovery-editor">
+          <label htmlFor={`observer-recovery-${w.id}`}>Human direction</label>
+          <textarea
+            id={`observer-recovery-${w.id}`}
+            value={recoveryDirection}
+            onChange={(event) => setRecoveryDirection(event.target.value)}
+            placeholder="Describe the new investigation direction or constraint…"
+            rows={3}
+            autoFocus
+          />
+          <div>
+            <button
+              className="tf-btn tf-btn-primary"
+              disabled={!recoveryDirection.trim() || continueDisabled}
+              onClick={() => void continueRun(w, recoveryDirection)}
+            >
+              <Play size={13} /> Start recovery
+            </button>
+            <button
+              className="tf-btn tf-btn-ghost"
+              disabled={busy !== null}
+              onClick={() => { setRecoveryWarningId(null); setRecoveryDirection(""); }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       {(w.status === "open" || w.status === "detected" || w.status === "correcting" || w.status === "escalated") && (
         <div className="tf-row-actions">
-          <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={continueDisabled} onClick={() => continueRun(w)} title="Start a new Agent run based on the Observer suggestion">
-            <Play size={13} /> Resume
+          <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={continueDisabled} onClick={() => void continueRun(w)} title={observerRecoveryRequiresDirection(w) ? "Provide a new direction and start a recovery run" : "Start a new Agent run based on the Observer suggestion"}>
+            <Play size={13} /> {observerRecoveryRequiresDirection(w) ? "Direct recovery" : "Resume"}
           </button>
           <button className="tf-btn tf-btn-ghost tf-btn-icon" disabled={busy !== null} onClick={() => convertToTask(w)} title="Convert this warning into a Task in the Tasks panel">
             <ListPlus size={13} /> Create task

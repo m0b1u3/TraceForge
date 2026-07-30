@@ -221,6 +221,39 @@ export class ObserverWarningStore {
     });
   }
 
+  beginHumanRecovery(id: string, runId: string, direction: string): ObserverWarning | undefined {
+    const current = this.getById(id);
+    const normalizedDirection = direction.trim();
+    if (!current || !normalizedDirection || current.correctionOutcome !== "stalled") return undefined;
+    const lastCorrectionAt = new Date().toISOString();
+    const correctionCount = current.correctionCount + 1;
+    this.db.update(observerWarnings).set({
+      status: "detected",
+      relatedRunId: runId,
+      suggestedGoal: normalizedDirection,
+      correctionCount,
+      correctionOutcome: "pending",
+      correctionEvidence: null,
+      lastCorrectionAt,
+      lastCorrectionTrigger: "human_direction",
+      escalationReason: null,
+      resolvedAt: null,
+    }).where(eq(observerWarnings.id, id)).run();
+    return ObserverWarningSchema.parse({
+      ...current,
+      status: "detected",
+      relatedRunId: runId,
+      suggestedGoal: normalizedDirection,
+      correctionCount,
+      correctionOutcome: "pending",
+      correctionEvidence: null,
+      lastCorrectionAt,
+      lastCorrectionTrigger: "human_direction",
+      escalationReason: null,
+      resolvedAt: null,
+    });
+  }
+
   updateStatus(id: string, status: ObserverWarning["status"]): ObserverWarning | undefined {
     const cur = this.getById(id);
     if (!cur) return undefined;
