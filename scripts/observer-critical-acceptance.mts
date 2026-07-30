@@ -40,7 +40,7 @@ if (!critical) {
 }
 
 const store = new ObserverWarningStore(createDb(":memory:"));
-const correcting = store.create({
+let correcting = store.create({
   ...critical,
   level: "critical",
   status: initialObserverStatus("critical"),
@@ -55,10 +55,12 @@ const correcting = store.create({
 if (observerIntervention(correcting).steering === undefined) {
   throw new Error("The first credible Critical warning did not produce steering");
 }
-const escalated = store.observeAgain(correcting.id, {
+correcting = store.recordCorrection(correcting.id, "high_risk") ?? correcting;
+let escalated = store.observeAgain(correcting.id, {
   level: "critical",
   escalationReason: "Critical evidence remained unresolved after the Observer correction window.",
 });
+if (escalated) escalated = store.settleCorrection(escalated.id, "escalated");
 if (!escalated || observerIntervention(escalated).pauseReason === undefined) {
   throw new Error("Correcting did not transition to an escalated pause");
 }
@@ -72,4 +74,10 @@ console.log(JSON.stringify({
   lifecycle: [correcting.status, escalated.status, resolved.status],
   steeringProduced: true,
   pauseProduced: true,
+  correctionMetrics: {
+    issued: resolved.correctionCount,
+    resolved: resolved.correctionResolvedCount,
+    failed: resolved.correctionFailedCount,
+    outcome: resolved.correctionOutcome,
+  },
 }));

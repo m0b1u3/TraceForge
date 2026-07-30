@@ -45,6 +45,12 @@ function createOpenWarning() {
     fingerprint: "warn-test-fingerprint",
     occurrenceCount: 1,
     lastObservedAt: new Date().toISOString(),
+    correctionCount: 0,
+    correctionResolvedCount: 0,
+    correctionFailedCount: 0,
+    correctionOutcome: "none",
+    lastCorrectionAt: null,
+    lastCorrectionTrigger: null,
     escalationReason: null,
     relatedRunId: "run_test",
     suggestedGoal: "[Observer correction]\n继续测 X",
@@ -101,6 +107,12 @@ describe("observer integration", () => {
       fingerprint: "warn-other-fingerprint",
       occurrenceCount: 1,
       lastObservedAt: new Date().toISOString(),
+      correctionCount: 0,
+      correctionResolvedCount: 0,
+      correctionFailedCount: 0,
+      correctionOutcome: "none",
+      lastCorrectionAt: null,
+      lastCorrectionTrigger: null,
       escalationReason: null,
       relatedRunId: "run_other",
       suggestedGoal: "",
@@ -158,6 +170,38 @@ describe("observer integration", () => {
       escalationReason: "Critical evidence remained unresolved after the Observer correction window.",
     });
     expect(store.observeAgain(first.id, { level: "critical" })).toEqual(escalated);
+  });
+
+  it("persists correction effectiveness across unresolved and resolved reviews", () => {
+    const store = new ObserverWarningStore(db);
+    const warning = store.create({
+      ...createOpenWarning(),
+      id: "warn_effectiveness",
+      status: "detected",
+    });
+
+    const firstCorrection = store.recordCorrection(warning.id, "repeated_failure");
+    expect(firstCorrection).toMatchObject({
+      correctionCount: 1,
+      correctionOutcome: "pending",
+      lastCorrectionTrigger: "repeated_failure",
+    });
+
+    const persisted = store.settleCorrection(warning.id, "persisted");
+    expect(persisted).toMatchObject({
+      correctionResolvedCount: 0,
+      correctionFailedCount: 1,
+      correctionOutcome: "persisted",
+    });
+
+    store.recordCorrection(warning.id, "interval");
+    const resolved = store.settleCorrection(warning.id, "resolved");
+    expect(resolved).toMatchObject({
+      correctionCount: 2,
+      correctionResolvedCount: 1,
+      correctionFailedCount: 1,
+      correctionOutcome: "resolved",
+    });
   });
 
   it("isolates fingerprints by run and resolves warnings superseded by a new run", () => {

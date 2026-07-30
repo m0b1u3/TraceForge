@@ -129,6 +129,11 @@ export function createDb(path: string) {
       fingerprint TEXT NOT NULL DEFAULT '',
       occurrence_count INTEGER NOT NULL DEFAULT 1,
       last_observed_at TEXT NOT NULL DEFAULT '',
+      correction_count INTEGER NOT NULL DEFAULT 0,
+      correction_resolved_count INTEGER NOT NULL DEFAULT 0,
+      correction_failed_count INTEGER NOT NULL DEFAULT 0,
+      correction_outcome TEXT NOT NULL DEFAULT 'none',
+      last_correction_at TEXT, last_correction_trigger TEXT,
       escalation_reason TEXT,
       related_run_id TEXT, suggested_goal TEXT NOT NULL DEFAULT '',
       evidence TEXT, resolved_at TEXT, created_at TEXT NOT NULL
@@ -193,6 +198,12 @@ export function createDb(path: string) {
   if (!hasWarningColumn("fingerprint")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''");
   if (!hasWarningColumn("occurrence_count")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1");
   if (!hasWarningColumn("last_observed_at")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN last_observed_at TEXT NOT NULL DEFAULT ''");
+  if (!hasWarningColumn("correction_count")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_count INTEGER NOT NULL DEFAULT 0");
+  if (!hasWarningColumn("correction_resolved_count")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_resolved_count INTEGER NOT NULL DEFAULT 0");
+  if (!hasWarningColumn("correction_failed_count")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_failed_count INTEGER NOT NULL DEFAULT 0");
+  if (!hasWarningColumn("correction_outcome")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_outcome TEXT NOT NULL DEFAULT 'none'");
+  if (!hasWarningColumn("last_correction_at")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN last_correction_at TEXT");
+  if (!hasWarningColumn("last_correction_trigger")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN last_correction_trigger TEXT");
   if (!hasWarningColumn("escalation_reason")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN escalation_reason TEXT");
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_warnings_fingerprint ON observer_warnings(case_id, fingerprint)");
   const trafficColumns = sqlite.prepare("PRAGMA table_info(traffic_entries)").all() as Array<{ name: string }>;

@@ -42,6 +42,8 @@ function runTokenUsage(run: AgentRun): TokenUsage {
 export interface ObserverTelemetry {
   reviewCount: number;
   correctionCount: number;
+  correctionResolvedCount: number;
+  correctionFailedCount: number;
   failureCount: number;
   totalTokens: number;
   lastTrigger: "interval" | "final" | "repeated_failure" | "high_risk" | "evidence_conflict" | "finding_verification" | null;
@@ -51,11 +53,25 @@ export interface ObserverTelemetry {
 const EMPTY_OBSERVER_TELEMETRY: ObserverTelemetry = {
   reviewCount: 0,
   correctionCount: 0,
+  correctionResolvedCount: 0,
+  correctionFailedCount: 0,
   failureCount: 0,
   totalTokens: 0,
   lastTrigger: null,
   lastDurationMs: null,
 };
+
+export function observerCorrectionMetrics(warnings: ObserverWarning[]) {
+  return warnings.reduce((metrics, warning) => ({
+    correctionCount: metrics.correctionCount + warning.correctionCount,
+    correctionResolvedCount: metrics.correctionResolvedCount + warning.correctionResolvedCount,
+    correctionFailedCount: metrics.correctionFailedCount + warning.correctionFailedCount,
+  }), {
+    correctionCount: 0,
+    correctionResolvedCount: 0,
+    correctionFailedCount: 0,
+  });
+}
 
 export function observerTelemetryFromHistory(
   usage: AgentRunUsage[],
@@ -65,7 +81,7 @@ export function observerTelemetryFromHistory(
   return {
     ...EMPTY_OBSERVER_TELEMETRY,
     reviewCount: observerUsage.length,
-    correctionCount: warnings.filter((warning) => warning.occurrenceCount >= 2).length,
+    ...observerCorrectionMetrics(warnings),
     totalTokens: observerUsage.reduce((sum, entry) => sum + entry.totalTokens, 0),
   };
 }
@@ -430,14 +446,21 @@ export const useStore = create<State>((set, get) => ({
       return { ok: false, error: message };
     }
   },
-  addWarning: (w) => set((s) => ({ warnings: [...s.warnings, w] })),
+  addWarning: (w) => set((s) => {
+    const warnings = [...s.warnings, w];
+    return {
+      warnings,
+      observerTelemetry: { ...s.observerTelemetry, ...observerCorrectionMetrics(warnings) },
+    };
+  }),
   upsertWarning: (w) =>
     set((s) => {
       const i = s.warnings.findIndex((x) => x.id === w.id);
-      if (i === -1) return { warnings: [...s.warnings, w] };
-      const copy = s.warnings.slice();
-      copy[i] = w;
-      return { warnings: copy };
+      const warnings = i === -1 ? [...s.warnings, w] : s.warnings.map((item, index) => index === i ? w : item);
+      return {
+        warnings,
+        observerTelemetry: { ...s.observerTelemetry, ...observerCorrectionMetrics(warnings) },
+      };
     }),
   pendingConfirmation: null,
   setPendingConfirmation: (p) => set({ pendingConfirmation: p }),
@@ -881,7 +904,9 @@ export const useStore = create<State>((set, get) => ({
       set((state) => ({
         observerTelemetry: {
           reviewCount: state.observerTelemetry.reviewCount + 1,
-          correctionCount: state.observerTelemetry.correctionCount + event.correctionCount,
+          correctionCount: state.observerTelemetry.correctionCount,
+          correctionResolvedCount: state.observerTelemetry.correctionResolvedCount,
+          correctionFailedCount: state.observerTelemetry.correctionFailedCount,
           failureCount: state.observerTelemetry.failureCount,
           totalTokens: state.observerTelemetry.totalTokens + event.totalTokens,
           lastTrigger: event.trigger,

@@ -18,6 +18,13 @@ const STATUS_LABEL: Record<ObserverWarning["status"], string> = {
   resolved: "Resolved",
   escalated: "Escalated",
 };
+const OUTCOME_LABEL: Record<ObserverWarning["correctionOutcome"], string> = {
+  none: "Not issued",
+  pending: "Awaiting verification",
+  resolved: "Recovered",
+  persisted: "Still present",
+  escalated: "Escalated",
+};
 
 export function observerWarningStatusLabel(status: ObserverWarning["status"]): string {
   return STATUS_LABEL[status];
@@ -58,19 +65,29 @@ export function ObserverTab() {
     { id: "monitoring", label: "Monitoring", icon: Eye, items: visibleWarnings.filter((warning) => observerWarningGroup(warning.status) === "monitoring") },
     { id: "history", label: "History", icon: Clock, items: visibleWarnings.filter((warning) => observerWarningGroup(warning.status) === "history") },
   ];
+  const settledCorrections = observerTelemetry.correctionResolvedCount + observerTelemetry.correctionFailedCount;
+  const effectiveness = settledCorrections > 0
+    ? Math.round((observerTelemetry.correctionResolvedCount / settledCorrections) * 100)
+    : null;
+  const averageTokens = observerTelemetry.correctionCount > 0
+    ? Math.round(observerTelemetry.totalTokens / observerTelemetry.correctionCount)
+    : null;
   const telemetry = (
     <div className="observer-telemetry" aria-label="Observer review activity">
       <div className="observer-telemetry-state">
         <span className={observerTelemetry.failureCount > 0 ? "is-degraded" : "is-healthy"}><Pulse size={13} weight="bold" /></span>
         <div>
           <strong>{observerTelemetry.failureCount > 0 ? "Review degraded" : observerTelemetry.reviewCount > 0 ? "Observer active" : "Observer standing by"}</strong>
-          <small>{observerTelemetry.lastTrigger ? `Last ${observerTelemetry.lastTrigger} review · ${observerTelemetry.lastDurationMs ?? 0} ms` : "Reviews run after three tool turns and before completion"}</small>
+          <small>{observerTelemetry.lastTrigger ? `Last ${observerTelemetry.lastTrigger} review · ${observerTelemetry.lastDurationMs ?? 0} ms` : "Reviews run at evidence, risk, failure, and periodic checkpoints"}</small>
         </div>
       </div>
       <div className="observer-telemetry-metrics">
         <span><strong>{observerTelemetry.reviewCount}</strong> reviews</span>
         <span><strong>{observerTelemetry.correctionCount}</strong> corrections</span>
+        <span><strong>{observerTelemetry.correctionResolvedCount}</strong> recovered</span>
+        <span><strong>{effectiveness === null ? "—" : `${effectiveness}%`}</strong> effective</span>
         <span><strong>{observerTelemetry.totalTokens.toLocaleString()}</strong> tokens</span>
+        {averageTokens !== null && <span><strong>{averageTokens.toLocaleString()}</strong> tokens/correction</span>}
       </div>
     </div>
   );
@@ -136,6 +153,12 @@ export function ObserverTab() {
       <strong className="observer-row-title">{w.title}</strong>
       <p className="observer-row-description">{w.description}</p>
       {w.status === "correcting" && <div className="observer-correction-track" aria-label="Correction in progress"><span className="is-complete"><CheckCircle size={11} weight="fill" />Detected</span><i /><span className="is-active"><ArrowBendDownRight size={11} />Correcting</span><i /><span>Verify</span></div>}
+      {w.correctionCount > 0 && (
+        <div className={`observer-correction-outcome is-${w.correctionOutcome}`}>
+          <span>{OUTCOME_LABEL[w.correctionOutcome]}</span>
+          <span>{w.correctionResolvedCount} recovered · {w.correctionFailedCount} unresolved · {w.correctionCount} issued</span>
+        </div>
+      )}
       <div className="observer-row-suggestion"><span>Suggested next step</span>{w.suggestedAction}</div>
       {(w.status === "open" || w.status === "detected" || w.status === "correcting" || w.status === "escalated") && (
         <div className="tf-row-actions">

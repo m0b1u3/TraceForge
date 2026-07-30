@@ -828,15 +828,17 @@ export function registerRoutes(
               && ["open", "detected", "correcting", "escalated"].includes(candidate.status)
               && observerFingerprint(candidate) === fingerprint);
           if (existing) {
-            if (existing.status === "escalated") continue;
-            const warning = observerStore.observeAgain(existing.id, {
+            let warning = observerStore.observeAgain(existing.id, {
               level,
               escalationReason: level === "critical"
                 ? "Critical evidence remained unresolved after the Observer correction window."
                 : null,
             });
             if (!warning) continue;
-            bus.emit({ type: "observer_warning_updated", warning });
+            warning = observerStore.settleCorrection(
+              warning.id,
+              warning.status === "escalated" ? "escalated" : "persisted",
+            ) ?? warning;
             const intervention = observerIntervention(warning, {
               allowPause: trigger === "high_risk" || trigger === "evidence_conflict",
             });
@@ -845,11 +847,13 @@ export function registerRoutes(
               bus.emit({ type: "agent_run_needs_confirmation", caseId: id, runId: reviewRunId, warning });
             } else if (intervention.steering) {
               steering.push(intervention.steering);
+              warning = observerStore.recordCorrection(warning.id, trigger) ?? warning;
             }
+            bus.emit({ type: "observer_warning_updated", warning });
             continue;
           }
           const now = new Date().toISOString();
-          const warning = observerStore.create({
+          let warning = observerStore.create({
             ...w,
             level,
             status: initialObserverStatus(level),
@@ -861,16 +865,17 @@ export function registerRoutes(
             suggestedGoal: w.suggestedGoal || w.suggestedAction,
             resolvedAt: null,
           });
-          bus.emit({ type: "observer_warning", warning });
           const intervention = observerIntervention(warning, { allowPause: false });
-          if (intervention.steering) steering.push(intervention.steering);
+          if (intervention.steering) {
+            steering.push(intervention.steering);
+            warning = observerStore.recordCorrection(warning.id, trigger) ?? warning;
+          }
+          bus.emit({ type: "observer_warning", warning });
         }
         for (const warning of activeBeforeReview) {
-          if (
-            !["open", "detected", "correcting"].includes(warning.status)
-            || observedFingerprints.has(warning.fingerprint)
-          ) continue;
-          const resolved = observerStore.updateStatus(warning.id, "resolved");
+          if (observedFingerprints.has(warning.fingerprint)) continue;
+          const settled = observerStore.settleCorrection(warning.id, "resolved") ?? warning;
+          const resolved = observerStore.updateStatus(settled.id, "resolved");
           if (resolved) bus.emit({ type: "observer_warning_updated", warning: resolved });
         }
         bus.emit({

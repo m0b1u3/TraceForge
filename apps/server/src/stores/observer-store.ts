@@ -13,6 +13,12 @@ function rowToWarning(row: typeof observerWarnings.$inferSelect): ObserverWarnin
     suggestedGoal: row.suggestedGoal, evidence: row.evidence ?? undefined,
     fingerprint: row.fingerprint, occurrenceCount: row.occurrenceCount,
     lastObservedAt: row.lastObservedAt, escalationReason: row.escalationReason,
+    correctionCount: row.correctionCount,
+    correctionResolvedCount: row.correctionResolvedCount,
+    correctionFailedCount: row.correctionFailedCount,
+    correctionOutcome: row.correctionOutcome,
+    lastCorrectionAt: row.lastCorrectionAt,
+    lastCorrectionTrigger: row.lastCorrectionTrigger,
     resolvedAt: row.resolvedAt, createdAt: row.createdAt,
   });
 }
@@ -31,6 +37,12 @@ export class ObserverWarningStore {
       suggestedAction: parsed.suggestedAction, status: parsed.status,
       fingerprint: parsed.fingerprint, occurrenceCount: parsed.occurrenceCount,
       lastObservedAt: parsed.lastObservedAt || parsed.createdAt,
+      correctionCount: parsed.correctionCount,
+      correctionResolvedCount: parsed.correctionResolvedCount,
+      correctionFailedCount: parsed.correctionFailedCount,
+      correctionOutcome: parsed.correctionOutcome,
+      lastCorrectionAt: parsed.lastCorrectionAt,
+      lastCorrectionTrigger: parsed.lastCorrectionTrigger,
       escalationReason: parsed.escalationReason,
       relatedRunId: parsed.relatedRunId, suggestedGoal: parsed.suggestedGoal,
       evidence: parsed.evidence ?? null,
@@ -130,6 +142,48 @@ export class ObserverWarningStore {
       occurrenceCount,
       lastObservedAt,
       escalationReason: input.escalationReason ?? null,
+    });
+  }
+
+  recordCorrection(id: string, trigger: string): ObserverWarning | undefined {
+    const current = this.getById(id);
+    if (!current) return undefined;
+    const lastCorrectionAt = new Date().toISOString();
+    const correctionCount = current.correctionCount + 1;
+    this.db.update(observerWarnings).set({
+      correctionCount,
+      correctionOutcome: "pending",
+      lastCorrectionAt,
+      lastCorrectionTrigger: trigger,
+    }).where(eq(observerWarnings.id, id)).run();
+    return ObserverWarningSchema.parse({
+      ...current,
+      correctionCount,
+      correctionOutcome: "pending",
+      lastCorrectionAt,
+      lastCorrectionTrigger: trigger,
+    });
+  }
+
+  settleCorrection(
+    id: string,
+    outcome: Extract<ObserverWarning["correctionOutcome"], "resolved" | "persisted" | "escalated">,
+  ): ObserverWarning | undefined {
+    const current = this.getById(id);
+    if (!current) return undefined;
+    if (current.correctionOutcome !== "pending") return current;
+    const correctionResolvedCount = current.correctionResolvedCount + (outcome === "resolved" ? 1 : 0);
+    const correctionFailedCount = current.correctionFailedCount + (outcome === "resolved" ? 0 : 1);
+    this.db.update(observerWarnings).set({
+      correctionOutcome: outcome,
+      correctionResolvedCount,
+      correctionFailedCount,
+    }).where(eq(observerWarnings.id, id)).run();
+    return ObserverWarningSchema.parse({
+      ...current,
+      correctionOutcome: outcome,
+      correctionResolvedCount,
+      correctionFailedCount,
     });
   }
 

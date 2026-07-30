@@ -26,7 +26,16 @@ function resetStore() {
     streamedAgentTexts: [],
     toast: null,
     warnings: [],
-    observerTelemetry: { reviewCount: 0, correctionCount: 0, failureCount: 0, totalTokens: 0, lastTrigger: null, lastDurationMs: null },
+    observerTelemetry: {
+      reviewCount: 0,
+      correctionCount: 0,
+      correctionResolvedCount: 0,
+      correctionFailedCount: 0,
+      failureCount: 0,
+      totalTokens: 0,
+      lastTrigger: null,
+      lastDurationMs: null,
+    },
     validationWorkflow: null,
     validationWorkflowDelta: null,
     validationSyncStatus: "stale",
@@ -162,6 +171,8 @@ const warning = {
   id: "warn_1",
   caseId: "case_1",
   level: "critical" as const,
+  issueType: "goal_drift" as const,
+  subject: "run:run_1",
   title: "偏离目标",
   description: "一直在测无关接口",
   relatedFacts: [],
@@ -172,6 +183,12 @@ const warning = {
   fingerprint: "fp_1",
   occurrenceCount: 2,
   lastObservedAt: new Date().toISOString(),
+  correctionCount: 1,
+  correctionResolvedCount: 0,
+  correctionFailedCount: 0,
+  correctionOutcome: "pending" as const,
+  lastCorrectionAt: new Date().toISOString(),
+  lastCorrectionTrigger: "interval",
   escalationReason: null,
   relatedRunId: "run_1",
   resolvedAt: null,
@@ -367,6 +384,10 @@ describe("store context inspector", () => {
 
   it("tracks Observer reviews, corrections, failures, and attributed tokens", () => {
     useStore.getState().handleRuntimeEvent({
+      type: "observer_warning",
+      warning,
+    });
+    useStore.getState().handleRuntimeEvent({
       type: "observer_review_completed",
       caseId: "case_1",
       runId: "run_1",
@@ -386,6 +407,8 @@ describe("store context inspector", () => {
     expect(useStore.getState().observerTelemetry).toEqual({
       reviewCount: 1,
       correctionCount: 1,
+      correctionResolvedCount: 0,
+      correctionFailedCount: 0,
       failureCount: 1,
       totalTokens: 120,
       lastTrigger: "interval",

@@ -11,6 +11,8 @@ describe("ObserverWarningSchema", () => {
     expect(w.level).toBe("warning");
     expect(w.relatedFacts).toEqual([]);
     expect(w.relatedTasks).toEqual([]);
+    expect(w.correctionCount).toBe(0);
+    expect(w.correctionOutcome).toBe("none");
   });
 
   it("defaults workflow fields for older warning payloads", () => {
@@ -49,6 +51,12 @@ describe("ObserverWarningSchema", () => {
         fingerprint: "fp_1",
         occurrenceCount: 1,
         lastObservedAt: "t",
+        correctionCount: 1,
+        correctionResolvedCount: 0,
+        correctionFailedCount: 0,
+        correctionOutcome: "pending",
+        lastCorrectionAt: "t",
+        lastCorrectionTrigger: "interval",
         escalationReason: null,
         relatedRunId: "run_1",
         suggestedGoal: "[Observer correction]\n继续检查 admin/login",

@@ -605,7 +605,44 @@
 }
 
 .observer-telemetry-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 10px;
   font: 500 var(--type-label)/1.35 var(--mono);
+}
+
+.observer-telemetry-metrics > span {
+  color: var(--foreground-muted);
+  white-space: nowrap;
+}
+
+.observer-telemetry-metrics strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.observer-correction-outcome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--foreground-muted);
+  font-size: var(--type-label);
+}
+
+.observer-correction-outcome > span:first-child {
+  color: var(--foreground-secondary);
+  font-weight: 600;
+}
+
+.observer-correction-outcome.is-resolved > span:first-child {
+  color: var(--success);
+}
+
+.observer-correction-outcome.is-persisted > span:first-child,
+.observer-correction-outcome.is-escalated > span:first-child {
+  color: var(--warning);
 }
 
 .observer-row-status,
