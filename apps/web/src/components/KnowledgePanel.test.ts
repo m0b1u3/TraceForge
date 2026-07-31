@@ -2,7 +2,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { buildEvidenceClusters, isPresentableEvidence, KnowledgePanel } from "./KnowledgePanel.js";
+import {
+  artifactConsumptionLabel,
+  buildEvidenceClusters,
+  isPresentableEvidence,
+  KnowledgePanel,
+} from "./KnowledgePanel.js";
 import { useStore } from "../store.js";
 
 // @ts-expect-error enable React act in jsdom tests
@@ -45,6 +50,76 @@ const fact = {
 };
 
 describe("KnowledgePanel", () => {
+  it("uses concise labels for every artifact consumption lifecycle state", () => {
+    const consumption = {
+      caseId: "case_1",
+      runId: "run_1",
+      artifactId: "artifact_1",
+      taskId: "task_1",
+      factIds: ["fact_1"],
+      status: "pending" as const,
+      usedByTool: null,
+      missedActions: 0,
+      updatedAt: "now",
+      lastEventId: "timeline_1",
+    };
+
+    expect(artifactConsumptionLabel()).toBe("Not tracked");
+    expect(artifactConsumptionLabel(consumption)).toBe("Awaiting use");
+    expect(artifactConsumptionLabel({ ...consumption, status: "consumed" })).toBe("Used");
+    expect(artifactConsumptionLabel({ ...consumption, status: "replan_requested" })).toBe("Needs attention");
+    expect(artifactConsumptionLabel({ ...consumption, status: "closed" })).toBe("Tracking closed");
+  });
+
+  it("shows how analyzed artifact evidence was consumed by the Agent", () => {
+    useStore.setState({
+      artifacts: [{
+        id: "artifact_1",
+        caseId: "case_1",
+        runId: "run_1",
+        sourceUrl: "https://target.example/export",
+        filename: "analysis.bin",
+        relativePath: "artifacts/analysis.bin",
+        byteSize: 2_048,
+        sha256: "abc123",
+        detectedFormat: "binary",
+        mediaType: "application/octet-stream",
+        status: "analyzed",
+        analyzerId: "generic-binary",
+        analysis: {
+          analyzerId: "generic-binary",
+          summary: "Candidate evidence recovered.",
+          findings: [],
+          coverage: { metadata: true, text: true, objectGraph: false, limitations: [] },
+        },
+        error: null,
+        createdAt: "now",
+        updatedAt: "now",
+      }],
+      artifactConsumptions: [{
+        caseId: "case_1",
+        runId: "run_1",
+        artifactId: "artifact_1",
+        taskId: "task_1",
+        factIds: ["fact_1"],
+        status: "consumed",
+        usedByTool: "record_fact",
+        missedActions: 0,
+        updatedAt: "later",
+        lastEventId: "timeline_2",
+      }],
+    });
+
+    const panel = renderPanel();
+    const artifact = panel.querySelector<HTMLDetailsElement>(".artifact-evidence-item");
+    expect(artifact?.textContent).toContain("analysis.bin");
+    expect(artifact?.textContent).toContain("Used");
+
+    artifact?.setAttribute("open", "");
+    expect(artifact?.textContent).toContain("task_1");
+    expect(artifact?.textContent).toContain("record_fact");
+  });
+
   it("keeps internal failure memory out of security evidence", () => {
     const failedAttempt = {
       ...fact,

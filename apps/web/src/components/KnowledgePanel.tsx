@@ -1,6 +1,7 @@
 import { useStore } from "../store.js";
 import { Archive, CaretDown, CaretRight, CheckCircle, Fingerprint, Gauge, LockKey, Robot, Warning, WarningCircle } from "@phosphor-icons/react";
 import type { Fact } from "@traceforge/shared";
+import type { ArtifactConsumption } from "@traceforge/shared";
 import { TrafficInspector } from "./inspector/TrafficInspector.js";
 import { FindingInspector, ToolEventInspector } from "./inspector/EvidenceInspector.js";
 import { TaskInspector, TimelineEventInspector } from "./inspector/GraphInspectors.js";
@@ -177,8 +178,19 @@ function artifactSize(bytes: number): string {
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
+export function artifactConsumptionLabel(consumption?: ArtifactConsumption): string {
+  if (!consumption) return "Not tracked";
+  if (consumption.status === "pending") return "Awaiting use";
+  if (consumption.status === "consumed") return "Used";
+  if (consumption.status === "replan_requested") return "Needs attention";
+  return "Tracking closed";
+}
+
 function ArtifactEvidence() {
-  const artifacts = useStore((state) => state.artifacts);
+  const { artifacts, consumptions } = useStore(useShallow((state) => ({
+    artifacts: state.artifacts,
+    consumptions: state.artifactConsumptions,
+  })));
   if (artifacts.length === 0) return null;
   return (
     <section className="case-overview-section artifact-evidence-section" aria-label="Artifacts">
@@ -190,6 +202,7 @@ function ArtifactEvidence() {
         {[...artifacts].reverse().slice(0, 5).map((artifact) => {
           const analysis = artifact.analysis;
           const complete = artifact.status === "analyzed" && analysis;
+          const consumption = consumptions.find((item) => item.artifactId === artifact.id);
           return (
             <details className="artifact-evidence-item" key={artifact.id}>
               <summary>
@@ -200,13 +213,33 @@ function ArtifactEvidence() {
                   <strong>{artifact.filename}</strong>
                   <small>{artifact.detectedFormat} · {artifactSize(artifact.byteSize)} · {artifact.status}</small>
                 </span>
-                {analysis && <span className="artifact-finding-count">{analysis.findings.length} evidence</span>}
+                <span className="artifact-summary-meta">
+                  {analysis && <span className="artifact-finding-count">{analysis.findings.length} evidence</span>}
+                  {consumption && (
+                    <span
+                      className="artifact-consumption-state"
+                      data-state={consumption.status}
+                      title={`Task ${consumption.taskId}`}
+                    >
+                      {consumption.status === "consumed"
+                        ? <CheckCircle size={11} weight="fill" aria-hidden="true" />
+                        : consumption.status === "replan_requested"
+                          ? <WarningCircle size={11} weight="fill" aria-hidden="true" />
+                          : <Archive size={11} aria-hidden="true" />}
+                      {artifactConsumptionLabel(consumption)}
+                    </span>
+                  )}
+                </span>
                 <CaretDown size={12} className="artifact-caret" aria-hidden="true" />
               </summary>
               <div className="artifact-evidence-detail">
                 <dl className="artifact-metadata">
                   <div><dt>SHA256</dt><dd><code>{artifact.sha256}</code></dd></div>
                   <div><dt>Analyzer</dt><dd>{artifact.analyzerId ?? "Not available"}</dd></div>
+                  {consumption && <div><dt>Use state</dt><dd>{artifactConsumptionLabel(consumption)}</dd></div>}
+                  {consumption && <div><dt>Task</dt><dd><code>{consumption.taskId}</code></dd></div>}
+                  {consumption?.usedByTool && <div><dt>Used by</dt><dd><code>{consumption.usedByTool}</code></dd></div>}
+                  {consumption?.status === "replan_requested" && <div><dt>Review</dt><dd>{consumption.missedActions} unrelated active actions observed</dd></div>}
                   {analysis && <div><dt>Coverage</dt><dd>{[
                     analysis.coverage.metadata && "metadata",
                     analysis.coverage.text && "text",

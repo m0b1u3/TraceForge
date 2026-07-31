@@ -11,6 +11,8 @@ function resetStore() {
     attackPaths: [],
     securityReports: [],
     facts: [],
+    artifacts: [],
+    artifactConsumptions: [],
     hypotheses: [],
     tasks: [],
     timeline: [],
@@ -142,6 +144,39 @@ describe("validation workflow realtime state", () => {
 
     useStore.getState().navigateToKnowledge({ kind: "task", id: "task_deleted" });
     expect(useStore.getState().toast?.message).toBe("Related task is no longer available.");
+  });
+});
+
+describe("artifact consumption realtime state", () => {
+  beforeEach(() => resetStore());
+
+  it("replaces the active case snapshot and ignores snapshots from another case", () => {
+    const consumption = {
+      caseId: "case_1",
+      runId: "run_1",
+      artifactId: "artifact_1",
+      taskId: "task_1",
+      factIds: ["fact_1"],
+      status: "consumed" as const,
+      usedByTool: "record_fact",
+      missedActions: 0,
+      updatedAt: "now",
+      lastEventId: "timeline_1",
+    };
+
+    useStore.getState().handleRuntimeEvent({
+      type: "artifact_consumption_snapshot",
+      caseId: "case_2",
+      consumptions: [{ ...consumption, caseId: "case_2" }],
+    });
+    expect(useStore.getState().artifactConsumptions).toEqual([]);
+
+    useStore.getState().handleRuntimeEvent({
+      type: "artifact_consumption_snapshot",
+      caseId: "case_1",
+      consumptions: [consumption],
+    });
+    expect(useStore.getState().artifactConsumptions).toEqual([consumption]);
   });
 });
 

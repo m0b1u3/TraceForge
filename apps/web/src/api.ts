@@ -1,4 +1,4 @@
-import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, ObserverStrategyAudit, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision, ValidationWorkflowSnapshot, Hypothesis, ArtifactRecord } from "@traceforge/shared";
+import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, ObserverStrategyAudit, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision, ValidationWorkflowSnapshot, Hypothesis, ArtifactRecord, ArtifactConsumption } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 export interface LlmConfig {
@@ -171,6 +171,14 @@ export async function listFacts(caseId: string): Promise<Fact[]> {
 
 export async function listArtifacts(caseId: string): Promise<ArtifactRecord[]> {
   const response = await ensureOk(await fetch(`/api/cases/${caseId}/artifacts`), "Load artifacts");
+  return response.json();
+}
+
+export async function listArtifactConsumptions(caseId: string): Promise<ArtifactConsumption[]> {
+  const response = await ensureOk(
+    await fetch(`/api/cases/${caseId}/artifact-consumptions`),
+    "Load artifact consumption",
+  );
   return response.json();
 }
 

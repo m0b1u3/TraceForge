@@ -98,6 +98,7 @@ import { ArtifactAnalyzerRegistry, JhatHprofAnalyzer } from "./artifact-analyzer
 import { makeAnalyzeArtifactTool, makeListArtifactsTool, registerExistingCaseArtifacts } from "./artifact-tools.js";
 import { connectArtifactEvidenceLifecycle } from "./artifact-evidence-lifecycle.js";
 import { artifactEvidenceForConsumption, EvidenceConsumptionTracker } from "./evidence-consumption-tracker.js";
+import { projectArtifactConsumptions } from "./artifact-consumption-projection.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -127,6 +128,13 @@ export function registerRoutes(
   const factStore = new FactStore(db);
   const taskStore = new TaskStore(db);
   const timelineStore = new TimelineStore(db);
+  const artifactConsumptionSnapshot = (caseId: string) =>
+    projectArtifactConsumptions(caseId, timelineStore.listByCase(caseId));
+  const emitArtifactConsumptionSnapshot = (caseId: string) => {
+    const consumptions = artifactConsumptionSnapshot(caseId);
+    bus.emit({ type: "artifact_consumption_snapshot", caseId, consumptions });
+    return consumptions;
+  };
   const syncArtifactEvidenceFacts = (artifact: ArtifactRecord): Fact[] => {
     if (artifact.status !== "analyzed" || !artifact.analysis) return [];
     const existingTags = new Set(factStore.listByCase(artifact.caseId).flatMap((fact) => fact.tags));
@@ -570,6 +578,12 @@ export function registerRoutes(
     const { id } = req.params as { id: string };
     if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
     return artifactStore.listByCase(id);
+  });
+
+  app.get("/api/cases/:id/artifact-consumptions", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    return artifactConsumptionSnapshot(id);
   });
 
   app.post("/api/cases/:id/tasks", async (req, reply) => {
@@ -1462,6 +1476,7 @@ export function registerRoutes(
         knowledgeUsageStore.recordInjected(id, runId, refs);
         evidenceConsumptionTracker.register(lifecycle.task.id, trackedEvidence);
         runs.addRuntimeMessage(runId, lifecycle.runtimeMessage);
+        emitArtifactConsumptionSnapshot(id);
       }
     }));
 
@@ -1870,6 +1885,7 @@ Artifact 证据：download_tool 成功只证明文件已获取。下载后用 li
             runId,
           );
           bus.emit({ type: "timeline_appended", entry });
+          emitArtifactConsumptionSnapshot(id);
         } else if (evidenceConsumption.type === "replan") {
           const factIds = evidenceConsumption.refs.map((ref) => ref.id);
           const message = [
@@ -1886,6 +1902,17 @@ Artifact 证据：download_tool 成功只证明文件已获取。下载后用 li
             runId,
           );
           bus.emit({ type: "timeline_appended", entry });
+          emitArtifactConsumptionSnapshot(id);
+        } else if (evidenceConsumption.type === "closed") {
+          const entry = timelineStore.append(
+            id,
+            "evidence_consumption_tracking_closed",
+            `Task=${evidenceConsumption.taskId}`,
+            evidenceConsumption.taskId,
+            runId,
+          );
+          bus.emit({ type: "timeline_appended", entry });
+          emitArtifactConsumptionSnapshot(id);
         }
         const outcomeKnowledge = new Map(referencedKnowledge.map((ref) => [`${ref.kind}:${ref.id}`, ref]));
         if (evidenceConsumption.type === "consumed") {
