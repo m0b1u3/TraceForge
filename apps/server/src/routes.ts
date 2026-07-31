@@ -136,7 +136,7 @@ export function registerRoutes(
     return consumptions;
   };
   const syncArtifactEvidenceFacts = (artifact: ArtifactRecord): Fact[] => {
-    if (artifact.status !== "analyzed" || !artifact.analysis) return [];
+    if (!["analyzed", "unsupported", "failed"].includes(artifact.status)) return [];
     const existingTags = new Set(factStore.listByCase(artifact.caseId).flatMap((fact) => fact.tags));
     const created: Fact[] = [];
     const recordFact = (key: string, input: Parameters<FactStore["create"]>[1]) => {
@@ -149,6 +149,36 @@ export function registerRoutes(
       bus.emit({ type: "fact_created", fact });
       bus.emit({ type: "timeline_appended", entry });
     };
+    if (!artifact.analysis) {
+      recordFact(`analysis-${artifact.status}`, {
+        sourceRunId: artifact.runId,
+        type: "artifact_analysis",
+        title: `Artifact analysis ${artifact.status}: ${artifact.filename}`,
+        value: {
+          artifactId: artifact.id,
+          path: artifact.relativePath,
+          sha256: artifact.sha256,
+          format: artifact.detectedFormat,
+          byteSize: artifact.byteSize,
+          status: artifact.status,
+          error: artifact.error,
+        },
+        source: { type: "artifact_analysis", ref: artifact.id },
+        confidence: 1,
+        tags: ["artifact", "analysis", "coverage-gap", artifact.detectedFormat],
+        verificationSummary: artifact.error ?? `Artifact analysis status is ${artifact.status}.`,
+        observations: [{
+          id: `observation_${artifact.id}_${artifact.status}`,
+          sourceType: "artifact_analysis",
+          sourceRef: artifact.id,
+          runId: artifact.runId,
+          condition: `status=${artifact.status}`,
+          summary: artifact.error ?? `Artifact analysis status is ${artifact.status}.`,
+          observedAt: artifact.updatedAt,
+        }],
+      });
+      return created;
+    }
     recordFact("analysis", {
       sourceRunId: artifact.runId,
       type: "artifact_analysis",
@@ -1452,9 +1482,18 @@ export function registerRoutes(
     registry.register(makeListArtifactsTool(id, artifactStore));
     registry.register(makeAnalyzeArtifactTool(id, projectRoot, artifactStore, artifactAnalyzers, (artifact, reason) => {
       bus.emit({ type: "artifact_updated", artifact });
-      if (artifact.status !== "analyzed" || !artifact.analysis) return;
-      if (reason === "analyzed") {
+      if (reason === "analyzing") return;
+      if (reason === "analyzed" && artifact.analysis) {
         const entry = timelineStore.append(id, "artifact_analyzed", artifact.analysis.summary, artifact.id, runId);
+        bus.emit({ type: "timeline_appended", entry });
+      } else if (reason === "unsupported" || reason === "failed") {
+        const entry = timelineStore.append(
+          id,
+          "artifact_analysis_unavailable",
+          `Artifact=${artifact.id}; status=${artifact.status}; limitation=${artifact.error ?? "no compatible analysis result"}`,
+          artifact.id,
+          runId,
+        );
         bus.emit({ type: "timeline_appended", entry });
       }
       syncArtifactEvidenceFacts(artifact);

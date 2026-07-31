@@ -158,4 +158,72 @@ describe("artifact evidence lifecycle with real SQLite", () => {
     expect(tasks.getById(queued.id)?.status).toBe("open");
     expect(timeline.listByCase("case_1")).toHaveLength(0);
   });
+
+  it("keeps an incomplete analysis gap on the one running Task without starting another Task", () => {
+    const db = createDb(":memory:");
+    const facts = new FactStore(db);
+    const tasks = new TaskStore(db);
+    const timeline = new TimelineStore(db);
+    const current = tasks.create("case_1", {
+      runId: "run_current",
+      title: "Investigate current evidence",
+      status: "running",
+      reason: "analysis in progress",
+      blockedBy: [],
+      triggerWhen: [],
+      relatedFacts: [],
+      hypothesisIds: ["hypothesis_1"],
+      priority: "high",
+    });
+    const queued = tasks.create("case_1", {
+      runId: "run_current",
+      title: "Investigate another candidate",
+      status: "open",
+      reason: "queued",
+      blockedBy: [],
+      triggerWhen: [],
+      relatedFacts: [],
+      hypothesisIds: ["hypothesis_2"],
+      priority: "medium",
+    });
+    const analysisFact = facts.create("case_1", {
+      sourceRunId: "run_current",
+      type: "artifact_analysis",
+      title: "Partial artifact analysis",
+      value: { artifactId: "artifact_1" },
+      source: { type: "artifact_analysis", ref: "artifact_1" },
+      confidence: 1,
+      tags: ["artifact", "analysis"],
+    });
+    const partial = analyzedArtifact();
+    partial.analysis = {
+      ...partial.analysis!,
+      findings: [],
+      coverage: {
+        metadata: true,
+        text: false,
+        objectGraph: true,
+        limitations: ["Text layer was not inspected."],
+      },
+    };
+
+    const result = connectArtifactEvidenceLifecycle({
+      runId: "run_current",
+      artifact: partial,
+      artifactFacts: [analysisFact],
+      facts,
+      tasks,
+      timeline,
+      emit: () => undefined,
+    });
+
+    expect(result.task?.id).toBe(current.id);
+    expect(tasks.getById(current.id)?.triggerWhen).toEqual([
+      expect.stringContaining("[Artifact coverage artifact_1]"),
+    ]);
+    expect(tasks.getById(queued.id)?.status).toBe("open");
+    expect(result.runtimeMessage).toContain("Coverage quality: incomplete");
+    expect(timeline.listByCase("case_1").filter((entry) =>
+      entry.eventType === "artifact_coverage_gap_recorded")).toHaveLength(1);
+  });
 });

@@ -1,7 +1,6 @@
 import { useStore } from "../store.js";
 import { Archive, CaretDown, CaretRight, CheckCircle, Fingerprint, Gauge, LockKey, Robot, Warning, WarningCircle } from "@phosphor-icons/react";
-import type { Fact } from "@traceforge/shared";
-import type { ArtifactConsumption } from "@traceforge/shared";
+import { assessArtifactCoverage, type ArtifactConsumption, type Fact } from "@traceforge/shared";
 import { TrafficInspector } from "./inspector/TrafficInspector.js";
 import { FindingInspector, ToolEventInspector } from "./inspector/EvidenceInspector.js";
 import { TaskInspector, TimelineEventInspector } from "./inspector/GraphInspectors.js";
@@ -201,6 +200,7 @@ function ArtifactEvidence() {
       <div className="artifact-evidence-list">
         {[...artifacts].reverse().slice(0, 5).map((artifact) => {
           const analysis = artifact.analysis;
+          const coverageAssessment = assessArtifactCoverage(artifact);
           const complete = artifact.status === "analyzed" && analysis;
           const consumption = consumptions.find((item) => item.artifactId === artifact.id);
           return (
@@ -214,6 +214,9 @@ function ArtifactEvidence() {
                   <small>{artifact.detectedFormat} · {artifactSize(artifact.byteSize)} · {artifact.status}</small>
                 </span>
                 <span className="artifact-summary-meta">
+                  <span className="artifact-coverage-quality" data-quality={coverageAssessment.quality}>
+                    {coverageAssessment.quality}
+                  </span>
                   {analysis && <span className="artifact-finding-count">{analysis.findings.length} evidence</span>}
                   {consumption && (
                     <span
@@ -245,6 +248,11 @@ function ArtifactEvidence() {
                     analysis.coverage.text && "text",
                     analysis.coverage.objectGraph && "object graph",
                   ].filter(Boolean).join(" · ") || "none"}</dd></div>}
+                  <div><dt>Coverage quality</dt><dd>{coverageAssessment.quality}</dd></div>
+                  {coverageAssessment.missingDimensions.length > 0 && (
+                    <div><dt>Missing</dt><dd>{coverageAssessment.missingDimensions.join(", ")}</dd></div>
+                  )}
+                  <div><dt>Negative conclusion</dt><dd>Not supported by this analysis alone</dd></div>
                 </dl>
                 {analysis?.findings.map((finding, index) => (
                   <div className="artifact-finding" key={`${finding.kind}-${finding.label}-${index}`}>
@@ -260,6 +268,9 @@ function ArtifactEvidence() {
                 {(analysis?.coverage.limitations ?? (artifact.error ? [artifact.error] : [])).map((limitation) => (
                   <p className="artifact-limitation" key={limitation}><WarningCircle size={12} />{limitation}</p>
                 ))}
+                {coverageAssessment.followUpRequired && (
+                  <p className="artifact-follow-up"><WarningCircle size={12} />{coverageAssessment.nextAction}</p>
+                )}
               </div>
             </details>
           );

@@ -9,3 +9,4 @@ export * from "./endpoint-observation.js";
 export * from "./observer-correction-audit.js";
 export * from "./artifact.js";
 export * from "./artifact-consumption.js";
+export * from "./artifact-coverage.js";

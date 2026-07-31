@@ -1603,6 +1603,34 @@
   background: color-mix(in srgb, var(--warning) 12%, transparent);
 }
 
+.artifact-coverage-quality {
+  padding: 2px 5px;
+  border-radius: var(--radius-xs);
+  color: var(--foreground-muted);
+  background: var(--surface-hover);
+  font: 500 10px/1.25 var(--font-mono);
+}
+
+.artifact-coverage-quality[data-quality="substantial"] {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.artifact-coverage-quality[data-quality="incomplete"],
+.artifact-coverage-quality[data-quality="unavailable"] {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.artifact-follow-up {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  color: var(--warning);
+  font-size: var(--text-meta);
+  line-height: 1.45;
+}
+
 .artifact-finding-count {
   padding: 2px 5px;
   border-radius: var(--radius-sm);

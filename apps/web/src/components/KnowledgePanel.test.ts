@@ -114,10 +114,12 @@ describe("KnowledgePanel", () => {
     const artifact = panel.querySelector<HTMLDetailsElement>(".artifact-evidence-item");
     expect(artifact?.textContent).toContain("analysis.bin");
     expect(artifact?.textContent).toContain("Used");
+    expect(artifact?.textContent).toContain("incomplete");
 
     artifact?.setAttribute("open", "");
     expect(artifact?.textContent).toContain("task_1");
     expect(artifact?.textContent).toContain("record_fact");
+    expect(artifact?.textContent).toContain("Not supported by this analysis alone");
   });
 
   it("keeps internal failure memory out of security evidence", () => {
