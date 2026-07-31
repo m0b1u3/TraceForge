@@ -3,8 +3,11 @@ import { createReadStream } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { ToolDescriptor } from "@traceforge/extension";
+import type { ArtifactRecord } from "@traceforge/shared";
 import type { ArtifactAnalyzerRegistry } from "./artifact-analyzer.js";
 import type { ArtifactStore } from "./stores/artifact-store.js";
+
+export type ArtifactChangeReason = "cached" | "analyzing" | "analyzed" | "unsupported" | "failed";
 
 function detectExistingFormat(buffer: Buffer, filename: string): string {
   if (buffer.subarray(0, 4).toString("ascii") === "JAVA") return "java-hprof";
@@ -109,7 +112,7 @@ export function makeAnalyzeArtifactTool(
   workspaceRoot: string,
   store: ArtifactStore,
   analyzers: ArtifactAnalyzerRegistry,
-  onAnalyzed?: (artifactId: string, summary: string) => void,
+  onChanged?: (artifact: ArtifactRecord, reason: ArtifactChangeReason) => void,
 ): ToolDescriptor {
   return {
     name: "analyze_artifact",
@@ -129,11 +132,13 @@ export function makeAnalyzeArtifactTool(
       const artifact = store.getById(artifactId);
       if (!artifact || artifact.caseId !== caseId) return { ok: false, content: `Artifact ${artifactId} does not exist in this Case.` };
       if (artifact.status === "analyzed" && artifact.analysis) {
+        onChanged?.(artifact, "cached");
         return { ok: true, content: formatAnalysis(artifact.id, artifact.analysis), meta: { artifactId } };
       }
       const analyzer = analyzers.find(artifact);
       if (!analyzer) {
-        store.updateAnalysis(artifact.id, "unsupported", null, null, `No analyzer supports format ${artifact.detectedFormat}.`);
+        const unsupported = store.updateAnalysis(artifact.id, "unsupported", null, null, `No analyzer supports format ${artifact.detectedFormat}.`);
+        if (unsupported) onChanged?.(unsupported, "unsupported");
         return {
           ok: false,
           content: `Artifact ${artifact.id} format=${artifact.detectedFormat} has no compatible analyzer. Acquisition is verified, content is not. Do not infer absence from this result.`,
@@ -142,15 +147,17 @@ export function makeAnalyzeArtifactTool(
       const caseRoot = resolve(workspaceRoot, "data/cases", caseId);
       const absolutePath = resolve(caseRoot, artifact.relativePath);
       if (!absolutePath.startsWith(caseRoot + sep)) return { ok: false, content: "artifact path escapes Case workspace" };
-      store.updateAnalysis(artifact.id, "analyzing", analyzer.id, null);
+      const analyzing = store.updateAnalysis(artifact.id, "analyzing", analyzer.id, null);
+      if (analyzing) onChanged?.(analyzing, "analyzing");
       try {
         const analysis = await analyzer.analyze(artifact, absolutePath);
-        store.updateAnalysis(artifact.id, "analyzed", analyzer.id, analysis);
-        onAnalyzed?.(artifact.id, analysis.summary);
+        const analyzed = store.updateAnalysis(artifact.id, "analyzed", analyzer.id, analysis);
+        if (analyzed) onChanged?.(analyzed, "analyzed");
         return { ok: true, content: formatAnalysis(artifact.id, analysis), meta: { artifactId, analyzerId: analyzer.id } };
       } catch (error) {
         const message = (error as Error).message;
-        store.updateAnalysis(artifact.id, "failed", analyzer.id, null, message);
+        const failed = store.updateAnalysis(artifact.id, "failed", analyzer.id, null, message);
+        if (failed) onChanged?.(failed, "failed");
         return {
           ok: false,
           content: `Artifact ${artifact.id} analysis failed with ${analyzer.id}: ${message}. Acquisition remains verified; content conclusions remain unresolved.`,

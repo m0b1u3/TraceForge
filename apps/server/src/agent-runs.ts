@@ -6,6 +6,7 @@ export interface ActiveAgentRun {
   run: AgentRun;
   abortController: AbortController;
   steeringQueue: string[];
+  runtimeMessageQueue: string[];
 }
 
 function now(): string {
@@ -52,6 +53,7 @@ export class AgentRunRegistry {
       },
       abortController: new AbortController(),
       steeringQueue: [],
+      runtimeMessageQueue: [],
     };
     this.runs.set(active.run.id, active);
     this.activeByCase.set(caseId, active.run.id);
@@ -93,6 +95,21 @@ export class AgentRunRegistry {
     if (!active) return [];
     const queued = active.steeringQueue.splice(0);
     return queued;
+  }
+
+  addRuntimeMessage(runId: string, text: string): AgentRun | undefined {
+    const active = this.runs.get(runId);
+    if (!active || terminal(active.run.status)) return undefined;
+    const message = text.trim();
+    if (!message || active.runtimeMessageQueue.includes(message)) return active.run;
+    active.runtimeMessageQueue.push(message);
+    return active.run;
+  }
+
+  consumeRuntimeMessages(runId: string): string[] {
+    const active = this.runs.get(runId);
+    if (!active) return [];
+    return active.runtimeMessageQueue.splice(0);
   }
 
   addUsage(
@@ -206,7 +223,12 @@ export class AgentRunRegistry {
         };
         this.store.save(run);
       }
-      this.runs.set(run.id, { run, abortController: new AbortController(), steeringQueue: [] });
+      this.runs.set(run.id, {
+        run,
+        abortController: new AbortController(),
+        steeringQueue: [],
+        runtimeMessageQueue: [],
+      });
       this.usageByRun.set(run.id, this.store.listUsage(run.id));
       const previousId = this.latestByCase.get(run.caseId);
       const previous = previousId ? this.runs.get(previousId)?.run : undefined;

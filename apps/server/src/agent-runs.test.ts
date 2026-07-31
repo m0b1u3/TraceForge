@@ -27,6 +27,17 @@ describe("AgentRunRegistry", () => {
     expect(reg.consumeSteering(run.id)).toEqual([]);
   });
 
+  it("queues runtime evidence separately from human steering and deduplicates pending messages", () => {
+    const reg = new AgentRunRegistry();
+    const { run } = reg.start("case_1", "investigate");
+    reg.addRuntimeMessage(run.id, "artifact evidence is ready");
+    reg.addRuntimeMessage(run.id, "artifact evidence is ready");
+
+    expect(reg.consumeSteering(run.id)).toEqual([]);
+    expect(reg.consumeRuntimeMessages(run.id)).toEqual(["artifact evidence is ready"]);
+    expect(reg.consumeRuntimeMessages(run.id)).toEqual([]);
+  });
+
   it("interrupt is idempotent and aborts the controller", () => {
     const reg = new AgentRunRegistry();
     const active = reg.start("case_1", "goal");

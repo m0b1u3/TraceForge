@@ -96,6 +96,7 @@ import { reconcileUnsupportedEndpointFacts } from "./endpoint-fact-reconciliatio
 import { ArtifactStore } from "./stores/artifact-store.js";
 import { ArtifactAnalyzerRegistry, JhatHprofAnalyzer } from "./artifact-analyzer.js";
 import { makeAnalyzeArtifactTool, makeListArtifactsTool, registerExistingCaseArtifacts } from "./artifact-tools.js";
+import { connectArtifactEvidenceLifecycle } from "./artifact-evidence-lifecycle.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -1433,14 +1434,26 @@ export function registerRoutes(
       },
     }));
     registry.register(makeListArtifactsTool(id, artifactStore));
-    registry.register(makeAnalyzeArtifactTool(id, projectRoot, artifactStore, artifactAnalyzers, (artifactId, summary) => {
-      const entry = timelineStore.append(id, "artifact_analyzed", summary, artifactId, runId);
-      bus.emit({ type: "timeline_appended", entry });
-      const artifact = artifactStore.getById(artifactId);
-      if (artifact) {
-        syncArtifactEvidenceFacts(artifact);
-        bus.emit({ type: "artifact_updated", artifact });
+    registry.register(makeAnalyzeArtifactTool(id, projectRoot, artifactStore, artifactAnalyzers, (artifact, reason) => {
+      bus.emit({ type: "artifact_updated", artifact });
+      if (artifact.status !== "analyzed" || !artifact.analysis) return;
+      if (reason === "analyzed") {
+        const entry = timelineStore.append(id, "artifact_analyzed", artifact.analysis.summary, artifact.id, runId);
+        bus.emit({ type: "timeline_appended", entry });
       }
+      syncArtifactEvidenceFacts(artifact);
+      const artifactFacts = factStore.listByCase(id).filter((fact) =>
+        fact.source.type === "artifact_analysis" && fact.source.ref === artifact.id);
+      const lifecycle = connectArtifactEvidenceLifecycle({
+        runId,
+        artifact,
+        artifactFacts,
+        facts: factStore,
+        tasks: taskStore,
+        timeline: timelineStore,
+        emit: (event) => bus.emit(event),
+      });
+      if (lifecycle.runtimeMessage) runs.addRuntimeMessage(runId, lifecycle.runtimeMessage);
     }));
 
     // 若该 case 有共享浏览器会话，把浏览器工具纳入 agent 工具集
@@ -1710,6 +1723,7 @@ Artifact 证据：download_tool 成功只证明文件已获取。下载后用 li
       ),
       getObserverReviewTrigger: () => observerScheduler.consume(),
       getSteeringMessages: () => runs.consumeSteering(runId),
+      getRuntimeMessages: () => runs.consumeRuntimeMessages(runId),
       onTurnComplete: async (summary) => runObserverReview(
         summary.runId,
         summary.trajectory,

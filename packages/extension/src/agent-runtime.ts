@@ -59,6 +59,7 @@ export interface AgentRunOptions {
   signal?: AbortSignal;
   runId?: string;
   getSteeringMessages?: () => string[];
+  getRuntimeMessages?: () => string[];
   budget?: Partial<AgentRunBudget>;
   onTurnComplete?: (summary: TurnSummary) => Promise<ObserverReviewDecision>;
   reviewIntervalTurns?: number;
@@ -453,6 +454,11 @@ export class AgentRuntime {
       const steering = options.getSteeringMessages?.() ?? [];
       for (const text of steering) {
         messages.push({ role: "user", content: `[Human steering]\n用户运行中补充指令：${text}` });
+      }
+
+      const runtimeMessages = options.getRuntimeMessages?.() ?? [];
+      for (const text of runtimeMessages) {
+        messages.push({ role: "user", content: `[Runtime evidence update]\n${text}` });
       }
 
       turnCount += 1;
