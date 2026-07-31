@@ -135,14 +135,35 @@ function binaryLike(content: string): boolean {
   return controls / Math.max(1, sample.length) > 0.02;
 }
 
+function escapedControlText(content: string): { text: string; changed: boolean } {
+  let changed = false;
+  const text = content.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, (character) => {
+    changed = true;
+    return `\\x${character.charCodeAt(0).toString(16).padStart(2, "0")}`;
+  });
+  return { text, changed };
+}
+
 export function compactToolResult(content: string, maxCharacters = DEFAULT_RUN_BUDGET.maxToolResultCharacters): string {
   if (binaryLike(content)) {
-    return `[binary output omitted: ${content.length} characters; record the file path, size, hash and analysis summary instead]`;
+    const escaped = escapedControlText(content);
+    const printableCharacters = content.replace(/[\u0000-\u001f\u007f]/g, "").trim().length;
+    const smallExtractedText = content.length <= Math.min(maxCharacters, 4_096)
+      && printableCharacters >= 24
+      && printableCharacters / Math.max(1, content.length) >= 0.35;
+    if (smallExtractedText) {
+      return `[control characters escaped; verify provenance before using as evidence]\n${escaped.text}`;
+    }
+    return `[binary output omitted: ${content.length} characters; record the artifact path, size, hash, format, analyzer coverage and analysis summary instead]`;
   }
-  if (content.length <= maxCharacters) return content;
+  const escaped = escapedControlText(content);
+  const safeContent = escaped.changed
+    ? `[control characters escaped; verify provenance before using as evidence]\n${escaped.text}`
+    : content;
+  if (safeContent.length <= maxCharacters) return safeContent;
   const head = Math.floor(maxCharacters * 0.7);
   const tail = maxCharacters - head;
-  return `${content.slice(0, head)}\n\n[... ${content.length - maxCharacters} characters omitted ...]\n\n${content.slice(-tail)}`;
+  return `${safeContent.slice(0, head)}\n\n[... ${safeContent.length - maxCharacters} characters omitted ...]\n\n${safeContent.slice(-tail)}`;
 }
 
 export function compactConversation(messages: TurnMessage[], maxCharacters: number): void {
@@ -563,7 +584,7 @@ export class AgentRuntime {
     try {
       const res = await executeWithDeadline(
         () => tool.execute(call.input),
-        Math.max(1_000, options.toolTimeoutMs ?? 45_000),
+        Math.max(1_000, tool.timeoutMs ?? options.toolTimeoutMs ?? 45_000),
         options.signal,
       );
       const effectiveOk = res.ok;

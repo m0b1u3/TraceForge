@@ -13,6 +13,7 @@ export interface ToolDescriptor {
   risk: "command" | "normal";
   source: string;
   executionMode?: ToolExecutionMode;
+  timeoutMs?: number;
   execute: (input: unknown) => Promise<ToolResult>;
 }
 

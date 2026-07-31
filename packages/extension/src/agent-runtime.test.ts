@@ -42,7 +42,8 @@ describe("runtime context governance", () => {
   });
 
   it("omits binary output and truncates oversized text", () => {
-    expect(compactToolResult(`HPROF\u0000\u0001binary`)).toContain("binary output omitted");
+    expect(compactToolResult(`extracted admin.password\u0000=\u0001adminweb from object relationship`)).toContain("control characters escaped");
+    expect(compactToolResult(`HPROF${"\u0000".repeat(200)}binary`)).toContain("binary output omitted");
     expect(compactToolResult("x".repeat(100), 20).length).toBeLessThan(100);
   });
 

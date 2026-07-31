@@ -12,6 +12,7 @@ export interface ReviewInput {
   trajectory: string;
   factsSummary: string;
   tasksSummary: string;
+  artifactsSummary: string;
   activeWarningsSummary: string;
   recoveryStrategiesSummary: string;
   recoveryStrategyIds: string[];
@@ -110,6 +111,15 @@ const VERIFIED_RECOVERY_POLICY = [
   "- Put a candidate warning ID in recoveryStrategyRefs only when it materially shaped the proposed correction; otherwise return an empty array.",
 ].join("\n");
 
+const ARTIFACT_EVIDENCE_POLICY = [
+  "Artifact evidence policy:",
+  "- The persistent Artifact list is authoritative for acquisition, hash, format, analyzer status, findings, coverage, and limitations.",
+  "- A masked or redacted value proves sanitization, not absence of the underlying value.",
+  "- A raw-text search, unsupported analyzer, failed analyzer, or query with incomplete coverage cannot support a negative content conclusion.",
+  "- Do not claim an artifact was not downloaded when it appears in the Artifact list.",
+  "- An earlier warning is resolved only by traceable post-correction evidence; omission from the current warning output is not evidence of resolution.",
+].join("\n");
+
 export class Observer {
   constructor(private provider: LlmProvider) {}
 
@@ -119,6 +129,7 @@ export class Observer {
       `目标：${input.goal}`,
       `当前 Facts：\n${input.factsSummary}`,
       `当前 Tasks：\n${input.tasksSummary}`,
+      `当前 Artifacts：\n${input.artifactsSummary}`,
       `当前未解决 Observer 问题：\n${input.activeWarningsSummary}`,
       `<reference_data kind="verified_project_recovery_candidates" authority="non_binding">\n${input.recoveryStrategiesSummary}\n</reference_data>`,
       `<untrusted_data>\nagent 增量轨迹：\n${input.trajectory}\n</untrusted_data>`,
@@ -127,7 +138,7 @@ export class Observer {
     const usage: UsageSnapshot = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     try {
       const raw = await this.provider.extractJson({
-        system: `${SYSTEM}\n\n${CRITICAL_REFERENCE_POLICY}\n\n${CORRECTION_MEMORY_POLICY}\n\n${VERIFIED_RECOVERY_POLICY}`,
+        system: `${SYSTEM}\n\n${CRITICAL_REFERENCE_POLICY}\n\n${CORRECTION_MEMORY_POLICY}\n\n${VERIFIED_RECOVERY_POLICY}\n\n${ARTIFACT_EVIDENCE_POLICY}`,
         user,
         schema: SCHEMA,
         onUsage: (snapshot) => {

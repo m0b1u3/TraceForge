@@ -97,6 +97,25 @@ export const trafficEntries = sqliteTable("traffic_entries", {
   createdAt: text("created_at").notNull(),
 });
 
+export const artifacts = sqliteTable("artifacts", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  runId: text("run_id"),
+  sourceUrl: text("source_url"),
+  filename: text("filename").notNull(),
+  relativePath: text("relative_path").notNull(),
+  byteSize: integer("byte_size").notNull(),
+  sha256: text("sha256").notNull(),
+  detectedFormat: text("detected_format").notNull(),
+  mediaType: text("media_type"),
+  status: text("status").notNull(),
+  analyzerId: text("analyzer_id"),
+  analysisJson: text("analysis_json"),
+  error: text("error"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const facts = sqliteTable("facts", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

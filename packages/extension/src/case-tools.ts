@@ -243,7 +243,7 @@ export function makeRecordTaskTool(
 ): ToolDescriptor {
   return {
     name: "record_task",
-    description: "记录一个待办/挂起任务。可设 status=blocked + triggerWhen 表示等待某条件（如等凭据）。要更新已有 Task（改状态/标题/原因等）时带上它的 id；新建则不带 id。",
+    description: "Create or update an investigation Task. Preserve separate suspicious points as separate queued Tasks, but set exactly one Task per Run to status=running before active validation. Finish, block, reject, or cancel that running Task before starting the next. Use status=blocked with triggerWhen when evidence is missing. Include id to update; omit id to create.",
     inputSchema: {
       type: "object",
       properties: {

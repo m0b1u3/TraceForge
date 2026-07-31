@@ -53,6 +53,15 @@ export function createDb(path: string) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_traffic_case ON traffic_entries(case_id);
+    CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, source_url TEXT,
+      filename TEXT NOT NULL, relative_path TEXT NOT NULL, byte_size INTEGER NOT NULL,
+      sha256 TEXT NOT NULL, detected_format TEXT NOT NULL, media_type TEXT,
+      status TEXT NOT NULL, analyzer_id TEXT, analysis_json TEXT, error TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_artifacts_case ON artifacts(case_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_case_sha ON artifacts(case_id, sha256);
     CREATE TABLE IF NOT EXISTS facts (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL,
       source_run_id TEXT,

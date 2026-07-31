@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
-import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, observerStrategyAudits, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions, validationConsensus } from "./db/schema.js";
+import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, artifacts, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, observerStrategyAudits, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions, validationConsensus } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -93,6 +93,9 @@ import {
   InvestigationStructurePolicy,
 } from "./investigation-runtime-policy.js";
 import { reconcileUnsupportedEndpointFacts } from "./endpoint-fact-reconciliation.js";
+import { ArtifactStore } from "./stores/artifact-store.js";
+import { ArtifactAnalyzerRegistry, JhatHprofAnalyzer } from "./artifact-analyzer.js";
+import { makeAnalyzeArtifactTool, makeListArtifactsTool, registerExistingCaseArtifacts } from "./artifact-tools.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -116,6 +119,9 @@ export function registerRoutes(
 ): void {
   const cases = new CaseStore(db);
   const traffic = new TrafficStore(db);
+  const artifactStore = new ArtifactStore(db);
+  const artifactAnalyzers = new ArtifactAnalyzerRegistry();
+  artifactAnalyzers.register(new JhatHprofAnalyzer());
   const factStore = new FactStore(db);
   const taskStore = new TaskStore(db);
   const timelineStore = new TimelineStore(db);
@@ -359,6 +365,7 @@ export function registerRoutes(
 
     // Cascade delete all case-associated data
     db.delete(trafficEntries).where(eq(trafficEntries.caseId, id)).run();
+    db.delete(artifacts).where(eq(artifacts.caseId, id)).run();
     db.delete(identityContexts).where(eq(identityContexts.caseId, id)).run();
     db.delete(attackPaths).where(eq(attackPaths.caseId, id)).run();
     db.delete(securityReports).where(eq(securityReports.caseId, id)).run();
@@ -859,6 +866,15 @@ export function registerRoutes(
           `blockedBy=${task.blockedBy.join(",") || "none"}`,
           `reason=${compact(task.reason) || "none"}`,
         ].join("; ")).join("\n") || "(none)";
+        const artifactsSummary = artifactStore.listByCase(id).map((artifact) => [
+          `${artifact.id} [${artifact.status}; format=${artifact.detectedFormat}; bytes=${artifact.byteSize}] ${artifact.relativePath}`,
+          `sha256=${artifact.sha256}`,
+          `analyzer=${artifact.analyzerId ?? "none"}`,
+          `summary=${compact(artifact.analysis?.summary) || "none"}`,
+          `coverage=${artifact.analysis ? `metadata=${artifact.analysis.coverage.metadata},text=${artifact.analysis.coverage.text},objectGraph=${artifact.analysis.coverage.objectGraph}` : "none"}`,
+          `findings=${artifact.analysis?.findings.map((finding) => `${finding.kind}:${finding.label}=${finding.value}`).join(" | ") || "none"}`,
+          `limitations=${artifact.analysis?.coverage.limitations.join(" | ") || artifact.error || "none"}`,
+        ].join("; ")).join("\n") || "(none)";
         const activeWarningsSummary = activeBeforeReview.map((warning) => {
           const audit = parseObserverCorrectionAudit(warning.correctionEvidence);
           const previousCorrection = warning.suggestedGoal
@@ -894,6 +910,7 @@ export function registerRoutes(
           trajectory: reviewTrajectory,
           factsSummary,
           tasksSummary,
+          artifactsSummary,
           activeWarningsSummary,
           recoveryStrategiesSummary: recoveryStrategySelection.summary,
           recoveryStrategyIds: recoveryStrategySelection.strategies.map(
@@ -1059,8 +1076,12 @@ export function registerRoutes(
             attribution.attributed ? "resolved" : "unattributed",
             serializeObserverCorrectionAudit(attribution.audit),
           ) ?? warning;
-          const resolved = observerStore.updateStatus(settled.id, "resolved");
-          if (resolved) bus.emit({ type: "observer_warning_updated", warning: resolved });
+          if (attribution.attributed) {
+            const resolved = observerStore.updateStatus(settled.id, "resolved");
+            if (resolved) bus.emit({ type: "observer_warning_updated", warning: resolved });
+          } else {
+            bus.emit({ type: "observer_warning_updated", warning: settled });
+          }
         }
         observerCadence.recordSuccessfulReview(reviewTurn, {
           warningCount: result.warnings.length,
@@ -1311,7 +1332,27 @@ export function registerRoutes(
       });
       return (res as { suggestion?: string }).suggestion ?? "No suggestion.";
     }));
-    registry.register(makeDownloadTool({ caseId: id, workspaceRoot: projectRoot }));
+    await registerExistingCaseArtifacts(id, projectRoot, artifactStore);
+    registry.register(makeDownloadTool({
+      caseId: id,
+      workspaceRoot: projectRoot,
+      onDownloaded: (artifact) => artifactStore.record({
+        caseId: id,
+        runId,
+        sourceUrl: artifact.sourceUrl,
+        filename: artifact.filename,
+        relativePath: artifact.relativePath,
+        byteSize: artifact.byteSize,
+        sha256: artifact.sha256,
+        detectedFormat: artifact.detectedFormat,
+        mediaType: null,
+      }),
+    }));
+    registry.register(makeListArtifactsTool(id, artifactStore));
+    registry.register(makeAnalyzeArtifactTool(id, projectRoot, artifactStore, artifactAnalyzers, (artifactId, summary) => {
+      const entry = timelineStore.append(id, "artifact_analyzed", summary, artifactId, runId);
+      bus.emit({ type: "timeline_appended", entry });
+    }));
 
     // 若该 case 有共享浏览器会话，把浏览器工具纳入 agent 工具集
     const browserSession = browserSessions.get(id);
@@ -1348,6 +1389,7 @@ export function registerRoutes(
 你可以用工具查看流量、记录发现（Fact/Task/Action）、重放请求。黑盒流程：先 navigate/extract_links 访问首页，再用 extract_api_endpoints 从流量中提取接口并记录为 Fact，然后用 replay_traffic 或 http_replay 构造变体请求测试漏洞。如需进一步利用（写 PoC、跑脚本、读取命令输出），可调用 MCP 工作区工具：exec_command 执行 shell 命令、write_file 写文件、read_file 读文件、list_dir 列目录；这些命令受限于当前 Case 的 workspace/<caseId>/ 目录并需要用户批准。
 证据驱动：记录动作前先记录支撑它的 Fact。
 情报复用：遇到任何可能有关的信息（端点、参数、版本号、错误信息、凭据线索、技术栈、WAF 行为、异常响应）都要立即记录为 Fact，即使不确定是否有用。后续在采取任何攻击动作前，先用 search_facts 检索相关 Fact 并尝试利用其中的价值。
+Artifact 证据：download_tool 成功只证明文件已获取。下载后用 list_artifacts 获取持久记录，并在存在兼容分析器时调用 analyze_artifact。优先使用结构化关系分析，不要只依赖原始字符串扫描。掩码/脱敏值只证明输出被处理，不能证明原值不存在；分析器不支持、执行失败、覆盖不足或未命中时，只能记录未解决和分析限制，禁止下“内容不存在”的结论。
 认证端点测试顺序：当目标涉及登录或认证接口时，按以下顺序执行：
 1. 先尝试一组常见/弱口令凭据（可控数量，不要无差别爆破）；
 2. 复用从其他 Facts 中发现的疑似凭据或线索；
