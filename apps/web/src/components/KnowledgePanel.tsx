@@ -1,5 +1,5 @@
 import { useStore } from "../store.js";
-import { CaretRight, Fingerprint, Gauge, LockKey, Robot, Warning } from "@phosphor-icons/react";
+import { Archive, CaretDown, CaretRight, CheckCircle, Fingerprint, Gauge, LockKey, Robot, Warning, WarningCircle } from "@phosphor-icons/react";
 import type { Fact } from "@traceforge/shared";
 import { TrafficInspector } from "./inspector/TrafficInspector.js";
 import { FindingInspector, ToolEventInspector } from "./inspector/EvidenceInspector.js";
@@ -171,6 +171,71 @@ function LatestFindings() {
   );
 }
 
+function artifactSize(bytes: number): string {
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_048_576) return `${(bytes / 1_024).toFixed(1)} KB`;
+  return `${(bytes / 1_048_576).toFixed(1)} MB`;
+}
+
+function ArtifactEvidence() {
+  const artifacts = useStore((state) => state.artifacts);
+  if (artifacts.length === 0) return null;
+  return (
+    <section className="case-overview-section artifact-evidence-section" aria-label="Artifacts">
+      <h3 className="case-overview-evidence-heading">
+        <span><Archive size={13} aria-hidden="true" />Artifacts</span>
+        <small>{artifacts.length} recorded</small>
+      </h3>
+      <div className="artifact-evidence-list">
+        {[...artifacts].reverse().slice(0, 5).map((artifact) => {
+          const analysis = artifact.analysis;
+          const complete = artifact.status === "analyzed" && analysis;
+          return (
+            <details className="artifact-evidence-item" key={artifact.id}>
+              <summary>
+                <span className="artifact-state" data-state={artifact.status}>
+                  {complete ? <CheckCircle size={13} weight="fill" /> : artifact.status === "failed" || artifact.status === "unsupported" ? <WarningCircle size={13} weight="fill" /> : <Archive size={13} />}
+                </span>
+                <span className="artifact-summary-copy">
+                  <strong>{artifact.filename}</strong>
+                  <small>{artifact.detectedFormat} · {artifactSize(artifact.byteSize)} · {artifact.status}</small>
+                </span>
+                {analysis && <span className="artifact-finding-count">{analysis.findings.length} evidence</span>}
+                <CaretDown size={12} className="artifact-caret" aria-hidden="true" />
+              </summary>
+              <div className="artifact-evidence-detail">
+                <dl className="artifact-metadata">
+                  <div><dt>SHA256</dt><dd><code>{artifact.sha256}</code></dd></div>
+                  <div><dt>Analyzer</dt><dd>{artifact.analyzerId ?? "Not available"}</dd></div>
+                  {analysis && <div><dt>Coverage</dt><dd>{[
+                    analysis.coverage.metadata && "metadata",
+                    analysis.coverage.text && "text",
+                    analysis.coverage.objectGraph && "object graph",
+                  ].filter(Boolean).join(" · ") || "none"}</dd></div>}
+                </dl>
+                {analysis?.findings.map((finding, index) => (
+                  <div className="artifact-finding" key={`${finding.kind}-${finding.label}-${index}`}>
+                    <span>{finding.kind}</span>
+                    <strong>{finding.label}</strong>
+                    <code>{finding.value}</code>
+                    {finding.evidence.map((evidence, evidenceIndex) => (
+                      <small key={evidenceIndex}>{evidence.relationship ?? evidence.path ?? evidence.objectId ?? evidence.detail}</small>
+                    ))}
+                  </div>
+                ))}
+                {analysis?.findings.length === 0 && <p className="artifact-empty-result">No candidate recovered by this analyzer. This is not proof of absence.</p>}
+                {(analysis?.coverage.limitations ?? (artifact.error ? [artifact.error] : [])).map((limitation) => (
+                  <p className="artifact-limitation" key={limitation}><WarningCircle size={12} />{limitation}</p>
+                ))}
+              </div>
+            </details>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function CaseOverview() {
   const navigateToKnowledge = useStore((state) => state.navigateToKnowledge);
   return (
@@ -187,6 +252,7 @@ function CaseOverview() {
         <RunStatusSection />
         <ValidationRunSummary />
         <ValidationWorkflow onNavigate={navigateToKnowledge} />
+        <ArtifactEvidence />
         <LatestFindings />
       </div>
     </>

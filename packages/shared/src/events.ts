@@ -1,5 +1,6 @@
 import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, ObserverStrategyAudit, AgentRun, IdentityContext, AttackPath, SecurityReport, Hypothesis, HypothesisTransition, AgentEventRefs, ToolFailureDiagnostic } from "./schemas.js";
 import type { ValidationWorkflowSnapshot } from "./validation-workflow.js";
+import type { ArtifactRecord } from "./artifact.js";
 
 export type RuntimeEvent =
   | { type: "case_created"; case: Case }
@@ -16,6 +17,7 @@ export type RuntimeEvent =
   | { type: "scope_violation"; caseId: string; url: string; reason: string }
   | { type: "fact_created"; fact: Fact }
   | { type: "fact_updated"; fact: Fact }
+  | { type: "artifact_updated"; artifact: ArtifactRecord }
   | { type: "task_created"; task: Task }
   | { type: "task_updated"; task: Task }
   | { type: "hypothesis_created"; hypothesis: Hypothesis; transition: HypothesisTransition }

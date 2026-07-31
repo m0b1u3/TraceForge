@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ArtifactAnalysis, ArtifactFinding, ArtifactRecord } from "./artifact-types.js";
+import type { ArtifactAnalysis, ArtifactFinding, ArtifactRecord } from "@traceforge/shared";
 
 export interface ArtifactAnalyzer {
   id: string;

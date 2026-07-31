@@ -11,7 +11,7 @@ import { FactStore } from "./stores/fact-store.js";
 import { TaskStore } from "./stores/task-store.js";
 import { TimelineStore } from "./stores/timeline-store.js";
 import { EventBus } from "./event-bus.js";
-import { parseObserverCorrectionAudit, serializeObserverCorrectionAudit, validationTimelineConsoleEvent, type Task, type ObserverWarning, type CaseSummary, type Fact, type TimelineEntry, type AgentEventRefs } from "@traceforge/shared";
+import { parseObserverCorrectionAudit, serializeObserverCorrectionAudit, validationTimelineConsoleEvent, type Task, type ObserverWarning, type CaseSummary, type Fact, type TimelineEntry, type AgentEventRefs, type ArtifactRecord } from "@traceforge/shared";
 import type { LlmProvider } from "@traceforge/llm";
 import { loadLlmConfig, createProviderFromConfig } from "@traceforge/llm";
 import { ActionCardStore } from "./stores/action-store.js";
@@ -125,6 +125,80 @@ export function registerRoutes(
   const factStore = new FactStore(db);
   const taskStore = new TaskStore(db);
   const timelineStore = new TimelineStore(db);
+  const syncArtifactEvidenceFacts = (artifact: ArtifactRecord): Fact[] => {
+    if (artifact.status !== "analyzed" || !artifact.analysis) return [];
+    const existingTags = new Set(factStore.listByCase(artifact.caseId).flatMap((fact) => fact.tags));
+    const created: Fact[] = [];
+    const recordFact = (key: string, input: Parameters<FactStore["create"]>[1]) => {
+      const tag = `artifact-evidence:${artifact.id}:${key}`;
+      if (existingTags.has(tag)) return;
+      const fact = factStore.create(artifact.caseId, { ...input, tags: [...input.tags, tag] });
+      existingTags.add(tag);
+      created.push(fact);
+      const entry = timelineStore.append(artifact.caseId, "fact_created", `Artifact evidence: ${fact.title}`, fact.id, artifact.runId ?? undefined);
+      bus.emit({ type: "fact_created", fact });
+      bus.emit({ type: "timeline_appended", entry });
+    };
+    recordFact("analysis", {
+      sourceRunId: artifact.runId,
+      type: "artifact_analysis",
+      title: `Analyzed artifact: ${artifact.filename}`,
+      value: {
+        artifactId: artifact.id,
+        path: artifact.relativePath,
+        sha256: artifact.sha256,
+        format: artifact.detectedFormat,
+        byteSize: artifact.byteSize,
+        analyzerId: artifact.analysis.analyzerId,
+        summary: artifact.analysis.summary,
+        coverage: artifact.analysis.coverage,
+      },
+      source: { type: "artifact_analysis", ref: artifact.id },
+      confidence: artifact.analysis.coverage.objectGraph ? 0.95 : 0.75,
+      tags: ["artifact", "analysis", artifact.detectedFormat],
+      verificationSummary: artifact.analysis.summary,
+      observations: [{
+        id: `observation_${artifact.id}_analysis`,
+        sourceType: "artifact_analysis",
+        sourceRef: artifact.id,
+        runId: artifact.runId,
+        condition: `analyzer=${artifact.analysis.analyzerId}`,
+        summary: artifact.analysis.summary,
+        observedAt: artifact.updatedAt,
+      }],
+    });
+    artifact.analysis.findings.forEach((finding, index) => recordFact(String(index), {
+      sourceRunId: artifact.runId,
+      type: "artifact_evidence",
+      title: `${finding.label} recovered from ${artifact.filename}`,
+      value: {
+        artifactId: artifact.id,
+        kind: finding.kind,
+        label: finding.label,
+        value: finding.value,
+        sensitive: finding.sensitive ?? false,
+        evidence: finding.evidence,
+        coverage: artifact.analysis?.coverage,
+      },
+      source: { type: "artifact_analysis", ref: artifact.id },
+      confidence: finding.confidence,
+      tags: ["artifact", "evidence", finding.kind, artifact.detectedFormat],
+      verificationSummary: `Recovered by ${artifact.analysis?.analyzerId} with traceable artifact relationship evidence.`,
+      observations: [{
+        id: `observation_${artifact.id}_${index}`,
+        sourceType: "artifact_analysis",
+        sourceRef: artifact.id,
+        runId: artifact.runId,
+        condition: finding.evidence.map((item) => item.relationship ?? item.path ?? item.objectId).filter(Boolean).join(" | "),
+        summary: `${finding.label}=${finding.value}`,
+        observedAt: artifact.updatedAt,
+      }],
+    }));
+    return created;
+  };
+  for (const currentCase of cases.list()) {
+    for (const artifact of artifactStore.listByCase(currentCase.id)) syncArtifactEvidenceFacts(artifact);
+  }
   const reconcileEndpointFacts = (caseId: string): void => {
     const reconciliation = reconcileUnsupportedEndpointFacts(caseId, factStore, timelineStore);
     for (const fact of reconciliation.facts) bus.emit({ type: "fact_updated", fact });
@@ -488,6 +562,12 @@ export function registerRoutes(
   app.get("/api/cases/:id/facts", async (req) => {
     const { id } = req.params as { id: string };
     return factStore.listByCase(id);
+  });
+
+  app.get("/api/cases/:id/artifacts", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    return artifactStore.listByCase(id);
   });
 
   app.post("/api/cases/:id/tasks", async (req, reply) => {
@@ -1336,22 +1416,31 @@ export function registerRoutes(
     registry.register(makeDownloadTool({
       caseId: id,
       workspaceRoot: projectRoot,
-      onDownloaded: (artifact) => artifactStore.record({
-        caseId: id,
-        runId,
-        sourceUrl: artifact.sourceUrl,
-        filename: artifact.filename,
-        relativePath: artifact.relativePath,
-        byteSize: artifact.byteSize,
-        sha256: artifact.sha256,
-        detectedFormat: artifact.detectedFormat,
-        mediaType: null,
-      }),
+      onDownloaded: (artifact) => {
+        const record = artifactStore.record({
+          caseId: id,
+          runId,
+          sourceUrl: artifact.sourceUrl,
+          filename: artifact.filename,
+          relativePath: artifact.relativePath,
+          byteSize: artifact.byteSize,
+          sha256: artifact.sha256,
+          detectedFormat: artifact.detectedFormat,
+          mediaType: null,
+        });
+        bus.emit({ type: "artifact_updated", artifact: record });
+        return record;
+      },
     }));
     registry.register(makeListArtifactsTool(id, artifactStore));
     registry.register(makeAnalyzeArtifactTool(id, projectRoot, artifactStore, artifactAnalyzers, (artifactId, summary) => {
       const entry = timelineStore.append(id, "artifact_analyzed", summary, artifactId, runId);
       bus.emit({ type: "timeline_appended", entry });
+      const artifact = artifactStore.getById(artifactId);
+      if (artifact) {
+        syncArtifactEvidenceFacts(artifact);
+        bus.emit({ type: "artifact_updated", artifact });
+      }
     }));
 
     // 若该 case 有共享浏览器会话，把浏览器工具纳入 agent 工具集

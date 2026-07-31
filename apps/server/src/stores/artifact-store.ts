@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { artifacts } from "../db/schema.js";
-import type { ArtifactAnalysis, ArtifactRecord, ArtifactStatus } from "../artifact-types.js";
+import type { ArtifactAnalysis, ArtifactRecord, ArtifactStatus } from "@traceforge/shared";
 
 function rowToArtifact(row: typeof artifacts.$inferSelect): ArtifactRecord {
   return {
