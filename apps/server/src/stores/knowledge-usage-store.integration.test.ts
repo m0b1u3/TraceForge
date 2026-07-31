@@ -42,4 +42,16 @@ describe("KnowledgeUsageStore with real SQLite", () => {
     expect(matched).toEqual([]);
     expect(store.list("case_1", "run_1")[0].usedCount).toBe(0);
   });
+
+  it("records value-based evidence use only after the evidence was injected", () => {
+    const store = new KnowledgeUsageStore(createDb(":memory:"));
+    const exposed: KnowledgeRef[] = [{ id: "fact_evidence", kind: "fact" }];
+
+    store.markUsed("case_1", "run_1", exposed);
+    expect(store.list("case_1", "run_1")).toHaveLength(0);
+
+    store.recordInjected("case_1", "run_1", exposed);
+    store.markUsed("case_1", "run_1", exposed);
+    expect(store.list("case_1", "run_1")[0].usedCount).toBe(1);
+  });
 });

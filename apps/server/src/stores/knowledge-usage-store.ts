@@ -47,8 +47,13 @@ export class KnowledgeUsageStore {
   markReferenced(caseId: string, runId: string, payload: unknown, available: KnowledgeRef[]): KnowledgeRef[] {
     const serialized = typeof payload === "string" ? payload : JSON.stringify(payload);
     const matched = available.filter((ref) => serialized.includes(ref.id));
+    this.markUsed(caseId, runId, matched);
+    return matched;
+  }
+
+  markUsed(caseId: string, runId: string, refs: KnowledgeRef[]): void {
     const now = new Date().toISOString();
-    for (const ref of matched) {
+    for (const ref of refs) {
       const id = rowId(runId, ref);
       const existing = this.db.select().from(knowledgeUsage).where(and(
         eq(knowledgeUsage.id, id),
@@ -60,7 +65,6 @@ export class KnowledgeUsageStore {
         lastUsedAt: now,
       }).where(eq(knowledgeUsage.id, id)).run();
     }
-    return matched;
   }
 
   recordOutcome(caseId: string, runId: string, refs: KnowledgeRef[], positive: number, negative: number): void {

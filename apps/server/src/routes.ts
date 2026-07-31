@@ -97,6 +97,7 @@ import { ArtifactStore } from "./stores/artifact-store.js";
 import { ArtifactAnalyzerRegistry, JhatHprofAnalyzer } from "./artifact-analyzer.js";
 import { makeAnalyzeArtifactTool, makeListArtifactsTool, registerExistingCaseArtifacts } from "./artifact-tools.js";
 import { connectArtifactEvidenceLifecycle } from "./artifact-evidence-lifecycle.js";
+import { artifactEvidenceForConsumption, EvidenceConsumptionTracker } from "./evidence-consumption-tracker.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -1365,6 +1366,7 @@ export function registerRoutes(
     registry.register(makeRecallConversationTool(id, agentEventStore, contextSummaryStore, { expander: queryExpander }));
     const availableKnowledge = new Map<string, KnowledgeRef>();
     const knowledgeOutcomeTracker = new KnowledgeOutcomeTracker();
+    const evidenceConsumptionTracker = new EvidenceConsumptionTracker();
     let latestSharedKnowledge: ReturnType<typeof buildSharedKnowledge> | undefined;
     const getSharedKnowledge = (query?: string) => {
       const runState = sessionStore.get(id, runId);
@@ -1453,7 +1455,14 @@ export function registerRoutes(
         timeline: timelineStore,
         emit: (event) => bus.emit(event),
       });
-      if (lifecycle.runtimeMessage) runs.addRuntimeMessage(runId, lifecycle.runtimeMessage);
+      if (lifecycle.runtimeMessage && lifecycle.task) {
+        const trackedEvidence = artifactEvidenceForConsumption(lifecycle.facts);
+        const refs = trackedEvidence.map((item) => item.ref);
+        for (const ref of refs) availableKnowledge.set(`${ref.kind}:${ref.id}`, ref);
+        knowledgeUsageStore.recordInjected(id, runId, refs);
+        evidenceConsumptionTracker.register(lifecycle.task.id, trackedEvidence);
+        runs.addRuntimeMessage(runId, lifecycle.runtimeMessage);
+      }
     }));
 
     // 若该 case 有共享浏览器会话，把浏览器工具纳入 agent 工具集
@@ -1842,7 +1851,47 @@ Artifact 证据：download_tool 成功只证明文件已获取。下载后用 li
           const entry = timelineStore.append(id, "knowledge_used", detail, referencedKnowledge[0].id, runId);
           bus.emit({ type: "timeline_appended", entry });
         }
-        const settledKnowledge = knowledgeOutcomeTracker.settle(report, referencedKnowledge);
+        const evidenceConsumption = evidenceConsumptionTracker.observe(report);
+        if (evidenceConsumption.type === "consumed") {
+          const directlyReferenced = new Set(referencedKnowledge.map((ref) => `${ref.kind}:${ref.id}`));
+          const implicitlyUsed = evidenceConsumption.refs.filter((ref) =>
+            !directlyReferenced.has(`${ref.kind}:${ref.id}`));
+          knowledgeUsageStore.markUsed(id, runId, implicitlyUsed);
+          const detail = [
+            `Task=${evidenceConsumption.taskId}`,
+            `tool=${evidenceConsumption.tool}`,
+            `facts=${evidenceConsumption.refs.map((ref) => ref.id).join(",")}`,
+          ].join("; ");
+          const entry = timelineStore.append(
+            id,
+            "evidence_consumed",
+            detail,
+            evidenceConsumption.taskId,
+            runId,
+          );
+          bus.emit({ type: "timeline_appended", entry });
+        } else if (evidenceConsumption.type === "replan") {
+          const factIds = evidenceConsumption.refs.map((ref) => ref.id);
+          const message = [
+            `Current Task ${evidenceConsumption.taskId} received new evidence Facts, but the next ${evidenceConsumption.missedActions} successful active actions did not reference them.`,
+            `Before another active action, inspect ${factIds.join(", ")} with get_fact_detail and decide whether the evidence closes the current gap or is irrelevant under a stated reason.`,
+            "Do not switch to another queued Task solely because this reminder was issued.",
+          ].join("\n");
+          runs.addRuntimeMessage(runId, message);
+          const entry = timelineStore.append(
+            id,
+            "evidence_consumption_replan_requested",
+            `Task=${evidenceConsumption.taskId}; facts=${factIds.join(",")}; missedActions=${evidenceConsumption.missedActions}`,
+            evidenceConsumption.taskId,
+            runId,
+          );
+          bus.emit({ type: "timeline_appended", entry });
+        }
+        const outcomeKnowledge = new Map(referencedKnowledge.map((ref) => [`${ref.kind}:${ref.id}`, ref]));
+        if (evidenceConsumption.type === "consumed") {
+          for (const ref of evidenceConsumption.refs) outcomeKnowledge.set(`${ref.kind}:${ref.id}`, ref);
+        }
+        const settledKnowledge = knowledgeOutcomeTracker.settle(report, [...outcomeKnowledge.values()]);
         if (settledKnowledge.refs.length) {
           knowledgeUsageStore.recordOutcome(
             id,
