@@ -117,6 +117,12 @@ describe("KnowledgePanel", () => {
         status: "succeeded",
         coverageDimensions: ["metadata", "text"],
         error: null,
+        analysis: {
+          analyzerId: "generic-binary",
+          summary: "Candidate evidence recovered.",
+          findings: [],
+          coverage: { metadata: true, text: true, objectGraph: false, limitations: [] },
+        },
         startedAt: "now",
         finishedAt: "later",
       }],

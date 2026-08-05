@@ -194,6 +194,7 @@ describe("artifact analysis attempt realtime state", () => {
       status: "running" as const,
       coverageDimensions: ["metadata"] as const,
       error: null,
+      analysis: null,
       startedAt: "now",
       finishedAt: null,
     };

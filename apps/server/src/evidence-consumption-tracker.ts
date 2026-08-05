@@ -12,6 +12,7 @@ const PASSIVE_OR_LIFECYCLE_TOOLS = new Set([
   "recall_case_knowledge",
   "get_validation_workflow_state",
   "list_artifacts",
+  "plan_artifact_analysis",
   "analyze_artifact",
   "list_identities",
   "list_attack_paths",

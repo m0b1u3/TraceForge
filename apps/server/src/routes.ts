@@ -96,7 +96,7 @@ import { reconcileUnsupportedEndpointFacts } from "./endpoint-fact-reconciliatio
 import { ArtifactStore } from "./stores/artifact-store.js";
 import { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
 import { ArtifactAnalyzerRegistry, JhatHprofAnalyzer } from "./artifact-analyzer.js";
-import { makeAnalyzeArtifactTool, makeListArtifactsTool, registerExistingCaseArtifacts } from "./artifact-tools.js";
+import { makeAnalyzeArtifactTool, makeListArtifactsTool, makePlanArtifactAnalysisTool, registerExistingCaseArtifacts } from "./artifact-tools.js";
 import { connectArtifactEvidenceLifecycle } from "./artifact-evidence-lifecycle.js";
 import { artifactEvidenceForConsumption, EvidenceConsumptionTracker } from "./evidence-consumption-tracker.js";
 import { projectArtifactConsumptions } from "./artifact-consumption-projection.js";
@@ -140,11 +140,16 @@ export function registerRoutes(
   };
   const syncArtifactEvidenceFacts = (artifact: ArtifactRecord): Fact[] => {
     if (!["analyzed", "unsupported", "failed"].includes(artifact.status)) return [];
-    const existingTags = new Set(factStore.listByCase(artifact.caseId).flatMap((fact) => fact.tags));
+    const existingFacts = factStore.listByCase(artifact.caseId);
+    const existingTags = new Set(existingFacts.flatMap((fact) => fact.tags));
     const created: Fact[] = [];
-    const recordFact = (key: string, input: Parameters<FactStore["create"]>[1]) => {
+    const recordFact = (
+      key: string,
+      input: Parameters<FactStore["create"]>[1],
+      duplicate?: (fact: Fact) => boolean,
+    ) => {
       const tag = `artifact-evidence:${artifact.id}:${key}`;
-      if (existingTags.has(tag)) return;
+      if (existingTags.has(tag) || (duplicate && existingFacts.some(duplicate))) return;
       const fact = factStore.create(artifact.caseId, { ...input, tags: [...input.tags, tag] });
       existingTags.add(tag);
       created.push(fact);
@@ -153,7 +158,7 @@ export function registerRoutes(
       bus.emit({ type: "timeline_appended", entry });
     };
     if (!artifact.analysis) {
-      recordFact(`analysis-${artifact.status}`, {
+      recordFact(`analysis-${artifact.status}:${artifact.analyzerId ?? "unresolved"}`, {
         sourceRunId: artifact.runId,
         type: "artifact_analysis",
         title: `Artifact analysis ${artifact.status}: ${artifact.filename}`,
@@ -164,6 +169,7 @@ export function registerRoutes(
           format: artifact.detectedFormat,
           byteSize: artifact.byteSize,
           status: artifact.status,
+          analyzerId: artifact.analyzerId,
           error: artifact.error,
         },
         source: { type: "artifact_analysis", ref: artifact.id },
@@ -179,10 +185,16 @@ export function registerRoutes(
           summary: artifact.error ?? `Artifact analysis status is ${artifact.status}.`,
           observedAt: artifact.updatedAt,
         }],
+      }, (fact) => {
+        const value = fact.value as { artifactId?: string; status?: string; analyzerId?: string };
+        return fact.type === "artifact_analysis"
+          && value.artifactId === artifact.id
+          && value.status === artifact.status
+          && (value.analyzerId ?? artifact.analyzerId) === artifact.analyzerId;
       });
       return created;
     }
-    recordFact("analysis", {
+    recordFact(`analysis:${artifact.analysis.analyzerId}`, {
       sourceRunId: artifact.runId,
       type: "artifact_analysis",
       title: `Analyzed artifact: ${artifact.filename}`,
@@ -209,13 +221,19 @@ export function registerRoutes(
         summary: artifact.analysis.summary,
         observedAt: artifact.updatedAt,
       }],
+    }, (fact) => {
+      const value = fact.value as { artifactId?: string; analyzerId?: string };
+      return fact.type === "artifact_analysis"
+        && value.artifactId === artifact.id
+        && value.analyzerId === artifact.analysis?.analyzerId;
     });
-    artifact.analysis.findings.forEach((finding, index) => recordFact(String(index), {
+    artifact.analysis.findings.forEach((finding, index) => recordFact(`finding:${artifact.analysis?.analyzerId}:${index}`, {
       sourceRunId: artifact.runId,
       type: "artifact_evidence",
       title: `${finding.label} recovered from ${artifact.filename}`,
       value: {
         artifactId: artifact.id,
+        analyzerId: artifact.analysis?.analyzerId,
         kind: finding.kind,
         label: finding.label,
         value: finding.value,
@@ -236,6 +254,13 @@ export function registerRoutes(
         summary: `${finding.label}=${finding.value}`,
         observedAt: artifact.updatedAt,
       }],
+    }, (fact) => {
+      const value = fact.value as { artifactId?: string; kind?: string; label?: string; value?: unknown };
+      return fact.type === "artifact_evidence"
+        && value.artifactId === artifact.id
+        && value.kind === finding.kind
+        && value.label === finding.label
+        && value.value === finding.value;
     }));
     return created;
   };
@@ -1490,6 +1515,7 @@ export function registerRoutes(
       },
     }));
     registry.register(makeListArtifactsTool(id, artifactStore, artifactAnalyzers, artifactAttemptStore));
+    registry.register(makePlanArtifactAnalysisTool(id, artifactStore, artifactAnalyzers, artifactAttemptStore));
     registry.register(makeAnalyzeArtifactTool(id, projectRoot, artifactStore, artifactAnalyzers, {
       attempts: artifactAttemptStore,
       runId,
@@ -1569,7 +1595,7 @@ export function registerRoutes(
 你可以用工具查看流量、记录发现（Fact/Task/Action）、重放请求。黑盒流程：先 navigate/extract_links 访问首页，再用 extract_api_endpoints 从流量中提取接口并记录为 Fact，然后用 replay_traffic 或 http_replay 构造变体请求测试漏洞。如需进一步利用（写 PoC、跑脚本、读取命令输出），可调用 MCP 工作区工具：exec_command 执行 shell 命令、write_file 写文件、read_file 读文件、list_dir 列目录；这些命令受限于当前 Case 的 workspace/<caseId>/ 目录并需要用户批准。
 证据驱动：记录动作前先记录支撑它的 Fact。
 情报复用：遇到任何可能有关的信息（端点、参数、版本号、错误信息、凭据线索、技术栈、WAF 行为、异常响应）都要立即记录为 Fact，即使不确定是否有用。后续在采取任何攻击动作前，先用 search_facts 检索相关 Fact 并尝试利用其中的价值。
-Artifact 证据：download_tool 成功只证明文件已获取。下载后用 list_artifacts 获取持久记录，并在存在兼容分析器时调用 analyze_artifact。优先使用结构化关系分析，不要只依赖原始字符串扫描。掩码/脱敏值只证明输出被处理，不能证明原值不存在；分析器不支持、执行失败、覆盖不足或未命中时，只能记录未解决和分析限制，禁止下“内容不存在”的结论。
+Artifact 证据：download_tool 成功只证明文件已获取。下载后用 list_artifacts 获取持久记录，调用 plan_artifact_analysis 根据覆盖缺口与尝试历史选择下一种方法，然后一次只调用一个 analyze_artifact。每次分析结束后重新规划，禁止并行启动多个 Analyzer。优先使用结构化关系分析，不要只依赖原始字符串扫描。掩码/脱敏值只证明输出被处理，不能证明原值不存在；分析器不支持、执行失败、覆盖不足或未命中时，只能记录未解决和分析限制，禁止下“内容不存在”的结论。
 认证端点测试顺序：当目标涉及登录或认证接口时，按以下顺序执行：
 1. 先尝试一组常见/弱口令凭据（可控数量，不要无差别爆破）；
 2. 复用从其他 Facts 中发现的疑似凭据或线索；

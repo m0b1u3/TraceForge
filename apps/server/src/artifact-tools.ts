@@ -7,6 +7,7 @@ import type { ArtifactAnalysisAttempt, ArtifactRecord } from "@traceforge/shared
 import type { ArtifactAnalyzerRegistry } from "./artifact-analyzer.js";
 import type { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
 import type { ArtifactStore } from "./stores/artifact-store.js";
+import { planArtifactAnalysis, type ArtifactAnalysisPlan } from "./artifact-analysis-planner.js";
 
 export type ArtifactChangeReason = "cached" | "analyzing" | "analyzed" | "unsupported" | "failed";
 
@@ -89,6 +90,51 @@ function formatAnalysis(artifactId: string, analysis: NonNullable<ReturnType<Art
   ].join("\n");
 }
 
+function formatAnalysisPlan(plan: ArtifactAnalysisPlan): string {
+  return [
+    `Artifact ${plan.artifactId} analysis plan: ${plan.status}.`,
+    `missingDimensions=${plan.missingDimensions.join(",") || "none"}`,
+    `recommendedAnalyzer=${plan.recommendedAnalyzerId ?? "none"}`,
+    `reason=${plan.reason}`,
+    `candidates=${plan.candidates.length === 0 ? "none" : plan.candidates.map((candidate) =>
+      `${candidate.analyzerId}[eligible=${candidate.eligible}; gain=${candidate.coverageGain.join(",") || "none"}; ${candidate.reason}]`).join(" | ")}`,
+    "Run only the recommended analyzer. Re-plan after that attempt finishes before choosing another method.",
+  ].join("\n");
+}
+
+export function makePlanArtifactAnalysisTool(
+  caseId: string,
+  store: ArtifactStore,
+  analyzers: ArtifactAnalyzerRegistry,
+  attempts: ArtifactAnalysisAttemptStore,
+): ToolDescriptor {
+  return {
+    name: "plan_artifact_analysis",
+    description: "Plan the next single artifact analysis method from missing coverage, registered analyzer capabilities, and persistent attempt history. This tool plans only; it never starts concurrent analysis.",
+    inputSchema: {
+      type: "object",
+      properties: { artifactId: { type: "string" } },
+      required: ["artifactId"],
+    },
+    risk: "normal",
+    source: "builtin",
+    execute: async (input) => {
+      const artifactId = (input as { artifactId?: string }).artifactId;
+      if (!artifactId) return { ok: false, content: "missing artifactId" };
+      const artifact = store.getById(artifactId);
+      if (!artifact || artifact.caseId !== caseId) return { ok: false, content: `Artifact ${artifactId} does not exist in this Case.` };
+      return {
+        ok: true,
+        content: formatAnalysisPlan(planArtifactAnalysis(
+          artifact,
+          analyzers.capabilities(artifact),
+          attempts.listByArtifact(artifact.id),
+        )),
+      };
+    },
+  };
+}
+
 export function makeListArtifactsTool(
   caseId: string,
   store: ArtifactStore,
@@ -154,14 +200,19 @@ export function makeAnalyzeArtifactTool(
       if (!artifactId) return { ok: false, content: "missing artifactId" };
       const artifact = store.getById(artifactId);
       if (!artifact || artifact.caseId !== caseId) return { ok: false, content: `Artifact ${artifactId} does not exist in this Case.` };
-      if (artifact.status === "analyzed" && artifact.analysis) {
-        options.onChanged?.(artifact, "cached");
-        return { ok: true, content: formatAnalysis(artifact.id, artifact.analysis), meta: { artifactId } };
-      }
-      const analyzer = analyzers.find(artifact, request.analyzerId);
       const previousAttempts = options.attempts?.listByArtifact(artifact.id) ?? [];
+      const plan = planArtifactAnalysis(artifact, analyzers.capabilities(artifact), previousAttempts);
+      if (!request.analyzerId && artifact.status === "analyzed" && artifact.analysis && plan.status !== "ready") {
+        options.onChanged?.(artifact, "cached");
+        return { ok: true, content: `${formatAnalysis(artifact.id, artifact.analysis)}\n${formatAnalysisPlan(plan)}`, meta: { artifactId } };
+      }
+      if (!request.analyzerId && plan.status === "running") {
+        return { ok: false, content: formatAnalysisPlan(plan) };
+      }
+      const selectedAnalyzerId = request.analyzerId ?? plan.recommendedAnalyzerId ?? undefined;
+      const analyzer = analyzers.find(artifact, selectedAnalyzerId);
       const activeSameMethod = previousAttempts.find((attempt) =>
-        attempt.analyzerId === (analyzer?.id ?? request.analyzerId ?? null)
+        attempt.analyzerId === (analyzer?.id ?? selectedAnalyzerId ?? null)
         && attempt.status === "running");
       if (activeSameMethod) {
         return {
@@ -170,29 +221,29 @@ export function makeAnalyzeArtifactTool(
         };
       }
       const previousSameMethod = previousAttempts.find((attempt) =>
-        attempt.analyzerId === (analyzer?.id ?? request.analyzerId ?? null)
-        && ["failed", "unsupported"].includes(attempt.status));
+        attempt.analyzerId === (analyzer?.id ?? selectedAnalyzerId ?? null)
+        && ["succeeded", "failed", "unsupported"].includes(attempt.status));
       if (previousSameMethod && !request.retry) {
         return {
           ok: false,
-          content: `Analyzer ${previousSameMethod.analyzerId ?? "selection"} already ended as ${previousSameMethod.status}: ${previousSameMethod.error ?? "no compatible result"}. Choose another compatible analyzer, resolve the limitation, or set retry=true only after conditions changed.`,
+          content: `Analyzer ${previousSameMethod.analyzerId ?? "selection"} already ended as ${previousSameMethod.status}: ${previousSameMethod.error ?? "its declared coverage was recorded"}. Re-plan, choose another compatible analyzer, or set retry=true only after conditions changed.`,
         };
       }
       if (!analyzer) {
-        const error = request.analyzerId
-          ? `Analyzer ${request.analyzerId} is unavailable or incompatible with format ${artifact.detectedFormat}.`
+        const error = selectedAnalyzerId
+          ? `Analyzer ${selectedAnalyzerId} is unavailable or incompatible with format ${artifact.detectedFormat}.`
           : `No analyzer supports format ${artifact.detectedFormat}.`;
         const attempt = options.attempts?.start({
           caseId,
           runId: options.runId ?? artifact.runId,
           artifactId: artifact.id,
-          analyzerId: request.analyzerId ?? null,
+          analyzerId: selectedAnalyzerId ?? null,
           coverageDimensions: [],
           status: "unsupported",
           error,
         });
         if (attempt) options.onAttemptChanged?.(attempt);
-        const unsupported = store.updateAnalysis(artifact.id, "unsupported", request.analyzerId ?? null, null, error);
+        const unsupported = store.updateAnalysis(artifact.id, "unsupported", selectedAnalyzerId ?? null, null, error);
         if (unsupported) options.onChanged?.(unsupported, "unsupported");
         return {
           ok: false,
@@ -216,7 +267,7 @@ export function makeAnalyzeArtifactTool(
         const analysis = await analyzer.analyze(artifact, absolutePath);
         const analyzed = store.updateAnalysis(artifact.id, "analyzed", analyzer.id, analysis);
         if (attempt) {
-          const completed = options.attempts?.finish(attempt.id, "succeeded");
+          const completed = options.attempts?.finish(attempt.id, "succeeded", null, analysis);
           if (completed) options.onAttemptChanged?.(completed);
         }
         if (analyzed) options.onChanged?.(analyzed, "analyzed");

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ArtifactAnalysisSchema } from "./artifact.js";
 
 export const ArtifactAnalyzerCapabilitySchema = z.object({
   analyzerId: z.string(),
@@ -17,6 +18,7 @@ export const ArtifactAnalysisAttemptSchema = z.object({
   status: z.enum(["running", "succeeded", "failed", "unsupported"]),
   coverageDimensions: z.array(z.enum(["metadata", "text", "object_graph"])),
   error: z.string().nullable(),
+  analysis: ArtifactAnalysisSchema.nullable().default(null),
   startedAt: z.string(),
   finishedAt: z.string().nullable(),
 });

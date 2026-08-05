@@ -125,6 +125,7 @@ export const artifactAnalysisAttempts = sqliteTable("artifact_analysis_attempts"
   status: text("status").notNull(),
   coverageDimensionsJson: text("coverage_dimensions_json").notNull().default("[]"),
   error: text("error"),
+  analysisJson: text("analysis_json"),
   startedAt: text("started_at").notNull(),
   finishedAt: text("finished_at"),
 });

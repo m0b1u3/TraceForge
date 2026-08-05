@@ -281,6 +281,7 @@ function ArtifactEvidence() {
                       <div className="artifact-attempt-row" data-status={attempt.status} key={attempt.id}>
                         <span>{attempt.analyzerId ?? "No compatible analyzer"}</span>
                         <small>{attempt.status}</small>
+                        {attempt.analysis && <p>{attempt.analysis.summary}</p>}
                         {attempt.error && <p>{attempt.error}</p>}
                       </div>
                     ))}

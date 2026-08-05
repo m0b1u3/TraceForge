@@ -10,6 +10,7 @@ const PASSIVE_TOOLS = new Set([
   "recall_case_knowledge",
   "get_validation_workflow_state",
   "list_artifacts",
+  "plan_artifact_analysis",
   "list_identities",
   "list_attack_paths",
   "list_security_reports",

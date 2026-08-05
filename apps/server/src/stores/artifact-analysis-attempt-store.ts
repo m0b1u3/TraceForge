@@ -14,6 +14,7 @@ function rowToAttempt(row: typeof artifactAnalysisAttempts.$inferSelect): Artifa
     status: row.status,
     coverageDimensions: JSON.parse(row.coverageDimensionsJson),
     error: row.error,
+    analysis: row.analysisJson ? JSON.parse(row.analysisJson) : null,
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
   });
@@ -38,6 +39,7 @@ export class ArtifactAnalysisAttemptStore {
       id: `artifact_attempt_${randomUUID()}`,
       status,
       error: input.error ?? null,
+      analysis: null,
       startedAt,
       finishedAt: status === "running" ? null : startedAt,
     });
@@ -50,6 +52,7 @@ export class ArtifactAnalysisAttemptStore {
       status: attempt.status,
       coverageDimensionsJson: JSON.stringify(attempt.coverageDimensions),
       error: attempt.error,
+      analysisJson: null,
       startedAt: attempt.startedAt,
       finishedAt: attempt.finishedAt,
     }).run();
@@ -60,13 +63,19 @@ export class ArtifactAnalysisAttemptStore {
     id: string,
     status: "succeeded" | "failed",
     error: string | null = null,
+    analysis: ArtifactAnalysisAttempt["analysis"] = null,
   ): ArtifactAnalysisAttempt | undefined {
     const current = this.getById(id);
     if (!current) return undefined;
     const finishedAt = new Date().toISOString();
-    this.db.update(artifactAnalysisAttempts).set({ status, error, finishedAt })
+    this.db.update(artifactAnalysisAttempts).set({
+      status,
+      error,
+      analysisJson: analysis ? JSON.stringify(analysis) : null,
+      finishedAt,
+    })
       .where(eq(artifactAnalysisAttempts.id, id)).run();
-    return { ...current, status, error, finishedAt };
+    return { ...current, status, error, analysis, finishedAt };
   }
 
   getById(id: string): ArtifactAnalysisAttempt | undefined {
