@@ -1,6 +1,6 @@
 import { useStore } from "../store.js";
 import { Archive, CaretDown, CaretRight, CheckCircle, Fingerprint, Gauge, LockKey, Robot, Warning, WarningCircle } from "@phosphor-icons/react";
-import { assessArtifactCoverage, type ArtifactConsumption, type Fact } from "@traceforge/shared";
+import { aggregateArtifactAnalysis, type ArtifactConsumption, type Fact } from "@traceforge/shared";
 import { TrafficInspector } from "./inspector/TrafficInspector.js";
 import { FindingInspector, ToolEventInspector } from "./inspector/EvidenceInspector.js";
 import { TaskInspector, TimelineEventInspector } from "./inspector/GraphInspectors.js";
@@ -200,11 +200,10 @@ function ArtifactEvidence() {
       </h3>
       <div className="artifact-evidence-list">
         {[...artifacts].reverse().slice(0, 5).map((artifact) => {
-          const analysis = artifact.analysis;
-          const coverageAssessment = assessArtifactCoverage(artifact);
-          const complete = artifact.status === "analyzed" && analysis;
           const consumption = consumptions.find((item) => item.artifactId === artifact.id);
           const attempts = analysisAttempts.filter((item) => item.artifactId === artifact.id);
+          const analysis = aggregateArtifactAnalysis(artifact, attempts);
+          const complete = analysis.quality === "substantial";
           return (
             <details className="artifact-evidence-item" key={artifact.id}>
               <summary>
@@ -216,11 +215,11 @@ function ArtifactEvidence() {
                   <small>{artifact.detectedFormat} · {artifactSize(artifact.byteSize)} · {artifact.status}</small>
                 </span>
                 <span className="artifact-summary-meta">
-                  <span className="artifact-coverage-quality" data-quality={coverageAssessment.quality}>
-                    {coverageAssessment.quality}
+                  <span className="artifact-coverage-quality" data-quality={analysis.quality}>
+                    {analysis.quality}
                   </span>
                   {attempts.length > 0 && <span className="artifact-attempt-count">{attempts.length} attempt{attempts.length === 1 ? "" : "s"}</span>}
-                  {analysis && <span className="artifact-finding-count">{analysis.findings.length} evidence</span>}
+                  <span className="artifact-finding-count">{analysis.findings.length} evidence</span>
                   {consumption && (
                     <span
                       className="artifact-consumption-state"
@@ -241,38 +240,35 @@ function ArtifactEvidence() {
               <div className="artifact-evidence-detail">
                 <dl className="artifact-metadata">
                   <div><dt>SHA256</dt><dd><code>{artifact.sha256}</code></dd></div>
-                  <div><dt>Analyzer</dt><dd>{artifact.analyzerId ?? "Not available"}</dd></div>
+                  <div><dt>Analyzers</dt><dd>{analysis.analyzerIds.join(", ") || "Not available"}</dd></div>
                   {consumption && <div><dt>Use state</dt><dd>{artifactConsumptionLabel(consumption)}</dd></div>}
                   {consumption && <div><dt>Task</dt><dd><code>{consumption.taskId}</code></dd></div>}
                   {consumption?.usedByTool && <div><dt>Used by</dt><dd><code>{consumption.usedByTool}</code></dd></div>}
                   {consumption?.status === "replan_requested" && <div><dt>Review</dt><dd>{consumption.missedActions} unrelated active actions observed</dd></div>}
-                  {analysis && <div><dt>Coverage</dt><dd>{[
-                    analysis.coverage.metadata && "metadata",
-                    analysis.coverage.text && "text",
-                    analysis.coverage.objectGraph && "object graph",
-                  ].filter(Boolean).join(" · ") || "none"}</dd></div>}
-                  <div><dt>Coverage quality</dt><dd>{coverageAssessment.quality}</dd></div>
-                  {coverageAssessment.missingDimensions.length > 0 && (
-                    <div><dt>Missing</dt><dd>{coverageAssessment.missingDimensions.join(", ")}</dd></div>
+                  <div><dt>Coverage</dt><dd>{analysis.coveredDimensions.join(" · ") || "none"}</dd></div>
+                  <div><dt>Coverage quality</dt><dd>{analysis.quality}</dd></div>
+                  {analysis.missingDimensions.length > 0 && (
+                    <div><dt>Missing</dt><dd>{analysis.missingDimensions.join(", ")}</dd></div>
                   )}
                   <div><dt>Negative conclusion</dt><dd>Not supported by this analysis alone</dd></div>
                 </dl>
-                {analysis?.findings.map((finding, index) => (
+                {analysis.findings.map((finding, index) => (
                   <div className="artifact-finding" key={`${finding.kind}-${finding.label}-${index}`}>
                     <span>{finding.kind}</span>
                     <strong>{finding.label}</strong>
                     <code>{finding.value}</code>
+                    <small>Sources: {finding.analyzerIds.join(", ")}</small>
                     {finding.evidence.map((evidence, evidenceIndex) => (
                       <small key={evidenceIndex}>{evidence.relationship ?? evidence.path ?? evidence.objectId ?? evidence.detail}</small>
                     ))}
                   </div>
                 ))}
-                {analysis?.findings.length === 0 && <p className="artifact-empty-result">No candidate recovered by this analyzer. This is not proof of absence.</p>}
-                {(analysis?.coverage.limitations ?? (artifact.error ? [artifact.error] : [])).map((limitation) => (
-                  <p className="artifact-limitation" key={limitation}><WarningCircle size={12} />{limitation}</p>
+                {analysis.findings.length === 0 && analysis.analyzerIds.length > 0 && <p className="artifact-empty-result">No candidate recovered by the completed analyzers. This is not proof of absence.</p>}
+                {analysis.limitations.map((limitation) => (
+                  <p className="artifact-limitation" key={`${limitation.analyzerId}-${limitation.detail}`}><WarningCircle size={12} /><span><strong>{limitation.analyzerId}</strong> · {limitation.detail}</span></p>
                 ))}
-                {coverageAssessment.followUpRequired && (
-                  <p className="artifact-follow-up"><WarningCircle size={12} />{coverageAssessment.nextAction}</p>
+                {analysis.followUpRequired && (
+                  <p className="artifact-follow-up"><WarningCircle size={12} />{analysis.nextAction}</p>
                 )}
                 {attempts.length > 0 && (
                   <div className="artifact-attempt-history" aria-label="Analysis attempts">

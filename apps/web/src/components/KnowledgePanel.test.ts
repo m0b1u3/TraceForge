@@ -125,6 +125,23 @@ describe("KnowledgePanel", () => {
         },
         startedAt: "now",
         finishedAt: "later",
+      }, {
+        id: "attempt_2",
+        caseId: "case_1",
+        runId: "run_1",
+        artifactId: "artifact_1",
+        analyzerId: "relationship-analyzer",
+        status: "succeeded",
+        coverageDimensions: ["object_graph"],
+        error: null,
+        analysis: {
+          analyzerId: "relationship-analyzer",
+          summary: "Relationships inspected.",
+          findings: [],
+          coverage: { metadata: false, text: false, objectGraph: true, limitations: [] },
+        },
+        startedAt: "later",
+        finishedAt: "latest",
       }],
     });
 
@@ -132,14 +149,15 @@ describe("KnowledgePanel", () => {
     const artifact = panel.querySelector<HTMLDetailsElement>(".artifact-evidence-item");
     expect(artifact?.textContent).toContain("analysis.bin");
     expect(artifact?.textContent).toContain("Used");
-    expect(artifact?.textContent).toContain("incomplete");
-    expect(artifact?.textContent).toContain("1 attempt");
+    expect(artifact?.textContent).toContain("substantial");
+    expect(artifact?.textContent).toContain("2 attempts");
 
     artifact?.setAttribute("open", "");
     expect(artifact?.textContent).toContain("task_1");
     expect(artifact?.textContent).toContain("record_fact");
     expect(artifact?.textContent).toContain("Not supported by this analysis alone");
     expect(artifact?.textContent).toContain("generic-binary");
+    expect(artifact?.textContent).toContain("relationship-analyzer");
   });
 
   it("keeps internal failure memory out of security evidence", () => {

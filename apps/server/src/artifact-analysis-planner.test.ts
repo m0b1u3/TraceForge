@@ -53,4 +53,27 @@ describe("artifact analysis planner", () => {
       recommendedAnalyzerId: null,
     });
   });
+
+  it("completes from cumulative attempt coverage even when the latest artifact result is partial", () => {
+    const textAnalysis = {
+      analyzerId: "text-analyzer", summary: "Text inspected.", findings: [],
+      coverage: { metadata: false, text: true, objectGraph: false, limitations: [] },
+    };
+    const graphAnalysis = {
+      analyzerId: "graph-analyzer", summary: "Graph inspected.", findings: [],
+      coverage: { metadata: false, text: false, objectGraph: true, limitations: [] },
+    };
+    const latestArtifact = { ...artifact, analyzerId: "graph-analyzer", analysis: graphAnalysis };
+    const attempts: ArtifactAnalysisAttempt[] = [
+      successfulAttempt,
+      { ...successfulAttempt, id: "attempt_2", analyzerId: "text-analyzer", coverageDimensions: ["text"], analysis: textAnalysis },
+      { ...successfulAttempt, id: "attempt_3", analyzerId: "graph-analyzer", coverageDimensions: ["object_graph"], analysis: graphAnalysis },
+    ];
+
+    expect(planArtifactAnalysis(latestArtifact, capabilities, attempts)).toMatchObject({
+      status: "complete",
+      missingDimensions: [],
+      recommendedAnalyzerId: null,
+    });
+  });
 });

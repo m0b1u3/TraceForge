@@ -1,4 +1,4 @@
-import { assessArtifactCoverage, type ArtifactAnalysisAttempt, type ArtifactAnalyzerCapability, type ArtifactRecord } from "@traceforge/shared";
+import { aggregateArtifactAnalysis, type ArtifactAnalysisAttempt, type ArtifactAnalyzerCapability, type ArtifactRecord } from "@traceforge/shared";
 
 export interface ArtifactAnalysisCandidate {
   analyzerId: string;
@@ -21,10 +21,8 @@ export function planArtifactAnalysis(
   capabilities: ArtifactAnalyzerCapability[],
   attempts: ArtifactAnalysisAttempt[],
 ): ArtifactAnalysisPlan {
-  const assessment = assessArtifactCoverage(artifact);
-  const missingDimensions = artifact.analysis
-    ? assessment.missingDimensions
-    : ["metadata", "text", "object_graph"] as ArtifactAnalyzerCapability["coverageDimensions"];
+  const aggregate = aggregateArtifactAnalysis(artifact, attempts);
+  const missingDimensions = aggregate.missingDimensions;
   const running = attempts.find((attempt) => attempt.status === "running");
   if (running) {
     return {
@@ -36,14 +34,14 @@ export function planArtifactAnalysis(
       reason: `Analysis attempt ${running.id} is still running with ${running.analyzerId ?? "an unresolved analyzer"}.`,
     };
   }
-  if (assessment.quality === "substantial") {
+  if (aggregate.quality === "substantial") {
     return {
       artifactId: artifact.id,
       status: "complete",
       missingDimensions: [],
       recommendedAnalyzerId: null,
       candidates: [],
-      reason: "All declared coverage dimensions are already satisfied.",
+      reason: "All cumulative coverage dimensions are already satisfied across successful analysis attempts.",
     };
   }
 
