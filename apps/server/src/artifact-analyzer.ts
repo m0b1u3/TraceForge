@@ -1,10 +1,12 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ArtifactAnalysis, ArtifactFinding, ArtifactRecord } from "@traceforge/shared";
+import type { ArtifactAnalysis, ArtifactAnalyzerCapability, ArtifactFinding, ArtifactRecord } from "@traceforge/shared";
 
 export interface ArtifactAnalyzer {
   id: string;
+  coverageDimensions?: ArtifactAnalyzerCapability["coverageDimensions"];
+  description?: string;
   supports(artifact: ArtifactRecord): boolean;
   analyze(artifact: ArtifactRecord, absolutePath: string): Promise<ArtifactAnalysis>;
 }
@@ -16,12 +18,22 @@ export class ArtifactAnalyzerRegistry {
     this.analyzers.push(analyzer);
   }
 
-  find(artifact: ArtifactRecord): ArtifactAnalyzer | undefined {
-    return this.analyzers.find((analyzer) => analyzer.supports(artifact));
+  find(artifact: ArtifactRecord, analyzerId?: string): ArtifactAnalyzer | undefined {
+    return this.analyzers.find((analyzer) =>
+      (!analyzerId || analyzer.id === analyzerId) && analyzer.supports(artifact));
   }
 
   list(): string[] {
     return this.analyzers.map((analyzer) => analyzer.id);
+  }
+
+  capabilities(artifact: ArtifactRecord): ArtifactAnalyzerCapability[] {
+    return this.analyzers.map((analyzer) => ({
+      analyzerId: analyzer.id,
+      compatible: analyzer.supports(artifact),
+      coverageDimensions: analyzer.coverageDimensions ?? [],
+      description: analyzer.description ?? "Structured artifact analyzer.",
+    }));
   }
 }
 
@@ -193,6 +205,8 @@ async function inspectSecurityUsers(port: number): Promise<ArtifactFinding[]> {
 
 export class JhatHprofAnalyzer implements ArtifactAnalyzer {
   readonly id = "jhat-hprof-object-graph";
+  readonly coverageDimensions: ArtifactAnalyzerCapability["coverageDimensions"] = ["metadata", "object_graph"];
+  readonly description = "Inspects supported Java object relationships and metadata.";
 
   supports(artifact: ArtifactRecord): boolean {
     return artifact.detectedFormat === "java-hprof";

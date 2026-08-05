@@ -3,8 +3,9 @@ import { createReadStream } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { ToolDescriptor } from "@traceforge/extension";
-import type { ArtifactRecord } from "@traceforge/shared";
+import type { ArtifactAnalysisAttempt, ArtifactRecord } from "@traceforge/shared";
 import type { ArtifactAnalyzerRegistry } from "./artifact-analyzer.js";
+import type { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
 import type { ArtifactStore } from "./stores/artifact-store.js";
 
 export type ArtifactChangeReason = "cached" | "analyzing" | "analyzed" | "unsupported" | "failed";
@@ -88,7 +89,12 @@ function formatAnalysis(artifactId: string, analysis: NonNullable<ReturnType<Art
   ].join("\n");
 }
 
-export function makeListArtifactsTool(caseId: string, store: ArtifactStore): ToolDescriptor {
+export function makeListArtifactsTool(
+  caseId: string,
+  store: ArtifactStore,
+  analyzers?: ArtifactAnalyzerRegistry,
+  attempts?: ArtifactAnalysisAttemptStore,
+): ToolDescriptor {
   return {
     name: "list_artifacts",
     description: "List persistent artifacts acquired in this Case, including hash, format, analysis status, and coverage. Use this before repeating a download or claiming an artifact was not acquired.",
@@ -100,8 +106,15 @@ export function makeListArtifactsTool(caseId: string, store: ArtifactStore): Too
       if (records.length === 0) return { ok: true, content: "No artifacts are recorded for this Case." };
       return {
         ok: true,
-        content: records.map((artifact) =>
-          `${artifact.id} [${artifact.status}; format=${artifact.detectedFormat}; bytes=${artifact.byteSize}; sha256=${artifact.sha256}] ${artifact.relativePath}${artifact.analyzerId ? `; analyzer=${artifact.analyzerId}` : ""}${artifact.error ? `; error=${artifact.error}` : ""}`).join("\n"),
+        content: records.map((artifact) => {
+          const compatible = analyzers?.capabilities(artifact).filter((item) => item.compatible) ?? [];
+          const history = attempts?.listByArtifact(artifact.id) ?? [];
+          return [
+            `${artifact.id} [${artifact.status}; format=${artifact.detectedFormat}; bytes=${artifact.byteSize}; sha256=${artifact.sha256}] ${artifact.relativePath}${artifact.analyzerId ? `; analyzer=${artifact.analyzerId}` : ""}${artifact.error ? `; error=${artifact.error}` : ""}`,
+            `compatibleAnalyzers=${compatible.map((item) => `${item.analyzerId}(${item.coverageDimensions.join(",") || "declared coverage unavailable"})`).join(" | ") || "none"}`,
+            `attempts=${history.length === 0 ? "none" : history.slice(0, 5).map((attempt) => `${attempt.analyzerId ?? "unresolved"}:${attempt.status}${attempt.error ? `(${attempt.error})` : ""}`).join(" | ")}`,
+          ].join("\n");
+        }).join("\n\n"),
       };
     },
   };
@@ -112,14 +125,23 @@ export function makeAnalyzeArtifactTool(
   workspaceRoot: string,
   store: ArtifactStore,
   analyzers: ArtifactAnalyzerRegistry,
-  onChanged?: (artifact: ArtifactRecord, reason: ArtifactChangeReason) => void,
+  options: {
+    onChanged?: (artifact: ArtifactRecord, reason: ArtifactChangeReason) => void;
+    attempts?: ArtifactAnalysisAttemptStore;
+    runId?: string | null;
+    onAttemptChanged?: (attempt: ArtifactAnalysisAttempt) => void;
+  } = {},
 ): ToolDescriptor {
   return {
     name: "analyze_artifact",
     description: "Analyze one recorded artifact with a compatible structured analyzer. Returns explicit coverage, limitations, recovered values, and traceable object/file relationships. A failed or unsupported analysis must not be converted into a negative content conclusion.",
     inputSchema: {
       type: "object",
-      properties: { artifactId: { type: "string" } },
+      properties: {
+        artifactId: { type: "string" },
+        analyzerId: { type: "string" },
+        retry: { type: "boolean" },
+      },
       required: ["artifactId"],
     },
     risk: "normal",
@@ -127,37 +149,86 @@ export function makeAnalyzeArtifactTool(
     executionMode: "serial",
     timeoutMs: 120_000,
     execute: async (input) => {
-      const artifactId = (input as { artifactId?: string }).artifactId;
+      const request = input as { artifactId?: string; analyzerId?: string; retry?: boolean };
+      const artifactId = request.artifactId;
       if (!artifactId) return { ok: false, content: "missing artifactId" };
       const artifact = store.getById(artifactId);
       if (!artifact || artifact.caseId !== caseId) return { ok: false, content: `Artifact ${artifactId} does not exist in this Case.` };
       if (artifact.status === "analyzed" && artifact.analysis) {
-        onChanged?.(artifact, "cached");
+        options.onChanged?.(artifact, "cached");
         return { ok: true, content: formatAnalysis(artifact.id, artifact.analysis), meta: { artifactId } };
       }
-      const analyzer = analyzers.find(artifact);
-      if (!analyzer) {
-        const unsupported = store.updateAnalysis(artifact.id, "unsupported", null, null, `No analyzer supports format ${artifact.detectedFormat}.`);
-        if (unsupported) onChanged?.(unsupported, "unsupported");
+      const analyzer = analyzers.find(artifact, request.analyzerId);
+      const previousAttempts = options.attempts?.listByArtifact(artifact.id) ?? [];
+      const activeSameMethod = previousAttempts.find((attempt) =>
+        attempt.analyzerId === (analyzer?.id ?? request.analyzerId ?? null)
+        && attempt.status === "running");
+      if (activeSameMethod) {
         return {
           ok: false,
-          content: `Artifact ${artifact.id} format=${artifact.detectedFormat} has no compatible analyzer. Acquisition is verified, content is not. Do not infer absence from this result.`,
+          content: `Analyzer ${activeSameMethod.analyzerId ?? "selection"} already has a running attempt ${activeSameMethod.id}. Wait for that attempt instead of starting another one.`,
+        };
+      }
+      const previousSameMethod = previousAttempts.find((attempt) =>
+        attempt.analyzerId === (analyzer?.id ?? request.analyzerId ?? null)
+        && ["failed", "unsupported"].includes(attempt.status));
+      if (previousSameMethod && !request.retry) {
+        return {
+          ok: false,
+          content: `Analyzer ${previousSameMethod.analyzerId ?? "selection"} already ended as ${previousSameMethod.status}: ${previousSameMethod.error ?? "no compatible result"}. Choose another compatible analyzer, resolve the limitation, or set retry=true only after conditions changed.`,
+        };
+      }
+      if (!analyzer) {
+        const error = request.analyzerId
+          ? `Analyzer ${request.analyzerId} is unavailable or incompatible with format ${artifact.detectedFormat}.`
+          : `No analyzer supports format ${artifact.detectedFormat}.`;
+        const attempt = options.attempts?.start({
+          caseId,
+          runId: options.runId ?? artifact.runId,
+          artifactId: artifact.id,
+          analyzerId: request.analyzerId ?? null,
+          coverageDimensions: [],
+          status: "unsupported",
+          error,
+        });
+        if (attempt) options.onAttemptChanged?.(attempt);
+        const unsupported = store.updateAnalysis(artifact.id, "unsupported", request.analyzerId ?? null, null, error);
+        if (unsupported) options.onChanged?.(unsupported, "unsupported");
+        return {
+          ok: false,
+          content: `${error} Acquisition is verified, content is not. Do not infer absence from this result.`,
         };
       }
       const caseRoot = resolve(workspaceRoot, "data/cases", caseId);
       const absolutePath = resolve(caseRoot, artifact.relativePath);
       if (!absolutePath.startsWith(caseRoot + sep)) return { ok: false, content: "artifact path escapes Case workspace" };
+      const attempt = options.attempts?.start({
+        caseId,
+        runId: options.runId ?? artifact.runId,
+        artifactId: artifact.id,
+        analyzerId: analyzer.id,
+        coverageDimensions: analyzer.coverageDimensions ?? [],
+      });
+      if (attempt) options.onAttemptChanged?.(attempt);
       const analyzing = store.updateAnalysis(artifact.id, "analyzing", analyzer.id, null);
-      if (analyzing) onChanged?.(analyzing, "analyzing");
+      if (analyzing) options.onChanged?.(analyzing, "analyzing");
       try {
         const analysis = await analyzer.analyze(artifact, absolutePath);
         const analyzed = store.updateAnalysis(artifact.id, "analyzed", analyzer.id, analysis);
-        if (analyzed) onChanged?.(analyzed, "analyzed");
+        if (attempt) {
+          const completed = options.attempts?.finish(attempt.id, "succeeded");
+          if (completed) options.onAttemptChanged?.(completed);
+        }
+        if (analyzed) options.onChanged?.(analyzed, "analyzed");
         return { ok: true, content: formatAnalysis(artifact.id, analysis), meta: { artifactId, analyzerId: analyzer.id } };
       } catch (error) {
         const message = (error as Error).message;
+        if (attempt) {
+          const completed = options.attempts?.finish(attempt.id, "failed", message);
+          if (completed) options.onAttemptChanged?.(completed);
+        }
         const failed = store.updateAnalysis(artifact.id, "failed", analyzer.id, null, message);
-        if (failed) onChanged?.(failed, "failed");
+        if (failed) options.onChanged?.(failed, "failed");
         return {
           ok: false,
           content: `Artifact ${artifact.id} analysis failed with ${analyzer.id}: ${message}. Acquisition remains verified; content conclusions remain unresolved.`,

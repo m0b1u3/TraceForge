@@ -62,6 +62,13 @@ export function createDb(path: string) {
     );
     CREATE INDEX IF NOT EXISTS idx_artifacts_case ON artifacts(case_id, created_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_case_sha ON artifacts(case_id, sha256);
+    CREATE TABLE IF NOT EXISTS artifact_analysis_attempts (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, artifact_id TEXT NOT NULL,
+      analyzer_id TEXT, status TEXT NOT NULL, coverage_dimensions_json TEXT NOT NULL DEFAULT '[]',
+      error TEXT, started_at TEXT NOT NULL, finished_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_artifact_analysis_attempts_artifact ON artifact_analysis_attempts(artifact_id, started_at);
+    CREATE INDEX IF NOT EXISTS idx_artifact_analysis_attempts_case ON artifact_analysis_attempts(case_id, started_at);
     CREATE TABLE IF NOT EXISTS facts (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL,
       source_run_id TEXT,

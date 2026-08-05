@@ -116,6 +116,19 @@ export const artifacts = sqliteTable("artifacts", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const artifactAnalysisAttempts = sqliteTable("artifact_analysis_attempts", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  runId: text("run_id"),
+  artifactId: text("artifact_id").notNull(),
+  analyzerId: text("analyzer_id"),
+  status: text("status").notNull(),
+  coverageDimensionsJson: text("coverage_dimensions_json").notNull().default("[]"),
+  error: text("error"),
+  startedAt: text("started_at").notNull(),
+  finishedAt: text("finished_at"),
+});
+
 export const facts = sqliteTable("facts", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

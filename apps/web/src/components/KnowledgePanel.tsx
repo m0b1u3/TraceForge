@@ -186,9 +186,10 @@ export function artifactConsumptionLabel(consumption?: ArtifactConsumption): str
 }
 
 function ArtifactEvidence() {
-  const { artifacts, consumptions } = useStore(useShallow((state) => ({
+  const { artifacts, consumptions, analysisAttempts } = useStore(useShallow((state) => ({
     artifacts: state.artifacts,
     consumptions: state.artifactConsumptions,
+    analysisAttempts: state.artifactAnalysisAttempts,
   })));
   if (artifacts.length === 0) return null;
   return (
@@ -203,6 +204,7 @@ function ArtifactEvidence() {
           const coverageAssessment = assessArtifactCoverage(artifact);
           const complete = artifact.status === "analyzed" && analysis;
           const consumption = consumptions.find((item) => item.artifactId === artifact.id);
+          const attempts = analysisAttempts.filter((item) => item.artifactId === artifact.id);
           return (
             <details className="artifact-evidence-item" key={artifact.id}>
               <summary>
@@ -217,6 +219,7 @@ function ArtifactEvidence() {
                   <span className="artifact-coverage-quality" data-quality={coverageAssessment.quality}>
                     {coverageAssessment.quality}
                   </span>
+                  {attempts.length > 0 && <span className="artifact-attempt-count">{attempts.length} attempt{attempts.length === 1 ? "" : "s"}</span>}
                   {analysis && <span className="artifact-finding-count">{analysis.findings.length} evidence</span>}
                   {consumption && (
                     <span
@@ -270,6 +273,18 @@ function ArtifactEvidence() {
                 ))}
                 {coverageAssessment.followUpRequired && (
                   <p className="artifact-follow-up"><WarningCircle size={12} />{coverageAssessment.nextAction}</p>
+                )}
+                {attempts.length > 0 && (
+                  <div className="artifact-attempt-history" aria-label="Analysis attempts">
+                    <strong>Analysis attempts</strong>
+                    {attempts.slice(0, 5).map((attempt) => (
+                      <div className="artifact-attempt-row" data-status={attempt.status} key={attempt.id}>
+                        <span>{attempt.analyzerId ?? "No compatible analyzer"}</span>
+                        <small>{attempt.status}</small>
+                        {attempt.error && <p>{attempt.error}</p>}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </details>

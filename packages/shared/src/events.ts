@@ -2,6 +2,7 @@ import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, Acti
 import type { ValidationWorkflowSnapshot } from "./validation-workflow.js";
 import type { ArtifactRecord } from "./artifact.js";
 import type { ArtifactConsumption } from "./artifact-consumption.js";
+import type { ArtifactAnalysisAttempt } from "./artifact-analysis-attempt.js";
 
 export type RuntimeEvent =
   | { type: "case_created"; case: Case }
@@ -20,6 +21,7 @@ export type RuntimeEvent =
   | { type: "fact_updated"; fact: Fact }
   | { type: "artifact_updated"; artifact: ArtifactRecord }
   | { type: "artifact_consumption_snapshot"; caseId: string; consumptions: ArtifactConsumption[] }
+  | { type: "artifact_analysis_attempt_updated"; attempt: ArtifactAnalysisAttempt }
   | { type: "task_created"; task: Task }
   | { type: "task_updated"; task: Task }
   | { type: "hypothesis_created"; hypothesis: Hypothesis; transition: HypothesisTransition }

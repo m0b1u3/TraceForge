@@ -13,6 +13,7 @@ function resetStore() {
     facts: [],
     artifacts: [],
     artifactConsumptions: [],
+    artifactAnalysisAttempts: [],
     hypotheses: [],
     tasks: [],
     timeline: [],
@@ -177,6 +178,34 @@ describe("artifact consumption realtime state", () => {
       consumptions: [consumption],
     });
     expect(useStore.getState().artifactConsumptions).toEqual([consumption]);
+  });
+});
+
+describe("artifact analysis attempt realtime state", () => {
+  beforeEach(() => resetStore());
+
+  it("inserts and then updates one persistent analysis attempt", () => {
+    const attempt = {
+      id: "attempt_1",
+      caseId: "case_1",
+      runId: "run_1",
+      artifactId: "artifact_1",
+      analyzerId: "structured-analyzer",
+      status: "running" as const,
+      coverageDimensions: ["metadata"] as const,
+      error: null,
+      startedAt: "now",
+      finishedAt: null,
+    };
+    useStore.getState().handleRuntimeEvent({ type: "artifact_analysis_attempt_updated", attempt: { ...attempt, coverageDimensions: [...attempt.coverageDimensions] } });
+    useStore.getState().handleRuntimeEvent({
+      type: "artifact_analysis_attempt_updated",
+      attempt: { ...attempt, coverageDimensions: [...attempt.coverageDimensions], status: "failed", error: "Analyzer exited.", finishedAt: "later" },
+    });
+
+    expect(useStore.getState().artifactAnalysisAttempts).toEqual([
+      expect.objectContaining({ id: "attempt_1", status: "failed", error: "Analyzer exited." }),
+    ]);
   });
 });
 

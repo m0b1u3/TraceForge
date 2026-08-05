@@ -108,6 +108,18 @@ describe("KnowledgePanel", () => {
         updatedAt: "later",
         lastEventId: "timeline_2",
       }],
+      artifactAnalysisAttempts: [{
+        id: "attempt_1",
+        caseId: "case_1",
+        runId: "run_1",
+        artifactId: "artifact_1",
+        analyzerId: "generic-binary",
+        status: "succeeded",
+        coverageDimensions: ["metadata", "text"],
+        error: null,
+        startedAt: "now",
+        finishedAt: "later",
+      }],
     });
 
     const panel = renderPanel();
@@ -115,11 +127,13 @@ describe("KnowledgePanel", () => {
     expect(artifact?.textContent).toContain("analysis.bin");
     expect(artifact?.textContent).toContain("Used");
     expect(artifact?.textContent).toContain("incomplete");
+    expect(artifact?.textContent).toContain("1 attempt");
 
     artifact?.setAttribute("open", "");
     expect(artifact?.textContent).toContain("task_1");
     expect(artifact?.textContent).toContain("record_fact");
     expect(artifact?.textContent).toContain("Not supported by this analysis alone");
+    expect(artifact?.textContent).toContain("generic-binary");
   });
 
   it("keeps internal failure memory out of security evidence", () => {

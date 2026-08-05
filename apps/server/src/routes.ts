@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
-import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, artifacts, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, observerStrategyAudits, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions, validationConsensus } from "./db/schema.js";
+import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, artifacts, artifactAnalysisAttempts, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, observerStrategyAudits, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions, validationConsensus } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -94,6 +94,7 @@ import {
 } from "./investigation-runtime-policy.js";
 import { reconcileUnsupportedEndpointFacts } from "./endpoint-fact-reconciliation.js";
 import { ArtifactStore } from "./stores/artifact-store.js";
+import { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
 import { ArtifactAnalyzerRegistry, JhatHprofAnalyzer } from "./artifact-analyzer.js";
 import { makeAnalyzeArtifactTool, makeListArtifactsTool, registerExistingCaseArtifacts } from "./artifact-tools.js";
 import { connectArtifactEvidenceLifecycle } from "./artifact-evidence-lifecycle.js";
@@ -123,6 +124,8 @@ export function registerRoutes(
   const cases = new CaseStore(db);
   const traffic = new TrafficStore(db);
   const artifactStore = new ArtifactStore(db);
+  const artifactAttemptStore = new ArtifactAnalysisAttemptStore(db);
+  artifactAttemptStore.recoverInterrupted();
   const artifactAnalyzers = new ArtifactAnalyzerRegistry();
   artifactAnalyzers.register(new JhatHprofAnalyzer());
   const factStore = new FactStore(db);
@@ -480,6 +483,7 @@ export function registerRoutes(
     // Cascade delete all case-associated data
     db.delete(trafficEntries).where(eq(trafficEntries.caseId, id)).run();
     db.delete(artifacts).where(eq(artifacts.caseId, id)).run();
+    db.delete(artifactAnalysisAttempts).where(eq(artifactAnalysisAttempts.caseId, id)).run();
     db.delete(identityContexts).where(eq(identityContexts.caseId, id)).run();
     db.delete(attackPaths).where(eq(attackPaths.caseId, id)).run();
     db.delete(securityReports).where(eq(securityReports.caseId, id)).run();
@@ -608,6 +612,12 @@ export function registerRoutes(
     const { id } = req.params as { id: string };
     if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
     return artifactStore.listByCase(id);
+  });
+
+  app.get("/api/cases/:id/artifact-analysis-attempts", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    return artifactAttemptStore.listByCase(id);
   });
 
   app.get("/api/cases/:id/artifact-consumptions", async (req, reply) => {
@@ -1479,44 +1489,49 @@ export function registerRoutes(
         return record;
       },
     }));
-    registry.register(makeListArtifactsTool(id, artifactStore));
-    registry.register(makeAnalyzeArtifactTool(id, projectRoot, artifactStore, artifactAnalyzers, (artifact, reason) => {
-      bus.emit({ type: "artifact_updated", artifact });
-      if (reason === "analyzing") return;
-      if (reason === "analyzed" && artifact.analysis) {
-        const entry = timelineStore.append(id, "artifact_analyzed", artifact.analysis.summary, artifact.id, runId);
-        bus.emit({ type: "timeline_appended", entry });
-      } else if (reason === "unsupported" || reason === "failed") {
-        const entry = timelineStore.append(
-          id,
-          "artifact_analysis_unavailable",
-          `Artifact=${artifact.id}; status=${artifact.status}; limitation=${artifact.error ?? "no compatible analysis result"}`,
-          artifact.id,
+    registry.register(makeListArtifactsTool(id, artifactStore, artifactAnalyzers, artifactAttemptStore));
+    registry.register(makeAnalyzeArtifactTool(id, projectRoot, artifactStore, artifactAnalyzers, {
+      attempts: artifactAttemptStore,
+      runId,
+      onAttemptChanged: (attempt) => bus.emit({ type: "artifact_analysis_attempt_updated", attempt }),
+      onChanged: (artifact, reason) => {
+        bus.emit({ type: "artifact_updated", artifact });
+        if (reason === "analyzing") return;
+        if (reason === "analyzed" && artifact.analysis) {
+          const entry = timelineStore.append(id, "artifact_analyzed", artifact.analysis.summary, artifact.id, runId);
+          bus.emit({ type: "timeline_appended", entry });
+        } else if (reason === "unsupported" || reason === "failed") {
+          const entry = timelineStore.append(
+            id,
+            "artifact_analysis_unavailable",
+            `Artifact=${artifact.id}; status=${artifact.status}; limitation=${artifact.error ?? "no compatible analysis result"}`,
+            artifact.id,
+            runId,
+          );
+          bus.emit({ type: "timeline_appended", entry });
+        }
+        syncArtifactEvidenceFacts(artifact);
+        const artifactFacts = factStore.listByCase(id).filter((fact) =>
+          fact.source.type === "artifact_analysis" && fact.source.ref === artifact.id);
+        const lifecycle = connectArtifactEvidenceLifecycle({
           runId,
-        );
-        bus.emit({ type: "timeline_appended", entry });
-      }
-      syncArtifactEvidenceFacts(artifact);
-      const artifactFacts = factStore.listByCase(id).filter((fact) =>
-        fact.source.type === "artifact_analysis" && fact.source.ref === artifact.id);
-      const lifecycle = connectArtifactEvidenceLifecycle({
-        runId,
-        artifact,
-        artifactFacts,
-        facts: factStore,
-        tasks: taskStore,
-        timeline: timelineStore,
-        emit: (event) => bus.emit(event),
-      });
-      if (lifecycle.runtimeMessage && lifecycle.task) {
-        const trackedEvidence = artifactEvidenceForConsumption(lifecycle.facts);
-        const refs = trackedEvidence.map((item) => item.ref);
-        for (const ref of refs) availableKnowledge.set(`${ref.kind}:${ref.id}`, ref);
-        knowledgeUsageStore.recordInjected(id, runId, refs);
-        evidenceConsumptionTracker.register(lifecycle.task.id, trackedEvidence);
-        runs.addRuntimeMessage(runId, lifecycle.runtimeMessage);
-        emitArtifactConsumptionSnapshot(id);
-      }
+          artifact,
+          artifactFacts,
+          facts: factStore,
+          tasks: taskStore,
+          timeline: timelineStore,
+          emit: (event) => bus.emit(event),
+        });
+        if (lifecycle.runtimeMessage && lifecycle.task) {
+          const trackedEvidence = artifactEvidenceForConsumption(lifecycle.facts);
+          const refs = trackedEvidence.map((item) => item.ref);
+          for (const ref of refs) availableKnowledge.set(`${ref.kind}:${ref.id}`, ref);
+          knowledgeUsageStore.recordInjected(id, runId, refs);
+          evidenceConsumptionTracker.register(lifecycle.task.id, trackedEvidence);
+          runs.addRuntimeMessage(runId, lifecycle.runtimeMessage);
+          emitArtifactConsumptionSnapshot(id);
+        }
+      },
     }));
 
     // 若该 case 有共享浏览器会话，把浏览器工具纳入 agent 工具集
