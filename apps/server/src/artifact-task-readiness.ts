@@ -2,6 +2,7 @@ import {
   aggregateArtifactAnalysis,
   type ArtifactAnalysisAttempt,
   type ArtifactRecord,
+  type ArtifactLimitationDisposition,
   type Fact,
   type Task,
 } from "@traceforge/shared";
@@ -12,6 +13,7 @@ export interface ArtifactTaskReadinessItem {
   quality: ReturnType<typeof aggregateArtifactAnalysis>["quality"];
   missingDimensions: ReturnType<typeof aggregateArtifactAnalysis>["missingDimensions"];
   hasTraceablePositiveEvidence: boolean;
+  acceptedLimitationId: string | null;
 }
 
 export interface ArtifactTaskReadiness extends TaskCompletionGateResult {
@@ -34,10 +36,11 @@ function isTraceablePositiveArtifactEvidence(fact: Fact, artifactId: string): bo
 }
 
 export function evaluateArtifactTaskReadiness(input: {
-  task: Pick<Task, "relatedFacts">;
+  task: Pick<Task, "id" | "relatedFacts">;
   facts: Fact[];
   artifacts: ArtifactRecord[];
   attempts: ArtifactAnalysisAttempt[];
+  dispositions?: ArtifactLimitationDisposition[];
 }): ArtifactTaskReadiness {
   const related = new Set(input.task.relatedFacts);
   const relatedFacts = input.facts.filter((fact) => related.has(fact.id));
@@ -55,19 +58,24 @@ export function evaluateArtifactTaskReadiness(input: {
       missing.push(`Artifact ${artifactId} referenced by the Task is unavailable`);
       continue;
     }
-    const aggregate = aggregateArtifactAnalysis(
-      artifact,
-      input.attempts.filter((attempt) => attempt.artifactId === artifactId),
-    );
+    const artifactAttempts = input.attempts.filter((attempt) => attempt.artifactId === artifactId);
+    const aggregate = aggregateArtifactAnalysis(artifact, artifactAttempts);
     const hasTraceablePositiveEvidence = relatedFacts.some((fact) =>
       isTraceablePositiveArtifactEvidence(fact, artifactId));
+    const currentAttemptIds = artifactAttempts.map((attempt) => attempt.id).sort();
+    const accepted = input.dispositions?.find((item) =>
+      item.status === "accepted"
+      && item.taskId === input.task.id
+      && item.artifactId === artifactId
+      && [...item.attemptIds].sort().join("\u0000") === currentAttemptIds.join("\u0000"));
     items.push({
       artifactId,
       quality: aggregate.quality,
       missingDimensions: aggregate.missingDimensions,
       hasTraceablePositiveEvidence,
+      acceptedLimitationId: accepted?.id ?? null,
     });
-    if (aggregate.quality !== "substantial" && !hasTraceablePositiveEvidence) {
+    if (aggregate.quality !== "substantial" && !hasTraceablePositiveEvidence && !accepted) {
       const gap = aggregate.missingDimensions.length > 0
         ? `missing cumulative coverage: ${aggregate.missingDimensions.join(", ")}`
         : `analysis state: ${aggregate.quality}`;

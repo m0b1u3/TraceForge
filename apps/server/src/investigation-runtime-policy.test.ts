@@ -9,6 +9,7 @@ describe("investigation runtime policy", () => {
     expect(isInvestigationStructureTool("record_fact")).toBe(true);
     expect(isInvestigationStructureTool("record_task")).toBe(true);
     expect(isInvestigationStructureTool("record_action")).toBe(true);
+    expect(isInvestigationStructureTool("manage_artifact_limitation")).toBe(true);
     expect(isInvestigationStructureTool("http_replay")).toBe(false);
   });
 

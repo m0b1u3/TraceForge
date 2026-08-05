@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
-import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, artifacts, artifactAnalysisAttempts, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, observerStrategyAudits, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions, validationConsensus } from "./db/schema.js";
+import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, artifacts, artifactAnalysisAttempts, artifactLimitationDispositions, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, observerStrategyAudits, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions, validationConsensus } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -95,12 +95,14 @@ import {
 import { reconcileUnsupportedEndpointFacts } from "./endpoint-fact-reconciliation.js";
 import { ArtifactStore } from "./stores/artifact-store.js";
 import { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
+import { ArtifactLimitationStore } from "./stores/artifact-limitation-store.js";
 import { ArtifactAnalyzerRegistry, JhatHprofAnalyzer } from "./artifact-analyzer.js";
 import { makeAnalyzeArtifactTool, makeListArtifactsTool, makePlanArtifactAnalysisTool, registerExistingCaseArtifacts } from "./artifact-tools.js";
 import { connectArtifactEvidenceLifecycle } from "./artifact-evidence-lifecycle.js";
 import { artifactEvidenceForConsumption, EvidenceConsumptionTracker } from "./evidence-consumption-tracker.js";
 import { projectArtifactConsumptions } from "./artifact-consumption-projection.js";
 import { combineTaskCompletionGates, evaluateArtifactTaskReadiness } from "./artifact-task-readiness.js";
+import { makeManageArtifactLimitationTool } from "./artifact-limitation-tool.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -126,6 +128,7 @@ export function registerRoutes(
   const traffic = new TrafficStore(db);
   const artifactStore = new ArtifactStore(db);
   const artifactAttemptStore = new ArtifactAnalysisAttemptStore(db);
+  const artifactLimitationStore = new ArtifactLimitationStore(db);
   artifactAttemptStore.recoverInterrupted();
   const artifactAnalyzers = new ArtifactAnalyzerRegistry();
   artifactAnalyzers.register(new JhatHprofAnalyzer());
@@ -388,6 +391,7 @@ export function registerRoutes(
       consensus: validationConsensusStore,
       artifacts: artifactStore,
       artifactAttempts: artifactAttemptStore,
+      artifactLimitations: artifactLimitationStore,
       paths: attackPathStore,
       timeline: timelineStore,
       runtime: runId ? validationRuntimeByRun.get(runId) : undefined,
@@ -512,6 +516,7 @@ export function registerRoutes(
     db.delete(trafficEntries).where(eq(trafficEntries.caseId, id)).run();
     db.delete(artifacts).where(eq(artifacts.caseId, id)).run();
     db.delete(artifactAnalysisAttempts).where(eq(artifactAnalysisAttempts.caseId, id)).run();
+    db.delete(artifactLimitationDispositions).where(eq(artifactLimitationDispositions.caseId, id)).run();
     db.delete(identityContexts).where(eq(identityContexts.caseId, id)).run();
     db.delete(attackPaths).where(eq(attackPaths.caseId, id)).run();
     db.delete(securityReports).where(eq(securityReports.caseId, id)).run();
@@ -648,6 +653,12 @@ export function registerRoutes(
     return artifactAttemptStore.listByCase(id);
   });
 
+  app.get("/api/cases/:id/artifact-limitations", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    return artifactLimitationStore.listByCase(id);
+  });
+
   app.get("/api/cases/:id/artifact-consumptions", async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
@@ -723,7 +734,7 @@ export function registerRoutes(
     const runId = query.runId || runs.getActiveByCase(id)?.run.id || runs.getLatestByCase(id)?.run.id;
     return buildValidationWorkflowSnapshot({
       caseId: id, runId, revision: currentValidationRevision(id), facts: factStore, hypotheses: hypothesisStore, tasks: taskStore,
-      consensus: validationConsensusStore, artifacts: artifactStore, artifactAttempts: artifactAttemptStore, paths: attackPathStore, timeline: timelineStore,
+      consensus: validationConsensusStore, artifacts: artifactStore, artifactAttempts: artifactAttemptStore, artifactLimitations: artifactLimitationStore, paths: attackPathStore, timeline: timelineStore,
       runtime: runId ? validationRuntimeByRun.get(runId) : undefined,
     });
   });
@@ -1031,7 +1042,13 @@ export function registerRoutes(
           `reason=${compact(task.reason) || "none"}`,
         ].join("; ")).join("\n") || "(none)";
         const artifactsSummary = artifactStore.listByCase(id).map((artifact) => {
-          const aggregate = aggregateArtifactAnalysis(artifact, artifactAttemptStore.listByArtifact(artifact.id));
+          const artifactAttempts = artifactAttemptStore.listByArtifact(artifact.id);
+          const aggregate = aggregateArtifactAnalysis(artifact, artifactAttempts);
+          const currentAttemptIds = artifactAttempts.map((attempt) => attempt.id).sort().join("\u0000");
+          const limitations = artifactLimitationStore.listByCase(id).filter((item) =>
+            item.artifactId === artifact.id
+            && item.status === "accepted"
+            && [...item.attemptIds].sort().join("\u0000") === currentAttemptIds);
           const linkedTasks = currentTasks.filter((task) => task.relatedFacts.some((factId) => {
             const fact = currentFacts.find((item) => item.id === factId);
             return fact?.source.type === "artifact_analysis" && fact.source.ref === artifact.id;
@@ -1045,6 +1062,7 @@ export function registerRoutes(
             `findings=${aggregate.findings.map((finding) => `${finding.kind}:${finding.label}=${finding.value}[sources=${finding.analyzerIds.join(",")}]`).join(" | ") || "none"}`,
             `limitations=${aggregate.limitations.map((item) => `${item.analyzerId}:${compact(item.detail)}`).join(" | ") || "none"}`,
             `linkedTasks=${linkedTasks.map((task) => `${task.id}:${task.status}`).join(",") || "none"}`,
+            `acceptedLimitations=${limitations.map((item) => `${item.id}:task=${item.taskId}:attempts=${item.attemptIds.join(",")}`).join(" | ") || "none"}`,
             "negativeConclusionSupportedByArtifactAlone=false",
           ].join("; ");
         }).join("\n") || "(none)";
@@ -1335,6 +1353,7 @@ export function registerRoutes(
             facts: currentFacts,
             artifacts: artifactStore.listByCase(id),
             attempts: artifactAttemptStore.listByCase(id),
+            dispositions: artifactLimitationStore.listByCase(id),
           }),
         );
       },
@@ -1351,12 +1370,13 @@ export function registerRoutes(
       consensus: validationConsensusStore,
       artifacts: artifactStore,
       artifactAttempts: artifactAttemptStore,
+      artifactLimitations: artifactLimitationStore,
       timeline: timelineStore,
       emit: (event) => bus.emit(event),
     }));
     registry.register(makeGetValidationWorkflowStateTool(() => buildValidationWorkflowSnapshot({
       caseId: id, runId, revision: currentValidationRevision(id), facts: factStore, hypotheses: hypothesisStore, tasks: taskStore,
-      consensus: validationConsensusStore, artifacts: artifactStore, artifactAttempts: artifactAttemptStore, paths: attackPathStore, timeline: timelineStore,
+      consensus: validationConsensusStore, artifacts: artifactStore, artifactAttempts: artifactAttemptStore, artifactLimitations: artifactLimitationStore, paths: attackPathStore, timeline: timelineStore,
       runtime: validationRuntimeByRun.get(runId),
     })));
     registry.register(makeRecordActionTool(
@@ -1541,6 +1561,11 @@ export function registerRoutes(
     }));
     registry.register(makeListArtifactsTool(id, artifactStore, artifactAnalyzers, artifactAttemptStore));
     registry.register(makePlanArtifactAnalysisTool(id, artifactStore, artifactAnalyzers, artifactAttemptStore));
+    registry.register(makeManageArtifactLimitationTool({
+      caseId: id, runId, artifacts: artifactStore, attempts: artifactAttemptStore, analyzers: artifactAnalyzers,
+      limitations: artifactLimitationStore, facts: factStore, tasks: taskStore, timeline: timelineStore,
+      emit: (event) => bus.emit(event),
+    }));
     registry.register(makeAnalyzeArtifactTool(id, projectRoot, artifactStore, artifactAnalyzers, {
       attempts: artifactAttemptStore,
       runId,
@@ -1622,6 +1647,7 @@ export function registerRoutes(
 证据驱动：记录动作前先记录支撑它的 Fact。
 情报复用：遇到任何可能有关的信息（端点、参数、版本号、错误信息、凭据线索、技术栈、WAF 行为、异常响应）都要立即记录为 Fact，即使不确定是否有用。后续在采取任何攻击动作前，先用 search_facts 检索相关 Fact 并尝试利用其中的价值。
 Artifact 证据：download_tool 成功只证明文件已获取。下载后用 list_artifacts 获取持久记录，调用 plan_artifact_analysis 根据覆盖缺口与尝试历史选择下一种方法，然后一次只调用一个 analyze_artifact。每次分析结束后重新规划，禁止并行启动多个 Analyzer。优先使用结构化关系分析，不要只依赖原始字符串扫描。掩码/脱敏值只证明输出被处理，不能证明原值不存在；分析器不支持、执行失败、覆盖不足或未命中时，只能记录未解决和分析限制，禁止下“内容不存在”的结论。
+当 plan_artifact_analysis 明确返回 blocked 或 exhausted，且当前所有兼容分析路径均已用尽时，可调用 manage_artifact_limitation 接受该 Task 的残余限制并说明理由。该记录只允许结束关联 Task 的生命周期，绝不能验证或否定安全发现；任何新的分析尝试都会使旧记录失效，之后必须重新评估。
 认证端点测试顺序：当目标涉及登录或认证接口时，按以下顺序执行：
 1. 先尝试一组常见/弱口令凭据（可控数量，不要无差别爆破）；
 2. 复用从其他 Facts 中发现的疑似凭据或线索；
@@ -2058,6 +2084,7 @@ Artifact 证据：download_tool 成功只证明文件已获取。下载后用 li
           "record_attack_path",
           "record_validation_conclusion",
           "propose_scope_expansion",
+          "manage_artifact_limitation",
         ]);
         if (report.ok && replanTriggers.has(report.name)) {
           try {

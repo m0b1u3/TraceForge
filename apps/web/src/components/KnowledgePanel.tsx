@@ -186,10 +186,11 @@ export function artifactConsumptionLabel(consumption?: ArtifactConsumption): str
 }
 
 function ArtifactEvidence() {
-  const { artifacts, consumptions, analysisAttempts } = useStore(useShallow((state) => ({
+  const { artifacts, consumptions, analysisAttempts, limitations } = useStore(useShallow((state) => ({
     artifacts: state.artifacts,
     consumptions: state.artifactConsumptions,
     analysisAttempts: state.artifactAnalysisAttempts,
+    limitations: state.artifactLimitations,
   })));
   if (artifacts.length === 0) return null;
   return (
@@ -203,6 +204,13 @@ function ArtifactEvidence() {
           const consumption = consumptions.find((item) => item.artifactId === artifact.id);
           const attempts = analysisAttempts.filter((item) => item.artifactId === artifact.id);
           const analysis = aggregateArtifactAnalysis(artifact, attempts);
+          const currentAttemptIds = attempts.map((item) => item.id).sort().join("\u0000");
+          const activeDisposition = limitations.find((item) => item.artifactId === artifact.id && item.status === "accepted");
+          const acceptedLimitation = activeDisposition
+            && [...activeDisposition.attemptIds].sort().join("\u0000") === currentAttemptIds
+            ? activeDisposition
+            : undefined;
+          const staleLimitation = activeDisposition && !acceptedLimitation ? activeDisposition : undefined;
           const complete = analysis.quality === "substantial";
           return (
             <details className="artifact-evidence-item" key={artifact.id}>
@@ -220,6 +228,8 @@ function ArtifactEvidence() {
                   </span>
                   {attempts.length > 0 && <span className="artifact-attempt-count">{attempts.length} attempt{attempts.length === 1 ? "" : "s"}</span>}
                   <span className="artifact-finding-count">{analysis.findings.length} evidence</span>
+                  {acceptedLimitation && <span className="artifact-attempt-count">limitation accepted</span>}
+                  {staleLimitation && <span className="artifact-attempt-count">limitation stale</span>}
                   {consumption && (
                     <span
                       className="artifact-consumption-state"
@@ -251,6 +261,8 @@ function ArtifactEvidence() {
                     <div><dt>Missing</dt><dd>{analysis.missingDimensions.join(", ")}</dd></div>
                   )}
                   <div><dt>Negative conclusion</dt><dd>Not supported by this analysis alone</dd></div>
+                  {acceptedLimitation && <div><dt>Accepted limitation</dt><dd>{acceptedLimitation.rationale}</dd></div>}
+                  {staleLimitation && <div><dt>Limitation review</dt><dd>New analysis attempts exist; the prior acceptance no longer closes this Task.</dd></div>}
                 </dl>
                 {analysis.findings.map((finding, index) => (
                   <div className="artifact-finding" key={`${finding.kind}-${finding.label}-${index}`}>
@@ -270,6 +282,7 @@ function ArtifactEvidence() {
                 {analysis.followUpRequired && (
                   <p className="artifact-follow-up"><WarningCircle size={12} />{analysis.nextAction}</p>
                 )}
+                {acceptedLimitation && <p className="artifact-limitation"><WarningCircle size={12} /><span>{acceptedLimitation.prohibitedConclusion}</span></p>}
                 {attempts.length > 0 && (
                   <div className="artifact-attempt-history" aria-label="Analysis attempts">
                     <strong>Analysis attempts</strong>

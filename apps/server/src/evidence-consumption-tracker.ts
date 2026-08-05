@@ -14,6 +14,7 @@ const PASSIVE_OR_LIFECYCLE_TOOLS = new Set([
   "list_artifacts",
   "plan_artifact_analysis",
   "analyze_artifact",
+  "manage_artifact_limitation",
   "list_identities",
   "list_attack_paths",
   "list_security_reports",

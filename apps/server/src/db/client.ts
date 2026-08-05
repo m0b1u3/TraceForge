@@ -69,6 +69,13 @@ export function createDb(path: string) {
     );
     CREATE INDEX IF NOT EXISTS idx_artifact_analysis_attempts_artifact ON artifact_analysis_attempts(artifact_id, started_at);
     CREATE INDEX IF NOT EXISTS idx_artifact_analysis_attempts_case ON artifact_analysis_attempts(case_id, started_at);
+    CREATE TABLE IF NOT EXISTS artifact_limitation_dispositions (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, task_id TEXT NOT NULL, artifact_id TEXT NOT NULL,
+      status TEXT NOT NULL, missing_dimensions_json TEXT NOT NULL DEFAULT '[]', attempt_ids_json TEXT NOT NULL DEFAULT '[]',
+      rationale TEXT NOT NULL, prohibited_conclusion TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_artifact_limitations_case ON artifact_limitation_dispositions(case_id, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_artifact_limitations_task ON artifact_limitation_dispositions(task_id, artifact_id);
     CREATE TABLE IF NOT EXISTS facts (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL,
       source_run_id TEXT,

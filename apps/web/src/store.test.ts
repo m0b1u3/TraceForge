@@ -14,6 +14,7 @@ function resetStore() {
     artifacts: [],
     artifactConsumptions: [],
     artifactAnalysisAttempts: [],
+    artifactLimitations: [],
     hypotheses: [],
     tasks: [],
     timeline: [],
@@ -206,6 +207,39 @@ describe("artifact analysis attempt realtime state", () => {
 
     expect(useStore.getState().artifactAnalysisAttempts).toEqual([
       expect.objectContaining({ id: "attempt_1", status: "failed", error: "Analyzer exited." }),
+    ]);
+  });
+});
+
+describe("artifact limitation realtime state", () => {
+  beforeEach(() => resetStore());
+
+  it("inserts and updates an auditable limitation disposition", () => {
+    const disposition = {
+      id: "artifact_limitation_1",
+      caseId: "case_1",
+      runId: "run_1",
+      taskId: "task_1",
+      artifactId: "artifact_1",
+      status: "accepted" as const,
+      missingDimensions: ["text"] as const,
+      attemptIds: ["attempt_1"],
+      rationale: "All currently compatible analyzer paths are exhausted.",
+      prohibitedConclusion: "This limitation does not prove content absence and cannot verify or reject a security finding." as const,
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    useStore.getState().handleRuntimeEvent({
+      type: "artifact_limitation_updated",
+      disposition: { ...disposition, missingDimensions: [...disposition.missingDimensions] },
+    });
+    useStore.getState().handleRuntimeEvent({
+      type: "artifact_limitation_updated",
+      disposition: { ...disposition, missingDimensions: [...disposition.missingDimensions], status: "revoked", updatedAt: "later" },
+    });
+
+    expect(useStore.getState().artifactLimitations).toEqual([
+      expect.objectContaining({ id: "artifact_limitation_1", status: "revoked", updatedAt: "later" }),
     ]);
   });
 });

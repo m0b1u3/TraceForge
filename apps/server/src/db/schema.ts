@@ -130,6 +130,21 @@ export const artifactAnalysisAttempts = sqliteTable("artifact_analysis_attempts"
   finishedAt: text("finished_at"),
 });
 
+export const artifactLimitationDispositions = sqliteTable("artifact_limitation_dispositions", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  runId: text("run_id"),
+  taskId: text("task_id").notNull(),
+  artifactId: text("artifact_id").notNull(),
+  status: text("status").notNull(),
+  missingDimensionsJson: text("missing_dimensions_json").notNull().default("[]"),
+  attemptIdsJson: text("attempt_ids_json").notNull().default("[]"),
+  rationale: text("rationale").notNull(),
+  prohibitedConclusion: text("prohibited_conclusion").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const facts = sqliteTable("facts", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

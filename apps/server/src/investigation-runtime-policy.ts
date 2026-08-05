@@ -28,6 +28,7 @@ const STRUCTURE_TOOLS = new Set([
   "record_attack_path",
   "record_security_report",
   "record_validation_conclusion",
+  "manage_artifact_limitation",
   "propose_scope_expansion",
 ]);
 

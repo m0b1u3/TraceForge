@@ -7,6 +7,7 @@ import type { TimelineStore } from "./stores/timeline-store.js";
 import type { ValidationConsensusStore } from "./stores/validation-consensus-store.js";
 import type { ArtifactStore } from "./stores/artifact-store.js";
 import type { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
+import type { ArtifactLimitationStore } from "./stores/artifact-limitation-store.js";
 import { evaluateValidationTaskCompletion } from "./validation-task-gate.js";
 import { evaluateValidationTaskExecutionTransition, isConsensusValidationTask } from "./validation-task-execution.js";
 import { combineTaskCompletionGates, evaluateArtifactTaskReadiness } from "./artifact-task-readiness.js";
@@ -23,6 +24,7 @@ export function makeManageValidationTaskTool(input: {
   consensus: ValidationConsensusStore;
   artifacts?: ArtifactStore;
   artifactAttempts?: ArtifactAnalysisAttemptStore;
+  artifactLimitations?: ArtifactLimitationStore;
   timeline: TimelineStore;
   emit: (event: ControlEvent) => void;
 }): ToolDescriptor {
@@ -104,6 +106,7 @@ export function makeManageValidationTaskTool(input: {
               facts: currentFacts,
               artifacts: input.artifacts.listByCase(input.caseId),
               attempts: input.artifactAttempts.listByCase(input.caseId),
+              dispositions: input.artifactLimitations?.listByCase(input.caseId),
             })
             : { allowed: true, missing: [] },
         );

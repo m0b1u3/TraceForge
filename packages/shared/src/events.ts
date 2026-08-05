@@ -3,6 +3,7 @@ import type { ValidationWorkflowSnapshot } from "./validation-workflow.js";
 import type { ArtifactRecord } from "./artifact.js";
 import type { ArtifactConsumption } from "./artifact-consumption.js";
 import type { ArtifactAnalysisAttempt } from "./artifact-analysis-attempt.js";
+import type { ArtifactLimitationDisposition } from "./artifact-limitation.js";
 
 export type RuntimeEvent =
   | { type: "case_created"; case: Case }
@@ -22,6 +23,7 @@ export type RuntimeEvent =
   | { type: "artifact_updated"; artifact: ArtifactRecord }
   | { type: "artifact_consumption_snapshot"; caseId: string; consumptions: ArtifactConsumption[] }
   | { type: "artifact_analysis_attempt_updated"; attempt: ArtifactAnalysisAttempt }
+  | { type: "artifact_limitation_updated"; disposition: ArtifactLimitationDisposition }
   | { type: "task_created"; task: Task }
   | { type: "task_updated"; task: Task }
   | { type: "hypothesis_created"; hypothesis: Hypothesis; transition: HypothesisTransition }
