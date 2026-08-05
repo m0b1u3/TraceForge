@@ -65,6 +65,13 @@ export class ObserverScheduler {
     const input = inputRecord(report.input);
     const scopeKey = report.executionScopeKey ?? "run:unscoped";
 
+    const requestedCompletion = report.name === "record_task"
+      ? input.status === "done"
+      : report.name === "manage_validation_task" && input.action === "complete";
+    if (report.ok && requestedCompletion && /remains blocked\. Missing (?:completion )?evidence:/i.test(report.content)) {
+      this.mark("evidence_conflict");
+    }
+
     if (countsAsUnresolvedFailure(report)) {
       this.observeFailure(scopeKey, report);
       return;

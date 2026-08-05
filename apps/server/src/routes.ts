@@ -11,7 +11,7 @@ import { FactStore } from "./stores/fact-store.js";
 import { TaskStore } from "./stores/task-store.js";
 import { TimelineStore } from "./stores/timeline-store.js";
 import { EventBus } from "./event-bus.js";
-import { parseObserverCorrectionAudit, serializeObserverCorrectionAudit, validationTimelineConsoleEvent, type Task, type ObserverWarning, type CaseSummary, type Fact, type TimelineEntry, type AgentEventRefs, type ArtifactRecord } from "@traceforge/shared";
+import { aggregateArtifactAnalysis, parseObserverCorrectionAudit, serializeObserverCorrectionAudit, validationTimelineConsoleEvent, type Task, type ObserverWarning, type CaseSummary, type Fact, type TimelineEntry, type AgentEventRefs, type ArtifactRecord } from "@traceforge/shared";
 import type { LlmProvider } from "@traceforge/llm";
 import { loadLlmConfig, createProviderFromConfig } from "@traceforge/llm";
 import { ActionCardStore } from "./stores/action-store.js";
@@ -100,6 +100,7 @@ import { makeAnalyzeArtifactTool, makeListArtifactsTool, makePlanArtifactAnalysi
 import { connectArtifactEvidenceLifecycle } from "./artifact-evidence-lifecycle.js";
 import { artifactEvidenceForConsumption, EvidenceConsumptionTracker } from "./evidence-consumption-tracker.js";
 import { projectArtifactConsumptions } from "./artifact-consumption-projection.js";
+import { combineTaskCompletionGates, evaluateArtifactTaskReadiness } from "./artifact-task-readiness.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -385,6 +386,8 @@ export function registerRoutes(
       hypotheses: hypothesisStore,
       tasks: taskStore,
       consensus: validationConsensusStore,
+      artifacts: artifactStore,
+      artifactAttempts: artifactAttemptStore,
       paths: attackPathStore,
       timeline: timelineStore,
       runtime: runId ? validationRuntimeByRun.get(runId) : undefined,
@@ -720,7 +723,7 @@ export function registerRoutes(
     const runId = query.runId || runs.getActiveByCase(id)?.run.id || runs.getLatestByCase(id)?.run.id;
     return buildValidationWorkflowSnapshot({
       caseId: id, runId, revision: currentValidationRevision(id), facts: factStore, hypotheses: hypothesisStore, tasks: taskStore,
-      consensus: validationConsensusStore, paths: attackPathStore, timeline: timelineStore,
+      consensus: validationConsensusStore, artifacts: artifactStore, artifactAttempts: artifactAttemptStore, paths: attackPathStore, timeline: timelineStore,
       runtime: runId ? validationRuntimeByRun.get(runId) : undefined,
     });
   });
@@ -1027,15 +1030,24 @@ export function registerRoutes(
           `blockedBy=${task.blockedBy.join(",") || "none"}`,
           `reason=${compact(task.reason) || "none"}`,
         ].join("; ")).join("\n") || "(none)";
-        const artifactsSummary = artifactStore.listByCase(id).map((artifact) => [
-          `${artifact.id} [${artifact.status}; format=${artifact.detectedFormat}; bytes=${artifact.byteSize}] ${artifact.relativePath}`,
-          `sha256=${artifact.sha256}`,
-          `analyzer=${artifact.analyzerId ?? "none"}`,
-          `summary=${compact(artifact.analysis?.summary) || "none"}`,
-          `coverage=${artifact.analysis ? `metadata=${artifact.analysis.coverage.metadata},text=${artifact.analysis.coverage.text},objectGraph=${artifact.analysis.coverage.objectGraph}` : "none"}`,
-          `findings=${artifact.analysis?.findings.map((finding) => `${finding.kind}:${finding.label}=${finding.value}`).join(" | ") || "none"}`,
-          `limitations=${artifact.analysis?.coverage.limitations.join(" | ") || artifact.error || "none"}`,
-        ].join("; ")).join("\n") || "(none)";
+        const artifactsSummary = artifactStore.listByCase(id).map((artifact) => {
+          const aggregate = aggregateArtifactAnalysis(artifact, artifactAttemptStore.listByArtifact(artifact.id));
+          const linkedTasks = currentTasks.filter((task) => task.relatedFacts.some((factId) => {
+            const fact = currentFacts.find((item) => item.id === factId);
+            return fact?.source.type === "artifact_analysis" && fact.source.ref === artifact.id;
+          }));
+          return [
+            `${artifact.id} [${artifact.status}; format=${artifact.detectedFormat}; bytes=${artifact.byteSize}] ${artifact.relativePath}`,
+            `sha256=${artifact.sha256}`,
+            `analyzers=${aggregate.analyzerIds.join(",") || "none"}`,
+            `cumulativeCoverage=${aggregate.coveredDimensions.join(",") || "none"}`,
+            `missingCoverage=${aggregate.missingDimensions.join(",") || "none"}`,
+            `findings=${aggregate.findings.map((finding) => `${finding.kind}:${finding.label}=${finding.value}[sources=${finding.analyzerIds.join(",")}]`).join(" | ") || "none"}`,
+            `limitations=${aggregate.limitations.map((item) => `${item.analyzerId}:${compact(item.detail)}`).join(" | ") || "none"}`,
+            `linkedTasks=${linkedTasks.map((task) => `${task.id}:${task.status}`).join(",") || "none"}`,
+            "negativeConclusionSupportedByArtifactAlone=false",
+          ].join("; ");
+        }).join("\n") || "(none)";
         const activeWarningsSummary = activeBeforeReview.map((warning) => {
           const audit = parseObserverCorrectionAudit(warning.correctionEvidence);
           const previousCorrection = warning.suggestedGoal
@@ -1309,12 +1321,23 @@ export function registerRoutes(
       (e) => bus.emit(e),
       runId,
       hypothesisStore,
-      (task) => evaluateValidationTaskCompletion({
-        task,
-        facts: factStore.listByCase(id),
-        consensus: validationConsensusStore.listByCase(id),
-        hypotheses: hypothesisStore.listByCase(id),
-      }),
+      (task) => {
+        const currentFacts = factStore.listByCase(id);
+        return combineTaskCompletionGates(
+          evaluateValidationTaskCompletion({
+            task,
+            facts: currentFacts,
+            consensus: validationConsensusStore.listByCase(id),
+            hypotheses: hypothesisStore.listByCase(id),
+          }),
+          evaluateArtifactTaskReadiness({
+            task,
+            facts: currentFacts,
+            artifacts: artifactStore.listByCase(id),
+            attempts: artifactAttemptStore.listByCase(id),
+          }),
+        );
+      },
       (current, requestedStatus, patch) => evaluateRecordTaskValidationStatusTransition({
         current, requestedStatus, patch, tasks: taskStore.listByCase(id),
       }),
@@ -1326,12 +1349,14 @@ export function registerRoutes(
       hypotheses: hypothesisStore,
       tasks: taskStore,
       consensus: validationConsensusStore,
+      artifacts: artifactStore,
+      artifactAttempts: artifactAttemptStore,
       timeline: timelineStore,
       emit: (event) => bus.emit(event),
     }));
     registry.register(makeGetValidationWorkflowStateTool(() => buildValidationWorkflowSnapshot({
       caseId: id, runId, revision: currentValidationRevision(id), facts: factStore, hypotheses: hypothesisStore, tasks: taskStore,
-      consensus: validationConsensusStore, paths: attackPathStore, timeline: timelineStore,
+      consensus: validationConsensusStore, artifacts: artifactStore, artifactAttempts: artifactAttemptStore, paths: attackPathStore, timeline: timelineStore,
       runtime: validationRuntimeByRun.get(runId),
     })));
     registry.register(makeRecordActionTool(
@@ -1542,6 +1567,7 @@ export function registerRoutes(
         const lifecycle = connectArtifactEvidenceLifecycle({
           runId,
           artifact,
+          attempts: artifactAttemptStore.listByArtifact(artifact.id),
           artifactFacts,
           facts: factStore,
           tasks: taskStore,

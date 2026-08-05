@@ -113,9 +113,11 @@ const VERIFIED_RECOVERY_POLICY = [
 
 const ARTIFACT_EVIDENCE_POLICY = [
   "Artifact evidence policy:",
-  "- The persistent Artifact list is authoritative for acquisition, hash, format, analyzer status, findings, coverage, and limitations.",
+  "- The persistent Artifact list reports cumulative results across successful analyzer attempts; do not reduce it to the latest analyzer output.",
   "- A masked or redacted value proves sanitization, not absence of the underlying value.",
   "- A raw-text search, unsupported analyzer, failed analyzer, or query with incomplete coverage cannot support a negative content conclusion.",
+  "- If a linked Task has incomplete cumulative coverage and no traceable positive artifact evidence, challenge an attempted negative conclusion or Task completion with an evidence_gap warning.",
+  "- Do not warn merely because a coverage gap exists while the Agent is still exploring it, and do not block a traceable positive result on unrelated missing coverage.",
   "- Do not claim an artifact was not downloaded when it appears in the Artifact list.",
   "- An earlier warning is resolved only by traceable post-correction evidence; omission from the current warning output is not evidence of resolution.",
 ].join("\n");

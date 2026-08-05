@@ -1,4 +1,4 @@
-import { assessArtifactCoverage, type ArtifactRecord, type Fact, type RuntimeEvent, type Task, type TimelineEntry } from "@traceforge/shared";
+import { aggregateArtifactAnalysis, type ArtifactAnalysisAttempt, type ArtifactRecord, type Fact, type RuntimeEvent, type Task, type TimelineEntry } from "@traceforge/shared";
 import type { FactStore } from "./stores/fact-store.js";
 import type { TaskStore } from "./stores/task-store.js";
 import type { TimelineStore } from "./stores/timeline-store.js";
@@ -18,6 +18,7 @@ export interface ArtifactEvidenceLifecycleResult {
 export function connectArtifactEvidenceLifecycle(input: {
   runId: string;
   artifact: ArtifactRecord;
+  attempts?: ArtifactAnalysisAttempt[];
   artifactFacts: Fact[];
   facts: FactStore;
   tasks: TaskStore;
@@ -38,7 +39,7 @@ export function connectArtifactEvidenceLifecycle(input: {
   if (runningTasks.length !== 1) return { facts: artifactFacts };
   const runningTask = runningTasks[0];
 
-  const assessment = assessArtifactCoverage(artifact);
+  const assessment = aggregateArtifactAnalysis(artifact, input.attempts ?? []);
   const factIds = artifactFacts.map((fact) => fact.id);
   const nextRelatedFacts = [...new Set([...runningTask.relatedFacts, ...factIds])];
   const coveragePrefix = `[Artifact coverage ${artifact.id}]`;
@@ -85,18 +86,18 @@ export function connectArtifactEvidenceLifecycle(input: {
     const gapEntry = input.timeline.append(
       artifact.caseId,
       "artifact_coverage_gap_recorded",
-      `Artifact=${artifact.id}; Task=${linkedTask.id}; quality=${assessment.quality}; missing=${assessment.missingDimensions.join(",") || "none"}; limitations=${assessment.limitations.join(" | ") || "none"}`,
+      `Artifact=${artifact.id}; Task=${linkedTask.id}; quality=${assessment.quality}; missing=${assessment.missingDimensions.join(",") || "none"}; limitations=${assessment.limitations.map((item) => `${item.analyzerId}:${item.detail}`).join(" | ") || "none"}`,
       linkedTask.id,
       input.runId,
     );
     input.emit({ type: "timeline_appended", entry: gapEntry });
   }
 
-  const findingCount = assessment.findingCount;
+  const findingCount = assessment.findings.length;
   const runtimeMessage = [
     `Artifact ${artifact.id} analysis state is attached to the current Task ${linkedTask.id}.`,
     `Evidence Facts: ${factIds.join(", ")}. Recovered candidates: ${findingCount}.`,
-    `Coverage quality: ${assessment.quality}. Missing dimensions: ${assessment.missingDimensions.join(", ") || "none"}. Limitations: ${assessment.limitations.join(" | ") || "none"}.`,
+    `Cumulative coverage quality: ${assessment.quality}. Missing dimensions: ${assessment.missingDimensions.join(", ") || "none"}. Limitations: ${assessment.limitations.map((item) => `${item.analyzerId}:${item.detail}`).join(" | ") || "none"}.`,
     findingCount > 0
       ? "Continue this same Task using the recovered values and their relationship evidence. Do not start another queued Task until this Task is completed, blocked, rejected, or explicitly released."
       : "No recovered candidate is not proof of absence. Continue this same Task by addressing the remaining evidence gap or explicitly retain the limitation before releasing it and moving on.",

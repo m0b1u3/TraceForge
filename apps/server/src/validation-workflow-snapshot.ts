@@ -6,11 +6,14 @@ import type { HypothesisStore } from "./stores/hypothesis-store.js";
 import type { TaskStore } from "./stores/task-store.js";
 import type { TimelineStore } from "./stores/timeline-store.js";
 import type { ValidationConsensusStore } from "./stores/validation-consensus-store.js";
+import type { ArtifactStore } from "./stores/artifact-store.js";
+import type { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
 import type { ValidationExplorationState } from "./validation-exploration-policy.js";
 import type { ValidationPriorityLeader } from "./validation-priority-hysteresis.js";
 import { evaluateValidationTaskCompletion } from "./validation-task-gate.js";
 import { recoverValidationFeedback, summarizeValidationFeedbackHistory } from "./validation-task-feedback.js";
 import { rankValidationTasks } from "./validation-task-priority.js";
+import { combineTaskCompletionGates, evaluateArtifactTaskReadiness } from "./artifact-task-readiness.js";
 
 const ACTIVE = new Set<Task["status"]>(["open", "blocked", "recheck_candidate", "approved", "running"]);
 
@@ -27,6 +30,8 @@ export function buildValidationWorkflowSnapshot(input: {
   hypotheses: HypothesisStore;
   tasks: TaskStore;
   consensus: ValidationConsensusStore;
+  artifacts?: ArtifactStore;
+  artifactAttempts?: ArtifactAnalysisAttemptStore;
   paths: AttackPathStore;
   timeline: TimelineStore;
   runtime?: ValidationRuntimeSnapshot;
@@ -59,12 +64,22 @@ export function buildValidationWorkflowSnapshot(input: {
       const finding = facts.find((fact) => fact.id === state.findingId && fact.type === "finding");
       const matchingTasks = activeTasks.filter((task) => task.title.startsWith(`[Consensus:${state.findingId}:${state.status}]`));
       const task = matchingTasks.sort((left, right) => Number(right.status === "running") - Number(left.status === "running") || left.createdAt.localeCompare(right.createdAt))[0];
-      const completion = evaluateValidationTaskCompletion({
-        task: { title: task?.title ?? `[Consensus:${state.findingId}:${state.status}]` },
-        facts,
-        consensus,
-        hypotheses,
-      });
+      const completion = combineTaskCompletionGates(
+        evaluateValidationTaskCompletion({
+          task: { title: task?.title ?? `[Consensus:${state.findingId}:${state.status}]` },
+          facts,
+          consensus,
+          hypotheses,
+        }),
+        task && input.artifacts && input.artifactAttempts
+          ? evaluateArtifactTaskReadiness({
+            task,
+            facts,
+            artifacts: input.artifacts.listByCase(input.caseId),
+            attempts: input.artifactAttempts.listByCase(input.caseId),
+          })
+          : { allowed: true, missing: [] },
+      );
       const ranking = task ? rankingByTask.get(task.id) : undefined;
       return {
         findingId: state.findingId,

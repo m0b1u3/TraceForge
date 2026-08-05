@@ -5,8 +5,11 @@ import type { HypothesisStore } from "./stores/hypothesis-store.js";
 import type { TaskStore } from "./stores/task-store.js";
 import type { TimelineStore } from "./stores/timeline-store.js";
 import type { ValidationConsensusStore } from "./stores/validation-consensus-store.js";
+import type { ArtifactStore } from "./stores/artifact-store.js";
+import type { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
 import { evaluateValidationTaskCompletion } from "./validation-task-gate.js";
 import { evaluateValidationTaskExecutionTransition, isConsensusValidationTask } from "./validation-task-execution.js";
+import { combineTaskCompletionGates, evaluateArtifactTaskReadiness } from "./artifact-task-readiness.js";
 
 type ControlEvent = { type: "task_updated"; task: Task } | { type: "timeline_appended"; entry: TimelineEntry };
 const KEY = /^\[Consensus:([^:\]]+):(insufficient|supported|conflicted|refuted)\]/;
@@ -18,6 +21,8 @@ export function makeManageValidationTaskTool(input: {
   hypotheses: HypothesisStore;
   tasks: TaskStore;
   consensus: ValidationConsensusStore;
+  artifacts?: ArtifactStore;
+  artifactAttempts?: ArtifactAnalysisAttemptStore;
   timeline: TimelineStore;
   emit: (event: ControlEvent) => void;
 }): ToolDescriptor {
@@ -85,12 +90,23 @@ export function makeManageValidationTaskTool(input: {
 
       if (request.action === "complete") {
         if (task.status !== "running") return { ok: false, content: `Validation task ${task.id} must be running before completion.` };
-        const completion = evaluateValidationTaskCompletion({
-          task,
-          facts: input.facts.listByCase(input.caseId),
-          consensus: input.consensus.listByCase(input.caseId),
-          hypotheses: input.hypotheses.listByCase(input.caseId),
-        });
+        const currentFacts = input.facts.listByCase(input.caseId);
+        const completion = combineTaskCompletionGates(
+          evaluateValidationTaskCompletion({
+            task,
+            facts: currentFacts,
+            consensus: input.consensus.listByCase(input.caseId),
+            hypotheses: input.hypotheses.listByCase(input.caseId),
+          }),
+          input.artifacts && input.artifactAttempts
+            ? evaluateArtifactTaskReadiness({
+              task,
+              facts: currentFacts,
+              artifacts: input.artifacts.listByCase(input.caseId),
+              attempts: input.artifactAttempts.listByCase(input.caseId),
+            })
+            : { allowed: true, missing: [] },
+        );
         const completed = input.tasks.update(task.id, completion.allowed ? {
           status: "done",
           reason: request.reason?.trim() || task.reason,

@@ -127,4 +127,23 @@ describe("ObserverScheduler event policy", () => {
     scheduler.observe({ name: "record_attack_path", input: {}, content: JSON.stringify({ status: "invalidated" }), ok: true });
     expect(scheduler.consume()).toBe("evidence_conflict");
   });
+
+  it("reviews a completion attempt rejected by an evidence gate without reviewing an ordinary Task update", () => {
+    const scheduler = new ObserverScheduler();
+    scheduler.observe({
+      name: "record_task",
+      input: { id: "task_1", status: "running" },
+      content: "Task task_1 updated.",
+      ok: true,
+    });
+    expect(scheduler.consume()).toBeNull();
+
+    scheduler.observe({
+      name: "record_task",
+      input: { id: "task_1", status: "done" },
+      content: "Task task_1 remains blocked. Missing completion evidence: cumulative artifact coverage",
+      ok: true,
+    });
+    expect(scheduler.consume()).toBe("evidence_conflict");
+  });
 });

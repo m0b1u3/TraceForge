@@ -222,7 +222,7 @@ describe("artifact evidence lifecycle with real SQLite", () => {
       expect.stringContaining("[Artifact coverage artifact_1]"),
     ]);
     expect(tasks.getById(queued.id)?.status).toBe("open");
-    expect(result.runtimeMessage).toContain("Coverage quality: incomplete");
+    expect(result.runtimeMessage).toContain("Cumulative coverage quality: incomplete");
     expect(timeline.listByCase("case_1").filter((entry) =>
       entry.eventType === "artifact_coverage_gap_recorded")).toHaveLength(1);
   });
