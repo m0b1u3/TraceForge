@@ -29,6 +29,7 @@ const STRUCTURE_TOOLS = new Set([
   "record_security_report",
   "record_validation_conclusion",
   "manage_artifact_limitation",
+  "authorize_artifact_retry",
   "propose_scope_expansion",
 ]);
 

@@ -13,6 +13,9 @@ function rowToAttempt(row: typeof artifactAnalysisAttempts.$inferSelect): Artifa
     analyzerId: row.analyzerId,
     status: row.status,
     coverageDimensions: JSON.parse(row.coverageDimensionsJson),
+    preflightFingerprint: row.preflightFingerprint,
+    preflightAvailability: row.preflightAvailability,
+    preflightReason: row.preflightReason,
     error: row.error,
     analysis: row.analysisJson ? JSON.parse(row.analysisJson) : null,
     startedAt: row.startedAt,
@@ -29,6 +32,9 @@ export class ArtifactAnalysisAttemptStore {
     artifactId: string;
     analyzerId: string | null;
     coverageDimensions: ArtifactAnalysisAttempt["coverageDimensions"];
+    preflightFingerprint?: string | null;
+    preflightAvailability?: ArtifactAnalysisAttempt["preflightAvailability"];
+    preflightReason?: string | null;
     status?: "running" | "unsupported";
     error?: string | null;
   }): ArtifactAnalysisAttempt {
@@ -51,6 +57,9 @@ export class ArtifactAnalysisAttemptStore {
       analyzerId: attempt.analyzerId,
       status: attempt.status,
       coverageDimensionsJson: JSON.stringify(attempt.coverageDimensions),
+      preflightFingerprint: attempt.preflightFingerprint,
+      preflightAvailability: attempt.preflightAvailability,
+      preflightReason: attempt.preflightReason,
       error: attempt.error,
       analysisJson: null,
       startedAt: attempt.startedAt,

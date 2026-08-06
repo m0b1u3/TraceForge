@@ -3,10 +3,11 @@ import { createReadStream } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { ToolDescriptor } from "@traceforge/extension";
-import type { ArtifactAnalysisAttempt, ArtifactRecord } from "@traceforge/shared";
-import type { ArtifactAnalyzerRegistry } from "./artifact-analyzer.js";
+import type { ArtifactAnalysisAttempt, ArtifactRecord, ArtifactRetryAuthorization } from "@traceforge/shared";
+import { artifactAnalyzerCapabilityFingerprint, type ArtifactAnalyzerRegistry } from "./artifact-analyzer.js";
 import type { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
 import type { ArtifactStore } from "./stores/artifact-store.js";
+import type { ArtifactRetryAuthorizationStore } from "./stores/artifact-retry-authorization-store.js";
 import { planArtifactAnalysis, type ArtifactAnalysisPlan } from "./artifact-analysis-planner.js";
 
 export type ArtifactChangeReason = "cached" | "analyzing" | "analyzed" | "unsupported" | "failed";
@@ -176,6 +177,8 @@ export function makeAnalyzeArtifactTool(
     attempts?: ArtifactAnalysisAttemptStore;
     runId?: string | null;
     onAttemptChanged?: (attempt: ArtifactAnalysisAttempt) => void;
+    retryAuthorizations?: ArtifactRetryAuthorizationStore;
+    onRetryAuthorizationChanged?: (authorization: ArtifactRetryAuthorization) => void;
   } = {},
 ): ToolDescriptor {
   return {
@@ -238,10 +241,36 @@ export function makeAnalyzeArtifactTool(
       const previousSameMethod = previousAttempts.find((attempt) =>
         attempt.analyzerId === (analyzer?.id ?? selectedAnalyzerId ?? null)
         && ["succeeded", "failed", "unsupported"].includes(attempt.status));
-      if (previousSameMethod && !request.retry) {
+      const currentFingerprint = selectedCapability
+        ? artifactAnalyzerCapabilityFingerprint(selectedCapability)
+        : null;
+      const preflightChanged = Boolean(
+        previousSameMethod?.preflightFingerprint
+        && currentFingerprint
+        && previousSameMethod.preflightFingerprint !== currentFingerprint,
+      );
+      const retryAuthorization = analyzer && previousSameMethod
+        ? options.retryAuthorizations?.getActive(artifact.id, analyzer.id)
+        : undefined;
+      const authorizedForCurrentFailure = Boolean(
+        retryAuthorization
+        && retryAuthorization.failedAttemptId === previousSameMethod?.id
+        && retryAuthorization.preflightFingerprint === currentFingerprint,
+      );
+      if (retryAuthorization && !authorizedForCurrentFailure && preflightChanged) {
+        const revoked = options.retryAuthorizations?.revoke(retryAuthorization.id);
+        if (revoked) options.onRetryAuthorizationChanged?.(revoked);
+      }
+      if (previousSameMethod?.status === "succeeded") {
         return {
           ok: false,
-          content: `Analyzer ${previousSameMethod.analyzerId ?? "selection"} already ended as ${previousSameMethod.status}: ${previousSameMethod.error ?? "its declared coverage was recorded"}. Re-plan, choose another compatible analyzer, or set retry=true only after conditions changed.`,
+          content: `Analyzer ${previousSameMethod.analyzerId ?? "selection"} already succeeded and its declared coverage was recorded. Re-plan instead of repeating it.`,
+        };
+      }
+      if (previousSameMethod && !preflightChanged && !authorizedForCurrentFailure) {
+        return {
+          ok: false,
+          content: `Analyzer ${previousSameMethod.analyzerId ?? "selection"} already ended as ${previousSameMethod.status}: ${previousSameMethod.error ?? "the method did not complete"}. Preflight identity is unchanged, so retry=true is insufficient. Use authorize_artifact_retry with a concrete reason and obtain approval, or repair the environment until the fingerprint changes.`,
         };
       }
       if (!analyzer) {
@@ -274,8 +303,15 @@ export function makeAnalyzeArtifactTool(
         artifactId: artifact.id,
         analyzerId: analyzer.id,
         coverageDimensions: analyzer.coverageDimensions ?? [],
+        preflightFingerprint: currentFingerprint,
+        preflightAvailability: selectedCapability?.availability ?? "ready",
+        preflightReason: selectedCapability?.availabilityReason ?? null,
       });
       if (attempt) options.onAttemptChanged?.(attempt);
+      if (authorizedForCurrentFailure && retryAuthorization) {
+        const consumed = options.retryAuthorizations?.consume(retryAuthorization.id);
+        if (consumed) options.onRetryAuthorizationChanged?.(consumed);
+      }
       const analyzing = store.updateAnalysis(artifact.id, "analyzing", analyzer.id, null);
       if (analyzing) options.onChanged?.(analyzing, "analyzing");
       try {

@@ -124,10 +124,27 @@ export const artifactAnalysisAttempts = sqliteTable("artifact_analysis_attempts"
   analyzerId: text("analyzer_id"),
   status: text("status").notNull(),
   coverageDimensionsJson: text("coverage_dimensions_json").notNull().default("[]"),
+  preflightFingerprint: text("preflight_fingerprint"),
+  preflightAvailability: text("preflight_availability"),
+  preflightReason: text("preflight_reason"),
   error: text("error"),
   analysisJson: text("analysis_json"),
   startedAt: text("started_at").notNull(),
   finishedAt: text("finished_at"),
+});
+
+export const artifactRetryAuthorizations = sqliteTable("artifact_retry_authorizations", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  runId: text("run_id"),
+  artifactId: text("artifact_id").notNull(),
+  analyzerId: text("analyzer_id").notNull(),
+  failedAttemptId: text("failed_attempt_id").notNull(),
+  preflightFingerprint: text("preflight_fingerprint").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
 });
 
 export const artifactLimitationDispositions = sqliteTable("artifact_limitation_dispositions", {

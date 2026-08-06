@@ -1,4 +1,5 @@
 import { aggregateArtifactAnalysis, type ArtifactAnalysisAttempt, type ArtifactAnalyzerCapability, type ArtifactRecord } from "@traceforge/shared";
+import { artifactAnalyzerCapabilityFingerprint } from "./artifact-analyzer.js";
 
 export interface ArtifactAnalysisCandidate {
   analyzerId: string;
@@ -57,6 +58,7 @@ export function planArtifactAnalysis(
     const coverageGain = capability.coverageDimensions.filter((dimension) => missingDimensions.includes(dimension));
     const availability = capability.availability ?? "ready";
     const recoveryHint = capability.recoveryHint ?? null;
+    const currentFingerprint = artifactAnalyzerCapabilityFingerprint(capability);
     if (availability === "unavailable") {
       return {
         analyzerId: capability.analyzerId, coverageGain, eligible: false, availability,
@@ -68,6 +70,14 @@ export function planArtifactAnalysis(
       return { analyzerId: capability.analyzerId, coverageGain, eligible: false, availability, requiresRecovery: false, recoveryHint, reason: "already running" };
     }
     if (previous?.status === "failed") {
+      if (previous.preflightFingerprint && previous.preflightFingerprint !== currentFingerprint) {
+        return {
+          analyzerId: capability.analyzerId, coverageGain,
+          eligible: coverageGain.length > 0 || capability.coverageDimensions.length === 0,
+          availability, requiresRecovery: false, recoveryHint,
+          reason: `preflight identity changed since failed attempt ${previous.id}; retry is now eligible`,
+        };
+      }
       return {
         analyzerId: capability.analyzerId, coverageGain, eligible: false, availability,
         requiresRecovery: true, recoveryHint,
@@ -75,6 +85,14 @@ export function planArtifactAnalysis(
       };
     }
     if (previous?.status === "unsupported") {
+      if (previous.preflightFingerprint && previous.preflightFingerprint !== currentFingerprint) {
+        return {
+          analyzerId: capability.analyzerId, coverageGain,
+          eligible: coverageGain.length > 0 || capability.coverageDimensions.length === 0,
+          availability, requiresRecovery: false, recoveryHint,
+          reason: `preflight identity changed since unsupported attempt ${previous.id}; retry is now eligible`,
+        };
+      }
       return { analyzerId: capability.analyzerId, coverageGain, eligible: false, availability, requiresRecovery: false, recoveryHint, reason: "previous attempt was unsupported" };
     }
     if (previous?.status === "succeeded") {

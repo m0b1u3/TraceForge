@@ -13,3 +13,4 @@ export * from "./artifact-coverage.js";
 export * from "./artifact-analysis-attempt.js";
 export * from "./artifact-analysis-aggregate.js";
 export * from "./artifact-limitation.js";
+export * from "./artifact-retry-authorization.js";

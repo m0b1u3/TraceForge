@@ -1,4 +1,4 @@
-import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, ObserverStrategyAudit, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision, ValidationWorkflowSnapshot, Hypothesis, ArtifactRecord, ArtifactConsumption, ArtifactAnalysisAttempt, ArtifactLimitationDisposition, ArtifactAnalyzerCapability } from "@traceforge/shared";
+import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, ObserverStrategyAudit, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision, ValidationWorkflowSnapshot, Hypothesis, ArtifactRecord, ArtifactConsumption, ArtifactAnalysisAttempt, ArtifactRetryAuthorization, ArtifactLimitationDisposition, ArtifactAnalyzerCapability } from "@traceforge/shared";
 import type { McpToolHandle } from "@traceforge/extension";
 
 export interface LlmConfig {
@@ -192,6 +192,11 @@ export async function listArtifactAnalysisAttempts(caseId: string): Promise<Arti
     await fetch(`/api/cases/${caseId}/artifact-analysis-attempts`),
     "Load artifact analysis attempts",
   );
+  return response.json();
+}
+
+export async function listArtifactRetryAuthorizations(caseId: string): Promise<ArtifactRetryAuthorization[]> {
+  const response = await ensureOk(await fetch(`/api/cases/${caseId}/artifact-retry-authorizations`), "Load artifact retry authorizations");
   return response.json();
 }
 

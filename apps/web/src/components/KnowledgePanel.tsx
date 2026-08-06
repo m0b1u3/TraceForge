@@ -186,11 +186,12 @@ export function artifactConsumptionLabel(consumption?: ArtifactConsumption): str
 }
 
 function ArtifactEvidence() {
-  const { artifacts, analyzerCapabilities, consumptions, analysisAttempts, limitations } = useStore(useShallow((state) => ({
+  const { artifacts, analyzerCapabilities, consumptions, analysisAttempts, retryAuthorizations, limitations } = useStore(useShallow((state) => ({
     artifacts: state.artifacts,
     analyzerCapabilities: state.artifactAnalyzerCapabilities,
     consumptions: state.artifactConsumptions,
     analysisAttempts: state.artifactAnalysisAttempts,
+    retryAuthorizations: state.artifactRetryAuthorizations,
     limitations: state.artifactLimitations,
   })));
   if (artifacts.length === 0) return null;
@@ -204,6 +205,7 @@ function ArtifactEvidence() {
         {[...artifacts].reverse().slice(0, 5).map((artifact) => {
           const consumption = consumptions.find((item) => item.artifactId === artifact.id);
           const attempts = analysisAttempts.filter((item) => item.artifactId === artifact.id);
+          const retryAuthorization = retryAuthorizations.find((item) => item.artifactId === artifact.id);
           const analysis = aggregateArtifactAnalysis(artifact, attempts);
           const capabilities = analyzerCapabilities[artifact.id] ?? [];
           const compatibleCapabilities = capabilities.filter((item) => item.compatible);
@@ -244,6 +246,7 @@ function ArtifactEvidence() {
                   {acceptedLimitation && <span className="artifact-attempt-count">limitation accepted</span>}
                   {staleLimitation && <span className="artifact-attempt-count">limitation stale</span>}
                   {unavailableCapabilities.length > 0 && <span className="artifact-attempt-count">recovery required</span>}
+                  {retryAuthorization?.status === "authorized" && <span className="artifact-attempt-count">retry authorized</span>}
                   {consumption && (
                     <span
                       className="artifact-consumption-state"
@@ -286,6 +289,7 @@ function ArtifactEvidence() {
                   <div><dt>Negative conclusion</dt><dd>Not supported by this analysis alone</dd></div>
                   {acceptedLimitation && <div><dt>Accepted limitation</dt><dd>{acceptedLimitation.rationale}</dd></div>}
                   {staleLimitation && <div><dt>Limitation review</dt><dd>New analysis attempts exist; the prior acceptance no longer closes this Task.</dd></div>}
+                  {retryAuthorization && <div><dt>Retry authorization</dt><dd>{retryAuthorization.status} · {retryAuthorization.reason}</dd></div>}
                 </dl>
                 {analysis.findings.map((finding, index) => (
                   <div className="artifact-finding" key={`${finding.kind}-${finding.label}-${index}`}>

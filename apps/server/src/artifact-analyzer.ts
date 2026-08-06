@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ArtifactAnalysis, ArtifactAnalyzerCapability, ArtifactFinding, ArtifactRecord } from "@traceforge/shared";
 
@@ -17,6 +18,15 @@ export interface ArtifactAnalyzerPreflight {
   reason: string;
   recoveryHint?: string;
   identity?: string;
+}
+
+export function artifactAnalyzerCapabilityFingerprint(capability: ArtifactAnalyzerCapability): string {
+  return createHash("sha256").update(JSON.stringify({
+    analyzerId: capability.analyzerId,
+    compatible: capability.compatible,
+    availability: capability.availability ?? "ready",
+    identity: capability.identity ?? null,
+  })).digest("hex");
 }
 
 export class ArtifactAnalyzerRegistry {
@@ -246,17 +256,24 @@ export class JhatHprofAnalyzer implements ArtifactAnalyzer {
       result = { availability: "unavailable", reason: discovery.reason, recoveryHint: discovery.recoveryHint };
     } else {
       const probe = spawnSync(discovery.path, ["-help"], { encoding: "utf8", timeout: 5_000, windowsHide: true });
+      let identity = discovery.path;
+      try {
+        const executable = statSync(discovery.path);
+        identity = `${discovery.path}|size=${executable.size}|mtime=${executable.mtimeMs}`;
+      } catch {
+        // The launch probe below remains authoritative when filesystem metadata is unavailable.
+      }
       result = probe.error
         ? {
             availability: "unavailable",
             reason: `jhat executable was discovered but could not be started: ${probe.error.message}`,
             recoveryHint: "Repair the configured executable or select a working JDK, then re-plan the artifact.",
-            identity: discovery.path,
+            identity,
           }
         : {
             availability: "ready",
             reason: `${discovery.reason} Executable launch preflight completed.`,
-            identity: discovery.path,
+            identity,
           };
     }
     this.cachedPreflight = { key, expiresAt: Date.now() + 15_000, result };

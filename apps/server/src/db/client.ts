@@ -65,10 +65,18 @@ export function createDb(path: string) {
     CREATE TABLE IF NOT EXISTS artifact_analysis_attempts (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, artifact_id TEXT NOT NULL,
       analyzer_id TEXT, status TEXT NOT NULL, coverage_dimensions_json TEXT NOT NULL DEFAULT '[]',
+      preflight_fingerprint TEXT, preflight_availability TEXT, preflight_reason TEXT,
       error TEXT, analysis_json TEXT, started_at TEXT NOT NULL, finished_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_artifact_analysis_attempts_artifact ON artifact_analysis_attempts(artifact_id, started_at);
     CREATE INDEX IF NOT EXISTS idx_artifact_analysis_attempts_case ON artifact_analysis_attempts(case_id, started_at);
+    CREATE TABLE IF NOT EXISTS artifact_retry_authorizations (
+      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, artifact_id TEXT NOT NULL,
+      analyzer_id TEXT NOT NULL, failed_attempt_id TEXT NOT NULL, preflight_fingerprint TEXT NOT NULL,
+      reason TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_artifact_retry_authorizations_case ON artifact_retry_authorizations(case_id, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_artifact_retry_authorizations_artifact ON artifact_retry_authorizations(artifact_id, analyzer_id);
     CREATE TABLE IF NOT EXISTS artifact_limitation_dispositions (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, task_id TEXT NOT NULL, artifact_id TEXT NOT NULL,
       status TEXT NOT NULL, missing_dimensions_json TEXT NOT NULL DEFAULT '[]', attempt_ids_json TEXT NOT NULL DEFAULT '[]',
@@ -291,7 +299,12 @@ export function createDb(path: string) {
     { name: "relationship_gate_json", definition: "TEXT NOT NULL DEFAULT 'null'" },
   ]);
   ensureColumns("timeline", [{ name: "run_id", definition: "TEXT" }]);
-  ensureColumns("artifact_analysis_attempts", [{ name: "analysis_json", definition: "TEXT" }]);
+  ensureColumns("artifact_analysis_attempts", [
+    { name: "analysis_json", definition: "TEXT" },
+    { name: "preflight_fingerprint", definition: "TEXT" },
+    { name: "preflight_availability", definition: "TEXT" },
+    { name: "preflight_reason", definition: "TEXT" },
+  ]);
   ensureColumns("hypotheses", [
     { name: "run_id", definition: "TEXT" },
     { name: "priority_score", definition: "INTEGER NOT NULL DEFAULT 50" },

@@ -21,6 +21,7 @@ const capabilities: ArtifactAnalyzerCapability[] = [
 const successfulAttempt: ArtifactAnalysisAttempt = {
   id: "attempt_1", caseId: "case_1", runId: "run_1", artifactId: "artifact_1",
   analyzerId: "metadata-analyzer", status: "succeeded", coverageDimensions: ["metadata"],
+  preflightFingerprint: null, preflightAvailability: null, preflightReason: null,
   error: null, analysis: artifact.analysis, startedAt: "a", finishedAt: "b",
 };
 
@@ -60,6 +61,24 @@ describe("artifact analysis planner", () => {
       candidates: [{ analyzerId: "object-analyzer", availability: "unavailable", requiresRecovery: true, eligible: false }],
     });
     expect(plan.reason).toContain("Install the analyzer dependency");
+  });
+
+  it("reopens a failed analyzer only after its preflight identity changes", () => {
+    const capability = { ...capabilities[1], identity: "analyzer-v2", availability: "ready" as const };
+    const failed = {
+      ...successfulAttempt,
+      analyzerId: capability.analyzerId,
+      status: "failed" as const,
+      analysis: null,
+      error: "execution failed",
+      preflightFingerprint: "previous-environment",
+    };
+
+    expect(planArtifactAnalysis(artifact, [capability], [failed])).toMatchObject({
+      status: "ready",
+      recommendedAnalyzerId: capability.analyzerId,
+      candidates: [{ eligible: true, requiresRecovery: false }],
+    });
   });
 
   it("reports exhaustion only after compatible paths ended as unsupported", () => {

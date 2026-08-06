@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db/client.js";
-import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, artifacts, artifactAnalysisAttempts, artifactLimitationDispositions, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, observerStrategyAudits, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions, validationConsensus } from "./db/schema.js";
+import { cases, identityContexts, attackPaths, securityReportRevisions, securityReports, trafficEntries, artifacts, artifactAnalysisAttempts, artifactRetryAuthorizations, artifactLimitationDispositions, facts, tasks, timeline, actionCards, decisions, agentEvents, observerWarnings, observerStrategyAudits, runCognitiveState, hypotheses, contextSummaries, knowledgeUsage, validationConclusions, validationConsensus } from "./db/schema.js";
 import { CaseStore } from "./stores/case-store.js";
 import { TrafficStore } from "./stores/traffic-store.js";
 import { FactStore } from "./stores/fact-store.js";
@@ -95,6 +95,7 @@ import {
 import { reconcileUnsupportedEndpointFacts } from "./endpoint-fact-reconciliation.js";
 import { ArtifactStore } from "./stores/artifact-store.js";
 import { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
+import { ArtifactRetryAuthorizationStore } from "./stores/artifact-retry-authorization-store.js";
 import { ArtifactLimitationStore } from "./stores/artifact-limitation-store.js";
 import { ArtifactAnalyzerRegistry, JhatHprofAnalyzer } from "./artifact-analyzer.js";
 import { makeAnalyzeArtifactTool, makeListArtifactsTool, makePlanArtifactAnalysisTool, registerExistingCaseArtifacts } from "./artifact-tools.js";
@@ -104,6 +105,7 @@ import { projectArtifactConsumptions } from "./artifact-consumption-projection.j
 import { combineTaskCompletionGates, evaluateArtifactTaskReadiness } from "./artifact-task-readiness.js";
 import { makeManageArtifactLimitationTool } from "./artifact-limitation-tool.js";
 import { planArtifactAnalysis } from "./artifact-analysis-planner.js";
+import { makeAuthorizeArtifactRetryTool } from "./artifact-retry-authorization-tool.js";
 
 function historyPageOptions(query: unknown): { limit?: number; offset?: number } {
   const value = (query ?? {}) as { limit?: string | number; offset?: string | number };
@@ -129,6 +131,7 @@ export function registerRoutes(
   const traffic = new TrafficStore(db);
   const artifactStore = new ArtifactStore(db);
   const artifactAttemptStore = new ArtifactAnalysisAttemptStore(db);
+  const artifactRetryAuthorizationStore = new ArtifactRetryAuthorizationStore(db);
   const artifactLimitationStore = new ArtifactLimitationStore(db);
   artifactAttemptStore.recoverInterrupted();
   const artifactAnalyzers = new ArtifactAnalyzerRegistry();
@@ -518,6 +521,7 @@ export function registerRoutes(
     db.delete(trafficEntries).where(eq(trafficEntries.caseId, id)).run();
     db.delete(artifacts).where(eq(artifacts.caseId, id)).run();
     db.delete(artifactAnalysisAttempts).where(eq(artifactAnalysisAttempts.caseId, id)).run();
+    db.delete(artifactRetryAuthorizations).where(eq(artifactRetryAuthorizations.caseId, id)).run();
     db.delete(artifactLimitationDispositions).where(eq(artifactLimitationDispositions.caseId, id)).run();
     db.delete(identityContexts).where(eq(identityContexts.caseId, id)).run();
     db.delete(attackPaths).where(eq(attackPaths.caseId, id)).run();
@@ -662,6 +666,12 @@ export function registerRoutes(
     const { id } = req.params as { id: string };
     if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
     return artifactAttemptStore.listByCase(id);
+  });
+
+  app.get("/api/cases/:id/artifact-retry-authorizations", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!cases.get(id)) return reply.code(404).send({ error: "case not found" });
+    return artifactRetryAuthorizationStore.listByCase(id);
   });
 
   app.get("/api/cases/:id/artifact-limitations", async (req, reply) => {
@@ -1576,6 +1586,11 @@ export function registerRoutes(
     }));
     registry.register(makeListArtifactsTool(id, artifactStore, artifactAnalyzers, artifactAttemptStore));
     registry.register(makePlanArtifactAnalysisTool(id, artifactStore, artifactAnalyzers, artifactAttemptStore));
+    registry.register(makeAuthorizeArtifactRetryTool({
+      caseId: id, runId, artifacts: artifactStore, attempts: artifactAttemptStore,
+      analyzers: artifactAnalyzers, authorizations: artifactRetryAuthorizationStore,
+      timeline: timelineStore, emit: (event) => bus.emit(event),
+    }));
     registry.register(makeManageArtifactLimitationTool({
       caseId: id, runId, artifacts: artifactStore, attempts: artifactAttemptStore, analyzers: artifactAnalyzers,
       limitations: artifactLimitationStore, facts: factStore, tasks: taskStore, timeline: timelineStore,
@@ -1585,6 +1600,14 @@ export function registerRoutes(
       attempts: artifactAttemptStore,
       runId,
       onAttemptChanged: (attempt) => bus.emit({ type: "artifact_analysis_attempt_updated", attempt }),
+      retryAuthorizations: artifactRetryAuthorizationStore,
+      onRetryAuthorizationChanged: (authorization) => {
+        bus.emit({ type: "artifact_retry_authorization_updated", authorization });
+        if (authorization.status === "consumed") {
+          const entry = timelineStore.append(id, "artifact_retry_consumed", `Artifact=${authorization.artifactId}; analyzer=${authorization.analyzerId}; authorization=${authorization.id}`, authorization.artifactId, runId);
+          bus.emit({ type: "timeline_appended", entry });
+        }
+      },
       onChanged: (artifact, reason) => {
         bus.emit({ type: "artifact_updated", artifact });
         if (reason === "analyzing") return;
@@ -1662,7 +1685,7 @@ export function registerRoutes(
 证据驱动：记录动作前先记录支撑它的 Fact。
 情报复用：遇到任何可能有关的信息（端点、参数、版本号、错误信息、凭据线索、技术栈、WAF 行为、异常响应）都要立即记录为 Fact，即使不确定是否有用。后续在采取任何攻击动作前，先用 search_facts 检索相关 Fact 并尝试利用其中的价值。
 Artifact 证据：download_tool 成功只证明文件已获取。下载后用 list_artifacts 获取持久记录，调用 plan_artifact_analysis 根据覆盖缺口与尝试历史选择下一种方法，然后一次只调用一个 analyze_artifact。每次分析结束后重新规划，禁止并行启动多个 Analyzer。优先使用结构化关系分析，不要只依赖原始字符串扫描。掩码/脱敏值只证明输出被处理，不能证明原值不存在；分析器不支持、执行失败、覆盖不足或未命中时，只能记录未解决和分析限制，禁止下“内容不存在”的结论。
-当 plan_artifact_analysis 返回 recovery_required 时，说明分析器依赖不可用或执行失败，必须先按 recovery 提示恢复环境，或仅在条件确实变化后显式重试；这不是路径耗尽，禁止接受限制。只有规划明确返回 blocked 或 exhausted，且当前所有兼容分析路径均已用尽时，才可调用 manage_artifact_limitation 接受该 Task 的残余限制并说明理由。该记录只允许结束关联 Task 的生命周期，绝不能验证或否定安全发现；任何新的分析尝试都会使旧记录失效，之后必须重新评估。
+当 plan_artifact_analysis 返回 recovery_required 时，说明分析器依赖不可用或执行失败，必须先按 recovery 提示恢复环境。环境身份指纹变化后重新规划会自动开放重试；条件未变化时 retry=true 不会绕过保护，必须调用 authorize_artifact_retry 说明具体理由并取得一次性人工批准，授权在分析开始时即被消费。这不是路径耗尽，禁止接受限制。只有规划明确返回 blocked 或 exhausted，且当前所有兼容分析路径均已用尽时，才可调用 manage_artifact_limitation 接受该 Task 的残余限制并说明理由。该记录只允许结束关联 Task 的生命周期，绝不能验证或否定安全发现；任何新的分析尝试都会使旧记录失效，之后必须重新评估。
 认证端点测试顺序：当目标涉及登录或认证接口时，按以下顺序执行：
 1. 先尝试一组常见/弱口令凭据（可控数量，不要无差别爆破）；
 2. 复用从其他 Facts 中发现的疑似凭据或线索；
@@ -2100,6 +2123,7 @@ Artifact 证据：download_tool 成功只证明文件已获取。下载后用 li
           "record_validation_conclusion",
           "propose_scope_expansion",
           "manage_artifact_limitation",
+          "authorize_artifact_retry",
         ]);
         if (report.ok && replanTriggers.has(report.name)) {
           try {
