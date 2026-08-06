@@ -120,6 +120,7 @@ const ARTIFACT_EVIDENCE_POLICY = [
   "- Do not warn merely because a coverage gap exists while the Agent is still exploring it, and do not block a traceable positive result on unrelated missing coverage.",
   "- An accepted limitation is an auditable permission to close one linked Task after analyzer exhaustion; it is never evidence of absence and must not verify or reject a Finding.",
   "- Analyzer dependency unavailability and execution failure are recovery_required states, not exhausted analysis paths. Require environment recovery or an explicit changed-condition retry before accepting a limitation.",
+  "- Treat analyzer recovery as proven only when a fresh preflight records improved availability and a changed environment identity. A recovery instruction or Agent assertion alone is not proof.",
   "- Do not claim an artifact was not downloaded when it appears in the Artifact list.",
   "- An earlier warning is resolved only by traceable post-correction evidence; omission from the current warning output is not evidence of resolution.",
 ].join("\n");

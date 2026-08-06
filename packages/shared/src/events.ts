@@ -5,6 +5,7 @@ import type { ArtifactConsumption } from "./artifact-consumption.js";
 import type { ArtifactAnalysisAttempt } from "./artifact-analysis-attempt.js";
 import type { ArtifactLimitationDisposition } from "./artifact-limitation.js";
 import type { ArtifactRetryAuthorization } from "./artifact-retry-authorization.js";
+import type { ArtifactRecovery } from "./artifact-recovery.js";
 
 export type RuntimeEvent =
   | { type: "case_created"; case: Case }
@@ -26,6 +27,7 @@ export type RuntimeEvent =
   | { type: "artifact_analysis_attempt_updated"; attempt: ArtifactAnalysisAttempt }
   | { type: "artifact_limitation_updated"; disposition: ArtifactLimitationDisposition }
   | { type: "artifact_retry_authorization_updated"; authorization: ArtifactRetryAuthorization }
+  | { type: "artifact_recovery_updated"; recovery: ArtifactRecovery }
   | { type: "task_created"; task: Task }
   | { type: "task_updated"; task: Task }
   | { type: "hypothesis_created"; hypothesis: Hypothesis; transition: HypothesisTransition }

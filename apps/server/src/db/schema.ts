@@ -147,6 +147,23 @@ export const artifactRetryAuthorizations = sqliteTable("artifact_retry_authoriza
   updatedAt: text("updated_at").notNull(),
 });
 
+export const artifactRecoveries = sqliteTable("artifact_recoveries", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  runId: text("run_id"),
+  taskId: text("task_id").notNull(),
+  artifactId: text("artifact_id").notNull(),
+  analyzerId: text("analyzer_id").notNull(),
+  failedAttemptId: text("failed_attempt_id"),
+  beforeFingerprint: text("before_fingerprint").notNull(),
+  afterFingerprint: text("after_fingerprint"),
+  instruction: text("instruction").notNull(),
+  result: text("result"),
+  status: text("status").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const artifactLimitationDispositions = sqliteTable("artifact_limitation_dispositions", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

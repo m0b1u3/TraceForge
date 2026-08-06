@@ -10,6 +10,7 @@ export interface ArtifactAnalyzer {
   description?: string;
   supports(artifact: ArtifactRecord): boolean;
   preflight?(): ArtifactAnalyzerPreflight;
+  invalidatePreflight?(): void;
   analyze(artifact: ArtifactRecord, absolutePath: string): Promise<ArtifactAnalysis>;
 }
 
@@ -45,8 +46,9 @@ export class ArtifactAnalyzerRegistry {
     return this.analyzers.map((analyzer) => analyzer.id);
   }
 
-  capabilities(artifact: ArtifactRecord): ArtifactAnalyzerCapability[] {
+  capabilities(artifact: ArtifactRecord, options: { refresh?: boolean } = {}): ArtifactAnalyzerCapability[] {
     return this.analyzers.map((analyzer) => {
+      if (options.refresh) analyzer.invalidatePreflight?.();
       const preflight = analyzer.preflight?.() ?? {
         availability: "ready" as const,
         reason: "Analyzer has no external dependency preflight.",
@@ -245,6 +247,10 @@ export class JhatHprofAnalyzer implements ArtifactAnalyzer {
 
   supports(artifact: ArtifactRecord): boolean {
     return artifact.detectedFormat === "java-hprof";
+  }
+
+  invalidatePreflight(): void {
+    this.cachedPreflight = undefined;
   }
 
   preflight(): ArtifactAnalyzerPreflight {

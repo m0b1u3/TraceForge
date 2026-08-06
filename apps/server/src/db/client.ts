@@ -76,7 +76,15 @@ export function createDb(path: string) {
       reason TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_artifact_retry_authorizations_case ON artifact_retry_authorizations(case_id, updated_at);
-    CREATE INDEX IF NOT EXISTS idx_artifact_retry_authorizations_artifact ON artifact_retry_authorizations(artifact_id, analyzer_id);
+      CREATE INDEX IF NOT EXISTS idx_artifact_retry_authorizations_artifact ON artifact_retry_authorizations(artifact_id, analyzer_id);
+      CREATE TABLE IF NOT EXISTS artifact_recoveries (
+        id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, task_id TEXT NOT NULL,
+        artifact_id TEXT NOT NULL, analyzer_id TEXT NOT NULL, failed_attempt_id TEXT,
+        before_fingerprint TEXT NOT NULL, after_fingerprint TEXT, instruction TEXT NOT NULL,
+        result TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_artifact_recoveries_case ON artifact_recoveries(case_id, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_artifact_recoveries_artifact ON artifact_recoveries(artifact_id, analyzer_id);
     CREATE TABLE IF NOT EXISTS artifact_limitation_dispositions (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, task_id TEXT NOT NULL, artifact_id TEXT NOT NULL,
       status TEXT NOT NULL, missing_dimensions_json TEXT NOT NULL DEFAULT '[]', attempt_ids_json TEXT NOT NULL DEFAULT '[]',
