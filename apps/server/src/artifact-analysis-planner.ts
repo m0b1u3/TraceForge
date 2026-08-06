@@ -4,12 +4,15 @@ export interface ArtifactAnalysisCandidate {
   analyzerId: string;
   coverageGain: ArtifactAnalyzerCapability["coverageDimensions"];
   eligible: boolean;
+  availability: "ready" | "degraded" | "unavailable";
+  requiresRecovery: boolean;
+  recoveryHint: string | null;
   reason: string;
 }
 
 export interface ArtifactAnalysisPlan {
   artifactId: string;
-  status: "complete" | "ready" | "running" | "blocked" | "exhausted";
+  status: "complete" | "ready" | "running" | "blocked" | "recovery_required" | "exhausted";
   missingDimensions: ArtifactAnalyzerCapability["coverageDimensions"];
   recommendedAnalyzerId: string | null;
   candidates: ArtifactAnalysisCandidate[];
@@ -52,18 +55,37 @@ export function planArtifactAnalysis(
   const candidates = capabilities.filter((capability) => capability.compatible).map((capability) => {
     const previous = latestByAnalyzer.get(capability.analyzerId);
     const coverageGain = capability.coverageDimensions.filter((dimension) => missingDimensions.includes(dimension));
-    if (previous?.status === "running") {
-      return { analyzerId: capability.analyzerId, coverageGain, eligible: false, reason: "already running" };
+    const availability = capability.availability ?? "ready";
+    const recoveryHint = capability.recoveryHint ?? null;
+    if (availability === "unavailable") {
+      return {
+        analyzerId: capability.analyzerId, coverageGain, eligible: false, availability,
+        requiresRecovery: true, recoveryHint,
+        reason: `preflight unavailable: ${capability.availabilityReason ?? "required analyzer dependency is unavailable"}`,
+      };
     }
-    if (previous?.status === "failed" || previous?.status === "unsupported") {
-      return { analyzerId: capability.analyzerId, coverageGain, eligible: false, reason: `previous attempt ${previous.status}` };
+    if (previous?.status === "running") {
+      return { analyzerId: capability.analyzerId, coverageGain, eligible: false, availability, requiresRecovery: false, recoveryHint, reason: "already running" };
+    }
+    if (previous?.status === "failed") {
+      return {
+        analyzerId: capability.analyzerId, coverageGain, eligible: false, availability,
+        requiresRecovery: true, recoveryHint,
+        reason: `previous attempt failed: ${previous.error ?? "execution did not complete"}; confirm changed conditions before retrying`,
+      };
+    }
+    if (previous?.status === "unsupported") {
+      return { analyzerId: capability.analyzerId, coverageGain, eligible: false, availability, requiresRecovery: false, recoveryHint, reason: "previous attempt was unsupported" };
     }
     if (previous?.status === "succeeded") {
-      return { analyzerId: capability.analyzerId, coverageGain, eligible: false, reason: "coverage already collected" };
+      return { analyzerId: capability.analyzerId, coverageGain, eligible: false, availability, requiresRecovery: false, recoveryHint, reason: "coverage already collected" };
     }
     return {
       analyzerId: capability.analyzerId,
       coverageGain,
+      availability,
+      requiresRecovery: false,
+      recoveryHint,
       eligible: coverageGain.length > 0 || capability.coverageDimensions.length === 0,
       reason: coverageGain.length > 0 ? `adds ${coverageGain.join(", ")}` : "declared coverage does not close the current gap",
     };
@@ -80,6 +102,17 @@ export function planArtifactAnalysis(
       recommendedAnalyzerId: recommended.analyzerId,
       candidates,
       reason: `Run ${recommended.analyzerId} next; it provides the largest untried declared coverage gain.`,
+    };
+  }
+  const recoverable = candidates.filter((candidate) => candidate.requiresRecovery);
+  if (recoverable.length > 0) {
+    return {
+      artifactId: artifact.id,
+      status: "recovery_required",
+      missingDimensions,
+      recommendedAnalyzerId: null,
+      candidates,
+      reason: `Analyzer execution is not exhausted: ${recoverable.map((candidate) => `${candidate.analyzerId}: ${candidate.reason}${candidate.recoveryHint ? `; recovery=${candidate.recoveryHint}` : ""}`).join(" | ")}`,
     };
   }
   const compatible = capabilities.some((capability) => capability.compatible);

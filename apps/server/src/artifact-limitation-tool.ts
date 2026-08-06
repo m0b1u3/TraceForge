@@ -67,7 +67,10 @@ export function makeManageArtifactLimitationTool(input: {
       const attempts = input.attempts.listByArtifact(artifact.id);
       const plan = planArtifactAnalysis(artifact, input.analyzers.capabilities(artifact), attempts);
       if (!["blocked", "exhausted"].includes(plan.status)) {
-        return { ok: false, content: `Artifact limitation cannot be accepted while analysis plan is ${plan.status}. ${plan.reason}` };
+        return {
+          ok: false,
+          content: `Artifact limitation cannot be accepted while analysis plan is ${plan.status}. ${plan.reason} Environment recovery and analysis exhaustion are different states.`,
+        };
       }
       const aggregate = aggregateArtifactAnalysis(artifact, attempts);
       if (aggregate.quality === "substantial") return { ok: false, content: "Artifact has complete cumulative coverage; no limitation acceptance is required." };

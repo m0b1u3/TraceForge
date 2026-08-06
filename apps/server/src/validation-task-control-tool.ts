@@ -8,6 +8,7 @@ import type { ValidationConsensusStore } from "./stores/validation-consensus-sto
 import type { ArtifactStore } from "./stores/artifact-store.js";
 import type { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
 import type { ArtifactLimitationStore } from "./stores/artifact-limitation-store.js";
+import type { ArtifactAnalyzerRegistry } from "./artifact-analyzer.js";
 import { evaluateValidationTaskCompletion } from "./validation-task-gate.js";
 import { evaluateValidationTaskExecutionTransition, isConsensusValidationTask } from "./validation-task-execution.js";
 import { combineTaskCompletionGates, evaluateArtifactTaskReadiness } from "./artifact-task-readiness.js";
@@ -25,6 +26,7 @@ export function makeManageValidationTaskTool(input: {
   artifacts?: ArtifactStore;
   artifactAttempts?: ArtifactAnalysisAttemptStore;
   artifactLimitations?: ArtifactLimitationStore;
+  artifactAnalyzers?: ArtifactAnalyzerRegistry;
   timeline: TimelineStore;
   emit: (event: ControlEvent) => void;
 }): ToolDescriptor {
@@ -107,6 +109,9 @@ export function makeManageValidationTaskTool(input: {
               artifacts: input.artifacts.listByCase(input.caseId),
               attempts: input.artifactAttempts.listByCase(input.caseId),
               dispositions: input.artifactLimitations?.listByCase(input.caseId),
+              capabilitiesByArtifact: input.artifactAnalyzers
+                ? Object.fromEntries(input.artifacts.listByCase(input.caseId).map((artifact) => [artifact.id, input.artifactAnalyzers!.capabilities(artifact)]))
+                : undefined,
             })
             : { allowed: true, missing: [] },
         );

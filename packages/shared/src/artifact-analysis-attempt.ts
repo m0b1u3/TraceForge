@@ -6,6 +6,10 @@ export const ArtifactAnalyzerCapabilitySchema = z.object({
   compatible: z.boolean(),
   coverageDimensions: z.array(z.enum(["metadata", "text", "object_graph"])),
   description: z.string(),
+  availability: z.enum(["ready", "degraded", "unavailable"]).optional(),
+  availabilityReason: z.string().optional(),
+  recoveryHint: z.string().optional(),
+  identity: z.string().optional(),
 });
 export type ArtifactAnalyzerCapability = z.infer<typeof ArtifactAnalyzerCapabilitySchema>;
 

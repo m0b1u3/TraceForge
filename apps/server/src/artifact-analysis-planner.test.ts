@@ -32,7 +32,7 @@ describe("artifact analysis planner", () => {
     expect(plan.candidates[0]).toMatchObject({ analyzerId: "graph-analyzer", coverageGain: ["object_graph"] });
   });
 
-  it("does not recommend failed methods again and reports exhaustion", () => {
+  it("does not treat failed execution as exhausted analysis", () => {
     const attempts: ArtifactAnalysisAttempt[] = capabilities.map((capability, index) => ({
       ...successfulAttempt,
       id: `attempt_${index}`,
@@ -42,8 +42,33 @@ describe("artifact analysis planner", () => {
       analysis: index === 0 ? artifact.analysis : null,
     }));
     expect(planArtifactAnalysis(artifact, capabilities, attempts)).toMatchObject({
-      status: "exhausted",
+      status: "recovery_required",
       recommendedAnalyzerId: null,
+    });
+  });
+
+  it("requires dependency recovery when a compatible analyzer fails preflight", () => {
+    const plan = planArtifactAnalysis(artifact, [{
+      analyzerId: "object-analyzer", compatible: true, coverageDimensions: ["object_graph"],
+      description: "Object relationships", availability: "unavailable",
+      availabilityReason: "Required executable is not installed.",
+      recoveryHint: "Install the analyzer dependency and re-plan.",
+    }], [successfulAttempt]);
+
+    expect(plan).toMatchObject({
+      status: "recovery_required", recommendedAnalyzerId: null,
+      candidates: [{ analyzerId: "object-analyzer", availability: "unavailable", requiresRecovery: true, eligible: false }],
+    });
+    expect(plan.reason).toContain("Install the analyzer dependency");
+  });
+
+  it("reports exhaustion only after compatible paths ended as unsupported", () => {
+    const attempts: ArtifactAnalysisAttempt[] = capabilities.map((capability, index) => ({
+      ...successfulAttempt, id: `unsupported_${index}`, analyzerId: capability.analyzerId,
+      status: "unsupported", coverageDimensions: capability.coverageDimensions, analysis: null,
+    }));
+    expect(planArtifactAnalysis(artifact, capabilities, attempts)).toMatchObject({
+      status: "exhausted", recommendedAnalyzerId: null,
     });
   });
 

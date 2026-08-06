@@ -12,6 +12,7 @@ function resetStore() {
     securityReports: [],
     facts: [],
     artifacts: [],
+    artifactAnalyzerCapabilities: {},
     artifactConsumptions: [],
     artifactAnalysisAttempts: [],
     artifactLimitations: [],

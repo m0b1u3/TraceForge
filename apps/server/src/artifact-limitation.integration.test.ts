@@ -46,6 +46,15 @@ describe("artifact limitation disposition with real SQLite", () => {
     expect(evaluateArtifactTaskReadiness({
       task, facts: [fact], artifacts: [artifact], attempts: [], dispositions: [disposition],
     }).allowed).toBe(true);
+    expect(evaluateArtifactTaskReadiness({
+      task, facts: [fact], artifacts: [artifact], attempts: [], dispositions: [disposition],
+      capabilitiesByArtifact: {
+        [artifact.id]: [{
+          analyzerId: "newly-available-analyzer", compatible: true, coverageDimensions: ["metadata"],
+          description: "Newly registered metadata analyzer", availability: "ready",
+        }],
+      },
+    }).allowed).toBe(false);
 
     const attempt = attempts.start({
       caseId: "case_1", runId: "run_1", artifactId: artifact.id,

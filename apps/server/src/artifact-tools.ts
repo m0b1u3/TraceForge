@@ -97,7 +97,7 @@ function formatAnalysisPlan(plan: ArtifactAnalysisPlan): string {
     `recommendedAnalyzer=${plan.recommendedAnalyzerId ?? "none"}`,
     `reason=${plan.reason}`,
     `candidates=${plan.candidates.length === 0 ? "none" : plan.candidates.map((candidate) =>
-      `${candidate.analyzerId}[eligible=${candidate.eligible}; gain=${candidate.coverageGain.join(",") || "none"}; ${candidate.reason}]`).join(" | ")}`,
+      `${candidate.analyzerId}[availability=${candidate.availability}; eligible=${candidate.eligible}; recoveryRequired=${candidate.requiresRecovery}; gain=${candidate.coverageGain.join(",") || "none"}; ${candidate.reason}${candidate.recoveryHint ? `; recovery=${candidate.recoveryHint}` : ""}]`).join(" | ")}`,
     "Run only the recommended analyzer. Re-plan after that attempt finishes before choosing another method.",
   ].join("\n");
 }
@@ -157,7 +157,7 @@ export function makeListArtifactsTool(
           const history = attempts?.listByArtifact(artifact.id) ?? [];
           return [
             `${artifact.id} [${artifact.status}; format=${artifact.detectedFormat}; bytes=${artifact.byteSize}; sha256=${artifact.sha256}] ${artifact.relativePath}${artifact.analyzerId ? `; analyzer=${artifact.analyzerId}` : ""}${artifact.error ? `; error=${artifact.error}` : ""}`,
-            `compatibleAnalyzers=${compatible.map((item) => `${item.analyzerId}(${item.coverageDimensions.join(",") || "declared coverage unavailable"})`).join(" | ") || "none"}`,
+            `compatibleAnalyzers=${compatible.map((item) => `${item.analyzerId}(availability=${item.availability ?? "ready"}; coverage=${item.coverageDimensions.join(",") || "declared coverage unavailable"}; reason=${item.availabilityReason ?? "none"}${item.recoveryHint ? `; recovery=${item.recoveryHint}` : ""})`).join(" | ") || "none"}`,
             `attempts=${history.length === 0 ? "none" : history.slice(0, 5).map((attempt) => `${attempt.analyzerId ?? "unresolved"}:${attempt.status}${attempt.error ? `(${attempt.error})` : ""}`).join(" | ")}`,
           ].join("\n");
         }).join("\n\n"),
@@ -201,7 +201,8 @@ export function makeAnalyzeArtifactTool(
       const artifact = store.getById(artifactId);
       if (!artifact || artifact.caseId !== caseId) return { ok: false, content: `Artifact ${artifactId} does not exist in this Case.` };
       const previousAttempts = options.attempts?.listByArtifact(artifact.id) ?? [];
-      const plan = planArtifactAnalysis(artifact, analyzers.capabilities(artifact), previousAttempts);
+      const capabilities = analyzers.capabilities(artifact);
+      const plan = planArtifactAnalysis(artifact, capabilities, previousAttempts);
       if (!request.analyzerId && artifact.status === "analyzed" && artifact.analysis && plan.status !== "ready") {
         options.onChanged?.(artifact, "cached");
         return { ok: true, content: `${formatAnalysis(artifact.id, artifact.analysis)}\n${formatAnalysisPlan(plan)}`, meta: { artifactId } };
@@ -209,7 +210,21 @@ export function makeAnalyzeArtifactTool(
       if (!request.analyzerId && plan.status === "running") {
         return { ok: false, content: formatAnalysisPlan(plan) };
       }
+      if (!request.analyzerId && plan.status !== "ready") {
+        return { ok: false, content: formatAnalysisPlan(plan) };
+      }
       const selectedAnalyzerId = request.analyzerId ?? plan.recommendedAnalyzerId ?? undefined;
+      const selectedCapability = capabilities.find((capability) => capability.analyzerId === selectedAnalyzerId);
+      if (selectedCapability?.compatible && selectedCapability.availability === "unavailable") {
+        return {
+          ok: false,
+          content: [
+            `Analyzer ${selectedCapability.analyzerId} failed execution preflight: ${selectedCapability.availabilityReason ?? "required dependency is unavailable"}.`,
+            selectedCapability.recoveryHint ? `Recovery: ${selectedCapability.recoveryHint}` : null,
+            "No analysis attempt was started. Acquisition remains verified and content conclusions remain unresolved.",
+          ].filter(Boolean).join(" "),
+        };
+      }
       const analyzer = analyzers.find(artifact, selectedAnalyzerId);
       const activeSameMethod = previousAttempts.find((attempt) =>
         attempt.analyzerId === (analyzer?.id ?? selectedAnalyzerId ?? null)

@@ -3,10 +3,12 @@ import {
   type ArtifactAnalysisAttempt,
   type ArtifactRecord,
   type ArtifactLimitationDisposition,
+  type ArtifactAnalyzerCapability,
   type Fact,
   type Task,
 } from "@traceforge/shared";
 import type { TaskCompletionGateResult } from "@traceforge/extension";
+import { planArtifactAnalysis } from "./artifact-analysis-planner.js";
 
 export interface ArtifactTaskReadinessItem {
   artifactId: string;
@@ -41,6 +43,7 @@ export function evaluateArtifactTaskReadiness(input: {
   artifacts: ArtifactRecord[];
   attempts: ArtifactAnalysisAttempt[];
   dispositions?: ArtifactLimitationDisposition[];
+  capabilitiesByArtifact?: Record<string, ArtifactAnalyzerCapability[]>;
 }): ArtifactTaskReadiness {
   const related = new Set(input.task.relatedFacts);
   const relatedFacts = input.facts.filter((fact) => related.has(fact.id));
@@ -63,10 +66,15 @@ export function evaluateArtifactTaskReadiness(input: {
     const hasTraceablePositiveEvidence = relatedFacts.some((fact) =>
       isTraceablePositiveArtifactEvidence(fact, artifactId));
     const currentAttemptIds = artifactAttempts.map((attempt) => attempt.id).sort();
+    const currentPlan = input.capabilitiesByArtifact?.[artifactId]
+      ? planArtifactAnalysis(artifact, input.capabilitiesByArtifact[artifactId], artifactAttempts)
+      : null;
+    const limitationStillPermitted = !currentPlan || ["blocked", "exhausted"].includes(currentPlan.status);
     const accepted = input.dispositions?.find((item) =>
       item.status === "accepted"
       && item.taskId === input.task.id
       && item.artifactId === artifactId
+      && limitationStillPermitted
       && [...item.attemptIds].sort().join("\u0000") === currentAttemptIds.join("\u0000"));
     items.push({
       artifactId,

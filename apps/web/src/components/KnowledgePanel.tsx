@@ -186,8 +186,9 @@ export function artifactConsumptionLabel(consumption?: ArtifactConsumption): str
 }
 
 function ArtifactEvidence() {
-  const { artifacts, consumptions, analysisAttempts, limitations } = useStore(useShallow((state) => ({
+  const { artifacts, analyzerCapabilities, consumptions, analysisAttempts, limitations } = useStore(useShallow((state) => ({
     artifacts: state.artifacts,
+    analyzerCapabilities: state.artifactAnalyzerCapabilities,
     consumptions: state.artifactConsumptions,
     analysisAttempts: state.artifactAnalysisAttempts,
     limitations: state.artifactLimitations,
@@ -204,14 +205,26 @@ function ArtifactEvidence() {
           const consumption = consumptions.find((item) => item.artifactId === artifact.id);
           const attempts = analysisAttempts.filter((item) => item.artifactId === artifact.id);
           const analysis = aggregateArtifactAnalysis(artifact, attempts);
+          const capabilities = analyzerCapabilities[artifact.id] ?? [];
+          const compatibleCapabilities = capabilities.filter((item) => item.compatible);
+          const complete = analysis.quality === "substantial";
+          const unavailableCapabilities = complete
+            ? []
+            : compatibleCapabilities.filter((item) => item.availability === "unavailable");
+          const limitationRecoveryPending = !complete && compatibleCapabilities.some((capability) => {
+            const previous = attempts.find((attempt) => attempt.analyzerId === capability.analyzerId);
+            return capability.availability === "unavailable"
+              || (!previous && (capability.availability ?? "ready") !== "unavailable")
+              || previous?.status === "failed";
+          });
           const currentAttemptIds = attempts.map((item) => item.id).sort().join("\u0000");
           const activeDisposition = limitations.find((item) => item.artifactId === artifact.id && item.status === "accepted");
           const acceptedLimitation = activeDisposition
             && [...activeDisposition.attemptIds].sort().join("\u0000") === currentAttemptIds
+            && !limitationRecoveryPending
             ? activeDisposition
             : undefined;
           const staleLimitation = activeDisposition && !acceptedLimitation ? activeDisposition : undefined;
-          const complete = analysis.quality === "substantial";
           return (
             <details className="artifact-evidence-item" key={artifact.id}>
               <summary>
@@ -230,6 +243,7 @@ function ArtifactEvidence() {
                   <span className="artifact-finding-count">{analysis.findings.length} evidence</span>
                   {acceptedLimitation && <span className="artifact-attempt-count">limitation accepted</span>}
                   {staleLimitation && <span className="artifact-attempt-count">limitation stale</span>}
+                  {unavailableCapabilities.length > 0 && <span className="artifact-attempt-count">recovery required</span>}
                   {consumption && (
                     <span
                       className="artifact-consumption-state"
@@ -251,6 +265,15 @@ function ArtifactEvidence() {
                 <dl className="artifact-metadata">
                   <div><dt>SHA256</dt><dd><code>{artifact.sha256}</code></dd></div>
                   <div><dt>Analyzers</dt><dd>{analysis.analyzerIds.join(", ") || "Not available"}</dd></div>
+                  <div>
+                    <dt>Analyzer readiness</dt>
+                    <dd>{compatibleCapabilities.length === 0
+                      ? "No compatible analyzer"
+                      : compatibleCapabilities.map((item) => `${item.analyzerId}: ${item.availability ?? "ready"}`).join(", ")}</dd>
+                  </div>
+                  {unavailableCapabilities.map((item) => (
+                    <div key={item.analyzerId}><dt>Recovery</dt><dd>{item.availabilityReason}{item.recoveryHint ? ` ${item.recoveryHint}` : ""}</dd></div>
+                  ))}
                   {consumption && <div><dt>Use state</dt><dd>{artifactConsumptionLabel(consumption)}</dd></div>}
                   {consumption && <div><dt>Task</dt><dd><code>{consumption.taskId}</code></dd></div>}
                   {consumption?.usedByTool && <div><dt>Used by</dt><dd><code>{consumption.usedByTool}</code></dd></div>}

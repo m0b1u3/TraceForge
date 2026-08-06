@@ -6,7 +6,7 @@ import { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt
 import { ArtifactStore } from "./stores/artifact-store.js";
 
 describe("artifact analysis attempts with real SQLite", () => {
-  it("persists an unsupported attempt and blocks an identical retry until explicitly requested", async () => {
+  it("does not fabricate an execution attempt when no compatible analyzer exists", async () => {
     const db = createDb(":memory:");
     const artifacts = new ArtifactStore(db);
     const attempts = new ArtifactAnalysisAttemptStore(db);
@@ -33,12 +33,12 @@ describe("artifact analysis attempts with real SQLite", () => {
     const second = await tool.execute({ artifactId: artifact.id });
 
     expect(first.ok).toBe(false);
-    expect(attempts.listByArtifact(artifact.id)).toHaveLength(1);
-    expect(attempts.listByArtifact(artifact.id)[0]).toMatchObject({ status: "unsupported", analyzerId: null });
-    expect(second.content).toContain("already ended as unsupported");
+    expect(first.content).toContain("No registered analyzer is compatible");
+    expect(second.content).toContain("No registered analyzer is compatible");
+    expect(attempts.listByArtifact(artifact.id)).toHaveLength(0);
 
     await tool.execute({ artifactId: artifact.id, retry: true });
-    expect(attempts.listByArtifact(artifact.id)).toHaveLength(2);
+    expect(attempts.listByArtifact(artifact.id)).toHaveLength(0);
   });
 
   it("persists a running attempt transition without losing its identity", () => {

@@ -8,7 +8,15 @@ export interface ArtifactAnalyzer {
   coverageDimensions?: ArtifactAnalyzerCapability["coverageDimensions"];
   description?: string;
   supports(artifact: ArtifactRecord): boolean;
+  preflight?(): ArtifactAnalyzerPreflight;
   analyze(artifact: ArtifactRecord, absolutePath: string): Promise<ArtifactAnalysis>;
+}
+
+export interface ArtifactAnalyzerPreflight {
+  availability: "ready" | "degraded" | "unavailable";
+  reason: string;
+  recoveryHint?: string;
+  identity?: string;
 }
 
 export class ArtifactAnalyzerRegistry {
@@ -28,30 +36,41 @@ export class ArtifactAnalyzerRegistry {
   }
 
   capabilities(artifact: ArtifactRecord): ArtifactAnalyzerCapability[] {
-    return this.analyzers.map((analyzer) => ({
-      analyzerId: analyzer.id,
-      compatible: analyzer.supports(artifact),
-      coverageDimensions: analyzer.coverageDimensions ?? [],
-      description: analyzer.description ?? "Structured artifact analyzer.",
-    }));
+    return this.analyzers.map((analyzer) => {
+      const preflight = analyzer.preflight?.() ?? {
+        availability: "ready" as const,
+        reason: "Analyzer has no external dependency preflight.",
+      };
+      return {
+        analyzerId: analyzer.id,
+        compatible: analyzer.supports(artifact),
+        coverageDimensions: analyzer.coverageDimensions ?? [],
+        description: analyzer.description ?? "Structured artifact analyzer.",
+        availability: preflight.availability,
+        availabilityReason: preflight.reason,
+        recoveryHint: preflight.recoveryHint,
+        identity: preflight.identity,
+      };
+    });
   }
 }
 
-function discoverJhat(): string | undefined {
-  const configured = [process.env.TRACEFORGE_JHAT_PATH, process.env.JHAT_PATH]
-    .find((candidate): candidate is string => !!candidate && existsSync(candidate));
-  if (configured) return configured;
+function discoverJhat(): { path?: string; reason: string; recoveryHint?: string } {
+  const configuredValue = process.env.TRACEFORGE_JHAT_PATH || process.env.JHAT_PATH;
+  if (configuredValue && existsSync(configuredValue)) {
+    return { path: configuredValue, reason: `Using configured jhat executable at ${configuredValue}.` };
+  }
   const executable = process.platform === "win32" ? "jhat.exe" : "jhat";
   if (process.env.JAVA_HOME) {
     const candidate = resolve(process.env.JAVA_HOME, "bin", executable);
-    if (existsSync(candidate)) return candidate;
+    if (existsSync(candidate)) return { path: candidate, reason: `Using jhat from JAVA_HOME at ${candidate}.` };
   }
   const located = spawnSync(process.platform === "win32" ? "where.exe" : "which", [executable], {
     encoding: "utf8",
     windowsHide: true,
   });
   const first = located.status === 0 ? located.stdout.split(/\r?\n/).find(Boolean) : undefined;
-  if (first && existsSync(first)) return first;
+  if (first && existsSync(first)) return { path: first, reason: `Using jhat discovered on PATH at ${first}.` };
   if (process.platform === "win32") {
     for (const root of ["C:\\Program Files\\Java", "C:\\Program Files\\Eclipse Adoptium"]) {
       if (!existsSync(root)) continue;
@@ -60,10 +79,15 @@ function discoverJhat(): string | undefined {
         .map((entry) => resolve(root, entry.name, "bin", executable))
         .filter(existsSync)
         .reverse();
-      if (candidates[0]) return candidates[0];
+      if (candidates[0]) return { path: candidates[0], reason: `Using discovered JDK jhat at ${candidates[0]}.` };
     }
   }
-  return undefined;
+  return {
+    reason: configuredValue
+      ? `Configured jhat executable does not exist at ${configuredValue}, and no fallback was discovered.`
+      : "No jhat executable was discovered in configuration, JAVA_HOME, PATH, or known JDK locations.",
+    recoveryHint: "Install a JDK containing jhat or set TRACEFORGE_JHAT_PATH to an executable path, then re-plan the artifact.",
+  };
 }
 
 function decodeHtml(value: string): string {
@@ -207,18 +231,45 @@ export class JhatHprofAnalyzer implements ArtifactAnalyzer {
   readonly id = "jhat-hprof-object-graph";
   readonly coverageDimensions: ArtifactAnalyzerCapability["coverageDimensions"] = ["metadata", "object_graph"];
   readonly description = "Inspects supported Java object relationships and metadata.";
+  private cachedPreflight?: { key: string; expiresAt: number; result: ArtifactAnalyzerPreflight };
 
   supports(artifact: ArtifactRecord): boolean {
     return artifact.detectedFormat === "java-hprof";
   }
 
+  preflight(): ArtifactAnalyzerPreflight {
+    const key = [process.env.TRACEFORGE_JHAT_PATH, process.env.JHAT_PATH, process.env.JAVA_HOME, process.env.PATH].join("\u0000");
+    if (this.cachedPreflight?.key === key && this.cachedPreflight.expiresAt > Date.now()) return this.cachedPreflight.result;
+    const discovery = discoverJhat();
+    let result: ArtifactAnalyzerPreflight;
+    if (!discovery.path) {
+      result = { availability: "unavailable", reason: discovery.reason, recoveryHint: discovery.recoveryHint };
+    } else {
+      const probe = spawnSync(discovery.path, ["-help"], { encoding: "utf8", timeout: 5_000, windowsHide: true });
+      result = probe.error
+        ? {
+            availability: "unavailable",
+            reason: `jhat executable was discovered but could not be started: ${probe.error.message}`,
+            recoveryHint: "Repair the configured executable or select a working JDK, then re-plan the artifact.",
+            identity: discovery.path,
+          }
+        : {
+            availability: "ready",
+            reason: `${discovery.reason} Executable launch preflight completed.`,
+            identity: discovery.path,
+          };
+    }
+    this.cachedPreflight = { key, expiresAt: Date.now() + 15_000, result };
+    return result;
+  }
+
   async analyze(_artifact: ArtifactRecord, absolutePath: string): Promise<ArtifactAnalysis> {
-    const jhat = discoverJhat();
-    if (!jhat) {
-      throw new Error("No HPROF object-graph analyzer is available. Install a JDK containing jhat or set TRACEFORGE_JHAT_PATH.");
+    const discovery = discoverJhat();
+    if (!discovery.path) {
+      throw new Error(`${discovery.reason} ${discovery.recoveryHint ?? ""}`.trim());
     }
     const port = 41_000 + Math.floor(Math.random() * 10_000);
-    const child = spawn(jhat, ["-J-Xmx1g", "-port", String(port), absolutePath], {
+    const child = spawn(discovery.path, ["-J-Xmx1g", "-port", String(port), absolutePath], {
       stdio: "ignore",
       windowsHide: true,
     });
