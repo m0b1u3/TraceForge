@@ -7,12 +7,23 @@ import type { EventBus } from "./event-bus.js";
 import type { TrafficStore } from "./stores/traffic-store.js";
 
 type Controller = "llm" | "human";
+type PageControlState = { key: string; tag: string; name: string; value: string; checked?: boolean };
+type PageStateSnapshot = { url: string; title: string; textLines: string[]; controls: PageControlState[] };
+type PageStateDiff = {
+  urlChanged: boolean;
+  titleChanged: boolean;
+  addedText: string[];
+  removedText: string[];
+  controlChanges: Array<{ key: string; before?: PageControlState; after?: PageControlState }>;
+  changed: boolean;
+};
 type BrowserActionTrace = {
   id: string;
   kind: string;
   beforeUrl: string;
   trafficIds: string[];
   startedAt: string;
+  beforeState: PageStateSnapshot;
 };
 
 /**
@@ -271,13 +282,71 @@ export class BrowserSession {
     return blocked;
   }
 
-  private beginAction(kind: string): BrowserActionTrace {
+  private async capturePageState(): Promise<PageStateSnapshot> {
+    if (!this.page || this.page.isClosed()) return { url: this.currentUrl(), title: "", textLines: [], controls: [] };
+    return this.page.evaluate(() => {
+      const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+      const semanticText = Array.from(document.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6,p,li,dt,dd,label,button,[role='alert'],[role='status']"))
+        .filter((element) => element.id !== "traceforge-control-lock" && !element.closest("#traceforge-control-lock"))
+        .flatMap((element) => element.innerText.split(/\n+/).map(clean).filter(Boolean));
+      const fallbackText = (document.body?.innerText ?? "").split(/\n+/).map(clean).filter(Boolean);
+      const textLines = [...new Set(semanticText.length ? semanticText : fallbackText)].slice(0, 160);
+      const controls = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input,textarea,select"))
+        .filter((element) => {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+        })
+        .slice(0, 100)
+        .map((element, index) => {
+          const name = clean(element.getAttribute("aria-label") || element.getAttribute("placeholder") || element.getAttribute("name") || element.id || `${element.tagName.toLowerCase()}-${index + 1}`);
+          const ref = element.dataset.traceforgeRef;
+          const value = element instanceof HTMLSelectElement
+            ? Array.from(element.selectedOptions).map((option) => option.value).join(",")
+            : element.value;
+          return {
+            key: ref || `${element.tagName.toLowerCase()}:${name}`,
+            tag: element.tagName.toLowerCase(),
+            name,
+            value,
+            checked: element instanceof HTMLInputElement && ["checkbox", "radio"].includes(element.type) ? element.checked : undefined,
+          };
+        });
+      return { url: location.href, title: document.title, textLines, controls };
+    }).catch(() => ({ url: this.currentUrl(), title: "", textLines: [], controls: [] }));
+  }
+
+  private pageStateDiff(before: PageStateSnapshot, after: PageStateSnapshot): PageStateDiff {
+    const beforeLines = new Set(before.textLines);
+    const afterLines = new Set(after.textLines);
+    const beforeControls = new Map(before.controls.map((control) => [control.key, control]));
+    const afterControls = new Map(after.controls.map((control) => [control.key, control]));
+    const controlChanges: PageStateDiff["controlChanges"] = [];
+    for (const key of new Set([...beforeControls.keys(), ...afterControls.keys()])) {
+      const previous = beforeControls.get(key);
+      const current = afterControls.get(key);
+      if (JSON.stringify(previous) !== JSON.stringify(current)) controlChanges.push({ key, before: previous, after: current });
+    }
+    const diff = {
+      urlChanged: before.url !== after.url,
+      titleChanged: before.title !== after.title,
+      addedText: after.textLines.filter((line) => !beforeLines.has(line)).slice(0, 24),
+      removedText: before.textLines.filter((line) => !afterLines.has(line)).slice(0, 24),
+      controlChanges: controlChanges.slice(0, 24),
+      changed: false,
+    };
+    diff.changed = diff.urlChanged || diff.titleChanged || diff.addedText.length > 0 || diff.removedText.length > 0 || diff.controlChanges.length > 0;
+    return diff;
+  }
+
+  private async beginAction(kind: string): Promise<BrowserActionTrace> {
     const action = {
       id: `browser_action_${randomUUID()}`,
       kind,
       beforeUrl: this.currentUrl(),
       trafficIds: [],
       startedAt: new Date().toISOString(),
+      beforeState: await this.capturePageState(),
     };
     this.activeAction = action;
     this.actionById.set(action.id, action);
@@ -289,10 +358,13 @@ export class BrowserSession {
     result: { ok: boolean; content: string },
   ): Promise<{ ok: boolean; content: string; meta: Record<string, unknown> }> {
     await this.page?.waitForTimeout(180).catch(() => {});
+    const afterState = await this.capturePageState();
+    const pageDiff = this.pageStateDiff(action.beforeState, afterState);
     if (this.activeAction?.id === action.id) this.activeAction = null;
     this.actionById.delete(action.id);
     return {
       ...result,
+      content: pageDiff.changed ? `${result.content}\n\nPage state change:\n${JSON.stringify(pageDiff, null, 2)}` : `${result.content}\n\nPage state change: none observed`,
       meta: {
         browserAction: {
           id: action.id,
@@ -303,6 +375,9 @@ export class BrowserSession {
           trafficIds: [...action.trafficIds],
           startedAt: action.startedAt,
           completedAt: new Date().toISOString(),
+          beforeState: action.beforeState,
+          afterState,
+          pageDiff,
         },
       },
     };
@@ -352,7 +427,7 @@ export class BrowserSession {
     const verdict = checkScope(url, this.scopeRules());
     if (!verdict.allowed) return { ok: false, content: `out of scope: ${verdict.reason}` };
     if (!this.page) return { ok: false, content: "浏览器未启动" };
-    const action = this.beginAction("navigate");
+    const action = await this.beginAction("navigate");
     this.lastBlockedNavigation = null;
     const navigationError = await this.page.goto(url, { waitUntil: "domcontentloaded" }).then(() => null).catch((error: Error) => error);
     const blocked = this.takeBlockedNavigation();
@@ -368,7 +443,7 @@ export class BrowserSession {
     const selector = this.targetSelector(target);
     const previousUrl = this.page?.url() ?? "";
     if (!this.page) return { ok: false, content: "浏览器未启动" };
-    const action = this.beginAction("click");
+    const action = await this.beginAction("click");
     try {
       this.lastBlockedNavigation = null;
       await this.withAgentInput(() => this.page!.locator(selector).click({ timeout: 5000 }));
@@ -385,7 +460,7 @@ export class BrowserSession {
   async fill(target: string, value: string): Promise<{ ok: boolean; content: string }> {
     const selector = this.targetSelector(target);
     if (!this.page) return { ok: false, content: "浏览器未启动" };
-    const action = this.beginAction("fill");
+    const action = await this.beginAction("fill");
     try {
       await this.withAgentInput(() => this.page!.locator(selector).fill(value, { timeout: 5000 }));
       return this.finishAction(action, { ok: true, content: `已填入 ${selector}` });
@@ -395,7 +470,7 @@ export class BrowserSession {
   }
   async selectOption(target: string, value: string): Promise<{ ok: boolean; content: string }> {
     if (!this.page) return { ok: false, content: "browser not started" };
-    const action = this.beginAction("select_option");
+    const action = await this.beginAction("select_option");
     try {
       await this.withAgentInput(() => this.page!.locator(this.targetSelector(target)).selectOption(value, { timeout: 5000 }));
       return this.finishAction(action, { ok: true, content: `Selected ${value} in ${target}` });
@@ -405,7 +480,7 @@ export class BrowserSession {
   }
   async press(key: string): Promise<{ ok: boolean; content: string }> {
     if (!this.page) return { ok: false, content: "browser not started" };
-    const action = this.beginAction("press");
+    const action = await this.beginAction("press");
     try {
       await this.withAgentInput(() => this.page!.keyboard.press(key));
       return this.finishAction(action, { ok: true, content: `Pressed ${key}` });
@@ -416,7 +491,7 @@ export class BrowserSession {
   async scroll(deltaY: number): Promise<{ ok: boolean; content: string }> {
     if (!this.page) return { ok: false, content: "browser not started" };
     if (!Number.isFinite(deltaY)) return { ok: false, content: "deltaY must be finite" };
-    const action = this.beginAction("scroll");
+    const action = await this.beginAction("scroll");
     const bounded = Math.max(-10_000, Math.min(10_000, deltaY));
     try {
       await this.withAgentInput(() => this.page!.mouse.wheel(0, bounded));

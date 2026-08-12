@@ -153,7 +153,7 @@ describe("BrowserSession traffic capture", () => {
   it("observes real interactive elements and acts through stable refs", async () => {
     const server = http.createServer((_req, res) => {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(`<input aria-label="Query"><select aria-label="Mode"><option value="safe">Safe</option><option value="deep">Deep</option></select><button onclick="document.body.dataset.result='submitted'">Submit</button>`);
+      res.end(`<input aria-label="Query"><select aria-label="Mode"><option value="safe">Safe</option><option value="deep">Deep</option></select><p id="status">Ready</p><button onclick="document.body.dataset.result='submitted';document.title='Complete';document.getElementById('status').textContent='Submission accepted'">Submit</button>`);
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     try {
@@ -170,9 +170,17 @@ describe("BrowserSession traffic capture", () => {
       const submit = observation.elements.find((item) => item.name === "Submit");
       expect(query && mode && submit).toBeTruthy();
 
-      await expect(session.fill(query!.ref, "evidence")).resolves.toMatchObject({ ok: true });
+      const fillResult = await session.fill(query!.ref, "evidence") as { ok: boolean; content: string; meta: { browserAction: { pageDiff: { changed: boolean; controlChanges: Array<{ after?: { value: string } }> } } } };
+      expect(fillResult.ok).toBe(true);
+      expect(fillResult.meta.browserAction.pageDiff.changed).toBe(true);
+      expect(fillResult.meta.browserAction.pageDiff.controlChanges.some((change) => change.after?.value === "evidence")).toBe(true);
       await expect(session.selectOption(mode!.ref, "deep")).resolves.toMatchObject({ ok: true });
-      await expect(session.click(submit!.ref)).resolves.toMatchObject({ ok: true });
+      const clickResult = await session.click(submit!.ref) as { ok: boolean; content: string; meta: { browserAction: { beforeState: { title: string }; afterState: { title: string }; pageDiff: { titleChanged: boolean; addedText: string[]; removedText: string[] } } } };
+      expect(clickResult.ok).toBe(true);
+      expect(clickResult.meta.browserAction).toMatchObject({ beforeState: { title: "" }, afterState: { title: "Complete" }, pageDiff: { titleChanged: true } });
+      expect(clickResult.meta.browserAction.pageDiff.addedText).toContain("Submission accepted");
+      expect(clickResult.meta.browserAction.pageDiff.removedText).toContain("Ready");
+      expect(clickResult.content).toContain("Page state change");
       const page = Reflect.get(session, "page") as Page;
       expect(await page.locator("input").inputValue()).toBe("evidence");
       expect(await page.locator("select").inputValue()).toBe("deep");

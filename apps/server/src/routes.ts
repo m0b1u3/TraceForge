@@ -72,6 +72,17 @@ import { buildSharedKnowledge } from "./shared-knowledge.js";
 import { KnowledgeUsageStore, type KnowledgeRef } from "./stores/knowledge-usage-store.js";
 import { KnowledgeOutcomeTracker } from "./knowledge-outcome.js";
 import { buildExplorationAdvisory } from "./exploration-advisor.js";
+
+function summarizeBrowserPageState(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  const state = value as { url?: unknown; title?: unknown; textLines?: unknown; controls?: unknown };
+  return {
+    url: typeof state.url === "string" ? state.url : "",
+    title: typeof state.title === "string" ? state.title : "",
+    textLineCount: Array.isArray(state.textLines) ? state.textLines.length : 0,
+    controlCount: Array.isArray(state.controls) ? state.controls.length : 0,
+  };
+}
 import { formatAttackPathPlan, rankAttackPathBreakpoints } from "./attack-path-planner.js";
 import { formatEvidenceGapPlan, mapEvidenceGaps } from "./evidence-gap-planner.js";
 import { buildValidationMatrices, formatValidationMatrices } from "./validation-matrix.js";
@@ -2029,6 +2040,9 @@ Artifact 证据：download_tool 成功只证明文件已获取。下载后用 li
           trafficIds?: unknown;
           startedAt?: unknown;
           completedAt?: unknown;
+          beforeState?: unknown;
+          afterState?: unknown;
+          pageDiff?: unknown;
         } | undefined;
         const browserTrafficIds = Array.isArray(browserAction?.trafficIds)
           ? browserAction.trafficIds.filter((id): id is string => typeof id === "string")
@@ -2047,6 +2061,9 @@ Artifact 证据：download_tool 成功只证明文件已获取。下载后用 li
               trafficIds: browserTrafficIds,
               startedAt: browserAction.startedAt,
               completedAt: browserAction.completedAt,
+              beforeState: summarizeBrowserPageState(browserAction.beforeState),
+              afterState: summarizeBrowserPageState(browserAction.afterState),
+              pageDiff: browserAction.pageDiff,
             }),
             browserAction.id,
             runId,
