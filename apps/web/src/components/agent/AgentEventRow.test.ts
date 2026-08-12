@@ -92,6 +92,7 @@ describe("AgentEventRow", () => {
   it("renders produced-knowledge chips on tool results and selects the entity on click", async () => {
     useStore.setState({
       facts: [{ id: "fact_1", caseId: "case_1", type: "vulnerability_hint", title: "Heapdump endpoint exposed", value: {}, source: { type: "agent", ref: "run_1" }, confidence: .95, tags: [], validity: "valid", findingStatus: null, createdAt: "now", updatedAt: "now", updateCount: 0 }],
+      traffic: [{ id: "traffic_1", caseId: "case_1", url: "https://example.test/login", method: "POST", requestHeaders: {}, requestBody: null, responseStatus: 200, responseBody: "ok", createdAt: "now" }],
     });
     const row = await renderRow({
       type: "event",
@@ -100,17 +101,23 @@ describe("AgentEventRow", () => {
       label: "Tool result",
       text: "record_fact → recorded",
       summary: "record_fact → recorded",
-      refs: { factIds: ["fact_1"], taskIds: ["task_9"], timelineEntryIds: ["tl_1"] },
+      refs: { factIds: ["fact_1"], taskIds: ["task_9"], trafficIds: ["traffic_1"], timelineEntryIds: ["tl_1"] },
     });
 
     const factChip = row.querySelector<HTMLButtonElement>('button[data-ref-kind="fact"]');
     expect(factChip?.textContent).toContain("Heapdump endpoint exposed");
     expect(row.querySelector('button[data-ref-kind="task"]')?.textContent).toContain("task_9");
+    const trafficChip = row.querySelector<HTMLButtonElement>('button[data-ref-kind="traffic"]');
+    expect(trafficChip?.textContent).toContain("POST /login");
 
     act(() => factChip?.click());
 
     expect(useStore.getState().selectedFactId).toBe("fact_1");
     expect(useStore.getState().inspectorMode).toBe("finding");
+
+    act(() => trafficChip?.click());
+    expect(useStore.getState().selectedTrafficId).toBe("traffic_1");
+    expect(useStore.getState().inspectorMode).toBe("traffic");
   });
 
   it("renders no chips when a tool result has no refs", async () => {

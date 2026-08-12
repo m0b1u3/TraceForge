@@ -74,7 +74,7 @@ describe("BrowserSession traffic capture", () => {
       sessions.push(session);
 
       await session.start();
-      await session.navigate(`http://${allowedHost}/login`);
+      const navigation = await session.navigate(`http://${allowedHost}/login`);
 
       const captured = await waitFor(() => {
         const entry = traffic.listByCase("c").find((candidate) => candidate.url === `http://${allowedHost}/login`);
@@ -85,6 +85,9 @@ describe("BrowserSession traffic capture", () => {
       expect(captured).toMatchObject({ responseStatus: 200, contentType: "text/plain; charset=utf-8", responseSize: 2, responseBody: "ok" });
       expect(captured.responseHeaders?.["content-type"]).toBe("text/plain; charset=utf-8");
       expect(events.some((event) => event.type === "response_captured" && event.entry.responseBody === "ok")).toBe(true);
+      const trace = (navigation as typeof navigation & { meta: { browserAction: { kind: string; beforeUrl: string; afterUrl: string; trafficIds: string[] } } }).meta.browserAction;
+      expect(trace).toMatchObject({ kind: "navigate", beforeUrl: "about:blank", afterUrl: `http://${allowedHost}/login` });
+      expect(trace.trafficIds).toContain(captured.id);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

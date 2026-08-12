@@ -14,7 +14,7 @@ export function toolActivityTone(activity: AgentToolActivity): ActivityTone {
   if (activity.outcome === "recovered") return "recovered";
   if (activity.outcome === "failed") return "issue";
   const refs = activity.result.refs;
-  if (refs && (refs.factIds.length > 0 || refs.taskIds.length > 0 || refs.timelineEntryIds.length > 0)) return "evidence";
+  if (refs && (refs.factIds.length > 0 || refs.taskIds.length > 0 || (refs.trafficIds?.length ?? 0) > 0 || refs.timelineEntryIds.length > 0)) return "evidence";
   if (/^\s*[A-Za-z0-9_:-]+\s*(?:(?:→|->)\s*)?(?:error|failed|blocked|denied|timeout|exception)\b/i.test(activity.result.text)) return "issue";
   return "complete";
 }

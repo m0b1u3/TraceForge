@@ -226,7 +226,7 @@ export function findAgentEventIndexByRef(events: Array<{ refs?: AgentEventRefs |
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const refs = events[index].refs;
     if (!refs) continue;
-    if (refs.factIds.includes(refId) || refs.taskIds.includes(refId) || refs.timelineEntryIds.includes(refId)) return index;
+    if (refs.factIds.includes(refId) || refs.taskIds.includes(refId) || (refs.trafficIds ?? []).includes(refId) || refs.timelineEntryIds.includes(refId)) return index;
   }
   return -1;
 }

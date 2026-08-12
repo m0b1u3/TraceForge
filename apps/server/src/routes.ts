@@ -2020,10 +2020,51 @@ Artifact 证据：download_tool 成功只证明文件已获取。下载后用 li
       },
       onToolExecuted: (report) => {
         structurePolicy.observe(report);
+        const browserAction = report.meta?.browserAction as {
+          id?: unknown;
+          kind?: unknown;
+          controller?: unknown;
+          beforeUrl?: unknown;
+          afterUrl?: unknown;
+          trafficIds?: unknown;
+          startedAt?: unknown;
+          completedAt?: unknown;
+        } | undefined;
+        const browserTrafficIds = Array.isArray(browserAction?.trafficIds)
+          ? browserAction.trafficIds.filter((id): id is string => typeof id === "string")
+          : [];
+        if (typeof browserAction?.id === "string") {
+          const actionEntry = timelineStore.append(
+            id,
+            "browser_action_completed",
+            JSON.stringify({
+              actionId: browserAction.id,
+              kind: browserAction.kind,
+              controller: browserAction.controller,
+              beforeUrl: browserAction.beforeUrl,
+              afterUrl: browserAction.afterUrl,
+              outcome: report.ok ? "succeeded" : "failed",
+              trafficIds: browserTrafficIds,
+              startedAt: browserAction.startedAt,
+              completedAt: browserAction.completedAt,
+            }),
+            browserAction.id,
+            runId,
+          );
+          bus.emit({ type: "timeline_appended", entry: actionEntry });
+        }
         const windowStack = toolRefWindows.get(report.name) ?? [];
         const windowStart = windowStack.shift() ?? runTimelineEntries.length;
         const refsQueue = pendingToolRefs.get(report.name) ?? [];
-        const toolRefs = collectToolRefs(runTimelineEntries.slice(windowStart));
+        const collectedRefs = collectToolRefs(runTimelineEntries.slice(windowStart));
+        const toolRefs = collectedRefs || browserTrafficIds.length
+          ? {
+              factIds: collectedRefs?.factIds ?? [],
+              taskIds: collectedRefs?.taskIds ?? [],
+              trafficIds: [...new Set([...(collectedRefs?.trafficIds ?? []), ...browserTrafficIds])],
+              timelineEntryIds: collectedRefs?.timelineEntryIds ?? [],
+            }
+          : null;
         refsQueue.push(toolRefs);
         pendingToolRefs.set(report.name, refsQueue);
         correctionAttribution.observe({

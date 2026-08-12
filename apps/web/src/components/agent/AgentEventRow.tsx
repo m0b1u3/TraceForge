@@ -40,7 +40,7 @@ export const AgentEventRow = memo(function AgentEventRow({ item }: { item: Agent
   const inspect = isTool ? () => selectAgentEvent({ kind: item.kind, label: item.label, text: item.text }) : undefined;
   const validationState = item.kind === "validation" ? validationEventState(item.eventType, item.target, workflow, targetTask, targetFact) : null;
   const targetTitle = targetTask?.title ?? targetFact?.title;
-  const refChips = item.refs && (item.refs.factIds.length > 0 || item.refs.taskIds.length > 0) ? <RefChips refs={item.refs} /> : null;
+  const refChips = item.refs && (item.refs.factIds.length > 0 || item.refs.taskIds.length > 0 || (item.refs.trafficIds?.length ?? 0) > 0) ? <RefChips refs={item.refs} /> : null;
 
   if (canExpand) {
     return (
@@ -83,11 +83,17 @@ const REF_CHIP_LIMIT = 3;
 export function RefChips({ refs }: { refs: AgentEventRefs }) {
   const selectFact = useStore((state) => state.selectFact);
   const selectTask = useStore((state) => state.selectTask);
+  const inspectTraffic = useStore((state) => state.inspectTraffic);
   const factTitles = useStore(useShallow((state) => refs.factIds.map((id) => state.facts.find((fact) => fact.id === id)?.title ?? null)));
   const taskTitles = useStore(useShallow((state) => refs.taskIds.map((id) => state.tasks.find((task) => task.id === id)?.title ?? null)));
+  const trafficItems = useStore(useShallow((state) => (refs.trafficIds ?? []).map((id) => state.traffic.find((entry) => entry.id === id) ?? null)));
   const chips = [
     ...refs.factIds.map((id, index) => ({ kind: "fact" as const, id, label: factTitles[index] ?? id, select: () => selectFact(id) })),
     ...refs.taskIds.map((id, index) => ({ kind: "task" as const, id, label: taskTitles[index] ?? id, select: () => selectTask(id) })),
+    ...(refs.trafficIds ?? []).map((id, index) => {
+      const entry = trafficItems[index];
+      return { kind: "traffic" as const, id, label: entry ? `${entry.method} ${new URL(entry.url).pathname}` : id, select: () => entry && inspectTraffic(entry) };
+    }),
   ];
   const visible = chips.slice(0, REF_CHIP_LIMIT);
   return (

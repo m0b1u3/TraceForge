@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chromium, type Browser, type BrowserContext, type LaunchOptions, type Page, type Response } from "playwright";
+import { chromium, type Browser, type BrowserContext, type LaunchOptions, type Page, type Request, type Response } from "playwright";
 import { checkScope } from "@traceforge/tool-resolver";
 import type { IdentityContext, ScopeRule, TrafficEntry } from "@traceforge/shared";
 import type { EventBus } from "./event-bus.js";
 import type { TrafficStore } from "./stores/traffic-store.js";
 
 type Controller = "llm" | "human";
+type BrowserActionTrace = {
+  id: string;
+  kind: string;
+  beforeUrl: string;
+  trafficIds: string[];
+  startedAt: string;
+};
 
 /**
  * 人机共享浏览器会话（每 Case 一个）：持久有头 Chromium + 控制权锁 + 流量监听。
@@ -23,6 +30,9 @@ export class BrowserSession {
   private stopped = true;
   private activeIdentity: IdentityContext | null = null;
   private lastBlockedNavigation: { url: string; reason: string } | null = null;
+  private activeAction: BrowserActionTrace | null = null;
+  private actionById = new Map<string, BrowserActionTrace>();
+  private requestActionIds = new WeakMap<Request, string>();
 
   // scopeRules 用 getter 实时取：对话中批准纳入的新 host 立即对正在运行的浏览器生效，
   // 不再是 start 时的快照（否则对话扩范围后已开的浏览器仍按旧空范围过滤掉一切流量）。
@@ -52,6 +62,7 @@ export class BrowserSession {
     await this.context.route("**/*", async (route) => {
       const request = route.request();
       const url = request.url();
+      if (this.activeAction) this.requestActionIds.set(request, this.activeAction.id);
       if (this._controller === "llm" && request.isNavigationRequest() && /^https?:/i.test(url)) {
         let isMainFrame = true;
         try { isMainFrame = request.frame().parentFrame() === null; } catch { /* frame may not be attached yet */ }
@@ -186,6 +197,9 @@ export class BrowserSession {
       responseBody: null,
       createdAt: new Date().toISOString(),
     };
+    const actionId = this.requestActionIds.get(req);
+    const action = actionId ? this.actionById.get(actionId) : undefined;
+    if (action && !action.trafficIds.includes(entry.id)) action.trafficIds.push(entry.id);
     this.traffic.add(entry);
     this.bus.emit({ type: "response_captured", entry });
     void this.enrichResponse(res, entry);
@@ -257,6 +271,43 @@ export class BrowserSession {
     return blocked;
   }
 
+  private beginAction(kind: string): BrowserActionTrace {
+    const action = {
+      id: `browser_action_${randomUUID()}`,
+      kind,
+      beforeUrl: this.currentUrl(),
+      trafficIds: [],
+      startedAt: new Date().toISOString(),
+    };
+    this.activeAction = action;
+    this.actionById.set(action.id, action);
+    return action;
+  }
+
+  private async finishAction(
+    action: BrowserActionTrace,
+    result: { ok: boolean; content: string },
+  ): Promise<{ ok: boolean; content: string; meta: Record<string, unknown> }> {
+    await this.page?.waitForTimeout(180).catch(() => {});
+    if (this.activeAction?.id === action.id) this.activeAction = null;
+    this.actionById.delete(action.id);
+    return {
+      ...result,
+      meta: {
+        browserAction: {
+          id: action.id,
+          kind: action.kind,
+          controller: this._controller,
+          beforeUrl: action.beforeUrl,
+          afterUrl: this.currentUrl(),
+          trafficIds: [...action.trafficIds],
+          startedAt: action.startedAt,
+          completedAt: new Date().toISOString(),
+        },
+      },
+    };
+  }
+
   // ---- 控制权锁（纯状态，无 playwright 依赖，可单测）----
   controller(): Controller {
     return this._controller;
@@ -301,12 +352,14 @@ export class BrowserSession {
     const verdict = checkScope(url, this.scopeRules());
     if (!verdict.allowed) return { ok: false, content: `out of scope: ${verdict.reason}` };
     if (!this.page) return { ok: false, content: "浏览器未启动" };
+    const action = this.beginAction("navigate");
     this.lastBlockedNavigation = null;
-    await this.page.goto(url, { waitUntil: "domcontentloaded" }).catch(() => {});
+    const navigationError = await this.page.goto(url, { waitUntil: "domcontentloaded" }).then(() => null).catch((error: Error) => error);
     const blocked = this.takeBlockedNavigation();
-    if (blocked) return { ok: false, content: `out of scope: ${blocked.reason} (${blocked.url})` };
+    if (blocked) return this.finishAction(action, { ok: false, content: `out of scope: ${blocked.reason} (${blocked.url})` });
+    if (navigationError) return this.finishAction(action, { ok: false, content: `Navigation failed: ${navigationError.message}` });
     this.bus.emit({ type: "browser_navigated", caseId: this.caseId, url });
-    return { ok: true, content: `已导航到 ${url}（状态见 traffic）` };
+    return this.finishAction(action, { ok: true, content: `已导航到 ${url}（状态见 traffic）` });
   }
   private targetSelector(target: string): string {
     return /^tf-\d+$/.test(target) ? `[data-traceforge-ref="${target}"]` : target;
@@ -315,53 +368,62 @@ export class BrowserSession {
     const selector = this.targetSelector(target);
     const previousUrl = this.page?.url() ?? "";
     if (!this.page) return { ok: false, content: "浏览器未启动" };
+    const action = this.beginAction("click");
     try {
       this.lastBlockedNavigation = null;
       await this.withAgentInput(() => this.page!.locator(selector).click({ timeout: 5000 }));
       const blocked = this.takeBlockedNavigation();
       if (blocked) {
         if (/^https?:/i.test(previousUrl)) await this.page!.goto(previousUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
-        return { ok: false, content: `out of scope: ${blocked.reason} (${blocked.url})` };
+        return this.finishAction(action, { ok: false, content: `out of scope: ${blocked.reason} (${blocked.url})` });
       }
-      return { ok: true, content: `已点击 ${selector}` };
+      return this.finishAction(action, { ok: true, content: `已点击 ${selector}` });
     } catch (e) {
-      return { ok: false, content: `点击失败：${(e as Error).message}` };
+      return this.finishAction(action, { ok: false, content: `点击失败：${(e as Error).message}` });
     }
   }
   async fill(target: string, value: string): Promise<{ ok: boolean; content: string }> {
     const selector = this.targetSelector(target);
     if (!this.page) return { ok: false, content: "浏览器未启动" };
+    const action = this.beginAction("fill");
     try {
       await this.withAgentInput(() => this.page!.locator(selector).fill(value, { timeout: 5000 }));
-      return { ok: true, content: `已填入 ${selector}` };
+      return this.finishAction(action, { ok: true, content: `已填入 ${selector}` });
     } catch (e) {
-      return { ok: false, content: `填值失败：${(e as Error).message}` };
+      return this.finishAction(action, { ok: false, content: `填值失败：${(e as Error).message}` });
     }
   }
   async selectOption(target: string, value: string): Promise<{ ok: boolean; content: string }> {
     if (!this.page) return { ok: false, content: "browser not started" };
+    const action = this.beginAction("select_option");
     try {
       await this.withAgentInput(() => this.page!.locator(this.targetSelector(target)).selectOption(value, { timeout: 5000 }));
-      return { ok: true, content: `Selected ${value} in ${target}` };
+      return this.finishAction(action, { ok: true, content: `Selected ${value} in ${target}` });
     } catch (e) {
-      return { ok: false, content: `Select failed: ${(e as Error).message}` };
+      return this.finishAction(action, { ok: false, content: `Select failed: ${(e as Error).message}` });
     }
   }
   async press(key: string): Promise<{ ok: boolean; content: string }> {
     if (!this.page) return { ok: false, content: "browser not started" };
+    const action = this.beginAction("press");
     try {
       await this.withAgentInput(() => this.page!.keyboard.press(key));
-      return { ok: true, content: `Pressed ${key}` };
+      return this.finishAction(action, { ok: true, content: `Pressed ${key}` });
     } catch (e) {
-      return { ok: false, content: `Key press failed: ${(e as Error).message}` };
+      return this.finishAction(action, { ok: false, content: `Key press failed: ${(e as Error).message}` });
     }
   }
   async scroll(deltaY: number): Promise<{ ok: boolean; content: string }> {
     if (!this.page) return { ok: false, content: "browser not started" };
     if (!Number.isFinite(deltaY)) return { ok: false, content: "deltaY must be finite" };
+    const action = this.beginAction("scroll");
     const bounded = Math.max(-10_000, Math.min(10_000, deltaY));
-    await this.withAgentInput(() => this.page!.mouse.wheel(0, bounded));
-    return { ok: true, content: `Scrolled ${bounded}px` };
+    try {
+      await this.withAgentInput(() => this.page!.mouse.wheel(0, bounded));
+      return this.finishAction(action, { ok: true, content: `Scrolled ${bounded}px` });
+    } catch (e) {
+      return this.finishAction(action, { ok: false, content: `Scroll failed: ${(e as Error).message}` });
+    }
   }
   async observePage(): Promise<string> {
     if (!this.page) return JSON.stringify({ error: "browser not started" });

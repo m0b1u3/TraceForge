@@ -405,6 +405,7 @@ export type ObserverWarning = z.infer<typeof ObserverWarningSchema>;
 export const AgentEventRefsSchema = z.object({
   factIds: z.array(z.string()).default([]),
   taskIds: z.array(z.string()).default([]),
+  trafficIds: z.array(z.string()).optional(),
   timelineEntryIds: z.array(z.string()).default([]),
 });
 export type AgentEventRefs = z.infer<typeof AgentEventRefsSchema>;
