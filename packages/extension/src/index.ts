@@ -39,7 +39,7 @@ export { makeListAttackPathsTool, makeRecordAttackPathTool } from "./attack-path
 export type { AttackPathWriter } from "./attack-path-tools.js";
 export { makeListSecurityReportsTool, makeRecordSecurityReportTool } from "./security-report-tools.js";
 export type { SecurityReportWriter } from "./security-report-tools.js";
-export { makeBrowserTools, type BrowserController } from "./browser-tools.js";
+export { BROWSER_TOOL_NAMES, makeBrowserTools, type BrowserController } from "./browser-tools.js";
 export { loadMcpConfig, McpServerConfigSchema, McpConfigSchema, type McpServerConfig } from "./mcp-config.js";
 export { mcpToolToDescriptor, type McpToolHandle, type McpCaller } from "./mcp-tools.js";
 export { McpManager, type McpClient, type McpClientFactory } from "./mcp-manager.js";

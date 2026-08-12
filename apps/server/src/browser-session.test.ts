@@ -106,11 +106,74 @@ describe("BrowserSession traffic capture", () => {
       sessions.push(session);
 
       await session.start();
+      await session.acquireByHuman();
       const page = Reflect.get(session, "page") as Page;
       await page.goto(visitedUrl);
 
       expect(traffic.listByCase("c").some((entry) => entry.url === visitedUrl)).toBe(true);
       await expect(session.navigate(visitedUrl)).resolves.toMatchObject({ ok: false });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("blocks an LLM click that would navigate the main frame outside scope", async () => {
+    const outside = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("outside");
+    });
+    await new Promise<void>((resolve) => outside.listen(0, "127.0.0.1", resolve));
+    const outsideAddress = outside.address();
+    if (!outsideAddress || typeof outsideAddress === "string") throw new Error("outside server unavailable");
+    const allowed = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(`<a id="leave" href="http://127.0.0.1:${outsideAddress.port}/outside">leave</a>`);
+    });
+    await new Promise<void>((resolve) => allowed.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = allowed.address();
+      if (!address || typeof address === "string") throw new Error("allowed server unavailable");
+      const allowedHost = `127.0.0.1:${address.port}`;
+      const { session } = makeSession([{ caseId: "c", allowHosts: [allowedHost], denyHosts: [] }], true);
+      sessions.push(session);
+      await session.start();
+      await session.navigate(`http://${allowedHost}/`);
+
+      await expect(session.click("#leave")).resolves.toMatchObject({ ok: false });
+      expect(session.currentUrl()).toBe(`http://${allowedHost}/`);
+    } finally {
+      await new Promise<void>((resolve, reject) => allowed.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => outside.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("observes real interactive elements and acts through stable refs", async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(`<input aria-label="Query"><select aria-label="Mode"><option value="safe">Safe</option><option value="deep">Deep</option></select><button onclick="document.body.dataset.result='submitted'">Submit</button>`);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("server unavailable");
+      const allowedHost = `127.0.0.1:${address.port}`;
+      const { session } = makeSession([{ caseId: "c", allowHosts: [allowedHost], denyHosts: [] }], true);
+      sessions.push(session);
+      await session.start();
+      await session.navigate(`http://${allowedHost}/`);
+      const observation = JSON.parse(await session.observePage()) as { elements: Array<{ ref: string; name: string; tag: string }> };
+      const query = observation.elements.find((item) => item.name === "Query");
+      const mode = observation.elements.find((item) => item.name === "Mode");
+      const submit = observation.elements.find((item) => item.name === "Submit");
+      expect(query && mode && submit).toBeTruthy();
+
+      await expect(session.fill(query!.ref, "evidence")).resolves.toMatchObject({ ok: true });
+      await expect(session.selectOption(mode!.ref, "deep")).resolves.toMatchObject({ ok: true });
+      await expect(session.click(submit!.ref)).resolves.toMatchObject({ ok: true });
+      const page = Reflect.get(session, "page") as Page;
+      expect(await page.locator("input").inputValue()).toBe("evidence");
+      expect(await page.locator("select").inputValue()).toBe("deep");
+      expect(await page.evaluate(() => document.body.dataset.result)).toBe("submitted");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }

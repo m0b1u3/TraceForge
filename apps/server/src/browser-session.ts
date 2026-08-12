@@ -22,6 +22,7 @@ export class BrowserSession {
   private _controller: Controller = "llm";
   private stopped = true;
   private activeIdentity: IdentityContext | null = null;
+  private lastBlockedNavigation: { url: string; reason: string } | null = null;
 
   // scopeRules 用 getter 实时取：对话中批准纳入的新 host 立即对正在运行的浏览器生效，
   // 不再是 start 时的快照（否则对话扩范围后已开的浏览器仍按旧空范围过滤掉一切流量）。
@@ -48,6 +49,23 @@ export class BrowserSession {
       if (this.browser === browser) this.finishStopped();
     });
     this.context = await this.browser.newContext();
+    await this.context.route("**/*", async (route) => {
+      const request = route.request();
+      const url = request.url();
+      if (this._controller === "llm" && request.isNavigationRequest() && /^https?:/i.test(url)) {
+        let isMainFrame = true;
+        try { isMainFrame = request.frame().parentFrame() === null; } catch { /* frame may not be attached yet */ }
+        if (isMainFrame) {
+          const verdict = checkScope(url, this.scopeRules());
+          if (!verdict.allowed) {
+            this.lastBlockedNavigation = { url, reason: verdict.reason };
+            await route.abort("blockedbyclient");
+            return;
+          }
+        }
+      }
+      await route.continue();
+    });
     await this.context.addInitScript(() => {
       const state = { locked: false };
       const blocker = (event: Event) => {
@@ -233,6 +251,12 @@ export class BrowserSession {
     }
   }
 
+  private takeBlockedNavigation(): { url: string; reason: string } | null {
+    const blocked = this.lastBlockedNavigation;
+    this.lastBlockedNavigation = null;
+    return blocked;
+  }
+
   // ---- 控制权锁（纯状态，无 playwright 依赖，可单测）----
   controller(): Controller {
     return this._controller;
@@ -277,27 +301,89 @@ export class BrowserSession {
     const verdict = checkScope(url, this.scopeRules());
     if (!verdict.allowed) return { ok: false, content: `out of scope: ${verdict.reason}` };
     if (!this.page) return { ok: false, content: "浏览器未启动" };
+    this.lastBlockedNavigation = null;
     await this.page.goto(url, { waitUntil: "domcontentloaded" }).catch(() => {});
+    const blocked = this.takeBlockedNavigation();
+    if (blocked) return { ok: false, content: `out of scope: ${blocked.reason} (${blocked.url})` };
     this.bus.emit({ type: "browser_navigated", caseId: this.caseId, url });
     return { ok: true, content: `已导航到 ${url}（状态见 traffic）` };
   }
-  async click(selector: string): Promise<{ ok: boolean; content: string }> {
+  private targetSelector(target: string): string {
+    return /^tf-\d+$/.test(target) ? `[data-traceforge-ref="${target}"]` : target;
+  }
+  async click(target: string): Promise<{ ok: boolean; content: string }> {
+    const selector = this.targetSelector(target);
+    const previousUrl = this.page?.url() ?? "";
     if (!this.page) return { ok: false, content: "浏览器未启动" };
     try {
-      await this.withAgentInput(() => this.page!.click(selector, { timeout: 5000 }));
+      this.lastBlockedNavigation = null;
+      await this.withAgentInput(() => this.page!.locator(selector).click({ timeout: 5000 }));
+      const blocked = this.takeBlockedNavigation();
+      if (blocked) {
+        if (/^https?:/i.test(previousUrl)) await this.page!.goto(previousUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
+        return { ok: false, content: `out of scope: ${blocked.reason} (${blocked.url})` };
+      }
       return { ok: true, content: `已点击 ${selector}` };
     } catch (e) {
       return { ok: false, content: `点击失败：${(e as Error).message}` };
     }
   }
-  async fill(selector: string, value: string): Promise<{ ok: boolean; content: string }> {
+  async fill(target: string, value: string): Promise<{ ok: boolean; content: string }> {
+    const selector = this.targetSelector(target);
     if (!this.page) return { ok: false, content: "浏览器未启动" };
     try {
-      await this.withAgentInput(() => this.page!.fill(selector, value, { timeout: 5000 }));
+      await this.withAgentInput(() => this.page!.locator(selector).fill(value, { timeout: 5000 }));
       return { ok: true, content: `已填入 ${selector}` };
     } catch (e) {
       return { ok: false, content: `填值失败：${(e as Error).message}` };
     }
+  }
+  async selectOption(target: string, value: string): Promise<{ ok: boolean; content: string }> {
+    if (!this.page) return { ok: false, content: "browser not started" };
+    try {
+      await this.withAgentInput(() => this.page!.locator(this.targetSelector(target)).selectOption(value, { timeout: 5000 }));
+      return { ok: true, content: `Selected ${value} in ${target}` };
+    } catch (e) {
+      return { ok: false, content: `Select failed: ${(e as Error).message}` };
+    }
+  }
+  async press(key: string): Promise<{ ok: boolean; content: string }> {
+    if (!this.page) return { ok: false, content: "browser not started" };
+    try {
+      await this.withAgentInput(() => this.page!.keyboard.press(key));
+      return { ok: true, content: `Pressed ${key}` };
+    } catch (e) {
+      return { ok: false, content: `Key press failed: ${(e as Error).message}` };
+    }
+  }
+  async scroll(deltaY: number): Promise<{ ok: boolean; content: string }> {
+    if (!this.page) return { ok: false, content: "browser not started" };
+    if (!Number.isFinite(deltaY)) return { ok: false, content: "deltaY must be finite" };
+    const bounded = Math.max(-10_000, Math.min(10_000, deltaY));
+    await this.withAgentInput(() => this.page!.mouse.wheel(0, bounded));
+    return { ok: true, content: `Scrolled ${bounded}px` };
+  }
+  async observePage(): Promise<string> {
+    if (!this.page) return JSON.stringify({ error: "browser not started" });
+    const observation = await this.page.evaluate(() => {
+      const candidates = Array.from(document.querySelectorAll<HTMLElement>("a[href],button,input,textarea,select,[role='button'],[role='link'],[contenteditable='true']"));
+      let nextRef = 1;
+      const elements = candidates.flatMap((element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        if (style.visibility === "hidden" || style.display === "none" || rect.width <= 0 || rect.height <= 0) return [];
+        let ref = element.dataset.traceforgeRef;
+        if (!ref) {
+          ref = `tf-${nextRef++}`;
+          element.dataset.traceforgeRef = ref;
+        }
+        const input = element instanceof HTMLInputElement ? element : null;
+        const name = element.getAttribute("aria-label") || element.getAttribute("title") || input?.placeholder || element.textContent?.trim() || input?.name || "";
+        return [{ ref, tag: element.tagName.toLowerCase(), role: element.getAttribute("role") || undefined, name: name.replace(/\s+/g, " ").slice(0, 160), type: input?.type || undefined, href: element instanceof HTMLAnchorElement ? element.href : undefined, disabled: "disabled" in element ? Boolean((element as HTMLButtonElement).disabled) : undefined }];
+      }).slice(0, 200);
+      return { url: location.href, title: document.title, text: (document.body?.innerText ?? "").replace(/\s+/g, " ").slice(0, 12_000), elements };
+    });
+    return JSON.stringify(observation, null, 2);
   }
   async extractLinks(): Promise<string[]> {
     if (!this.page) return [];

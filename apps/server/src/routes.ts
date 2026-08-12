@@ -21,7 +21,7 @@ import {
   makeListTrafficTool, makeGetTrafficTool,
   makeRecordFactTool, makeRecordTaskTool, makeRecordActionTool,
   makeReopenTaskTool, makeRevertDoneTaskTool,
-  makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools,
+  makeHttpReplayTool, makeProposeScopeExpansionTool, makeBrowserTools, BROWSER_TOOL_NAMES,
   makeReplayTrafficTool, makeExtractApiEndpointsTool,
   makeCompareIdentityTrafficTool, makeListIdentitiesTool, makeRecordIdentityTool, makeUseBrowserIdentityTool,
   makeAssessValidationExperimentTool,
@@ -29,7 +29,7 @@ import {
   makeListSecurityReportsTool, makeRecordSecurityReportTool,
   McpManager, mcpToolToDescriptor, Observer, LlmQueryExpander,
   makeReevaluateFactsTool, FailureMemory, makeDownloadTool,
-  type AgentRunBudget, type ObserverReviewTrigger,
+  type AgentRunBudget, type ObserverReviewTrigger, type ToolDescriptor,
 } from "@traceforge/extension";
 import { BrowserSession } from "./browser-session.js";
 import { ObserverWarningStore } from "./stores/observer-store.js";
@@ -566,6 +566,40 @@ export function registerRoutes(
 
   // 人机共享浏览器会话（每 Case 一个），内存管理
   const browserSessions = new Map<string, BrowserSession>();
+  const activeToolRegistries = new Map<string, {
+    runId: string;
+    registry: ToolRegistry;
+    browserAttached: boolean;
+    displaced: Map<string, ToolDescriptor>;
+  }>();
+
+  const detachBrowserTools = (caseId: string): void => {
+    const active = activeToolRegistries.get(caseId);
+    if (!active) return;
+    if (!active.browserAttached) return;
+    for (const name of BROWSER_TOOL_NAMES) active.registry.unregister(name);
+    active.registry.unregister("use_browser_identity");
+    for (const tool of active.displaced.values()) active.registry.register(tool);
+    active.displaced.clear();
+    active.browserAttached = false;
+  };
+
+  const attachBrowserTools = (caseId: string, session: BrowserSession): void => {
+    const active = activeToolRegistries.get(caseId);
+    if (!active) return;
+    detachBrowserTools(caseId);
+    const browserTools = [...makeBrowserTools(session), makeUseBrowserIdentityTool(caseId, identityStore, session)];
+    for (const tool of browserTools) {
+      const existing = active.registry.get(tool.name);
+      if (existing) {
+        active.displaced.set(tool.name, existing);
+        active.registry.unregister(tool.name);
+      }
+      active.registry.register(tool);
+    }
+    active.browserAttached = true;
+    runs.addRuntimeMessage(active.runId, "The shared browser is available. Use observe_page before interacting; browser actions and redirects remain scope-guarded.");
+  };
 
   app.get("/api/cases/:id/browser", async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -590,6 +624,7 @@ export function registerRoutes(
         { headless: false },
         () => {
           if (browserSessions.get(id) === session) browserSessions.delete(id);
+          detachBrowserTools(id);
         },
         () => runs.getActiveByCase(id)?.run.id ?? null,
       );
@@ -597,6 +632,7 @@ export function registerRoutes(
     }
     try {
       await session.start();
+      attachBrowserTools(id, session);
     } catch (err) {
       browserSessions.delete(id);
       return reply.code(500).send({ error: "browser launch failed", reason: (err as Error).message });
@@ -610,6 +646,7 @@ export function registerRoutes(
     if (!session) return reply.code(404).send({ error: "no browser session" });
     await session.stop();
     browserSessions.delete(id);
+    detachBrowserTools(id);
     return { ok: true };
   });
 
@@ -1668,16 +1705,14 @@ export function registerRoutes(
     }));
 
     // 若该 case 有共享浏览器会话，把浏览器工具纳入 agent 工具集
-    const browserSession = browserSessions.get(id);
-    if (browserSession) {
-      for (const t of makeBrowserTools(browserSession, c.scopeRules)) registry.register(t);
-      registry.register(makeUseBrowserIdentityTool(id, identityStore, browserSession));
-    }
-
     // 若配置了 MCP server，把其工具纳入 agent 工具集；工具名直接使用 MCP toolName。
     if (mcp) {
       for (const h of mcp.listTools()) registry.register(mcpToolToDescriptor(h, mcp, { caseId: id }));
     }
+
+    activeToolRegistries.set(id, { runId, registry, browserAttached: false, displaced: new Map() });
+    const browserSession = browserSessions.get(id);
+    if (browserSession) attachBrowserTools(id, browserSession);
 
     const gate = new ApprovalGate(async (tool, input) => {
       const approvalId = `appr_${randomUUID()}`;
@@ -2259,7 +2294,10 @@ Artifact 证据：download_tool 成功只证明文件已获取。下载后用 li
         // Execution failures are already persisted as scoped agent events with
         // diagnostics. They are not observations and must never become Facts.
       },
-    }).finally(offTimelineCollect);
+    }).finally(() => {
+      offTimelineCollect();
+      if (activeToolRegistries.get(id)?.runId === runId) activeToolRegistries.delete(id);
+    });
 
     const afterRun = runs.get(runId)?.run;
     if (afterRun && afterRun.status === "running") {
@@ -2315,6 +2353,7 @@ Artifact 证据：download_tool 成功只证明文件已获取。下载后用 li
     bus.emit({ type: "agent_started", caseId: id, goal: active.run.goal });
     setImmediate(() => {
       void runAgentInBackground(active.run.id).catch((err) => {
+        if (activeToolRegistries.get(id)?.runId === active.run.id) activeToolRegistries.delete(id);
         const current = runs.get(active.run.id);
         if (current?.run.status === "interrupting") {
           const interrupted = runs.markInterrupted(active.run.id, current.run.interruptReason ?? (err as Error).message);
