@@ -98,6 +98,7 @@ export function buildSharedKnowledge(sources: SharedKnowledgeSources, _currentRu
       return `${identity.id} [${identity.kind}] ${identity.name} v${identity.version}${credentials}`;
     }),
     attackPaths: attackPaths.map((path) => `${path.id} [${path.status}] ${path.title}; objective=${clip(path.objective)}${path.breakpoint ? `; breakpoint=${clip(path.breakpoint)}` : ""}`),
+    solverInsights: [],
     excludedConflictCount: excluded.length,
     injectedFactIds: verifiedFindings.map((fact) => fact.id),
     injectedKnowledgeRefs: [

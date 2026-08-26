@@ -1,5 +1,5 @@
 import type { Fact } from "@traceforge/shared";
-import type { NativeToolDef, ToolDescriptor } from "../tool.js";
+import { TOOL_SECURITY, type NativeToolDef, type ToolDescriptor } from "../tool.js";
 
 export interface FactStoreLike {
   listByCase(caseId: string): Fact[];
@@ -26,7 +26,7 @@ export function makeReevaluateFactsTool(
       },
       required: ["goal"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseRead,
     source: "builtin",
     async execute(input) {
       const { goal, focus } = input as ReevaluateFactsInput;

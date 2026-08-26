@@ -8,13 +8,18 @@
   },
   "scripts": {
     "build": "pnpm -r build",
+    "verify:release": "pnpm test:fast && pnpm -r build",
+    "verify:live": "pnpm test:live",
     "test": "vitest run",
-    "test:fast": "vitest run --exclude apps/server/src/agent-approval-interrupt-real-llm.test.ts --exclude apps/server/src/agent-failure-memory-real-llm.test.ts --exclude apps/server/src/agent-run-usage-real-llm.test.ts --exclude apps/server/src/browser-session.test.ts --exclude apps/server/src/extract-api-endpoints-llm.test.ts --exclude apps/server/src/llm-config-service.test.ts --exclude apps/server/src/routes-agent-events.test.ts --exclude apps/server/src/routes-agent.test.ts --exclude apps/server/src/routes-cognitive.test.ts --exclude apps/server/src/routes-mcp.test.ts",
-    "test:live": "vitest run apps/server/src/agent-approval-interrupt-real-llm.test.ts apps/server/src/agent-failure-memory-real-llm.test.ts apps/server/src/agent-run-usage-real-llm.test.ts apps/server/src/browser-session.test.ts apps/server/src/extract-api-endpoints-llm.test.ts apps/server/src/llm-config-service.test.ts apps/server/src/routes-agent-events.test.ts apps/server/src/routes-agent.test.ts apps/server/src/routes-cognitive.test.ts apps/server/src/routes-mcp.test.ts",
+    "test:fast": "vitest run --exclude apps/server/src/extract-api-endpoints-llm.test.ts --exclude apps/server/src/llm-config-service.test.ts --exclude apps/server/src/routes-mcp.test.ts",
+    "test:live": "vitest run apps/server/src/extract-api-endpoints-llm.test.ts apps/server/src/llm-config-service.test.ts apps/server/src/routes-mcp.test.ts",
     "test:watch": "vitest",
-    "acceptance:observer": "tsx scripts/observer-critical-acceptance.mts",
     "dev:server": "pnpm --filter @traceforge/server dev",
-    "dev:web": "pnpm --filter @traceforge/web dev"
+    "dev:web": "pnpm --filter @traceforge/web dev",
+    "start:server": "pnpm --filter @traceforge/server start",
+    "build:windows-sandbox": "tsx scripts/build-windows-sandbox-helper.mts",
+    "release:desktop": "tsx scripts/build-desktop-release.mts",
+    "verify:desktop-release": "tsx scripts/verify-desktop-release.mts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

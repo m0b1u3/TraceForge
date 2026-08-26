@@ -1,5 +1,5 @@
 import type { ArtifactRetryAuthorization, RuntimeEvent } from "@traceforge/shared";
-import type { ToolDescriptor } from "@traceforge/extension";
+import { TOOL_SECURITY, type ToolDescriptor } from "@traceforge/extension";
 import { artifactAnalyzerCapabilityFingerprint, type ArtifactAnalyzerRegistry } from "./artifact-analyzer.js";
 import type { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
 import type { ArtifactRetryAuthorizationStore } from "./stores/artifact-retry-authorization-store.js";
@@ -41,7 +41,7 @@ export function makeAuthorizeArtifactRetryTool(input: {
       },
       required: ["artifactId", "analyzerId", "reason"],
     },
-    risk: "command",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     executionMode: "serial",
     execute: async (raw) => {

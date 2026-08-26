@@ -23,9 +23,9 @@ const timeline = { append: (_c: string, _e: string, d: string, r?: string) => ({
 const noop = () => {};
 
 describe("makeReopenTaskTool", () => {
-  it("is normal risk", () => {
+  it("declares a case-contained write profile", () => {
     const t = makeReopenTaskTool("c", mkTasks([]).reader, mkTasks([]).writer, mkFacts([]), timeline, noop);
-    expect(t.risk).toBe("normal");
+    expect(t.security).toMatchObject({ impactScope: "case", mutates: true, destructive: false });
     expect(t.name).toBe("reopen_task");
   });
 
@@ -62,10 +62,10 @@ describe("makeReopenTaskTool", () => {
 });
 
 describe("makeRevertDoneTaskTool", () => {
-  it("is command risk (goes through approval gate)", () => {
+  it("declares the same case-contained write profile", () => {
     const tk = mkTasks([]);
     const t = makeRevertDoneTaskTool("c", tk.reader, tk.writer, mkFacts([]), timeline, noop);
-    expect(t.risk).toBe("command");
+    expect(t.security).toMatchObject({ impactScope: "case", mutates: true, destructive: false });
     expect(t.name).toBe("revert_done_task");
   });
 

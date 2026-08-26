@@ -1,0 +1,429 @@
+import type Database from "better-sqlite3";
+import {
+  IdempotencyConflictError,
+  RevisionConflictError,
+  type AppendEventsRequest,
+  type AppendEventsResult,
+  type RecordedCommand,
+  type ScenarioEvent,
+  type ScenarioEventStore,
+  type ScenarioEventStream,
+  type WorkerDescriptor,
+  type WorkerStatus,
+} from "@traceforge/orchestration-core";
+import type { BlackboardChangeBus } from "./blackboard-change-bus.js";
+
+interface StreamRow { revision: number }
+export interface ScenarioRunSummaryRow {
+  runId: string;
+  caseId: string;
+  definitionKind: string;
+  definitionVersion: number;
+  status: string;
+  activePhaseId: string;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface ScenarioApprovalRow {
+  id: string;
+  runId: string;
+  caseId: string;
+  workId: string;
+  actionKey: string;
+  toolName: string;
+  risk: string;
+  rationale: string;
+  inputRef: string;
+  status: string;
+  requestedByWorkerId: string;
+  resolutionReason: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+export interface ScenarioWorkLeaseRow {
+  runId: string;
+  workId: string;
+  workerId: string;
+  leaseId: string;
+  leaseExpiresAt: string;
+  updatedAt: string;
+}
+interface CommandRow { fingerprint: string; resulting_revision: number }
+interface EventRow { payload_json: string }
+interface WorkerRow {
+  id: string;
+  roles_json: string;
+  capabilities_json: string;
+  max_concurrent_work: number;
+  status: WorkerStatus;
+  heartbeat_at: string;
+}
+
+function parseEvents(rows: EventRow[]): ScenarioEvent[] {
+  return rows.map((row) => JSON.parse(row.payload_json) as ScenarioEvent);
+}
+
+export class SqliteScenarioEventStore implements ScenarioEventStore {
+  constructor(private readonly sqlite: Database.Database, private readonly changes?: BlackboardChangeBus) {}
+
+  load(runId: string): ScenarioEventStream {
+    const row = this.sqlite.prepare("SELECT revision FROM scenario_event_streams WHERE run_id = ?").get(runId) as StreamRow | undefined;
+    if (!row) return { runId, revision: 0, events: [] };
+    const events = this.sqlite.prepare(
+      "SELECT payload_json FROM scenario_events WHERE run_id = ? ORDER BY sequence ASC",
+    ).all(runId) as EventRow[];
+    return { runId, revision: row.revision, events: parseEvents(events) };
+  }
+
+  findCommand(runId: string, commandId: string): RecordedCommand | undefined {
+    const command = this.sqlite.prepare(
+      "SELECT fingerprint, resulting_revision FROM scenario_commands WHERE run_id = ? AND command_id = ?",
+    ).get(runId, commandId) as CommandRow | undefined;
+    if (!command) return undefined;
+    const events = this.sqlite.prepare(
+      "SELECT payload_json FROM scenario_events WHERE run_id = ? AND command_id = ? ORDER BY event_index ASC",
+    ).all(runId, commandId) as EventRow[];
+    return {
+      commandId,
+      fingerprint: command.fingerprint,
+      resultingRevision: command.resulting_revision,
+      events: parseEvents(events),
+    };
+  }
+
+  append(request: AppendEventsRequest): AppendEventsResult {
+    if (request.events.length === 0) throw new Error(`Command ${request.commandId} emitted no events`);
+    const result = this.sqlite.transaction(() => {
+      const existing = this.findCommand(request.runId, request.commandId);
+      if (existing) {
+        if (existing.fingerprint !== request.fingerprint) {
+          throw new IdempotencyConflictError(request.runId, request.commandId);
+        }
+        return { resultingRevision: existing.resultingRevision, events: existing.events, idempotentReplay: true };
+      }
+
+      const stream = this.sqlite.prepare(
+        "SELECT revision FROM scenario_event_streams WHERE run_id = ?",
+      ).get(request.runId) as StreamRow | undefined;
+      const actualRevision = stream?.revision ?? 0;
+      if (actualRevision !== request.expectedRevision) {
+        throw new RevisionConflictError(request.runId, request.expectedRevision, actualRevision);
+      }
+      const firstTimestamp = request.events[0].type === "run_started"
+        ? request.events[0].state.createdAt
+        : request.events[0].at;
+      if (!stream) {
+        const started = request.events[0];
+        if (started.type !== "run_started") throw new Error(`New scenario stream ${request.runId} must begin with run_started`);
+        this.sqlite.prepare(
+          `INSERT INTO scenario_event_streams
+            (run_id, case_id, definition_kind, definition_version, status, active_phase_id, revision, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+        ).run(
+          request.runId,
+          started.state.caseId,
+          started.state.definitionKind,
+          started.state.definitionVersion,
+          started.state.status,
+          started.state.activePhaseId,
+          firstTimestamp,
+          firstTimestamp,
+        );
+      }
+
+      const insertEvent = this.sqlite.prepare(
+        "INSERT INTO scenario_events (run_id, sequence, command_id, event_index, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      );
+      request.events.forEach((event, index) => {
+        const timestamp = event.type === "run_started" ? event.state.createdAt : event.at;
+        insertEvent.run(
+          request.runId,
+          request.expectedRevision + index + 1,
+          request.commandId,
+          index,
+          event.type,
+          JSON.stringify(event),
+          timestamp,
+        );
+        this.updateLeaseProjection(request.runId, event, timestamp);
+        this.updateRunProjection(request.runId, event);
+        this.updateApprovalProjection(request.runId, event, timestamp);
+      });
+      const resultingRevision = request.expectedRevision + request.events.length;
+      const lastEvent = request.events.at(-1)!;
+      const updatedAt = lastEvent.type === "run_started" ? lastEvent.state.updatedAt : lastEvent.at;
+      this.sqlite.prepare(
+        "UPDATE scenario_event_streams SET revision = ?, updated_at = ? WHERE run_id = ? AND revision = ?",
+      ).run(resultingRevision, updatedAt, request.runId, request.expectedRevision);
+      this.sqlite.prepare(
+        "INSERT INTO scenario_commands (run_id, command_id, fingerprint, resulting_revision, created_at) VALUES (?, ?, ?, ?, ?)",
+      ).run(request.runId, request.commandId, request.fingerprint, resultingRevision, updatedAt);
+      return { resultingRevision, events: request.events, idempotentReplay: false };
+    })();
+    if (!result.idempotentReplay) {
+      const stream = this.sqlite.prepare("SELECT case_id FROM scenario_event_streams WHERE run_id = ?")
+        .get(request.runId) as { case_id: string };
+      const last = request.events.at(-1)!;
+      this.changes?.publish({
+        kind: "run",
+        runId: request.runId,
+        caseId: stream.case_id,
+        revision: result.resultingRevision,
+        eventTypes: request.events.map((event) => event.type),
+        at: last.type === "run_started" ? last.state.updatedAt : last.at,
+      });
+    }
+    return result;
+  }
+
+  listRuns(caseId?: string): ScenarioRunSummaryRow[] {
+    const rows = (caseId
+      ? this.sqlite.prepare(`
+          SELECT run_id, case_id, definition_kind, definition_version, status, active_phase_id, revision, created_at, updated_at
+          FROM scenario_event_streams WHERE case_id = ? ORDER BY created_at DESC
+        `).all(caseId)
+      : this.sqlite.prepare(`
+          SELECT run_id, case_id, definition_kind, definition_version, status, active_phase_id, revision, created_at, updated_at
+          FROM scenario_event_streams ORDER BY created_at DESC
+        `).all()) as Array<{
+          run_id: string;
+          case_id: string;
+          definition_kind: string;
+          definition_version: number;
+          status: string;
+          active_phase_id: string;
+          revision: number;
+          created_at: string;
+          updated_at: string;
+        }>;
+    return rows.map((row) => ({
+      runId: row.run_id,
+      caseId: row.case_id,
+      definitionKind: row.definition_kind,
+      definitionVersion: row.definition_version,
+      status: row.status,
+      activePhaseId: row.active_phase_id,
+      revision: row.revision,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  listApprovals(filter: { caseId?: string; status?: string } = {}): ScenarioApprovalRow[] {
+    const clauses: string[] = [];
+    const parameters: string[] = [];
+    if (filter.caseId) { clauses.push("case_id = ?"); parameters.push(filter.caseId); }
+    if (filter.status) { clauses.push("status = ?"); parameters.push(filter.status); }
+    const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.sqlite.prepare(`
+      SELECT id, run_id, case_id, work_id, action_key, tool_name, risk, rationale, input_ref,
+             status, requested_by_worker_id, resolution_reason, created_at, resolved_at
+      FROM scenario_work_approvals${where} ORDER BY created_at ASC
+    `).all(...parameters) as Array<{
+      id: string; run_id: string; case_id: string; work_id: string; action_key: string; tool_name: string;
+      risk: string; rationale: string; input_ref: string; status: string; requested_by_worker_id: string;
+      resolution_reason: string | null; created_at: string; resolved_at: string | null;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      runId: row.run_id,
+      caseId: row.case_id,
+      workId: row.work_id,
+      actionKey: row.action_key,
+      toolName: row.tool_name,
+      risk: row.risk,
+      rationale: row.rationale,
+      inputRef: row.input_ref,
+      status: row.status,
+      requestedByWorkerId: row.requested_by_worker_id,
+      resolutionReason: row.resolution_reason,
+      createdAt: row.created_at,
+      resolvedAt: row.resolved_at,
+    }));
+  }
+
+  private updateApprovalProjection(runId: string, event: ScenarioEvent, at: string): void {
+    if (event.type === "work_approval_requested") {
+      const stream = this.sqlite.prepare("SELECT case_id FROM scenario_event_streams WHERE run_id = ?")
+        .get(runId) as { case_id: string } | undefined;
+      if (!stream) throw new Error(`Approval ${event.approval.id} references missing run ${runId}`);
+      const approval = event.approval;
+      this.sqlite.prepare(`
+        INSERT INTO scenario_work_approvals
+          (id, run_id, case_id, work_id, action_key, tool_name, risk, rationale, input_ref, status,
+           requested_by_worker_id, resolution_reason, created_at, resolved_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)
+      `).run(
+        approval.id, runId, stream.case_id, approval.workId, approval.actionKey, approval.toolName,
+        approval.risk, approval.rationale, approval.inputRef, approval.status, approval.requestedByWorkerId, at,
+      );
+      return;
+    }
+    if (event.type === "work_approval_resolved") {
+      const result = this.sqlite.prepare(`
+        UPDATE scenario_work_approvals SET status = ?, resolution_reason = ?, resolved_at = ?
+        WHERE id = ? AND run_id = ? AND work_id = ? AND status = 'pending'
+      `).run(event.approved ? "approved" : "rejected", event.reason, at, event.approvalId, runId, event.workId);
+      if (result.changes !== 1) throw new Error(`Cannot resolve missing approval ${event.approvalId}`);
+      return;
+    }
+    if (event.type === "work_cancelled") {
+      this.sqlite.prepare(`
+        UPDATE scenario_work_approvals SET status = 'cancelled', resolution_reason = ?, resolved_at = ?
+        WHERE run_id = ? AND work_id = ? AND status = 'pending'
+      `).run(event.reason, at, runId, event.workId);
+      return;
+    }
+    if (event.type === "run_cancelled") {
+      this.sqlite.prepare(`
+        UPDATE scenario_work_approvals SET status = 'cancelled', resolution_reason = ?, resolved_at = ?
+        WHERE run_id = ? AND status = 'pending'
+      `).run(event.reason, at, runId);
+    }
+  }
+
+  private updateRunProjection(runId: string, event: ScenarioEvent): void {
+    switch (event.type) {
+      case "phase_advanced":
+        this.sqlite.prepare("UPDATE scenario_event_streams SET active_phase_id = ? WHERE run_id = ?").run(event.to, runId);
+        return;
+      case "run_completed":
+        this.sqlite.prepare("UPDATE scenario_event_streams SET status = 'completed' WHERE run_id = ?").run(runId);
+        return;
+      case "run_paused":
+        this.sqlite.prepare("UPDATE scenario_event_streams SET status = 'paused' WHERE run_id = ?").run(runId);
+        return;
+      case "run_resumed":
+        this.sqlite.prepare("UPDATE scenario_event_streams SET status = 'running' WHERE run_id = ?").run(runId);
+        return;
+      case "run_cancelled":
+        this.sqlite.prepare("UPDATE scenario_event_streams SET status = 'cancelled' WHERE run_id = ?").run(runId);
+    }
+  }
+
+  private updateLeaseProjection(runId: string, event: ScenarioEvent, at: string): void {
+    if (event.type === "work_claimed") {
+      this.sqlite.prepare(`
+        INSERT INTO scenario_work_leases (run_id, work_id, worker_id, lease_id, lease_expires_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(runId, event.workId, event.workerId, event.leaseId, event.leaseExpiresAt, at);
+      return;
+    }
+    if (event.type === "work_lease_renewed") {
+      const result = this.sqlite.prepare(`
+        UPDATE scenario_work_leases SET lease_expires_at = ?, updated_at = ?
+        WHERE run_id = ? AND work_id = ? AND lease_id = ?
+      `).run(event.leaseExpiresAt, at, runId, event.workId, event.leaseId);
+      if (result.changes !== 1) throw new Error(`Cannot renew missing lease ${event.leaseId}`);
+      return;
+    }
+    switch (event.type) {
+      case "work_completed":
+      case "work_failed":
+      case "work_blocked":
+      case "work_requeued":
+      case "work_approval_requested":
+        this.sqlite.prepare(
+          "DELETE FROM scenario_work_leases WHERE run_id = ? AND work_id = ?",
+        ).run(runId, event.workId);
+        return;
+      case "work_cancelled":
+        this.sqlite.prepare(
+          "DELETE FROM scenario_work_leases WHERE run_id = ? AND work_id = ?",
+        ).run(runId, event.workId);
+        return;
+      case "run_cancelled":
+      case "run_completed":
+      case "run_paused":
+        this.sqlite.prepare("DELETE FROM scenario_work_leases WHERE run_id = ?").run(runId);
+    }
+  }
+}
+
+export class SqliteWorkerRegistry {
+  constructor(private readonly sqlite: Database.Database) {}
+
+  upsert(worker: WorkerDescriptor, updatedAt: string): void {
+    if (!worker.id.trim() || worker.roles.length === 0 || worker.maxConcurrentWork < 1) {
+      throw new Error("Worker id, roles, and positive capacity are required");
+    }
+    this.sqlite.prepare(`
+      INSERT INTO scenario_workers (id, roles_json, capabilities_json, max_concurrent_work, status, heartbeat_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        roles_json = excluded.roles_json,
+        capabilities_json = excluded.capabilities_json,
+        max_concurrent_work = excluded.max_concurrent_work,
+        status = excluded.status,
+        heartbeat_at = excluded.heartbeat_at,
+        updated_at = excluded.updated_at
+    `).run(
+      worker.id,
+      JSON.stringify([...new Set(worker.roles)].sort()),
+      JSON.stringify([...new Set(worker.capabilities)].sort()),
+      worker.maxConcurrentWork,
+      worker.status,
+      worker.heartbeatAt,
+      updatedAt,
+    );
+  }
+
+  heartbeat(workerId: string, at: string): void {
+    const result = this.sqlite.prepare(
+      "UPDATE scenario_workers SET heartbeat_at = ?, updated_at = ? WHERE id = ?",
+    ).run(at, at, workerId);
+    if (result.changes !== 1) throw new Error(`Unknown worker ${workerId}`);
+  }
+
+  setStatus(workerId: string, status: WorkerStatus, at: string): void {
+    const result = this.sqlite.prepare(
+      "UPDATE scenario_workers SET status = ?, updated_at = ? WHERE id = ?",
+    ).run(status, at, workerId);
+    if (result.changes !== 1) throw new Error(`Unknown worker ${workerId}`);
+  }
+
+  list(): WorkerDescriptor[] {
+    const rows = this.sqlite.prepare(
+      "SELECT id, roles_json, capabilities_json, max_concurrent_work, status, heartbeat_at FROM scenario_workers ORDER BY id",
+    ).all() as WorkerRow[];
+    return rows.map((row) => ({
+      id: row.id,
+      roles: JSON.parse(row.roles_json) as WorkerDescriptor["roles"],
+      capabilities: JSON.parse(row.capabilities_json) as string[],
+      maxConcurrentWork: row.max_concurrent_work,
+      status: row.status,
+      heartbeatAt: row.heartbeat_at,
+    }));
+  }
+
+  activeWorkCounts(): Record<string, number> {
+    const rows = this.sqlite.prepare(
+      "SELECT worker_id, COUNT(*) AS count FROM scenario_work_leases GROUP BY worker_id",
+    ).all() as Array<{ worker_id: string; count: number }>;
+    return Object.fromEntries(rows.map((row) => [row.worker_id, row.count]));
+  }
+
+  listLeases(runId?: string): ScenarioWorkLeaseRow[] {
+    const rows = (runId
+      ? this.sqlite.prepare(`
+          SELECT run_id, work_id, worker_id, lease_id, lease_expires_at, updated_at
+          FROM scenario_work_leases WHERE run_id = ? ORDER BY updated_at ASC, work_id ASC
+        `).all(runId)
+      : this.sqlite.prepare(`
+          SELECT run_id, work_id, worker_id, lease_id, lease_expires_at, updated_at
+          FROM scenario_work_leases ORDER BY updated_at ASC, work_id ASC
+        `).all()) as Array<{
+          run_id: string; work_id: string; worker_id: string; lease_id: string;
+          lease_expires_at: string; updated_at: string;
+        }>;
+    return rows.map((row) => ({
+      runId: row.run_id,
+      workId: row.work_id,
+      workerId: row.worker_id,
+      leaseId: row.lease_id,
+      leaseExpiresAt: row.lease_expires_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+}

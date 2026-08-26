@@ -6,6 +6,7 @@ export interface SharedKnowledgeContext {
   verifiedFindings: string[];
   identities: string[];
   attackPaths: string[];
+  solverInsights?: string[];
   excludedConflictCount: number;
   injectedFactIds: string[];
   injectedKnowledgeRefs?: Array<{
@@ -57,6 +58,7 @@ export function buildContext(input: ContextInput, budget: ContextBudget): BuildR
         input.sharedKnowledge.verifiedFindings.length ? `已验证 Findings：\n${input.sharedKnowledge.verifiedFindings.map((item) => `- ${item}`).join("\n")}` : "已验证 Findings：（无）",
         input.sharedKnowledge.identities.length ? `可用 Identities：\n${input.sharedKnowledge.identities.map((item) => `- ${item}`).join("\n")}` : "可用 Identities：（无）",
         input.sharedKnowledge.attackPaths.length ? `攻击路径：\n${input.sharedKnowledge.attackPaths.map((item) => `- ${item}`).join("\n")}` : "攻击路径：（无）",
+        input.sharedKnowledge.solverInsights?.length ? `Solver 研究摘要（仅作线索，不是 Fact 或验证结论）：\n${input.sharedKnowledge.solverInsights.map((item) => `- ${item}`).join("\n")}` : "",
         input.sharedKnowledge.excludedConflictCount > 0 ? `已隔离 ${input.sharedKnowledge.excludedConflictCount} 条 conflicted/superseded/stale 知识；仅在主动检索并复核时使用。` : "",
       ].filter(Boolean).join("\n")
     : "";

@@ -3,15 +3,15 @@
     {
       "name": "filesystem",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-      "trustLevel": "command"
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
     },
     {
       "name": "poc",
       "command": "node",
       "args": ["packages/mcp-poc-server/dist/main.js"],
-      "env": { "TRACEFORGE_WORKSPACE": "./workspace" },
-      "trustLevel": "command"
+      "env": {
+        "TRACEFORGE_WORKSPACE": "./workspace"
+      }
     }
   ]
 }

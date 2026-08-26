@@ -23,3 +23,7 @@ flow/tsconfig.node.json
 traceforge-*.png
 data/
 workspace/
+apps/desktop/release/
+**/target/
+.playwright-cli/
+tips.txt

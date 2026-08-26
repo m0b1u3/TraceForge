@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AttackPath, AttackPathStep, RuntimeEvent } from "@traceforge/shared";
-import type { ToolDescriptor } from "./tool.js";
+import { TOOL_SECURITY, type ToolDescriptor } from "./tool.js";
 
 export interface AttackPathWriter {
   create(caseId: string, input: Omit<AttackPath, "id" | "caseId" | "version" | "createdAt" | "updatedAt">): AttackPath;
@@ -63,7 +63,7 @@ export function makeListAttackPathsTool(caseId: string, paths: AttackPathWriter)
   return {
     name: "list_attack_paths",
     description: "List persistent attack paths for this case, including paths created by earlier runs.",
-    risk: "normal",
+    security: TOOL_SECURITY.caseRead,
     source: "builtin",
     executionMode: "parallel",
     inputSchema: { type: "object", properties: {} },
@@ -81,7 +81,7 @@ export function makeRecordAttackPathTool(
   return {
     name: "record_attack_path",
     description: "Create or advance a persistent, evidence-linked attack path. Supply id to update a path from this or an earlier run. Verified steps require Fact evidence; validated paths require all steps verified plus evidence and a Finding.",
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     executionMode: "serial",
     inputSchema: {

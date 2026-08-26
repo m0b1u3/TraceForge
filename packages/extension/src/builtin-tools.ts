@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { replay, type Fetcher, type ReplayRequest } from "@traceforge/tools";
 import { checkScope } from "@traceforge/tool-resolver";
 import type { IdentityContext, ScopeRule, TrafficEntry } from "@traceforge/shared";
-import type { ToolDescriptor } from "./tool.js";
+import { TOOL_SECURITY, type ToolDescriptor } from "./tool.js";
 import type { TrafficReader, Emit } from "./case-tools.js";
 
 export interface TrafficWriter {
@@ -36,7 +36,7 @@ export function makeHttpReplayTool(
       },
       required: ["url", "method"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.authorizedTargetWrite,
     source: "builtin",
     execute: async (input) => {
       const value = input as ReplayRequest & { identityId?: string };
@@ -86,7 +86,7 @@ export function makeReplayTrafficTool(
       },
       required: ["trafficId"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.authorizedTargetWrite,
     source: "builtin",
     execute: async (input) => {
       const { trafficId, url, method, headers, body, identityId } = input as {
@@ -219,7 +219,7 @@ export function makeCompareIdentityTrafficTool(
       },
       required: ["trafficId", "leftIdentityId", "rightIdentityId"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.authorizedTargetWrite,
     source: "builtin",
     execute: async (input) => {
       if (!caseId || !trafficWriter || !emit) return { ok: false, content: "traffic persistence is not configured" };
@@ -286,7 +286,7 @@ export function makeProposeScopeExpansionTool(
       properties: { host: { type: "string" }, reason: { type: "string" } },
       required: ["host", "reason"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     execute: async (input) => {
       const { host, reason } = input as { host: string; reason: string };

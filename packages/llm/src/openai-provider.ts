@@ -8,6 +8,7 @@ export interface OpenAIOptions {
   model: string;
   baseUrl?: string;
   jsonMode?: "json_schema" | "json_object";
+  embeddingModel?: string;
 }
 
 interface ToolAccumulator { id: string; name: string; args: string }
@@ -80,6 +81,17 @@ export class OpenAICompatibleProvider implements LlmProvider {
     this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseUrl, ...(fetchImpl ? { fetch: fetchImpl } : {}) });
   }
 
+  async embed(args: { inputs: string[]; signal?: AbortSignal }): Promise<number[][]> {
+    if (!this.opts.embeddingModel) throw new Error("embeddingModel is not configured");
+    if (args.inputs.length === 0) return [];
+    const response = await withRetry("openai.embed", () => this.client.embeddings.create({
+      model: this.opts.embeddingModel!,
+      input: args.inputs,
+      encoding_format: "float",
+    }, args.signal ? { signal: args.signal } : undefined), { signal: args.signal });
+    return response.data.sort((a, b) => a.index - b.index).map((item) => item.embedding);
+  }
+
   async extractJson(args: ExtractJsonArgs): Promise<unknown> {
     if (this.opts.jsonMode === "json_object") return this.extractJsonObject(args);
 
@@ -95,7 +107,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
           { role: "system", content: args.system },
           { role: "user", content: args.user },
         ],
-      }));
+      }, args.signal ? { signal: args.signal } : undefined), { signal: args.signal });
     } catch (error) {
       if (!isResponseFormatUnavailable(error) && !isEmptyJsonResponseError(error)) throw error;
       res = await withRetry("openai.extractJson.fallback", () => this.client.chat.completions.create({
@@ -104,7 +116,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
           { role: "system", content: `${args.system}\n只输出一个 JSON 对象，不要输出 Markdown 或解释文字。JSON 必须符合这个 schema：${JSON.stringify(args.schema)}` },
           { role: "user", content: args.user },
         ],
-      }));
+      }, args.signal ? { signal: args.signal } : undefined), { signal: args.signal });
     }
     const content = extractText(res.choices[0]);
     if (!content) throw new Error("no content in response");
@@ -123,11 +135,11 @@ export class OpenAICompatibleProvider implements LlmProvider {
             { role: "system", content: jsonObjectSystemPrompt(args.system, args.schema) },
             { role: "user", content: args.user },
           ],
-        });
+        }, args.signal ? { signal: args.signal } : undefined);
         const content = extractText(response.choices[0]);
         if (!content) throw retryableEmptyContentError();
         return response;
-      });
+      }, { signal: args.signal });
     } catch (error) {
       if (isResponseFormatUnavailable(error) || isEmptyJsonResponseError(error)) {
         res = await withRetry("openai.extractJson.jsonObject.fallback", () => this.client.chat.completions.create({
@@ -136,7 +148,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
             { role: "system", content: jsonObjectSystemPrompt(args.system, args.schema) },
             { role: "user", content: args.user },
           ],
-        }));
+        }, args.signal ? { signal: args.signal } : undefined), { signal: args.signal });
       } else {
         throw error;
       }

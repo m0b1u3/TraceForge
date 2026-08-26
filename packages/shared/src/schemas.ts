@@ -402,14 +402,6 @@ export const ObserverWarningSchema = z.object({
 export type ObserverWarningInput = z.input<typeof ObserverWarningSchema>;
 export type ObserverWarning = z.infer<typeof ObserverWarningSchema>;
 
-export const AgentEventRefsSchema = z.object({
-  factIds: z.array(z.string()).default([]),
-  taskIds: z.array(z.string()).default([]),
-  trafficIds: z.array(z.string()).optional(),
-  timelineEntryIds: z.array(z.string()).default([]),
-});
-export type AgentEventRefs = z.infer<typeof AgentEventRefsSchema>;
-
 export const ToolFailureDiagnosticSchema = z.object({
   category: z.enum([
     "command_exit",
@@ -430,22 +422,6 @@ export const ToolFailureDiagnosticSchema = z.object({
   recommendation: z.string(),
 });
 export type ToolFailureDiagnostic = z.infer<typeof ToolFailureDiagnosticSchema>;
-
-export const AgentEventSchema = z.object({
-  id: z.string(),
-  caseId: z.string(),
-  kind: z.enum(["user", "started", "text", "reasoning", "tool_call", "tool_result", "validation", "done", "error"]),
-  text: z.string(),
-  tool: z.string().nullable().default(null),
-  refs: AgentEventRefsSchema.nullable().default(null),
-  runId: z.string().nullable().optional(),
-  executionId: z.string().nullable().optional(),
-  outcome: z.enum(["running", "succeeded", "failed", "recovered"]).nullable().optional(),
-  recoveredByExecutionId: z.string().nullable().optional(),
-  failureDiagnostic: ToolFailureDiagnosticSchema.nullable().optional(),
-  createdAt: z.string(),
-});
-export type AgentEvent = z.infer<typeof AgentEventSchema>;
 
 export const SessionStateSchema = z.object({
   caseId: z.string(),
@@ -520,47 +496,24 @@ export const ContextSummarySchema = z.object({
 });
 export type ContextSummary = z.infer<typeof ContextSummarySchema>;
 
-export const AgentRunStatusSchema = z.enum([
-  "queued",
-  "running",
-  "interrupting",
-  "interrupted",
-  "needs_continuation",
-  "completed",
-  "failed",
-]);
-export type AgentRunStatus = z.infer<typeof AgentRunStatusSchema>;
-
-export const AgentRunSchema = z.object({
+export const ExperienceEntrySchema = z.object({
   id: z.string(),
-  caseId: z.string(),
-  goal: z.string(),
-  status: AgentRunStatusSchema,
+  title: z.string().min(1),
+  applicability: z.string().min(1),
+  procedure: z.array(z.string().min(1)).min(1),
+  expectedSignals: z.array(z.string()).default([]),
+  failureModes: z.array(z.string()).default([]),
+  evidenceRequirements: z.array(z.string()).min(1),
+  sourceCaseId: z.string(),
+  sourceRunId: z.string().nullable().default(null),
+  sourceTaskId: z.string(),
+  evidenceFactIds: z.array(z.string()).min(1),
+  status: z.enum(["draft", "active", "retired"]).default("draft"),
+  version: z.number().int().positive().default(1),
+  successCount: z.number().int().nonnegative().default(0),
+  failureCount: z.number().int().nonnegative().default(0),
+  tags: z.array(z.string()).default([]),
   createdAt: z.string(),
-  startedAt: z.string().nullable().default(null),
-  finishedAt: z.string().nullable().default(null),
-  interruptReason: z.string().nullable().default(null),
-  completionReason: z.string().nullable().default(null),
-  error: z.string().nullable().default(null),
-  promptTokens: z.number().default(0),
-  completionTokens: z.number().default(0),
-  totalTokens: z.number().default(0),
+  updatedAt: z.string(),
 });
-export type AgentRun = z.infer<typeof AgentRunSchema>;
-
-export const AgentRunUsageSchema = z.object({
-  id: z.string(),
-  runId: z.string(),
-  caseId: z.string(),
-  turn: z.number().int().positive(),
-  promptTokens: z.number().int().nonnegative(),
-  completionTokens: z.number().int().nonnegative(),
-  totalTokens: z.number().int().nonnegative(),
-  source: z.enum(["agent", "observer"]).default("agent"),
-  currency: z.string().regex(/^[A-Z]{3}$/).nullable().default(null),
-  inputCostMicros: z.number().int().nonnegative().nullable().default(null),
-  outputCostMicros: z.number().int().nonnegative().nullable().default(null),
-  totalCostMicros: z.number().int().nonnegative().nullable().default(null),
-  createdAt: z.string(),
-});
-export type AgentRunUsage = z.infer<typeof AgentRunUsageSchema>;
+export type ExperienceEntry = z.infer<typeof ExperienceEntrySchema>;

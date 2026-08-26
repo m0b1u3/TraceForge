@@ -6,13 +6,12 @@ export const McpServerConfigSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).default([]),
   env: z.record(z.string()).optional(),
-  trustLevel: z.enum(["command", "normal"]).default("command"),
-});
+}).strict();
 export type McpServerConfig = z.infer<typeof McpServerConfigSchema>;
 
 export const McpConfigSchema = z.object({
   servers: z.array(McpServerConfigSchema).default([]),
-});
+}).strict();
 
 export function loadMcpConfig(path = "config/mcp.json"): McpServerConfig[] {
   try {

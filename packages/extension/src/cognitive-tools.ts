@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from "./tool.js";
+import { TOOL_SECURITY, type ToolDescriptor } from "./tool.js";
 
 export interface SessionStateWriter {
   upsert(caseId: string, patch: { currentGoal?: string; phase?: string; focus?: { host?: string; url?: string; note?: string }; activeHypothesisIds?: string[] }, runId: string): { phase: string };
@@ -41,7 +41,7 @@ export function makeUpdateSessionStateTool(caseId: string, ss: SessionStateWrite
         focus: { type: "object", properties: { host: { type: "string" }, url: { type: "string" }, note: { type: "string" } } },
       },
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     execute: async (input) => {
       const p = { ...((input ?? {}) as Record<string, unknown>) };
@@ -97,7 +97,7 @@ export function makeRecordHypothesisTool(caseId: string, hyp: HypothesisWriter, 
       },
       required: ["statement", "basedOnFactIds"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     execute: async (input) => {
       const { statement, basedOnFactIds, relatedTaskIds, relations, activate, priorityScore, scoreFactors, reason } = (input ?? {}) as {
@@ -138,7 +138,7 @@ export function makeResolveHypothesisTool(caseId: string, hyp: HypothesisWriter,
       },
       required: ["id", "status"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     execute: async (input) => {
       const { id, status, confirmingFactId, reason } = (input ?? {}) as { id?: string; status?: "confirmed" | "refuted"; confirmingFactId?: string; reason?: string };

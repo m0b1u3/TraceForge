@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { ToolRegistry } from "./registry.js";
-import type { ToolDescriptor } from "./tool.js";
+import { TOOL_SECURITY, type ToolDescriptor } from "./tool.js";
 
-function tool(name: string, risk: "command" | "normal" = "normal"): ToolDescriptor {
+function tool(name: string): ToolDescriptor {
   return {
     name, description: `does ${name}`, inputSchema: { type: "object", properties: {} },
-    risk, source: "builtin", execute: async () => ({ ok: true, content: "done" }),
+    security: TOOL_SECURITY.caseRead, source: "builtin", execute: async () => ({ ok: true, content: "done" }),
   };
 }
 
@@ -21,6 +21,12 @@ describe("ToolRegistry", () => {
     const r = new ToolRegistry();
     r.register(tool("x"));
     expect(() => r.register(tool("x"))).toThrow();
+  });
+
+  it("rejects dynamic tools without a security profile", () => {
+    const r = new ToolRegistry();
+    const unsafe = { ...tool("unsafe"), security: undefined } as unknown as ToolDescriptor;
+    expect(() => r.register(unsafe)).toThrow(/security profile required/);
   });
 
   it("unregisters a tool (for MCP disconnect)", () => {

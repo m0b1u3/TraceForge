@@ -1,5 +1,5 @@
 import type { IdentityContext, RuntimeEvent, TimelineEntry } from "@traceforge/shared";
-import type { ToolDescriptor } from "./tool.js";
+import { TOOL_SECURITY, type ToolDescriptor } from "./tool.js";
 
 export interface IdentityWriter {
   create(caseId: string, input: Omit<IdentityContext, "id" | "caseId" | "version" | "createdAt" | "updatedAt">): IdentityContext;
@@ -23,7 +23,9 @@ export function makeListIdentitiesTool(caseId: string, identities: IdentityWrite
     name: "list_identities",
     description: "List named identities available in this case, including role, status, version, headers, cookies, and plaintext credentials.",
     inputSchema: { type: "object", properties: {} },
-    risk: "normal",
+    security: {
+      capabilities: ["data.read", "secrets.read"], impactScope: "case", mutates: false, destructive: false, openWorld: false,
+    },
     source: "builtin",
     executionMode: "parallel",
     execute: async () => ({
@@ -55,7 +57,7 @@ export function makeRecordIdentityTool(
       },
       required: ["name", "kind"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     execute: async (input) => {
       const value = input as Partial<IdentityContext>;
@@ -103,7 +105,7 @@ export function makeUseBrowserIdentityTool(
       properties: { identityId: { type: "string" } },
       required: ["identityId"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     execute: async (input) => {
       const { identityId } = input as { identityId: string };

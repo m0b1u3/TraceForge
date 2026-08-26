@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
-import type { ToolDescriptor } from "@traceforge/extension";
+import { TOOL_SECURITY, type ToolDescriptor } from "@traceforge/extension";
 import type { ArtifactAnalysisAttempt, ArtifactRecord, ArtifactRetryAuthorization } from "@traceforge/shared";
 import { artifactAnalyzerCapabilityFingerprint, type ArtifactAnalyzerRegistry } from "./artifact-analyzer.js";
 import type { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
@@ -117,7 +117,7 @@ export function makePlanArtifactAnalysisTool(
       properties: { artifactId: { type: "string" } },
       required: ["artifactId"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseRead,
     source: "builtin",
     execute: async (input) => {
       const artifactId = (input as { artifactId?: string }).artifactId;
@@ -146,7 +146,7 @@ export function makeListArtifactsTool(
     name: "list_artifacts",
     description: "List persistent artifacts acquired in this Case, including hash, format, analysis status, and coverage. Use this before repeating a download or claiming an artifact was not acquired.",
     inputSchema: { type: "object", properties: {} },
-    risk: "normal",
+    security: TOOL_SECURITY.caseRead,
     source: "builtin",
     execute: async () => {
       const records = store.listByCase(caseId);
@@ -193,7 +193,7 @@ export function makeAnalyzeArtifactTool(
       },
       required: ["artifactId"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     executionMode: "serial",
     timeoutMs: 120_000,

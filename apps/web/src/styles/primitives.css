@@ -287,6 +287,11 @@ button,
   color: var(--foreground);
   background: var(--surface);
   box-shadow: var(--shadow-lg);
+  max-height: calc(100dvh - 32px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 /* Normalize the highest-frequency workbench text. */
@@ -739,6 +744,7 @@ button,
 .agent-event:hover .agent-event-actions,
 .agent-event:focus-within .agent-event-actions { opacity: 1; }
 .composer {
+  align-items: flex-end;
   gap: 8px;
   margin: 0 24px 18px;
   padding: 6px 7px 6px 14px;
@@ -749,10 +755,13 @@ button,
 }
 .composer textarea {
   min-height: 40px;
+  max-height: 200px;
   padding: 10px 0;
   color: var(--foreground);
   font-size: 13px;
   line-height: 1.45;
+  overflow-y: hidden;
+  resize: none;
 }
 .composer .tf-btn { height: 38px; border-radius: var(--radius-md); }
 .composer .tf-btn-primary { min-width: 88px; }

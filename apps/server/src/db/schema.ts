@@ -262,22 +262,6 @@ export const decisions = sqliteTable("decisions", {
   createdAt: text("created_at").notNull(),
 });
 
-export const agentEvents = sqliteTable("agent_events", {
-  seq: integer("seq").primaryKey({ autoIncrement: true }),
-  id: text("id").notNull(),
-  caseId: text("case_id").notNull(),
-  kind: text("kind").notNull(),
-  text: text("text").notNull(),
-  tool: text("tool"),
-  refsJson: text("refs_json"),
-  runId: text("run_id"),
-  executionId: text("execution_id"),
-  outcome: text("outcome"),
-  recoveredByExecutionId: text("recovered_by_execution_id"),
-  failureDiagnosticJson: text("failure_diagnostic_json"),
-  createdAt: text("created_at").notNull(),
-});
-
 export const observerWarnings = sqliteTable("observer_warnings", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),
@@ -402,34 +386,48 @@ export const runCognitiveState = sqliteTable("run_cognitive_state", {
   updatedAt: text("updated_at").notNull(),
 });
 
-export const agentRuns = sqliteTable("agent_runs", {
+export const semanticDocuments = sqliteTable("semantic_documents", {
   id: text("id").primaryKey(),
-  caseId: text("case_id").notNull(),
-  goal: text("goal").notNull(),
-  status: text("status").notNull(),
-  createdAt: text("created_at").notNull(),
-  startedAt: text("started_at"),
-  finishedAt: text("finished_at"),
-  interruptReason: text("interrupt_reason"),
-  completionReason: text("completion_reason"),
-  error: text("error"),
-  promptTokens: integer("prompt_tokens").notNull().default(0),
-  completionTokens: integer("completion_tokens").notNull().default(0),
-  totalTokens: integer("total_tokens").notNull().default(0),
+  caseId: text("case_id"),
+  kind: text("kind").notNull(),
+  sourceId: text("source_id").notNull(),
+  textHash: text("text_hash").notNull(),
+  content: text("content").notNull(),
+  model: text("model").notNull(),
+  dimensions: integer("dimensions").notNull(),
+  vectorJson: text("vector_json").notNull(),
+  updatedAt: text("updated_at").notNull(),
 });
 
-export const agentRunUsage = sqliteTable("agent_run_usage", {
+export const experienceEntries = sqliteTable("experience_entries", {
   id: text("id").primaryKey(),
-  runId: text("run_id").notNull(),
+  title: text("title").notNull(),
+  applicability: text("applicability").notNull(),
+  procedureJson: text("procedure_json").notNull(),
+  expectedSignalsJson: text("expected_signals_json").notNull(),
+  failureModesJson: text("failure_modes_json").notNull(),
+  evidenceRequirementsJson: text("evidence_requirements_json").notNull(),
+  sourceCaseId: text("source_case_id").notNull(),
+  sourceRunId: text("source_run_id"),
+  sourceTaskId: text("source_task_id").notNull(),
+  evidenceFactIdsJson: text("evidence_fact_ids_json").notNull(),
+  status: text("status").notNull(),
+  version: integer("version").notNull(),
+  successCount: integer("success_count").notNull().default(0),
+  failureCount: integer("failure_count").notNull().default(0),
+  tagsJson: text("tags_json").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const networkSearchRuns = sqliteTable("network_search_runs", {
+  id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),
-  turn: integer("turn").notNull(),
-  promptTokens: integer("prompt_tokens").notNull(),
-  completionTokens: integer("completion_tokens").notNull(),
-  totalTokens: integer("total_tokens").notNull(),
-  source: text("source").notNull().default("agent"),
-  currency: text("currency"),
-  inputCostMicros: integer("input_cost_micros"),
-  outputCostMicros: integer("output_cost_micros"),
-  totalCostMicros: integer("total_cost_micros"),
+  grantId: text("grant_id").notNull(),
+  query: text("query").notNull(),
+  allowedDomainsJson: text("allowed_domains_json").notNull(),
+  resultsJson: text("results_json").notNull(),
+  status: text("status").notNull(),
+  error: text("error"),
   createdAt: text("created_at").notNull(),
 });

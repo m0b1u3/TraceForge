@@ -11,7 +11,7 @@ function hasMigration(sqlite: SqliteConnection, id: string): boolean {
 
 /**
  * Retires the legacy representation where operational tool failures were
- * stored as security Facts. Agent events remain untouched as the audit source.
+ * stored as security Facts. Scenario event streams are the durable audit source.
  */
 export function applyDataMigrations(sqlite: SqliteConnection): void {
   sqlite.exec(`

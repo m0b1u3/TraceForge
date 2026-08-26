@@ -36,9 +36,26 @@ const JSON_MODES = [
 
 const CURRENCIES = ["USD", "CNY", "EUR", "GBP", "JPY"];
 
+function DesktopUpdateSettings() {
+  const bridge = globalThis.window?.traceforgeDesktop;
+  const [state, setState] = useState<{ status?: string; version?: string; percent?: number; message?: string }>({ status: "idle" });
+  useEffect(() => bridge?.onUpdateState(setState), [bridge]);
+  if (!bridge) return null;
+  return <section className="settings-section">
+    <div className="settings-section-heading"><strong>Desktop updates</strong><span>Signed release metadata is checked without downloading until you approve.</span></div>
+    <div className="settings-key-status" role="status">{state.status === "downloading" ? `Downloading ${Math.round(state.percent ?? 0)}%` : state.status === "available" ? `Version ${state.version} is available` : state.status === "ready" ? `Version ${state.version} is ready to install` : state.message ?? state.status}</div>
+    <div className="flex gap-2">
+      <Button type="button" variant="outline" size="sm" onClick={() => void bridge.checkForUpdates()}>Check for updates</Button>
+      {state.status === "available" && <Button type="button" size="sm" onClick={() => void bridge.downloadUpdate()}>Download</Button>}
+      {state.status === "ready" && <Button type="button" size="sm" onClick={() => void bridge.installUpdate()}>Restart and install</Button>}
+    </div>
+  </section>;
+}
+
 export interface LlmSettingsFields {
   provider: LlmConfigInput["provider"];
   model: string;
+  embeddingModel?: string;
   apiKey: string;
   baseUrl: string;
   jsonMode: string;
@@ -53,6 +70,7 @@ export function buildLlmConfigInput(fields: LlmSettingsFields): LlmConfigInput {
   return {
     provider: fields.provider,
     model: fields.model.trim(),
+    ...(fields.embeddingModel?.trim() ? { embeddingModel: fields.embeddingModel.trim() } : {}),
     baseUrl: fields.baseUrl.trim() || undefined,
     apiKey: fields.apiKey || undefined,
     jsonMode: fields.jsonMode === "default" ? undefined : (fields.jsonMode as LlmConfigInput["jsonMode"]),
@@ -116,6 +134,7 @@ export function SettingsModal({
 
   const [provider, setProvider] = useState<LlmConfigInput["provider"]>("openai");
   const [model, setModel] = useState("");
+  const [embeddingModel, setEmbeddingModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiKeyDirty, setApiKeyDirty] = useState(false);
   const [baseUrl, setBaseUrl] = useState("");
@@ -152,6 +171,7 @@ export function SettingsModal({
     if (!llmConfig) return;
     setProvider(llmConfig.provider);
     setModel(llmConfig.model);
+    setEmbeddingModel(llmConfig.embeddingModel ?? "");
     setApiKey(llmConfig.apiKeyMasked ?? "");
     setApiKeyDirty(false);
     setShowApiKey(false);
@@ -171,11 +191,12 @@ export function SettingsModal({
 
   if (!settingsModalOpen_) return null;
 
-  const buildInput = () => buildLlmConfigInput({ provider, model, apiKey: apiKeyDirty ? apiKey : "", baseUrl, jsonMode, contextWindowTokens, maxOutputTokens, currency, inputPricePerMillion, outputPricePerMillion });
+  const buildInput = () => buildLlmConfigInput({ provider, model, embeddingModel, apiKey: apiKeyDirty ? apiKey : "", baseUrl, jsonMode, contextWindowTokens, maxOutputTokens, currency, inputPricePerMillion, outputPricePerMillion });
 
   const isDirty = Boolean(llmConfig && (
     provider !== llmConfig.provider
     || model !== llmConfig.model
+    || embeddingModel !== (llmConfig.embeddingModel ?? "")
     || apiKeyDirty
     || baseUrl !== (llmConfig.baseUrl ?? "")
     || jsonMode !== (llmConfig.jsonMode ?? "default")
@@ -370,6 +391,17 @@ export function SettingsModal({
                 placeholder="https://api.example.com/v1"
               />
             </div>
+
+            <div className="grid gap-2">
+              <label htmlFor="embeddingModel" className="text-sm font-medium">Embedding model</label>
+              <Input
+                id="embeddingModel"
+                value={embeddingModel}
+                onChange={(event) => setEmbeddingModel(event.target.value)}
+                placeholder="e.g. text-embedding-3-small"
+              />
+              <small>Optional. Enables persisted vector retrieval; without it TraceForge keeps keyword retrieval as a reliable fallback.</small>
+            </div>
           </section>}
 
           {activeSection === "runtime" && <section className="settings-section" aria-labelledby="settings-runtime-title">
@@ -461,6 +493,7 @@ export function SettingsModal({
               <button type="button" role="radio" aria-checked={theme === "dark"} className={theme === "dark" ? "is-selected" : ""} onClick={() => setTheme("dark")}><Moon size={18} /><span><strong>Dark</strong><small>Low-light operations</small></span><CheckCircle size={16} weight={theme === "dark" ? "fill" : "regular"} /></button>
             </div>
           </section>}
+          {activeSection === "interface" && <DesktopUpdateSettings />}
 
           {formError && <div className="settings-feedback is-error" role="alert"><Warning size={16} weight="fill" />{formError}</div>}
 

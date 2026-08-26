@@ -11,7 +11,7 @@ const reader = { listByCase: (cid: string) => (cid === "c" ? entries : []) };
 describe("makeListTrafficTool", () => {
   it("lists traffic summaries for the case", async () => {
     const tool = makeListTrafficTool("c", reader);
-    expect(tool.risk).toBe("normal");
+    expect(tool.security).toMatchObject({ impactScope: "case", mutates: false });
     expect(tool.executionMode).toBe("parallel");
     const res = await tool.execute({});
     expect(res.ok).toBe(true);

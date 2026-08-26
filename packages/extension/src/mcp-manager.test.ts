@@ -17,8 +17,10 @@ describe("McpManager real stdio integration", () => {
       name: "poc",
       command: process.execPath,
       args: [resolve("packages/mcp-poc-server/dist/main.js")],
-      env: { TRACEFORGE_WORKSPACE: workspace },
-      trustLevel: "command",
+      env: {
+        TRACEFORGE_WORKSPACE: workspace,
+        TRACEFORGE_WINDOWS_SANDBOX_HELPER: join(workspace, "missing-sandbox-helper.exe"),
+      },
     }]);
   });
 
@@ -29,8 +31,8 @@ describe("McpManager real stdio integration", () => {
 
   it("discovers tools and calls the real MCP child process", async () => {
     const handles = manager.listTools();
-    expect(handles.map((handle) => handle.toolName).sort()).toEqual(["exec_command", "list_dir", "read_file", "write_file"]);
-    expect(handles.every((handle) => handle.serverName === "poc" && handle.trustLevel === "command")).toBe(true);
+    expect(handles.map((handle) => handle.toolName).sort()).toEqual(["list_dir", "read_file", "write_file"]);
+    expect(handles.every((handle) => handle.serverName === "poc")).toBe(true);
 
     const result = await manager.callTool("poc", "list_dir", { caseId: "case_1", path: "" });
     expect(result).toEqual({ ok: true, content: "(empty)" });
@@ -48,7 +50,13 @@ describe("McpManager real stdio integration", () => {
     const descriptor = mcpToolToDescriptor(handle!, manager);
     expect(descriptor.name).toBe("list_dir");
     expect(descriptor.source).toBe("mcp:poc");
-    expect(descriptor.risk).toBe("command");
+    expect(descriptor.security).toMatchObject({
+      capabilities: ["data.read"],
+      impactScope: "case",
+      mutates: false,
+      destructive: false,
+      openWorld: false,
+    });
     await expect(descriptor.execute({ caseId: "case_1", path: "" })).resolves.toEqual({
       ok: true,
       content: "(empty)",

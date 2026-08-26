@@ -1,9 +1,17 @@
-import type { Case, CaseSummary, TrafficEntry, Fact, Task, TimelineEntry, ObserverWarning, ObserverStrategyAudit, AgentEvent, AgentRun, AgentRunUsage, AttackPath, IdentityContext, SecurityReport, SecurityReportRevision, ValidationWorkflowSnapshot, Hypothesis, ArtifactRecord, ArtifactConsumption, ArtifactAnalysisAttempt, ArtifactRetryAuthorization, ArtifactRecovery, ArtifactLimitationDisposition, ArtifactAnalyzerCapability } from "@traceforge/shared";
-import type { McpToolHandle } from "@traceforge/extension";
+import type { Case, CaseSummary, ScenarioAgentEvent } from "@traceforge/shared";
+
+export interface McpToolInfo {
+  serverName: string;
+  toolName: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean };
+}
 
 export interface LlmConfig {
   provider: "anthropic" | "openai";
   model: string;
+  embeddingModel?: string;
   baseUrl?: string;
   apiKeyMasked: string;
   jsonMode?: "json_schema" | "json_object";
@@ -17,6 +25,7 @@ export interface LlmConfig {
 export interface LlmConfigInput {
   provider: "anthropic" | "openai";
   model: string;
+  embeddingModel?: string;
   baseUrl?: string;
   apiKey?: string;
   jsonMode?: "json_schema" | "json_object";
@@ -27,388 +36,356 @@ export interface LlmConfigInput {
   outputPricePerMillion?: number | null;
 }
 
-async function ensureOk(r: Response, action: string): Promise<Response> {
-  if (r.ok) return r;
-  let reason = `${r.status}`;
+export interface ScenarioRunSummary {
+  runId: string; caseId: string; definitionKind: string; definitionVersion: number;
+  status: string; activePhaseId: string; revision: number; createdAt: string; updatedAt: string;
+}
+
+export interface ScenarioAuthorization {
+  id: string;
+  caseId: string;
+  scenarioKind: "web_blackbox";
+  scope: { targets: string[]; allowedActions: string[]; deniedActions: string[]; notes?: string };
+  approvedBy: string;
+  status: "active" | "revoked";
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScenarioApproval {
+  id: string;
+  runId: string;
+  caseId: string;
+  workId: string;
+  actionKey: string;
+  toolName: string;
+  risk: "read_only" | "bounded_write" | "privileged" | "destructive";
+  rationale: string;
+  inputRef: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  requestedByWorkerId: string;
+  resolutionReason: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface ScenarioDefinitionView {
+  kind: "web_blackbox" | "code_audit" | "red_team_lateral";
+  version: number;
+  title: string;
+  authorizationActions: string[];
+  requiredCapabilities: string[];
+  initialPhaseId: string;
+  agentTopology: {
+    planner: { enabled: boolean };
+    observer: { enabled: boolean };
+    workerPools: Array<{ id: string; role: string; activation: string; minimumInstances: number; maximumInstances: number; maxConcurrentWork: number; capabilities: string[] }>;
+  };
+  phases: Array<{ id: string; title: string; objective: string; allowedWorkKinds: string[]; maxParallelWork: number; requiredCapabilities: string[] }>;
+}
+
+export interface ScenarioRunState {
+  id: string;
+  caseId: string;
+  definitionKind: ScenarioDefinitionView["kind"];
+  definitionVersion: number;
+  goal: string;
+  scopeRef: string;
+  status: "running" | "paused" | "blocked" | "completed" | "cancelled";
+  activePhaseId: string;
+  availableCapabilities: string[];
+  workItems: Array<{
+    id: string; runId: string; phaseId: string; kind: "research" | "validation" | "review" | "report";
+    title: string; objective: string; priority: number;
+    status: "queued" | "running" | "waiting_approval" | "completed" | "blocked" | "failed" | "cancelled";
+    allowedWorkerRoles: string[]; requiredCapabilities: string[]; hypothesisIds: string[]; evidenceRefs: string[];
+    workerId: string | null; leaseId: string | null; leaseExpiresAt: string | null; attempt: number; maxAttempts: number;
+    idempotencyKey: string;
+    latestCheckpoint: { id: string; workId: string; leaseId: string; progressSummary: string; payloadRef: string; createdAt: string } | null;
+    resumeFromCheckpoint: boolean;
+    resultSummary: string | null; error: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null;
+  }>;
+  outputs: Array<{ id: string; kind: string; summary: string; refs: string[]; phaseId: string; producedByWorkId: string; createdAt: string }>;
+  directives: Array<{ id: string; kind: "steer"; targetWorkId: string; instruction: string; rationale: string; issuedBy: "observer"; createdAt: string }>;
+  revision: number;
+  blockedReason: string | null;
+  suspension: { reason: string; requestedBy: "operator" | "system"; pausedAt: string } | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+export interface ScenarioCommandResult { state: ScenarioRunState; idempotentReplay: boolean }
+
+export interface ScenarioRunRecoveryDiagnostic {
+  runId: string;
+  status: ScenarioRunState["status"];
+  runRevision: number;
+  projectionMatchesReplay: boolean;
+  projectionIssues: string[];
+  activeLeases: Array<{
+    workId: string; workerId: string; leaseId: string; leaseExpiresAt: string;
+    checkpointRef: string | null; resumableFromCheckpoint: boolean;
+  }>;
+  queuedCheckpointWorkIds: string[];
+  pendingApprovalIds: string[];
+  suspension: ScenarioRunState["suspension"];
+}
+
+export interface ScenarioRunReplay {
+  runId: string; revision: number; currentRevision: number; eventCount: number;
+  stateDigest: string; isCurrent: boolean; state: ScenarioRunState;
+}
+
+export type CognitiveAgentStatus = "disabled" | "unavailable" | "awaiting_state" | "applying" | "observing";
+export type WorkerHealth = "healthy" | "stale" | "draining" | "offline";
+export type PlannerDecision =
+  | { action: "wait"; rationale: string }
+  | {
+      action: "plan"; rationale: string;
+      proposals: Array<{ kind: string; title: string; objective: string; priority: number }>;
+      cancellations: Array<{ workId: string; reason: string }>;
+      reprioritizations: Array<{ workId: string; priority: number; reason: string }>;
+    };
+export type ObserverDecision =
+  | { action: "continue"; rationale: string }
+  | { action: "steer"; workId: string; instruction: string; rationale: string }
+  | { action: "terminate_branch"; workId: string; reason: string }
+  | { action: "terminate_run"; reason: string };
+
+export interface ScenarioCollaborationSnapshot {
+  runId: string;
+  caseId: string;
+  capturedAt: string;
+  runRevision: number;
+  graphRevision: number;
+  agents: {
+    planner: {
+      status: CognitiveAgentStatus;
+      evaluationCount: number;
+      evaluations: Array<{
+        id: string; decision: PlannerDecision; applied: boolean; observedRunRevision: number;
+        resultingRunRevision: number | null; createdAt: string; appliedAt: string | null;
+      }>;
+    };
+    observer: {
+      status: CognitiveAgentStatus;
+      evaluationCount: number;
+      evaluations: Array<{
+        id: string; decision: ObserverDecision; applied: boolean; observedRunRevision: number;
+        resultingRunRevision: number | null; createdAt: string; appliedAt: string | null;
+      }>;
+    };
+  };
+  workerPools: Array<{
+    id: string; role: string; activation: string; registeredCount: number; healthyCount: number;
+    queuedWork: number; runningWork: number; activeLeases: number; maximumInstances: number;
+  }>;
+  workers: Array<{
+    id: string; roles: string[]; capabilities: string[]; status: "online" | "draining" | "offline";
+    health: WorkerHealth; heartbeatAt: string; heartbeatAgeMs: number | null; maxConcurrentWork: number;
+    activeWork: number; availableSlots: number;
+    runLeases: Array<{
+      runId: string; workId: string; workerId: string; leaseId: string; leaseExpiresAt: string;
+      updatedAt: string; expired: boolean; expiresInMs: number;
+    }>;
+  }>;
+  knowledge: {
+    totalNodes: number; totalEdges: number; countsByKind: Record<string, number>; countsByStatus: Record<string, number>;
+    nodes: Array<{
+      id: string; runId: string | null; kind: string; title: string; summary: string; status: string;
+      confidence: number; updatedAt: string;
+    }>;
+    edges: Array<{ id: string; sourceId: string; targetId: string; relation: string; rationale: string; createdAt: string }>;
+    truncated: boolean;
+  };
+  workLinks: Array<{
+    workId: string; hypothesisNodeIds: string[]; evidenceNodeIds: string[]; outputIds: string[];
+    linkedNodeIds: string[]; externalRefs: string[];
+  }>;
+}
+
+export interface ScenarioAgentEventPage { events: ScenarioAgentEvent[]; nextCursor: number; hasMore: boolean }
+
+async function ensureOk(response: Response, action: string): Promise<Response> {
+  if (response.ok) return response;
+  let reason = String(response.status);
   try {
-    const body = await r.json();
-    reason = body.reason || body.error || reason;
-  } catch { /* Keep the status code for non-JSON responses. */ }
+    const body = await response.json() as { reason?: string; error?: string };
+    reason = body.reason ?? body.error ?? reason;
+  } catch { /* Preserve HTTP status for non-JSON failures. */ }
   throw new Error(`${action} failed: ${reason}`);
 }
 
 export async function createCase(name: string, allowHosts: string[]): Promise<Case> {
-  const r = await fetch("/api/cases", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name, allowHosts }),
-  });
-  await ensureOk(r, "Create case");
-  return r.json();
-}
-
-export async function deleteCase(caseId: string): Promise<{ deleted: boolean }> {
-  const r = await fetch(`/api/cases/${caseId}`, { method: "DELETE" });
-  await ensureOk(r, "Delete case");
-  return r.json();
-}
-
-export interface BrowserRuntimeState {
-  ok: boolean;
-  controller: "llm" | "human" | null;
-  url?: string;
-}
-
-export interface HistoryPage {
-  limit?: number;
-  offset?: number;
-}
-
-function historyUrl(path: string, page?: HistoryPage): string {
-  if (!page?.limit) return path;
-  const query = new URLSearchParams({
-    limit: String(page.limit),
-    offset: String(page.offset ?? 0),
-  });
-  return `${path}?${query}`;
-}
-
-export async function getBrowserState(caseId: string): Promise<BrowserRuntimeState> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/browser`), "Load browser state");
-  return response.json() as Promise<BrowserRuntimeState>;
-}
-
-export async function startBrowser(caseId: string): Promise<BrowserRuntimeState> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/browser/start`, { method: "POST" }), "Start browser");
-  return response.json() as Promise<BrowserRuntimeState>;
-}
-export async function stopBrowser(caseId: string): Promise<void> {
-  await ensureOk(await fetch(`/api/cases/${caseId}/browser/stop`, { method: "POST" }), "Stop browser");
-}
-export async function takeoverBrowser(caseId: string): Promise<BrowserRuntimeState> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/browser/takeover`, { method: "POST" }), "Take over browser");
-  return response.json() as Promise<BrowserRuntimeState>;
-}
-export async function releaseBrowser(caseId: string): Promise<BrowserRuntimeState> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/browser/release`, { method: "POST" }), "Return browser control");
-  return response.json() as Promise<BrowserRuntimeState>;
-}
-
-export async function listTraffic(caseId: string, page?: HistoryPage): Promise<TrafficEntry[]> {
-  const r = await fetch(historyUrl(`/api/cases/${caseId}/traffic`, page));
-  await ensureOk(r, "Load traffic");
-  return r.json();
-}
-
-export async function listAttackPaths(caseId: string): Promise<AttackPath[]> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/attack-paths`), "Load attack paths");
-  return response.json();
-}
-
-export async function listIdentities(caseId: string): Promise<IdentityContext[]> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/identities`), "Load identities");
-  return response.json();
-}
-
-export async function listSecurityReports(caseId: string): Promise<SecurityReport[]> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/security-reports`), "Load security reports");
-  return response.json();
-}
-
-export async function downloadSecurityReport(caseId: string, reportId: string, format: "markdown" | "json"): Promise<void> {
-  const response = await ensureOk(
-    await fetch(`/api/cases/${caseId}/security-reports/${reportId}/export?format=${format}`),
-    "Export security report",
-  );
-  const disposition = response.headers.get("content-disposition") ?? "";
-  const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? `security-report.${format === "json" ? "json" : "md"}`;
-  const url = URL.createObjectURL(await response.blob());
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-export async function listSecurityReportRevisions(caseId: string, reportId: string): Promise<SecurityReportRevision[]> {
-  const response = await ensureOk(
-    await fetch(`/api/cases/${caseId}/security-reports/${reportId}/revisions`),
-    "Load report revisions",
-  );
-  return response.json();
-}
-
-export async function acceptSecurityReportRevision(caseId: string, reportId: string, revisionId: string): Promise<SecurityReportRevision> {
-  const response = await ensureOk(
-    await fetch(`/api/cases/${caseId}/security-reports/${reportId}/revisions/${revisionId}/accept`, { method: "POST" }),
-    "Accept report revision",
-  );
-  return response.json();
-}
-
-export async function clearTraffic(caseId: string): Promise<{ deleted: number }> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/traffic`, { method: "DELETE" }), "Clear traffic");
-  return response.json() as Promise<{ deleted: number }>;
-}
-
-export async function createFact(
-  caseId: string,
-  input: Omit<Fact, "id" | "caseId" | "createdAt" | "confidence" | "tags" | "updateCount" | "updatedAt" | "validity"> &
-    Partial<Pick<Fact, "confidence" | "tags">>,
-): Promise<Fact> {
-  const r = await fetch(`/api/cases/${caseId}/facts`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  await ensureOk(r, "Create fact");
-  return r.json();
-}
-
-export async function listFacts(caseId: string): Promise<Fact[]> {
-  return (await fetch(`/api/cases/${caseId}/facts`)).json();
-}
-
-export async function listArtifacts(caseId: string): Promise<ArtifactRecord[]> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/artifacts`), "Load artifacts");
-  return response.json();
-}
-
-export async function listArtifactAnalyzerCapabilities(caseId: string): Promise<Record<string, ArtifactAnalyzerCapability[]>> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/artifact-analyzer-capabilities`), "Load artifact analyzer capabilities");
-  return response.json();
-}
-
-export async function listArtifactConsumptions(caseId: string): Promise<ArtifactConsumption[]> {
-  const response = await ensureOk(
-    await fetch(`/api/cases/${caseId}/artifact-consumptions`),
-    "Load artifact consumption",
-  );
-  return response.json();
-}
-
-export async function listArtifactAnalysisAttempts(caseId: string): Promise<ArtifactAnalysisAttempt[]> {
-  const response = await ensureOk(
-    await fetch(`/api/cases/${caseId}/artifact-analysis-attempts`),
-    "Load artifact analysis attempts",
-  );
-  return response.json();
-}
-
-export async function listArtifactRetryAuthorizations(caseId: string): Promise<ArtifactRetryAuthorization[]> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/artifact-retry-authorizations`), "Load artifact retry authorizations");
-  return response.json();
-}
-
-export async function listArtifactRecoveries(caseId: string): Promise<ArtifactRecovery[]> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/artifact-recoveries`), "Load artifact recoveries");
-  return response.json();
-}
-
-export async function listArtifactLimitations(caseId: string): Promise<ArtifactLimitationDisposition[]> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/artifact-limitations`), "Load artifact limitations");
-  return response.json();
-}
-
-export async function createTask(
-  caseId: string,
-  input: Omit<Task, "id" | "caseId" | "createdAt" | "updatedAt" | "updateCount"> &
-    Partial<Pick<Task, "updateCount">>,
-): Promise<Task> {
-  const r = await fetch(`/api/cases/${caseId}/tasks`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  await ensureOk(r, "Create task");
-  return r.json();
-}
-
-export async function listTasks(caseId: string): Promise<Task[]> {
-  return (await fetch(`/api/cases/${caseId}/tasks`)).json();
-}
-
-export async function listHypotheses(caseId: string): Promise<Hypothesis[]> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/hypotheses`), "List hypotheses");
-  return response.json();
-}
-
-export async function getValidationWorkflow(caseId: string, runId?: string): Promise<ValidationWorkflowSnapshot> {
-  const query = runId ? `?runId=${encodeURIComponent(runId)}` : "";
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}/validation/workflow${query}`), "Load validation workflow");
-  return response.json() as Promise<ValidationWorkflowSnapshot>;
-}
-
-export async function patchTask(taskId: string, status: Task["status"], reason?: string): Promise<Task> {
-  const r = await fetch(`/api/tasks/${taskId}`, {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ status, reason }),
-  });
-  await ensureOk(r, "Update task status");
-  return r.json();
-}
-
-export async function listTimeline(caseId: string, page?: HistoryPage): Promise<TimelineEntry[]> {
-  const response = await ensureOk(await fetch(historyUrl(`/api/cases/${caseId}/timeline`, page)), "Load timeline");
-  return response.json();
-}
-
-export async function runAgent(
-  caseId: string,
-  goal: string,
-  options: { observerRecovery?: { warningId: string; direction: string } } = {},
-): Promise<AgentRun> {
-  const r = await ensureOk(await fetch(`/api/cases/${caseId}/agent/run`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal, ...options }),
-  }), "Run Agent");
-  return (await r.json()).run;
-}
-
-export async function steerAgentRun(runId: string, content: string): Promise<AgentRun> {
-  const r = await ensureOk(await fetch(`/api/agent/runs/${runId}/steer`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ content }),
-  }), "Add steering instruction");
-  return (await r.json()).run;
-}
-
-export async function interruptAgentRun(runId: string, reason?: string): Promise<AgentRun> {
-  const r = await ensureOk(await fetch(`/api/agent/runs/${runId}/interrupt`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason }),
-  }), "Stop Agent");
-  return (await r.json()).run;
-}
-
-export async function getActiveAgentRun(caseId: string): Promise<AgentRun | null> {
-  return (await fetch(`/api/cases/${caseId}/agent/runs/active`)).json();
-}
-
-export async function getLatestAgentRun(caseId: string): Promise<AgentRun | null> {
-  return (await fetch(`/api/cases/${caseId}/agent/runs/latest`)).json();
-}
-
-export async function getAgentRunUsage(runId: string): Promise<AgentRunUsage[]> {
-  return (await fetch(`/api/agent/runs/${runId}/usage`)).json();
-}
-
-export interface PendingInterventions {
-  approval: { approvalId: string; tool: string; input: string } | null;
-  scope: { host: string; reason: string } | null;
-}
-
-export async function getPendingInterventions(caseId: string): Promise<PendingInterventions> {
-  return (await fetch(`/api/cases/${caseId}/interventions/pending`)).json();
-}
-
-export async function resolveApproval(approvalId: string, decision: "approved" | "rejected"): Promise<void> {
-  await ensureOk(await fetch(`/api/agent/approvals/${approvalId}`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision }),
-  }), "Submit approval");
+  return (await ensureOk(await fetch("/api/cases", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, allowHosts }),
+  }), "Create Case")).json();
 }
 
 export async function listCases(): Promise<Case[]> {
-  return (await fetch("/api/cases")).json();
+  return (await ensureOk(await fetch("/api/cases"), "Load Cases")).json();
 }
 
 export async function listCaseSummaries(): Promise<CaseSummary[]> {
-  const response = await ensureOk(await fetch("/api/cases/summary"), "Load case summaries");
-  return response.json() as Promise<CaseSummary[]>;
+  return (await ensureOk(await fetch("/api/cases/summary"), "Load Case summaries")).json();
 }
 
 export async function updateCase(caseId: string, patch: Partial<Pick<Case, "name" | "status">>): Promise<Case> {
-  const response = await ensureOk(await fetch(`/api/cases/${caseId}`, {
-    method: "PATCH",
+  return (await ensureOk(await fetch(`/api/cases/${caseId}`, {
+    method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch),
+  }), "Update Case")).json();
+}
+
+export async function deleteCase(caseId: string): Promise<{ deleted: boolean }> {
+  return (await ensureOk(await fetch(`/api/cases/${caseId}`, { method: "DELETE" }), "Delete Case")).json();
+}
+
+export async function listScenarioRuns(caseId: string): Promise<ScenarioRunSummary[]> {
+  return (await ensureOk(await fetch(`/api/scenarios/runs?${new URLSearchParams({ caseId })}`), "Load Scenario Runs")).json();
+}
+
+export async function listScenarioDefinitions(): Promise<ScenarioDefinitionView[]> {
+  return (await ensureOk(await fetch("/api/scenarios/definitions"), "Load Scenario Profiles")).json();
+}
+
+export async function listScenarioAuthorizations(caseId: string): Promise<ScenarioAuthorization[]> {
+  return (await ensureOk(await fetch(`/api/scenarios/authorizations?${new URLSearchParams({ caseId })}`), "Load authorizations")).json();
+}
+
+export async function createScenarioAuthorization(input: {
+  caseId: string;
+  scenarioKind: "web_blackbox";
+  targets: string[];
+  allowedActions: string[];
+  deniedActions: string[];
+  approvedBy: string;
+  expiresAt: string;
+  notes?: string;
+}): Promise<ScenarioAuthorization> {
+  const id = crypto.randomUUID();
+  return (await ensureOk(await fetch("/api/scenarios/authorizations", {
+    method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(patch),
-  }), "Update case");
-  return response.json() as Promise<Case>;
+    body: JSON.stringify({
+      id,
+      caseId: input.caseId,
+      scenarioKind: input.scenarioKind,
+      scope: { targets: input.targets, allowedActions: input.allowedActions, deniedActions: input.deniedActions, notes: input.notes },
+      approvedBy: input.approvedBy,
+      expiresAt: input.expiresAt,
+    }),
+  }), "Create authorization")).json();
 }
 
-export async function listMcpTools(): Promise<McpToolHandle[]> {
-  return (await fetch("/api/mcp/tools")).json();
+export async function revokeScenarioAuthorization(authorizationId: string): Promise<{ id: string; status: "revoked"; cancelledRunIds: string[] }> {
+  return (await ensureOk(await fetch(`/api/scenarios/authorizations/${encodeURIComponent(authorizationId)}/revoke`, { method: "POST" }), "Revoke authorization")).json();
 }
 
-export async function listWarnings(caseId: string): Promise<ObserverWarning[]> {
-  const body = await (await fetch(`/api/cases/${caseId}/warnings`)).json();
-  return Array.isArray(body) ? body : body.warnings ?? [];
+export async function getScenarioRun(runId: string): Promise<ScenarioRunState> {
+  return (await ensureOk(await fetch(`/api/scenarios/runs/${encodeURIComponent(runId)}`), "Load Scenario Run")).json();
 }
 
-export async function acceptObserverWarning(warningId: string): Promise<ObserverWarning> {
-  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/accept`, { method: "POST" }), "Resume Observer warning");
-  return r.json();
+export async function getScenarioCollaboration(runId: string): Promise<ScenarioCollaborationSnapshot> {
+  return (await ensureOk(
+    await fetch(`/api/scenarios/runs/${encodeURIComponent(runId)}/collaboration`),
+    "Load collaboration snapshot",
+  )).json();
 }
 
-export async function dismissObserverWarning(warningId: string): Promise<ObserverWarning> {
-  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/dismiss`, { method: "POST" }), "Ignore Observer warning");
-  return r.json();
+export async function createScenarioRun(input: {
+  caseId: string;
+  goal: string;
+  scopeRef: string;
+  scenarioKind: "web_blackbox";
+  definitionVersion: number;
+}): Promise<ScenarioCommandResult> {
+  const runId = crypto.randomUUID();
+  return (await ensureOk(await fetch("/api/scenarios/runs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...input, runId, commandId: crypto.randomUUID() }),
+  }), "Start Scenario Run")).json();
 }
 
-export async function convertObserverWarningToTask(warningId: string): Promise<{ warning: ObserverWarning; task: Task }> {
-  const r = await ensureOk(await fetch(`/api/observer/warnings/${warningId}/convert-task`, { method: "POST" }), "Create Observer task");
-  return r.json();
+export async function cancelScenarioRun(runId: string, expectedRevision: number, reason: string): Promise<ScenarioCommandResult> {
+  return (await ensureOk(await fetch(`/api/scenarios/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ commandId: crypto.randomUUID(), expectedRevision, reason }),
+  }), "Cancel Scenario Run")).json();
 }
 
-export async function listAgentEvents(caseId: string, page?: HistoryPage): Promise<AgentEvent[]> {
-  const response = await ensureOk(await fetch(historyUrl(`/api/cases/${caseId}/agent/events`, page)), "Load Agent history");
-  return response.json();
+export async function pauseScenarioRun(runId: string, expectedRevision: number, reason: string): Promise<ScenarioCommandResult> {
+  return (await ensureOk(await fetch(`/api/scenarios/runs/${encodeURIComponent(runId)}/pause`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ commandId: crypto.randomUUID(), expectedRevision, reason }),
+  }), "Pause Scenario Run")).json();
 }
 
-export async function approveScope(caseId: string, host: string): Promise<void> {
-  await ensureOk(await fetch(`/api/cases/${caseId}/scope/approve`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ host }),
-  }), "Approve scope");
+export async function resumeScenarioRun(runId: string, expectedRevision: number, reason: string): Promise<ScenarioCommandResult> {
+  return (await ensureOk(await fetch(`/api/scenarios/runs/${encodeURIComponent(runId)}/resume`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ commandId: crypto.randomUUID(), expectedRevision, reason }),
+  }), "Resume Scenario Run")).json();
 }
 
-export async function listObserverStrategyAudits(caseId: string): Promise<ObserverStrategyAudit[]> {
-  const response = await ensureOk(
-    await fetch(`/api/cases/${caseId}/observer/strategy-audits`),
-    "Load Observer strategy audits",
-  );
-  const body = await response.json() as { audits?: ObserverStrategyAudit[] };
-  return body.audits ?? [];
+export async function getScenarioRunRecovery(runId: string): Promise<ScenarioRunRecoveryDiagnostic> {
+  return (await ensureOk(await fetch(`/api/scenarios/runs/${encodeURIComponent(runId)}/recovery`), "Load Run recovery diagnostic")).json();
 }
 
-export async function rejectScope(caseId: string, host: string): Promise<void> {
-  await ensureOk(await fetch(`/api/cases/${caseId}/scope/reject`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ host }),
-  }), "Keep scope blocked");
+export async function getScenarioRunReplay(runId: string, revision?: number): Promise<ScenarioRunReplay> {
+  const query = revision === undefined ? "" : `?${new URLSearchParams({ revision: String(revision) })}`;
+  return (await ensureOk(await fetch(`/api/scenarios/runs/${encodeURIComponent(runId)}/replay${query}`), "Replay Scenario Run")).json();
+}
+
+export async function listScenarioApprovals(caseId: string, status?: ScenarioApproval["status"]): Promise<ScenarioApproval[]> {
+  const query = new URLSearchParams({ caseId });
+  if (status) query.set("status", status);
+  return (await ensureOk(await fetch(`/api/scenarios/approvals?${query}`), "Load approvals")).json();
+}
+
+export async function resolveScenarioApproval(
+  approvalId: string,
+  expectedRevision: number,
+  approved: boolean,
+  reason: string,
+): Promise<ScenarioCommandResult> {
+  return (await ensureOk(await fetch(`/api/scenarios/approvals/${encodeURIComponent(approvalId)}/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ commandId: crypto.randomUUID(), expectedRevision, approved, reason }),
+  }), approved ? "Approve action" : "Reject action")).json();
+}
+
+export async function getScenarioAgentEvents(runId: string, after = 0, limit = 1_000): Promise<ScenarioAgentEventPage> {
+  const query = new URLSearchParams({ after: String(after), limit: String(limit) });
+  return (await ensureOk(await fetch(`/api/scenarios/runs/${encodeURIComponent(runId)}/agent-events?${query}`), "Replay Agent protocol events")).json();
 }
 
 export async function getLlmConfig(): Promise<LlmConfig> {
-  const r = await fetch("/api/config/llm");
-  await ensureOk(r, "Load LLM config");
-  return r.json();
-}
-
-export async function revealLlmApiKey(): Promise<string> {
-  const response = await fetch("/api/config/llm/reveal-key", {
-    method: "POST",
-    headers: { "cache-control": "no-store" },
-  });
-  await ensureOk(response, "Reveal API key");
-  const body = await response.json() as { apiKey?: unknown };
-  if (typeof body.apiKey !== "string") throw new Error("Reveal API key failed: invalid response");
-  return body.apiKey;
+  return (await ensureOk(await fetch("/api/config/llm"), "Load LLM config")).json();
 }
 
 export async function updateLlmConfig(input: LlmConfigInput): Promise<LlmConfig> {
-  const r = await fetch("/api/config/llm", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  await ensureOk(r, "Save LLM config");
-  return r.json();
+  return (await ensureOk(await fetch("/api/config/llm", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  }), "Save LLM config")).json();
 }
 
 export async function testLlmConfig(input: LlmConfigInput): Promise<{ ok: boolean; message?: string; error?: string }> {
-  const r = await fetch("/api/config/llm/test", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  await ensureOk(r, "Test LLM connection");
-  return r.json();
+  return (await ensureOk(await fetch("/api/config/llm/test", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  }), "Test LLM config")).json();
+}
+
+export async function revealLlmApiKey(): Promise<string> {
+  const response = await ensureOk(await fetch("/api/config/llm/reveal-key", { method: "POST" }), "Reveal LLM API key");
+  return ((await response.json()) as { apiKey: string }).apiKey;
+}
+
+export async function listMcpTools(): Promise<McpToolInfo[]> {
+  return (await ensureOk(await fetch("/api/mcp/tools"), "Load MCP tools")).json();
 }

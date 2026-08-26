@@ -1,5 +1,5 @@
 import type { TrafficEntry } from "@traceforge/shared";
-import type { ToolDescriptor } from "./tool.js";
+import { TOOL_SECURITY, type ToolDescriptor } from "./tool.js";
 
 export type ValidationVerdict = "supports" | "refutes" | "inconclusive";
 
@@ -180,7 +180,7 @@ export function makeAssessValidationExperimentTool(caseId: string, traffic: Vali
   return {
     name: "assess_validation_experiment",
     description: "Assess a persisted baseline/variant traffic pair as supports, refutes, or inconclusive. HTTP 200 alone never proves a vulnerability; mutations require follow-up business-state confirmation.",
-    risk: "normal",
+    security: TOOL_SECURITY.caseRead,
     source: "builtin",
     inputSchema: {
       type: "object",

@@ -4,7 +4,7 @@ import {
   type TrafficEntry, type Fact, type Task, type ActionCard, type TimelineEntry,
   ActionCardSchema, classifyEndpointObservation, type RuntimeEvent, type ScopeRule,
 } from "@traceforge/shared";
-import type { ToolDescriptor } from "./tool.js";
+import { TOOL_SECURITY, type ToolDescriptor } from "./tool.js";
 
 export interface TrafficReader {
   listByCase(caseId: string): TrafficEntry[];
@@ -15,7 +15,7 @@ export function makeListTrafficTool(caseId: string, traffic: TrafficReader): Too
     name: "list_traffic",
     description: "列出本 case 已捕获的 HTTP 请求摘要（method / url / 状态码 / id）。分析前先看有哪些流量。",
     inputSchema: { type: "object", properties: {} },
-    risk: "normal",
+    security: TOOL_SECURITY.caseRead,
     source: "builtin",
     executionMode: "parallel",
     execute: async () => {
@@ -31,7 +31,7 @@ export function makeGetTrafficTool(caseId: string, traffic: TrafficReader): Tool
     name: "get_traffic",
     description: "按 id 取一条已捕获请求的详情（含 headers 与响应体）。",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-    risk: "normal",
+    security: TOOL_SECURITY.caseRead,
     source: "builtin",
     executionMode: "parallel",
     execute: async (input) => {
@@ -114,7 +114,7 @@ export function makeRecordFactTool(caseId: string, facts: FactWriter, timeline: 
       },
       required: ["type", "title"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     execute: async (input) => {
       const i = input as {
@@ -257,7 +257,7 @@ export function makeRecordTaskTool(
       },
       required: ["title"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     execute: async (input) => {
       const i = input as Record<string, unknown>;
@@ -368,7 +368,7 @@ export function makeRecordActionTool(
       },
       required: ["title", "goal", "evidenceRefs", "hypothesisRefs", "taskRefs", "reasoning", "steps", "tool"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     execute: async (input) => {
       const i = input as Record<string, unknown>;
@@ -449,7 +449,7 @@ export function makeReopenTaskTool(
       properties: { taskId: { type: "string" }, reason: { type: "string" }, evidenceRefs: { type: "array", items: { type: "string" } } },
       required: ["taskId", "reason", "evidenceRefs"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     execute: async (input) => {
       const i = input as { taskId: string; reason: string };
@@ -479,7 +479,7 @@ export function makeRevertDoneTaskTool(
       properties: { taskId: { type: "string" }, reason: { type: "string" }, evidenceRefs: { type: "array", items: { type: "string" } } },
       required: ["taskId", "reason", "evidenceRefs"],
     },
-    risk: "command",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     execute: async (input) => {
       const i = input as { taskId: string; reason: string };
@@ -640,7 +640,7 @@ export function makeExtractApiEndpointsTool(
         deep: { type: "boolean", description: "启用 LLM 深度分析并提取参数，可能增加 token 消耗" },
       },
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseRead,
     source: "builtin",
     executionMode: "parallel",
     execute: async (input) => {

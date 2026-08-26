@@ -1,5 +1,5 @@
 import type { Task, ValidationWorkflowSnapshot } from "@traceforge/shared";
-import type { ToolDescriptor } from "@traceforge/extension";
+import { TOOL_SECURITY, type ToolDescriptor } from "@traceforge/extension";
 import type { AttackPathStore } from "./stores/attack-path-store.js";
 import type { FactStore } from "./stores/fact-store.js";
 import type { HypothesisStore } from "./stores/hypothesis-store.js";
@@ -117,7 +117,7 @@ export function makeGetValidationWorkflowStateTool(get: () => ReturnType<typeof 
     name: "get_validation_workflow_state",
     description: "Get the current validation consensus, ranked tasks, running lease, missing completion evidence, outcome feedback, exploration window, and consistency issues.",
     inputSchema: { type: "object", properties: {} },
-    risk: "normal",
+    security: TOOL_SECURITY.caseRead,
     source: "builtin",
     execute: async () => ({ ok: true, content: JSON.stringify(get(), null, 2) }),
   };

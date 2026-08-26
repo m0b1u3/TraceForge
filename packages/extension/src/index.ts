@@ -1,25 +1,12 @@
-export type { ToolResult, ToolDescriptor, NativeToolDef } from "./tool.js";
-export { ToolRegistry } from "./registry.js";
-export { ApprovalGate, type ApprovalDecision, type ApprovalAsker } from "./approval-gate.js";
-export {
-  FailureMemory,
-  computeFailureFingerprint,
-  type BlockedFailure,
-  type FailureRecord,
-} from "./failure-memory.js";
 export type {
-  LlmProvider, ExtractJsonArgs, ToolCall, TurnMessage, RunTurn, RunToolsArgs, StreamToolsHandlers, UsageSnapshot,
+  ToolResult, ToolDescriptor, NativeToolDef, ToolExecutionMode,
+  ToolCapability, ToolImpactScope, ToolSecurityProfile,
+} from "./tool.js";
+export { TOOL_SECURITY } from "./tool.js";
+export { ToolRegistry } from "./registry.js";
+export type {
+  LlmProvider, ExtractJsonArgs, ToolCall, TurnMessage, RunTurn, RunToolsArgs, StreamToolsHandlers, UsageSnapshot, EmbedArgs,
 } from "./provider.js";
-export {
-  AgentRuntime,
-  DEFAULT_RUN_BUDGET,
-  normalizeRunBudget,
-  type AgentEvent,
-  type AgentRunBudget,
-  type AgentRunOptions,
-  type ToolExecutionReport,
-} from "./agent-runtime.js";
-export type { ObserverReviewTrigger } from "./agent-runtime.js";
 export {
   diagnoseToolFailure,
   failureClassFromDiagnostic,
@@ -43,7 +30,6 @@ export { BROWSER_TOOL_NAMES, makeBrowserTools, type BrowserController } from "./
 export { loadMcpConfig, McpServerConfigSchema, McpConfigSchema, type McpServerConfig } from "./mcp-config.js";
 export { mcpToolToDescriptor, type McpToolHandle, type McpCaller } from "./mcp-tools.js";
 export { McpManager, type McpClient, type McpClientFactory } from "./mcp-manager.js";
-export { Observer, type ReviewInput } from "./observer.js";
 export { makeReevaluateFactsTool, type ReevaluateFactsInput, type FactStoreLike } from "./tools/reevaluate-facts.js";
 export {
   makeListTrafficTool, makeGetTrafficTool, type TrafficReader,
@@ -57,5 +43,4 @@ export {
 export { makeUpdateSessionStateTool, makeRecordHypothesisTool, makeResolveHypothesisTool } from "./cognitive-tools.js";
 export type { SessionStateWriter, HypothesisWriter, FactReader } from "./cognitive-tools.js";
 export { makeDownloadTool, type DownloadFetcher, type DownloadToolDeps } from "./download-tool.js";
-export * from "./memory-tools.js";
 export * from "./query-expander.js";

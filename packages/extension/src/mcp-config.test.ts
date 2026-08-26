@@ -21,7 +21,6 @@ describe("loadMcpConfig", () => {
     const cfg = loadMcpConfig(p);
     expect(cfg).toHaveLength(1);
     expect(cfg[0].name).toBe("filesystem");
-    expect(cfg[0].trustLevel).toBe("command"); // 默认
     expect(cfg[0].args).toEqual(["-y", "srv"]);
   });
 
@@ -30,11 +29,15 @@ describe("loadMcpConfig", () => {
     expect(loadMcpConfig(p)[0].args).toEqual([]);
   });
 
-  it("accepts trustLevel normal and optional env", () => {
-    const p = tmpConfig({ servers: [{ name: "s", command: "run", trustLevel: "normal", env: { K: "v" } }] });
+  it("accepts optional env", () => {
+    const p = tmpConfig({ servers: [{ name: "s", command: "run", env: { K: "v" } }] });
     const c = loadMcpConfig(p)[0];
-    expect(c.trustLevel).toBe("normal");
     expect(c.env).toEqual({ K: "v" });
+  });
+
+  it("rejects the removed trustLevel field", () => {
+    const p = tmpConfig({ servers: [{ name: "s", command: "run", trustLevel: "normal" }] });
+    expect(loadMcpConfig(p)).toEqual([]);
   });
 
   it("rejects an invalid name (returns [] on schema failure)", () => {

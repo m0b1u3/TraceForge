@@ -27,7 +27,11 @@ export class AnthropicProvider implements LlmProvider {
       system: args.system,
       messages: [{ role: "user", content: args.user }],
     } as unknown as Anthropic.MessageCreateParamsNonStreaming;
-    const res = await withRetry("anthropic.extractJson", () => this.client.messages.create(params));
+    const res = await withRetry(
+      "anthropic.extractJson",
+      () => this.client.messages.create(params, args.signal ? { signal: args.signal } : undefined),
+      { signal: args.signal },
+    );
     const text = res.content.find((b) => b.type === "text");
     if (!text || text.type !== "text") throw new Error("no text block in response");
     emitUsage(args.onUsage, res.usage);
@@ -38,7 +42,7 @@ export class AnthropicProvider implements LlmProvider {
     // 用 Anthropic 原生 tool-calling：tools 参数 + tool_use/tool_result 块。
     // SDK 类型对 thinking:adaptive 不全，整体断言兜底（同 extractJson）。
     // Anthropic 协议：一条 assistant 里的 N 个 tool_use，必须紧跟"一条" user 消息且其中含全部 N 个
-    // tool_result。AgentRuntime 把每个工具结果存为独立的 role:"tool" 消息，这里要把**连续的** tool
+    // tool_result。模型执行层把每个工具结果存为独立的 role:"tool" 消息，这里要把**连续的** tool
     // 消息合并进同一条 user 消息，否则 DeepSeek/Anthropic 端点报 "tool_use ids without tool_result"。
     const anthropicMessages: Array<{ role: "user" | "assistant"; content: unknown }> = [];
     for (const m of args.messages) {

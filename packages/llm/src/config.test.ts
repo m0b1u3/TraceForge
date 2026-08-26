@@ -61,6 +61,42 @@ describe("LlmConfigSchema", () => {
   it("rejects an unknown provider", () => {
     expect(() => LlmConfigSchema.parse({ provider: "grok", model: "m", apiKey: "sk-x" })).toThrow();
   });
+
+  it("validates role routes and model runtime policies", () => {
+    const config = LlmConfigSchema.parse({
+      provider: "openai",
+      model: "primary-model",
+      apiKey: "primary-key",
+      alternativeRoutes: [{ id: "backup", provider: "anthropic", model: "backup-model", apiKey: "backup-key" }],
+      rolePolicies: {
+        planner: { routeIds: ["primary", "backup"], timeoutMs: 30_000, maximumRunTokens: 100_000 },
+      },
+    });
+    expect(config.rolePolicies?.planner?.routeIds).toEqual(["primary", "backup"]);
+    expect(() => LlmConfigSchema.parse({
+      provider: "openai",
+      model: "primary-model",
+      rolePolicies: { worker: { routeIds: ["missing"] } },
+    })).toThrow(/unknown model routes/);
+  });
+
+  it("validates model admission and backpressure policy", () => {
+    const config = LlmConfigSchema.parse({
+      provider: "openai",
+      model: "primary-model",
+      resourcePolicy: {
+        maximumConcurrentCalls: 4,
+        maximumConcurrentCallsPerRun: 1,
+        maximumQueueDepth: 32,
+        roleConcurrency: { planner: 1, observer: 1, worker: 3 },
+        rolePriorities: { planner: 80, observer: 100, worker: 60 },
+      },
+    });
+    expect(config.resourcePolicy?.maximumConcurrentCalls).toBe(4);
+    expect(() => LlmConfigSchema.parse({
+      provider: "openai", model: "primary-model", resourcePolicy: { maximumQueueDepth: 0 },
+    })).toThrow();
+  });
 });
 
 describe("loadLlmConfig", () => {

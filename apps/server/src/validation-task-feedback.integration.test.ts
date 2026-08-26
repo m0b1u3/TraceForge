@@ -41,6 +41,21 @@ describe("validation task outcome feedback with real SQLite", () => {
     expect(summary.scoreAdjustment).toBeGreaterThan(0);
   });
 
+  it("treats a browser state transition as observable progress without promoting it to evidence", () => {
+    const observation = observeValidationOutcome({
+      findingId: "fact_browser", taskId: "task_browser", tool: "browser_click", ok: true,
+      before: { evidenceCount: 1, evidenceSignature: "same", consensusSignature: "same", attackPathSignature: "same" },
+      after: { evidenceCount: 1, evidenceSignature: "same", consensusSignature: "same", attackPathSignature: "same" },
+      observableChange: true,
+    });
+    expect(observation.observableChange).toBe(true);
+    expect(observation.evidenceProduced).toBe(0);
+    expect(observation.consensusAdvanced).toBe(false);
+    expect(observation.attackPathAdvanced).toBe(false);
+    expect(observation.noProgress).toBe(false);
+    expect(summarizeValidationFeedbackHistory({ fact_browser: [observation] }).fact_browser.scoreAdjustment).toBe(0);
+  });
+
   it("penalizes repeated no-progress and failed validation work", () => {
     const observations = Array.from({ length: 6 }, (_, index) => observeValidationOutcome({
       findingId: "fact_2", taskId: "task_2", tool: `tool_${index}`, ok: index < 4,

@@ -1,5 +1,5 @@
 import type { Task, TimelineEntry } from "@traceforge/shared";
-import type { ToolDescriptor } from "@traceforge/extension";
+import { TOOL_SECURITY, type ToolDescriptor } from "@traceforge/extension";
 import type { FactStore } from "./stores/fact-store.js";
 import type { HypothesisStore } from "./stores/hypothesis-store.js";
 import type { TaskStore } from "./stores/task-store.js";
@@ -47,7 +47,7 @@ export function makeManageValidationTaskTool(input: {
       },
       required: ["taskId", "action"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     executionMode: "serial",
     execute: async (raw) => {

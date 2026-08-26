@@ -39,7 +39,7 @@ describe("makeRecordFactTool", () => {
     const timeline = makeTimeline();
     const events: RuntimeEvent[] = [];
     const tool = makeRecordFactTool("c", facts, timeline, (e) => events.push(e));
-    expect(tool.risk).toBe("normal");
+    expect(tool.security).toMatchObject({ impactScope: "case", mutates: true });
     const res = await tool.execute({ type: "graphql_endpoint", title: "gql", value: { url: "x" } });
     expect(res.ok).toBe(true);
     expect(facts._arr).toHaveLength(1);

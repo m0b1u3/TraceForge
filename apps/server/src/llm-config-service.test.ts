@@ -132,6 +132,30 @@ describe("LlmConfigService", () => {
     expect(typeof provider.runTools).toBe("function");
   });
 
+  it("initializes masked alternative routes and exposes role routing policy", async () => {
+    makeConfig(tmp, {
+      provider: "openai",
+      model: "primary-model",
+      apiKey: "primary-secret",
+      alternativeRoutes: [{ id: "backup", provider: "anthropic", model: "backup-model", apiKey: "backup-secret" }],
+      rolePolicies: { observer: { routeIds: ["primary", "backup"], timeoutMs: 12_000 } },
+    });
+    const svc = new LlmConfigService(join(tmp, "llm.json"), {
+      createProvider: (config) => ({
+        async extractJson() { return { model: config.model }; },
+        async runTools() { throw new Error("not used"); },
+      }),
+    });
+    const view = svc.initializeFromConfig();
+    expect(view.alternativeRoutes).toEqual([
+      expect.objectContaining({ id: "backup", model: "backup-model", apiKeyMasked: "••••••••" }),
+    ]);
+    expect(JSON.stringify(view)).not.toContain("backup-secret");
+    expect(svc.getRolePolicies().observer).toMatchObject({ routeIds: ["primary", "backup"], timeoutMs: 12_000 });
+    expect(await svc.getModelRoutes().get("backup")!.extractJson({ system: "", user: "", schema: {} }))
+      .toEqual({ model: "backup-model" });
+  });
+
   it("handles missing apiKey in config", () => {
     makeConfig(tmp, { provider: "openai", model: "m" });
     const svc = new LlmConfigService(join(tmp, "llm.json"));

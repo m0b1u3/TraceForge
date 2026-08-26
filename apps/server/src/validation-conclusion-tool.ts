@@ -1,6 +1,7 @@
 import type { RuntimeEvent } from "@traceforge/shared";
 import {
   assessValidationExperiment,
+  TOOL_SECURITY,
   type ToolDescriptor,
 } from "@traceforge/extension";
 import type { FactStore } from "./stores/fact-store.js";
@@ -26,7 +27,7 @@ export function makeRecordValidationConclusionTool(input: {
   return {
     name: "record_validation_conclusion",
     description: "Assess persisted baseline/variant traffic, save a structured validation conclusion, and conservatively update the linked Finding lifecycle. Supports advances candidate to validating; inconclusive never advances; strong refutation reopens verified findings for review.",
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     inputSchema: {
       type: "object",

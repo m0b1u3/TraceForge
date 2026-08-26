@@ -1,4 +1,4 @@
-import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, ObserverStrategyAudit, AgentRun, IdentityContext, AttackPath, SecurityReport, Hypothesis, HypothesisTransition, AgentEventRefs, ToolFailureDiagnostic } from "./schemas.js";
+import type { Case, TrafficEntry, Fact, Task, TimelineEntry, CandidateFact, ActionCard, Decision, ObserverWarning, ObserverStrategyAudit, IdentityContext, AttackPath, SecurityReport, Hypothesis, HypothesisTransition } from "./schemas.js";
 import type { ValidationWorkflowSnapshot } from "./validation-workflow.js";
 import type { ArtifactRecord } from "./artifact.js";
 import type { ArtifactConsumption } from "./artifact-consumption.js";
@@ -6,8 +6,10 @@ import type { ArtifactAnalysisAttempt } from "./artifact-analysis-attempt.js";
 import type { ArtifactLimitationDisposition } from "./artifact-limitation.js";
 import type { ArtifactRetryAuthorization } from "./artifact-retry-authorization.js";
 import type { ArtifactRecovery } from "./artifact-recovery.js";
+import type { ScenarioAgentEvent } from "./scenario-agent-events.js";
 
 export type RuntimeEvent =
+  | { type: "scenario_agent_event"; event: ScenarioAgentEvent }
   | { type: "case_created"; case: Case }
   | { type: "case_deleted"; caseId: string }
   | { type: "identity_created"; identity: IdentityContext }
@@ -38,35 +40,11 @@ export type RuntimeEvent =
   | { type: "action_candidates_generated"; caseId: string; candidates: ActionCard[] }
   | { type: "action_approved"; action: ActionCard }
   | { type: "decision_recorded"; decision: Decision }
-  | { type: "agent_started"; caseId: string; goal: string }
-  | { type: "agent_text"; caseId: string; content: string }
-  | { type: "agent_reasoning"; caseId: string; content: string }
-  | { type: "agent_tool_call"; caseId: string; runId: string; executionId: string; tool: string; input: string }
-  | { type: "agent_tool_result"; caseId: string; runId: string; executionId: string; tool: string; content: string; outcome: "succeeded" | "failed"; recoveredExecutionIds: string[]; failureDiagnostic?: ToolFailureDiagnostic | null; refs?: AgentEventRefs | null }
-  | { type: "agent_tool_blocked"; caseId: string; runId: string; tool: string; input: string; reason: string }
-  | { type: "agent_done"; caseId: string; content: string }
-  | { type: "agent_error"; caseId: string; content: string }
-  | { type: "agent_run_started"; run: AgentRun }
-  | { type: "agent_stream_start"; caseId: string; runId: string; messageId: string }
-  | { type: "agent_stream_delta"; caseId: string; runId: string; messageId: string; delta: string }
-  | { type: "agent_stream_end"; caseId: string; runId: string; messageId: string; content: string }
-  | { type: "agent_retrying"; caseId: string; runId: string; attempt: number; maxAttempts: number; reason: string }
-  | { type: "agent_steering_added"; caseId: string; runId: string; content: string }
-  | { type: "agent_run_interrupted"; run: AgentRun }
-  | { type: "agent_run_needs_confirmation"; caseId: string; runId: string; warning: ObserverWarning }
-  | { type: "agent_run_needs_continuation"; run: AgentRun; reason: string }
-  | { type: "agent_run_completed"; run: AgentRun; content: string }
-  | { type: "agent_run_failed"; run: AgentRun; error: string }
-  | { type: "agent_usage"; caseId: string; runId: string; usageId: string; turn: number; source: "agent" | "observer"; createdAt: string; promptTokens: number; completionTokens: number; totalTokens: number; currency: string | null; inputCostMicros: number | null; outputCostMicros: number | null; totalCostMicros: number | null; cumulativePromptTokens: number; cumulativeCompletionTokens: number; cumulativeTotalTokens: number }
   | { type: "approval_requested"; caseId: string; approvalId: string; tool: string; input: string }
   | { type: "approval_resolved"; caseId: string; approvalId: string; tool: string; decision: "approved" | "rejected" }
   | { type: "action_recorded"; action: ActionCard }
   | { type: "scope_expansion_proposed"; caseId: string; host: string; reason: string }
   | { type: "scope_expansion_rejected"; caseId: string; host: string }
-  | { type: "browser_started"; caseId: string }
-  | { type: "browser_stopped"; caseId: string }
-  | { type: "browser_control_changed"; caseId: string; controller: "llm" | "human" }
-  | { type: "browser_navigated"; caseId: string; url: string }
   | { type: "observer_warning"; warning: ObserverWarning }
   | { type: "observer_warning_updated"; warning: ObserverWarning }
   | {

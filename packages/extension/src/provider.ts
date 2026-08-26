@@ -10,6 +10,7 @@ export interface ExtractJsonArgs {
   system: string;
   user: string;
   schema: Record<string, unknown>;
+  signal?: AbortSignal;
   onUsage?: (usage: UsageSnapshot) => void;
 }
 
@@ -24,6 +25,8 @@ export interface TurnMessage {
   content: string;
   toolCallId?: string;
   toolCalls?: ToolCall[];
+  /** Runtime-only compaction hint; providers ignore it when serializing requests. */
+  contextPriority?: "normal" | "pinned";
 }
 
 export interface RunTurn {
@@ -48,8 +51,14 @@ export interface StreamToolsHandlers {
   onUsage?: (usage: UsageSnapshot) => void;
 }
 
+export interface EmbedArgs {
+  inputs: string[];
+  signal?: AbortSignal;
+}
+
 export interface LlmProvider {
   extractJson(args: ExtractJsonArgs): Promise<unknown>;
   runTools(args: RunToolsArgs): Promise<RunTurn>;
   streamTools?(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn>;
+  embed?(args: EmbedArgs): Promise<number[][]>;
 }

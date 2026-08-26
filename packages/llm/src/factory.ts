@@ -1,12 +1,12 @@
 import type { LlmProvider } from "./provider.js";
-import type { LlmConfig } from "./config.js";
+import type { LlmConfig, LlmEndpointConfig } from "./config.js";
 import { AnthropicProvider } from "./anthropic-provider.js";
 import { OpenAICompatibleProvider } from "./openai-provider.js";
 
-export function createProvider(config: LlmConfig): LlmProvider {
+export function createProvider(config: LlmEndpointConfig): LlmProvider {
   const apiKey = config.apiKey;
   if (!apiKey) throw new Error("apiKey is missing");
-  const opts = { apiKey, model: config.model, baseUrl: config.baseUrl, jsonMode: config.jsonMode };
+  const opts = { apiKey, model: config.model, embeddingModel: config.embeddingModel, baseUrl: config.baseUrl, jsonMode: config.jsonMode };
   return config.provider === "anthropic"
     ? new AnthropicProvider(opts)
     : new OpenAICompatibleProvider(opts);

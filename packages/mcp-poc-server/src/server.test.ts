@@ -8,8 +8,8 @@ let root: string;
 beforeEach(async () => { root = await mkdtemp(join(tmpdir(), "poc-srv-")); });
 
 describe("TOOL_DEFS", () => {
-  it("exposes the four tools, each requiring caseId", () => {
-    expect(TOOL_DEFS.map((t) => t.name).sort()).toEqual(["exec_command", "list_dir", "read_file", "write_file"]);
+  it("exposes only Case filesystem tools, each requiring caseId", () => {
+    expect(TOOL_DEFS.map((t) => t.name).sort()).toEqual(["list_dir", "read_file", "write_file"]);
     for (const t of TOOL_DEFS) {
       expect((t.inputSchema as { properties: Record<string, unknown> }).properties).toHaveProperty("caseId");
     }

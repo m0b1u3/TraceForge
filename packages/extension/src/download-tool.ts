@@ -67,7 +67,9 @@ export function makeDownloadTool(deps: DownloadToolDeps): ToolDescriptor {
       },
       required: ["url", "filename"],
     },
-    risk: "command",
+    security: {
+      capabilities: ["network.read", "filesystem.write"], impactScope: "authorized_target", mutates: true, destructive: false, openWorld: false,
+    },
     source: "builtin",
     execute: async (input) => {
       const { url, filename, executable } = input as { url?: string; filename?: string; executable?: boolean };

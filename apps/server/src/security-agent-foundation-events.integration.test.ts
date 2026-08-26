@@ -1,0 +1,63 @@
+import Fastify from "fastify";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import type { LlmProvider } from "@traceforge/llm";
+import { createDb, getSqliteClient } from "./db/client.js";
+import { registerSecurityAgentFoundation } from "./security-agent-foundation.js";
+
+const unavailableProvider: LlmProvider = {
+  async extractJson() { throw new Error("provider is intentionally unavailable"); },
+  async runTools() { throw new Error("provider is intentionally unavailable"); },
+};
+
+describe("security agent foundation protocol events", () => {
+  it("projects control-plane cancellation into a replayable system Turn", async () => {
+    const app = Fastify();
+    const db = createDb(":memory:");
+    const sqlite = getSqliteClient(db);
+    const root = mkdtempSync(join(tmpdir(), "traceforge-agent-events-"));
+    sqlite.prepare("INSERT INTO cases (id, name, status, scope_rules_json, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run("case_1", "Authorized assessment", "active", "{}", "2026-08-25T08:00:00.000Z");
+    registerSecurityAgentFoundation(app, sqlite, unavailableProvider, root, () => false, { autoScheduleIntervalMs: 60_000 });
+    await app.ready();
+    try {
+      const authorization = await app.inject({
+        method: "POST", url: "/api/scenarios/authorizations",
+        payload: {
+          id: "scope_1", caseId: "case_1", scenarioKind: "web_blackbox",
+          scope: { targets: ["https://authorized.example"], allowedActions: ["scope.read"], deniedActions: [] },
+          approvedBy: "operator_1", expiresAt: "2027-08-25T09:00:00.000Z",
+        },
+      });
+      expect(authorization.statusCode).toBe(201);
+      const started = await app.inject({
+        method: "POST", url: "/api/scenarios/runs",
+        payload: {
+          commandId: "start_1", runId: "run_1", caseId: "case_1", goal: "Assess authorized scope",
+          scopeRef: "scope_1", scenarioKind: "web_blackbox", definitionVersion: 1,
+        },
+      });
+      expect(started.statusCode).toBe(201);
+      const cancelled = await app.inject({
+        method: "POST", url: "/api/scenarios/runs/run_1/cancel",
+        payload: { commandId: "cancel_1", expectedRevision: 1, reason: "Operator stopped the Run" },
+      });
+      expect(cancelled.statusCode).toBe(200);
+
+      const replay = await app.inject({ method: "GET", url: "/api/scenarios/runs/run_1/agent-events?after=0&limit=10" });
+      expect(replay.statusCode).toBe(200);
+      expect(replay.json().events.map((event: { method: string }) => event.method)).toEqual([
+        "turn/started", "item/completed", "turn/completed",
+        "turn/started", "item/completed", "turn/completed",
+      ]);
+      expect(replay.json().events[1].params.item).toMatchObject({ type: "controlChange", eventType: "run_started" });
+      expect(replay.json().events[4].params.item).toMatchObject({ type: "controlChange", eventType: "run_cancelled" });
+    } finally {
+      await app.close();
+      sqlite.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

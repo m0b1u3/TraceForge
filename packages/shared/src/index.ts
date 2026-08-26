@@ -15,3 +15,4 @@ export * from "./artifact-analysis-aggregate.js";
 export * from "./artifact-limitation.js";
 export * from "./artifact-retry-authorization.js";
 export * from "./artifact-recovery.js";
+export * from "./scenario-agent-events.js";

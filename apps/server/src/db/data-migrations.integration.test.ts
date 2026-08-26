@@ -4,9 +4,10 @@ import {
   applyDataMigrations,
   REMOVE_LEGACY_FAILED_ATTEMPT_FACTS,
 } from "./data-migrations.js";
+import { createDb, getSqliteClient } from "./client.js";
 
 describe("data migrations with real SQLite", () => {
-  it("removes legacy failure facts and their derived rows while preserving execution events", () => {
+  it("removes legacy failure facts and their derived rows", () => {
     const sqlite = new Database(":memory:");
     sqlite.exec(`
       CREATE TABLE facts (id TEXT PRIMARY KEY, type TEXT NOT NULL);
@@ -19,12 +20,6 @@ describe("data migrations with real SQLite", () => {
         id TEXT PRIMARY KEY,
         ref_id TEXT
       );
-      CREATE TABLE agent_events (
-        id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL,
-        text TEXT NOT NULL
-      );
-
       INSERT INTO facts (id, type) VALUES
         ('legacy_failure', 'failed_attempt'),
         ('evidence', 'http_observation');
@@ -34,8 +29,6 @@ describe("data migrations with real SQLite", () => {
       INSERT INTO timeline (id, ref_id) VALUES
         ('legacy_timeline', 'legacy_failure'),
         ('evidence_timeline', 'evidence');
-      INSERT INTO agent_events (id, kind, text) VALUES
-        ('failure_event', 'tool_result', 'command failed');
     `);
 
     applyDataMigrations(sqlite);
@@ -44,11 +37,25 @@ describe("data migrations with real SQLite", () => {
     expect(sqlite.prepare("SELECT id FROM facts ORDER BY id").all()).toEqual([{ id: "evidence" }]);
     expect(sqlite.prepare("SELECT id FROM knowledge_usage ORDER BY id").all()).toEqual([{ id: "evidence_usage" }]);
     expect(sqlite.prepare("SELECT id FROM timeline ORDER BY id").all()).toEqual([{ id: "evidence_timeline" }]);
-    expect(sqlite.prepare("SELECT id FROM agent_events").all()).toEqual([{ id: "failure_event" }]);
     expect(sqlite.prepare("SELECT id FROM app_migrations").all()).toEqual([
       { id: REMOVE_LEGACY_FAILED_ATTEMPT_FACTS },
     ]);
 
+    sqlite.close();
+  });
+
+  it("does not recreate retired chat and solver tables", () => {
+    const sqlite = getSqliteClient(createDb(":memory:"));
+    const retired = sqlite.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN ('agent_events', 'agent_runs', 'agent_run_usage', 'solver_work_items')
+      ORDER BY name
+    `).all();
+
+    expect(retired).toEqual([]);
+    expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scenario_event_streams'").get())
+      .toEqual({ name: "scenario_event_streams" });
     sqlite.close();
   });
 });

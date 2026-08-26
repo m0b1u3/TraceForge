@@ -4,8 +4,17 @@ import type { McpServerConfig } from "./mcp-config.js";
 import type { McpToolHandle, McpCaller } from "./mcp-tools.js";
 
 export interface McpClient {
-  listTools(): Promise<{ tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> }>;
-  callTool(args: { name: string; arguments: unknown }): Promise<{ content?: Array<{ type: string; text?: string }>; isError?: boolean }>;
+  listTools(): Promise<{ tools: Array<{
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+    annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean };
+  }> }>;
+  callTool(args: { name: string; arguments: unknown }): Promise<{
+    content?: Array<{ type: string; text?: string }>;
+    isError?: boolean;
+    structuredContent?: Record<string, unknown>;
+  }>;
   close(): Promise<void>;
 }
 
@@ -41,7 +50,7 @@ export class McpManager implements McpCaller {
             toolName: t.name,
             description: t.description ?? "",
             inputSchema: t.inputSchema ?? { type: "object" },
-            trustLevel: cfg.trustLevel,
+            annotations: t.annotations,
           });
         }
       } catch (err) {
@@ -54,7 +63,7 @@ export class McpManager implements McpCaller {
     return [...this.handles];
   }
 
-  async callTool(serverName: string, toolName: string, input: unknown): Promise<{ ok: boolean; content: string }> {
+  async callTool(serverName: string, toolName: string, input: unknown): Promise<{ ok: boolean; content: string; meta?: Record<string, unknown> }> {
     const client = this.clients.get(serverName);
     if (!client) return { ok: false, content: `unknown mcp server: ${serverName}` };
     try {
@@ -62,7 +71,7 @@ export class McpManager implements McpCaller {
       const text = (res.content ?? [])
         .map((c) => (c.type === "text" ? c.text ?? "" : `[${c.type}]`))
         .join("\n");
-      return { ok: !res.isError, content: text };
+      return { ok: !res.isError, content: text, ...(res.structuredContent ? { meta: res.structuredContent } : {}) };
     } catch (err) {
       return { ok: false, content: `mcp call failed: ${(err as Error).message}` };
     }

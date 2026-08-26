@@ -16,6 +16,13 @@ export interface ValidationFeedbackObservation {
   evidenceProduced: number;
   consensusAdvanced: boolean;
   attackPathAdvanced: boolean;
+  /**
+   * A tool may produce an observable external state transition before the
+   * agent records it as evidence. This prevents that boundary from being
+   * treated as repetition, but deliberately does not increase evidence or
+   * verification scores.
+   */
+  observableChange?: boolean;
   failed: boolean;
   noProgress: boolean;
 }
@@ -39,6 +46,7 @@ export function observeValidationOutcome(input: {
   ok: boolean;
   before: ValidationOutcomeSnapshot;
   after: ValidationOutcomeSnapshot;
+  observableChange?: boolean;
 }): ValidationFeedbackObservation {
   const evidenceProduced = Math.max(
     input.after.evidenceCount - input.before.evidenceCount,
@@ -53,8 +61,9 @@ export function observeValidationOutcome(input: {
     evidenceProduced,
     consensusAdvanced,
     attackPathAdvanced,
+    observableChange: input.observableChange || undefined,
     failed: !input.ok,
-    noProgress: input.ok && evidenceProduced === 0 && !consensusAdvanced && !attackPathAdvanced,
+    noProgress: input.ok && evidenceProduced === 0 && !consensusAdvanced && !attackPathAdvanced && !input.observableChange,
   };
 }
 

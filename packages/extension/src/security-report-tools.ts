@@ -1,5 +1,5 @@
 import type { RuntimeEvent, SecurityReport } from "@traceforge/shared";
-import type { ToolDescriptor } from "./tool.js";
+import { TOOL_SECURITY, type ToolDescriptor } from "./tool.js";
 
 export interface SecurityReportWriter {
   create(caseId: string, input: Omit<SecurityReport, "id" | "caseId" | "reviewStatus" | "reviewReasons" | "dependencyVersions" | "version" | "createdAt" | "updatedAt">): SecurityReport;
@@ -18,7 +18,7 @@ export function makeListSecurityReportsTool(caseId: string, reports: SecurityRep
   return {
     name: "list_security_reports",
     description: "List evidence-backed security reports persisted for this case.",
-    risk: "normal",
+    security: TOOL_SECURITY.caseRead,
     source: "builtin",
     executionMode: "parallel",
     inputSchema: { type: "object", properties: {} },
@@ -36,7 +36,7 @@ export function makeRecordSecurityReportTool(
   return {
     name: "record_security_report",
     description: "Create or revise an evidence-backed report. Finding IDs must reference valid verified Findings; attack paths must be validated. State limitations explicitly and never add unsupported claims.",
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     executionMode: "serial",
     inputSchema: {

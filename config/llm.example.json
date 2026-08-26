@@ -7,5 +7,27 @@
   "apiKey": "sk-xxxxx",
   "jsonMode": "json_object",
   "contextWindowTokens": 128000,
-  "maxOutputTokens": 8192
+  "maxOutputTokens": 8192,
+  "alternativeRoutes": [
+    {
+      "id": "backup",
+      "provider": "anthropic",
+      "model": "claude-opus-4-8",
+      "apiKey": "sk-ant-xxxxx"
+    }
+  ],
+  "rolePolicies": {
+    "planner": { "routeIds": ["primary", "backup"], "timeoutMs": 120000, "maximumRunTokens": 250000 },
+    "observer": { "routeIds": ["primary", "backup"], "timeoutMs": 90000, "maximumRunTokens": 150000 },
+    "worker": { "routeIds": ["primary", "backup"], "timeoutMs": 120000, "maximumRunTokens": 500000 }
+  },
+  "resourcePolicy": {
+    "maximumConcurrentCalls": 8,
+    "maximumConcurrentCallsPerRun": 2,
+    "maximumQueueDepth": 128,
+    "maximumQueueWaitMs": 120000,
+    "priorityAgingIntervalMs": 5000,
+    "roleConcurrency": { "planner": 2, "observer": 2, "worker": 6 },
+    "rolePriorities": { "planner": 80, "observer": 100, "worker": 60 }
+  }
 }

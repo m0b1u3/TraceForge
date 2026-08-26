@@ -1,5 +1,5 @@
 import type { ArtifactAnalyzerCapability, ArtifactRecovery, RuntimeEvent, Task } from "@traceforge/shared";
-import type { ToolDescriptor } from "@traceforge/extension";
+import { TOOL_SECURITY, type ToolDescriptor } from "@traceforge/extension";
 import { artifactAnalyzerCapabilityFingerprint, type ArtifactAnalyzerRegistry } from "./artifact-analyzer.js";
 import { planArtifactAnalysis } from "./artifact-analysis-planner.js";
 import type { ArtifactAnalysisAttemptStore } from "./stores/artifact-analysis-attempt-store.js";
@@ -62,7 +62,7 @@ export function makeManageArtifactRecoveryTool(input: {
       },
       required: ["action"],
     },
-    risk: "normal",
+    security: TOOL_SECURITY.caseWrite,
     source: "builtin",
     executionMode: "serial",
     execute: async (raw) => {

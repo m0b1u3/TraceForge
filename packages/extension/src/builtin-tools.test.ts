@@ -34,10 +34,10 @@ function makeTraffic(entry: TrafficEntry) {
 }
 
 describe("makeHttpReplayTool", () => {
-  it("is normal-risk and replays an in-scope request over real HTTP", async () => {
+  it("declares authorized-target effects and replays an in-scope request over real HTTP", async () => {
     await withTarget(async (baseUrl, rules) => {
       const tool = makeHttpReplayTool(rules);
-      expect(tool.risk).toBe("normal");
+      expect(tool.security).toMatchObject({ impactScope: "authorized_target", mutates: true, openWorld: false });
       const res = await tool.execute({ url: `${baseUrl}/x`, method: "GET" });
       expect(res.ok).toBe(true);
       expect(res.content).toContain("200");
@@ -107,7 +107,7 @@ describe("makeProposeScopeExpansionTool", () => {
   it("records a proposal without sending any packet", async () => {
     const proposals: Array<[string, string]> = [];
     const tool = makeProposeScopeExpansionTool((host, reason) => { proposals.push([host, reason]); });
-    expect(tool.risk).toBe("normal");
+    expect(tool.security).toMatchObject({ impactScope: "case", mutates: true, openWorld: false });
     const res = await tool.execute({ host: "cdn.t.com", reason: "same cert" });
     expect(proposals).toEqual([["cdn.t.com", "same cert"]]);
     expect(res.ok).toBe(true);
