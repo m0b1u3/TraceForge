@@ -61,4 +61,110 @@ describe("ExecutionToolDiscoveryRuntime", () => {
     expect(runtime.registry.get("first")).toMatchObject({ lifecycle: "active", provider: { version: "2.0.0" } });
     expect(runtime.registry.get("removed")).toMatchObject({ lifecycle: "draining" });
   });
+
+  it("replaces and deactivates managed discovery sources without leaving tools eligible", async () => {
+    const closed: string[] = [];
+    const first = {
+      source: "managed",
+      async discover() { return [tool("candidate", "managed")]; },
+      async close() { closed.push("first"); },
+    };
+    const second = {
+      source: "managed",
+      async discover() { return [tool("candidate", "managed", "2.0.0")]; },
+      async close() { closed.push("second"); },
+    };
+    const runtime = new ExecutionToolDiscoveryRuntime([first]);
+    await runtime.refresh();
+    const activation = await runtime.activateSource(second);
+    await activation.drained;
+    expect(closed).toEqual(["first"]);
+    expect(runtime.registry.get("candidate")).toMatchObject({ lifecycle: "active", provider: { version: "2.0.0" } });
+
+    await runtime.deactivateSource("managed");
+    expect(closed).toEqual(["first", "second"]);
+    expect(runtime.hasSource("managed")).toBe(false);
+    expect(runtime.registry.resolve(["cap.candidate"]).providers).toEqual([]);
+    expect(runtime.registry.get("candidate")).toMatchObject({ lifecycle: "draining" });
+  });
+
+  it("publishes a new generation before waiting for old in-flight calls to drain", async () => {
+    const closed: string[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const firstTool = tool("candidate", "managed");
+    firstTool.execute = async () => {
+      await blocked;
+      return { status: "succeeded", summary: "old completed", raw: "", refs: [], retryable: false };
+    };
+    const first = {
+      source: "managed",
+      async discover() { return [firstTool]; },
+      async close() { closed.push("first"); },
+    };
+    const second = {
+      source: "managed",
+      async discover() { return [tool("candidate", "managed", "2.0.0")]; },
+    };
+    const runtime = new ExecutionToolDiscoveryRuntime([first]);
+    await runtime.refresh();
+    const oldAdapter = runtime.registry.get("candidate")!.provider;
+    const oldCall = oldAdapter.execute({}, {} as never);
+
+    const activation = await runtime.activateSource(second);
+    expect(runtime.registry.get("candidate")).toMatchObject({ lifecycle: "active", provider: { version: "2.0.0" } });
+    expect(closed).toEqual([]);
+    await expect(oldAdapter.execute({}, {} as never)).rejects.toMatchObject({ retryable: true });
+
+    release();
+    await expect(oldCall).resolves.toMatchObject({ summary: "old completed" });
+    await activation.drained;
+    expect(closed).toEqual(["first"]);
+  });
+
+  it("does not reactivate a manually draining source during periodic refresh", async () => {
+    const runtime = new ExecutionToolDiscoveryRuntime([{
+      source: "managed",
+      async discover() { return [tool("candidate", "managed")]; },
+    }], 0);
+    await runtime.refresh();
+    runtime.drainSource("managed");
+    await runtime.refreshDue();
+    expect(runtime.registry.get("candidate")).toMatchObject({ lifecycle: "draining" });
+    expect(runtime.registry.resolve(["cap.candidate"]).providers).toEqual([]);
+    expect(runtime.snapshot().sources).toMatchObject([{ acceptingInvocations: false, inFlightInvocations: 0 }]);
+  });
+
+  it("rebinds a fresh implementation when a drained source is re-enabled at the same version", async () => {
+    const first = tool("candidate", "managed");
+    const second = tool("candidate", "managed");
+    second.execute = async () => ({ status: "succeeded", summary: "fresh implementation", raw: "", refs: [], retryable: false });
+    const runtime = new ExecutionToolDiscoveryRuntime([{
+      source: "managed",
+      async discover() { return [first]; },
+    }]);
+    await runtime.refresh();
+    runtime.drainSource("managed");
+    const activation = await runtime.activateSource({
+      source: "managed",
+      async discover() { return [second]; },
+    });
+    await activation.drained;
+    const active = runtime.registry.get("candidate")!.provider;
+    await expect(active.execute({}, {} as never)).resolves.toMatchObject({ summary: "fresh implementation" });
+  });
+
+  it("restores the current generation when replacement catalog commit is rejected", async () => {
+    const runtime = new ExecutionToolDiscoveryRuntime([{
+      source: "managed",
+      async discover() { return [tool("candidate", "managed")]; },
+    }]);
+    await runtime.refresh();
+    await expect(runtime.activateSource({
+      source: "managed",
+      async discover() { return [tool("duplicate", "managed", "2.0.0"), tool("duplicate", "managed", "2.0.0")]; },
+    })).rejects.toThrow(/duplicate name/);
+    expect(runtime.registry.get("candidate")).toMatchObject({ lifecycle: "active", provider: { version: "1.0.0" } });
+    await expect(runtime.registry.get("candidate")!.provider.execute({}, {} as never)).resolves.toMatchObject({ status: "succeeded" });
+  });
 });

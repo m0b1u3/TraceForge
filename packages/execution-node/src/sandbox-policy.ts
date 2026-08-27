@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, win32 } from "node:path";
 import { allowsFileSystemPath, type EffectivePermissionProfile, type PermissionPathGrant } from "@traceforge/orchestration-core";
 import { permissionProfileFingerprint, resourceLimitsFingerprint, type StartProcessRequest } from "./protocol.js";
 import type { SpawnLaunchSpec } from "./runtime.js";
@@ -30,7 +30,8 @@ function assertCommon(request: StartProcessRequest, expectedPlatform: EffectiveP
 
 function assertExistingPolicyPaths(profile: EffectivePermissionProfile, pathExists: (path: string) => boolean): void {
   for (const grant of [...profile.filesystem.read, ...profile.filesystem.write, ...profile.filesystem.deny]) {
-    if (!isAbsolute(grant.path)) throw new Error(`Sandbox policy path must be absolute: ${grant.path}`);
+    const absolute = profile.platform === "windows" ? win32.isAbsolute(grant.path) : isAbsolute(grant.path);
+    if (!absolute) throw new Error(`Sandbox policy path must be absolute: ${grant.path}`);
     if (!pathExists(grant.path)) {
       throw new Error(`Sandbox cannot prove a policy for missing path ${grant.path}; execution denied`);
     }

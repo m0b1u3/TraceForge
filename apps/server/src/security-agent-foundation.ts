@@ -36,6 +36,7 @@ import {
 import { registerScenarioAgentEventRoutes, SqliteScenarioAgentEventStream } from "./scenario-agent-event-stream.js";
 import { registerScenarioCollaborationRoutes, ScenarioCollaborationSnapshotService } from "./scenario-collaboration-snapshot.js";
 import { registerScenarioRunRecoveryRoutes, ScenarioRunRecoveryService } from "./scenario-run-recovery.js";
+import type { ToolProviderInstallation } from "./tool-provider-control-plane.js";
 
 export interface SecurityAgentFoundationOptions {
   autoScheduleIntervalMs?: number;
@@ -45,6 +46,8 @@ export interface SecurityAgentFoundationOptions {
   onAgentEvent?: (event: ScenarioAgentEvent) => void;
   executionNode?: ExecutionNode;
   toolDiscoverySources?: readonly ExecutionToolDiscoverySource[];
+  toolProviderTrustRoots?: ReadonlyMap<string, string>;
+  toolProviderSourceFactory?: (installation: ToolProviderInstallation) => Promise<ExecutionToolDiscoverySource> | ExecutionToolDiscoverySource;
 }
 
 /**
@@ -144,6 +147,7 @@ export function registerSecurityAgentFoundation(
   registerEmbeddedWorkers(
     app, sqlite, provider, projectRoot, providerReady, sessions, evidenceGraph, changes,
     cognitiveSnapshots, modelRuntime, agentEvents, options.executionNode, options.toolDiscoverySources,
+    options.toolProviderTrustRoots, options.toolProviderSourceFactory,
   );
   const publishControlEvents = (change: Extract<Parameters<Parameters<typeof changes.subscribe>[0]>[0], { kind: "run" }>) => {
     const run = scenarioRuntime.load(change.runId);

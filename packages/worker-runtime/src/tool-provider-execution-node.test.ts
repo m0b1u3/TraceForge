@@ -89,10 +89,15 @@ class FakeProviderNode {
   }
 }
 
-function client(node: FakeProviderNode): ExecutionNodeToolProviderClient {
+function client(
+  node: FakeProviderNode,
+  expected?: { providerId?: string; providerVersion?: string },
+): ExecutionNodeToolProviderClient {
   return new ExecutionNodeToolProviderClient({
     node: node.asNode(), executable: "C:\\provider.exe", workingDirectory: "C:\\provider",
     attribution: node.descriptor.attribution, permissions, resources, expectedSandboxBackend: "appcontainer", requestTimeoutMs: 2_000,
+    expectedProviderId: expected?.providerId,
+    expectedProviderVersion: expected?.providerVersion,
   });
 }
 
@@ -114,6 +119,17 @@ describe("ExecutionNodeToolProviderClient", () => {
     const node = new FakeProviderNode(false);
     const rpc = client(node);
     await expect(rpc.listTools()).rejects.toThrow(/permission attestation does not match/);
+    expect(node.terminated).toBe(1);
+    expect(rpc.status().provider).toBeNull();
+  });
+
+  it.each([
+    [{ providerId: "different-provider" }, /identity mismatch/],
+    [{ providerVersion: "2.0.0" }, /version mismatch/],
+  ] as const)("rejects and terminates a Provider whose signed identity expectation does not match", async (expected, message) => {
+    const node = new FakeProviderNode();
+    const rpc = client(node, expected);
+    await expect(rpc.listTools()).rejects.toThrow(message);
     expect(node.terminated).toBe(1);
     expect(rpc.status().provider).toBeNull();
   });

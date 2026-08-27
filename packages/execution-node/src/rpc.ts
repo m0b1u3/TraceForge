@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmod, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -131,9 +131,14 @@ export function createExecutionRpcAuthToken(): string {
 
 export function defaultExecutionRpcPipe(nodeId: string, runtimeDirectory = tmpdir()): ExecutionRpcAddress {
   const safe = nodeId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80) || "node";
-  return process.platform === "win32"
-    ? { kind: "pipe", path: `\\\\.\\pipe\\traceforge-execution-${safe}` }
-    : { kind: "pipe", path: join(runtimeDirectory, `traceforge-execution-${safe}.sock`) };
+  if (process.platform === "win32") return { kind: "pipe", path: `\\\\.\\pipe\\traceforge-execution-${safe}` };
+  // Darwin limits AF_UNIX paths to roughly 104 bytes. User-local runtime
+  // directories are often already long, so bind the identity through a hash
+  // instead of embedding an unbounded node id in the socket filename.
+  const identity = createHash("sha256").update(nodeId).digest("hex").slice(0, 16);
+  const path = join(runtimeDirectory, `tf-exec-${identity}.sock`);
+  if (Buffer.byteLength(path) > 100) throw new Error("Execution RPC runtime directory is too long for a local socket");
+  return { kind: "pipe", path };
 }
 
 export class ExecutionRpcDispatcher {

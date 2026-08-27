@@ -86,7 +86,7 @@ export class CapabilityProviderRegistry<T extends CapabilityProviderDescriptor> 
         this.replace(next);
         replaced.push(next.name);
       } else if (state.lifecycle === "draining") {
-        this.setLifecycle(state.provider.name, "active");
+        this.reactivate(next);
       }
     }
     for (const provider of discovered.values()) {
@@ -107,6 +107,22 @@ export class CapabilityProviderRegistry<T extends CapabilityProviderDescriptor> 
       provider: registered, lifecycle: "active", health: "healthy", consecutiveFailures: 0,
       lastFailure: null, revision: this.revision,
     });
+  }
+
+  reactivate(provider: T): void {
+    validateProvider(provider);
+    const current = this.require(provider.name);
+    if (current.lifecycle !== "draining") throw new Error(`Capability provider ${provider.name} can only be rebound while draining`);
+    if (current.provider.source !== provider.source || current.provider.version !== provider.version) {
+      throw new Error(`Reactivated provider ${provider.name} must preserve source and version`);
+    }
+    this.revision += 1;
+    current.provider = cloneProvider(provider);
+    current.lifecycle = "active";
+    current.health = "healthy";
+    current.consecutiveFailures = 0;
+    current.lastFailure = null;
+    current.revision = this.revision;
   }
 
   setLifecycle(name: string, lifecycle: ToolProviderLifecycle): void {
@@ -153,6 +169,17 @@ export class CapabilityProviderRegistry<T extends CapabilityProviderDescriptor> 
 
   list(): CapabilityProviderState<T>[] {
     return [...this.states.values()].map(cloneState).sort((left, right) => left.provider.name.localeCompare(right.provider.name));
+  }
+
+  drainSource(source: string): string[] {
+    if (!source.trim()) throw new Error("Capability provider source is required");
+    const drained: string[] = [];
+    for (const state of this.states.values()) {
+      if (state.provider.source !== source || state.lifecycle !== "active") continue;
+      this.setLifecycle(state.provider.name, "draining");
+      drained.push(state.provider.name);
+    }
+    return drained.sort();
   }
 
   resolve(

@@ -45,6 +45,8 @@ export interface ExecutionNodeToolProviderOptions {
   maximumFrameBytes?: number;
   maximumInFlightRequests?: number;
   maximumStderrBytes?: number;
+  expectedProviderId?: string;
+  expectedProviderVersion?: string;
 }
 
 interface PendingRequest {
@@ -79,7 +81,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
   constructor(private readonly options: ExecutionNodeToolProviderOptions) {
     if (options.permissions.network === "direct") throw new Error("Execution Node Tool Provider cannot use direct networking");
     if (options.permissions.process.access !== "sandboxed") throw new Error("Execution Node Tool Provider requires sandboxed process access");
-    if (options.permissions.secrets !== "handles_only") throw new Error("Execution Node Tool Provider requires handle-only secret access");
+    if (options.permissions.secrets === "plaintext") throw new Error("Execution Node Tool Provider cannot receive plaintext secrets");
     this.processTimeoutMs = positiveInteger(options.processTimeoutMs ?? 24 * 60 * 60 * 1_000, "process timeout");
     this.outputLimitBytes = positiveInteger(options.outputLimitBytes ?? 64 * 1024 * 1024, "output limit");
     this.requestTimeoutMs = positiveInteger(options.requestTimeoutMs ?? 15_000, "request timeout");
@@ -175,6 +177,12 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
       const epoch = ++this.epoch;
       void this.pump(epoch);
       this.provider = validateToolProviderHandshake(await this.send("provider.handshake", { protocolVersion: TOOL_PROVIDER_RPC_VERSION }));
+      if (this.options.expectedProviderId && this.provider.providerId !== this.options.expectedProviderId) {
+        throw new Error(`Execution Node Tool Provider identity mismatch: expected ${this.options.expectedProviderId}`);
+      }
+      if (this.options.expectedProviderVersion && this.provider.providerVersion !== this.options.expectedProviderVersion) {
+        throw new Error(`Execution Node Tool Provider version mismatch: expected ${this.options.expectedProviderVersion}`);
+      }
       this.state = "ready";
       this.lastError = null;
     } catch (error) {

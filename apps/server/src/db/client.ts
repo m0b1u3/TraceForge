@@ -151,6 +151,44 @@ export function createDb(path: string) {
       result_json TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS tool_provider_manifests (
+      provider_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      manifest_json TEXT NOT NULL,
+      package_root TEXT NOT NULL,
+      manifest_fingerprint TEXT NOT NULL,
+      signer_id TEXT NOT NULL,
+      signature_base64 TEXT NOT NULL,
+      state TEXT NOT NULL,
+      state_reason TEXT,
+      installed_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (provider_id, version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_provider_manifests_state
+      ON tool_provider_manifests(state, updated_at);
+    CREATE TABLE IF NOT EXISTS tool_provider_commands (
+      command_id TEXT PRIMARY KEY,
+      fingerprint TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS tool_provider_events (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
+      provider_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      from_state TEXT,
+      to_state TEXT NOT NULL,
+      reason TEXT,
+      actor TEXT NOT NULL,
+      command_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_provider_events_provider
+      ON tool_provider_events(provider_id, sequence);
     CREATE TABLE IF NOT EXISTS scenario_work_approvals (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL,

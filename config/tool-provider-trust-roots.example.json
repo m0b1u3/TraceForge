@@ -1,0 +1,5 @@
+{
+  "keys": {
+    "local-release-key": "-----BEGIN PUBLIC KEY-----\nREPLACE_WITH_AN_ED25519_PUBLIC_KEY\n-----END PUBLIC KEY-----"
+  }
+}

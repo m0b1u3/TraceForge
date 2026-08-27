@@ -63,4 +63,19 @@ describe("CapabilityProviderRegistry", () => {
     expect(() => registry.synchronize("test", [invalid])).toThrow(/does not belong/);
     expect(registry.get("existing")).toMatchObject({ lifecycle: "active" });
   });
+
+  it("drains every active provider owned by one source", () => {
+    const registry = new CapabilityProviderRegistry<Provider>();
+    registry.synchronize("test", [provider("first", ["cap.a"]), provider("second", ["cap.b"])]);
+    expect(registry.drainSource("test")).toEqual(["first", "second"]);
+    expect(registry.resolve(["cap.a", "cap.b"]).providers).toEqual([]);
+  });
+
+  it("rebinds a draining provider implementation when the same signed version is reactivated", () => {
+    const registry = new CapabilityProviderRegistry<Provider>();
+    registry.synchronize("test", [{ ...provider("first", ["cap.a"]), marker: "old" }]);
+    registry.drainSource("test");
+    registry.synchronize("test", [{ ...provider("first", ["cap.a"]), marker: "new" }]);
+    expect(registry.get("first")).toMatchObject({ lifecycle: "active", health: "healthy", provider: { marker: "new" } });
+  });
 });

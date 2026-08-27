@@ -12,6 +12,7 @@ import { McpManager, loadMcpConfig } from "@traceforge/extension";
 import { LlmConfigService } from "./llm-config-service.js";
 import { registerSecurityAgentFoundation } from "./security-agent-foundation.js";
 import { startLocalExecutionNodeService } from "./execution-node-service.js";
+import { loadToolProviderTrustRoots } from "./tool-provider-control-plane.js";
 
 // 运行时数据固定放在项目根目录 data/ 下，避免受 process.cwd() 影响（tsx watch 从 apps/server 启动）
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -94,6 +95,7 @@ export async function buildServer(
     modelResourcePolicy: llmService.getResourcePolicy(),
     onAgentEvent: (event) => bus.emit({ type: "scenario_agent_event", event }),
     executionNode: executionNodeService.client,
+    toolProviderTrustRoots: loadToolProviderTrustRoots(resolve(projectRoot, "config/tool-provider-trust-roots.json")),
   });
 
   app.get("/api/health", async () => ({

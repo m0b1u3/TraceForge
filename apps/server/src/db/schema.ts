@@ -123,6 +123,42 @@ export const executionNetworkReceipts = sqliteTable("execution_network_receipts"
   completedAt: text("completed_at").notNull(),
 });
 
+export const toolProviderManifests = sqliteTable("tool_provider_manifests", {
+  providerId: text("provider_id").notNull(),
+  version: text("version").notNull(),
+  manifestJson: text("manifest_json").notNull(),
+  packageRoot: text("package_root").notNull(),
+  manifestFingerprint: text("manifest_fingerprint").notNull(),
+  signerId: text("signer_id").notNull(),
+  signatureBase64: text("signature_base64").notNull(),
+  state: text("state").notNull(),
+  stateReason: text("state_reason"),
+  installedAt: text("installed_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const toolProviderCommands = sqliteTable("tool_provider_commands", {
+  commandId: text("command_id").primaryKey(),
+  fingerprint: text("fingerprint").notNull(),
+  providerId: text("provider_id").notNull(),
+  version: text("version").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const toolProviderEvents = sqliteTable("tool_provider_events", {
+  sequence: integer("sequence").primaryKey({ autoIncrement: true }),
+  id: text("id").notNull().unique(),
+  providerId: text("provider_id").notNull(),
+  version: text("version").notNull(),
+  eventType: text("event_type").notNull(),
+  fromState: text("from_state"),
+  toState: text("to_state").notNull(),
+  reason: text("reason"),
+  actor: text("actor").notNull(),
+  commandId: text("command_id").notNull().unique(),
+  createdAt: text("created_at").notNull(),
+});
+
 export const artifacts = sqliteTable("artifacts", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

@@ -16,6 +16,8 @@ export interface ExecutionToolSourceStatus {
   lastSuccessAt: string | null;
   lastError: string | null;
   discoveredProviders: number;
+  acceptingInvocations: boolean;
+  inFlightInvocations: number;
   diagnostics: Record<string, unknown> | null;
 }
 
@@ -35,15 +37,30 @@ export interface ExecutionToolRuntimeSnapshot {
   providers: ExecutionToolProviderStatus[];
 }
 
+export interface ExecutionToolSourceActivation {
+  drained: Promise<void>;
+}
+
 interface MutableSourceStatus extends ExecutionToolSourceStatus {
   lastAttemptMs: number | null;
+}
+
+interface SourceGeneration {
+  source: ExecutionToolDiscoverySource;
+  accepting: boolean;
+  inFlight: number;
+  drained: Promise<void>;
+  resolveDrained: () => void;
+  closePromise: Promise<void> | null;
 }
 
 export class ExecutionToolDiscoveryRuntime {
   readonly registry: CapabilityProviderRegistry<ExecutionToolAdapter>;
   private readonly sources = new Map<string, ExecutionToolDiscoverySource>();
+  private readonly generations = new Map<string, SourceGeneration>();
   private readonly sourceStatuses = new Map<string, MutableSourceStatus>();
   private readonly refreshes = new Map<string, Promise<void>>();
+  private readonly retirements = new Set<Promise<void>>();
 
   constructor(
     sources: readonly ExecutionToolDiscoverySource[],
@@ -61,15 +78,77 @@ export class ExecutionToolDiscoveryRuntime {
     if (!id) throw new Error("Tool discovery source is required");
     if (this.sources.has(id)) throw new Error(`Tool discovery source already registered: ${id}`);
     this.sources.set(id, source);
+    this.generations.set(id, createGeneration(source));
     this.sourceStatuses.set(id, {
       source: id, status: "pending", lastAttemptAt: null, lastSuccessAt: null, lastError: null,
-      discoveredProviders: 0, diagnostics: null, lastAttemptMs: null,
+      discoveredProviders: 0, acceptingInvocations: true, inFlightInvocations: 0,
+      diagnostics: null, lastAttemptMs: null,
     });
+  }
+
+  hasSource(source: string): boolean {
+    return this.sources.has(source);
+  }
+
+  async activateSource(source: ExecutionToolDiscoverySource): Promise<ExecutionToolSourceActivation> {
+    const id = source.source.trim();
+    if (!id) throw new Error("Tool discovery source is required");
+    const current = this.sources.get(id);
+    if (current === source) {
+      await this.refresh(id);
+      return { drained: Promise.resolve() };
+    }
+    const generation = createGeneration(source);
+    const attemptedAt = this.now();
+    const providers = await this.discover(source, generation);
+    const previousGeneration = this.generations.get(id);
+    const previousProviders = this.registry.list()
+      .filter((state) => state.provider.source === id && state.lifecycle !== "retired")
+      .map((state) => state.provider);
+    if (previousGeneration) this.beginDrain(previousGeneration);
+    this.registry.drainSource(id);
+    try {
+      this.registry.synchronize(id, providers);
+    } catch (error) {
+      if (previousGeneration) this.resume(previousGeneration);
+      if (previousProviders.length) this.registry.synchronize(id, previousProviders);
+      throw error;
+    }
+    this.sources.set(id, source);
+    this.generations.set(id, generation);
+    this.sourceStatuses.set(id, {
+      source: id, status: "ready", lastAttemptAt: attemptedAt.toISOString(), lastSuccessAt: this.now().toISOString(), lastError: null,
+      discoveredProviders: providers.length, acceptingInvocations: true, inFlightInvocations: 0,
+      diagnostics: source.diagnostics?.() ?? null, lastAttemptMs: attemptedAt.getTime(),
+    });
+    const drained = previousGeneration ? this.trackRetirement(this.closeGeneration(previousGeneration)) : Promise.resolve();
+    return { drained };
+  }
+
+  async deactivateSource(source: string): Promise<void> {
+    const current = this.sources.get(source);
+    const generation = this.generations.get(source);
+    this.registry.drainSource(source);
+    if (!current) return;
+    if (generation) await this.closeGeneration(generation);
+    else await current.close?.();
+    if (this.sources.get(source) === current) {
+      this.sources.delete(source);
+      this.generations.delete(source);
+      this.sourceStatuses.delete(source);
+    }
+  }
+
+  drainSource(source: string): string[] {
+    const generation = this.generations.get(source);
+    if (generation) this.beginDrain(generation);
+    return this.registry.drainSource(source);
   }
 
   async refreshDue(): Promise<void> {
     const current = this.now().getTime();
     const due = [...this.sourceStatuses.values()]
+      .filter((state) => this.generations.get(state.source)?.accepting !== false)
       .filter((state) => state.lastAttemptMs === null || current - state.lastAttemptMs >= this.refreshIntervalMs)
       .map((state) => state.source);
     await Promise.all(due.map((source) => this.refresh(source)));
@@ -82,15 +161,23 @@ export class ExecutionToolDiscoveryRuntime {
 
   async close(): Promise<void> {
     await Promise.allSettled([...this.refreshes.values()]);
-    await Promise.all([...this.sources.values()].map((source) => source.close?.() ?? Promise.resolve()));
+    await Promise.all([
+      ...[...this.generations.values()].map((generation) => this.closeGeneration(generation)),
+      ...this.retirements,
+    ]);
   }
 
   snapshot(): ExecutionToolRuntimeSnapshot {
     const sources = [...this.sourceStatuses.values()]
-      .map(({ lastAttemptMs: _lastAttemptMs, ...state }) => ({
-        ...state,
-        diagnostics: this.sources.get(state.source)?.diagnostics?.() ?? state.diagnostics,
-      }))
+      .map(({ lastAttemptMs: _lastAttemptMs, ...state }) => {
+        const generation = this.generations.get(state.source);
+        return {
+          ...state,
+          acceptingInvocations: generation?.accepting ?? false,
+          inFlightInvocations: generation?.inFlight ?? 0,
+          diagnostics: this.sources.get(state.source)?.diagnostics?.() ?? state.diagnostics,
+        };
+      })
       .sort((left, right) => left.source.localeCompare(right.source));
     const providers = this.registry.list().map(({ provider, ...state }) => {
       const { execute: _execute, ...tool } = provider;
@@ -109,6 +196,7 @@ export class ExecutionToolDiscoveryRuntime {
   private refreshOne(source: string): Promise<void> {
     const existing = this.refreshes.get(source);
     if (existing) return existing;
+    if (this.generations.get(source)?.accepting === false) return Promise.resolve();
     const discovered = this.sources.get(source);
     if (!discovered) return Promise.reject(new Error(`Unknown tool discovery source: ${source}`));
     const refresh = this.performRefresh(discovered).finally(() => { this.refreshes.delete(source); });
@@ -122,11 +210,9 @@ export class ExecutionToolDiscoveryRuntime {
     state.lastAttemptMs = attemptedAt.getTime();
     state.lastAttemptAt = attemptedAt.toISOString();
     try {
-      const providers = await source.discover();
-      for (const provider of providers) {
-        if (provider.source !== source.source) throw new Error(`Discovered tool ${provider.name} does not belong to source ${source.source}`);
-        if (provider.timeoutMs < 1) throw new Error(`Execution tool ${provider.name} requires a positive timeout`);
-      }
+      const generation = this.generations.get(source.source);
+      if (!generation || generation.source !== source) throw new Error(`Tool discovery source ${source.source} is no longer active`);
+      const providers = await this.discover(source, generation);
       this.registry.synchronize(source.source, providers);
       state.status = "ready";
       state.lastSuccessAt = this.now().toISOString();
@@ -139,6 +225,62 @@ export class ExecutionToolDiscoveryRuntime {
       state.diagnostics = source.diagnostics?.() ?? null;
     }
   }
+
+  private async discover(source: ExecutionToolDiscoverySource, generation: SourceGeneration): Promise<ExecutionToolAdapter[]> {
+    const providers = await source.discover();
+    return providers.map((provider) => {
+      if (provider.source !== source.source) throw new Error(`Discovered tool ${provider.name} does not belong to source ${source.source}`);
+      if (provider.timeoutMs < 1) throw new Error(`Execution tool ${provider.name} requires a positive timeout`);
+      return {
+        ...provider,
+        execute: async (input, context) => {
+          if (!generation.accepting) throw drainingError(provider.name, provider.version);
+          generation.inFlight += 1;
+          try { return await provider.execute(input, context); }
+          finally {
+            generation.inFlight -= 1;
+            if (!generation.accepting && generation.inFlight === 0) generation.resolveDrained();
+          }
+        },
+      };
+    });
+  }
+
+  private beginDrain(generation: SourceGeneration): Promise<void> {
+    generation.accepting = false;
+    if (generation.inFlight === 0) generation.resolveDrained();
+    return generation.drained;
+  }
+
+  private resume(generation: SourceGeneration): void {
+    if (generation.accepting) return;
+    let resolveDrained!: () => void;
+    generation.drained = new Promise<void>((resolve) => { resolveDrained = resolve; });
+    generation.resolveDrained = resolveDrained;
+    generation.accepting = true;
+  }
+
+  private closeGeneration(generation: SourceGeneration): Promise<void> {
+    if (generation.closePromise) return generation.closePromise;
+    generation.closePromise = this.beginDrain(generation).then(() => generation.source.close?.() ?? Promise.resolve());
+    return generation.closePromise;
+  }
+
+  private trackRetirement(retirement: Promise<void>): Promise<void> {
+    this.retirements.add(retirement);
+    void retirement.finally(() => { this.retirements.delete(retirement); }).catch(() => undefined);
+    return retirement;
+  }
+}
+
+function createGeneration(source: ExecutionToolDiscoverySource): SourceGeneration {
+  let resolveDrained!: () => void;
+  const drained = new Promise<void>((resolve) => { resolveDrained = resolve; });
+  return { source, accepting: true, inFlight: 0, drained, resolveDrained, closePromise: null };
+}
+
+function drainingError(name: string, version: string): Error & { retryable: true } {
+  return Object.assign(new Error(`Tool ${name}@${version} began draining before invocation ownership was acquired`), { retryable: true as const });
 }
 
 export function staticExecutionToolSource(source: string, tools: readonly ExecutionToolAdapter[]): ExecutionToolDiscoverySource {

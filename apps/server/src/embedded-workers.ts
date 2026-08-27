@@ -44,6 +44,15 @@ import type { SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots
 import type { ModelExecutionRuntime } from "./model-execution-runtime.js";
 import type { ScenarioAgentEventWriter } from "./scenario-agent-event-stream.js";
 import { registerExecutionToolRuntimeRoutes } from "./execution-tool-runtime-routes.js";
+import {
+  createToolProviderRuntimeBinding,
+  registerToolProviderControlRoutes,
+  SqliteToolProviderControlStore,
+  ToolProviderControlPlane,
+  type ToolProviderInstallation,
+} from "./tool-provider-control-plane.js";
+import { ManagedToolProviderPackageStore } from "./tool-provider-package-store.js";
+import { createManagedToolProviderSourceFactory } from "./managed-tool-provider-source.js";
 
 function serverBaseUrl(app: FastifyInstance): string {
   const address = app.server.address();
@@ -261,6 +270,8 @@ export function registerEmbeddedWorkers(
   agentEvents: ScenarioAgentEventWriter,
   executionNode?: ExecutionNode,
   externalToolSources: readonly ExecutionToolDiscoverySource[] = [],
+  toolProviderTrustRoots: ReadonlyMap<string, string> = new Map(),
+  toolProviderSourceFactory?: (installation: ToolProviderInstallation) => Promise<ExecutionToolDiscoverySource> | ExecutionToolDiscoverySource,
 ): void {
   const authorizationGuard = new ScenarioAuthorizationGuard(sqlite);
   const builtinTools: ExecutionToolAdapter[] = [
@@ -278,6 +289,20 @@ export function registerEmbeddedWorkers(
     ...externalToolSources,
   ]);
   registerExecutionToolRuntimeRoutes(app, toolRuntime);
+  const managedSourceFactory = toolProviderSourceFactory
+    ?? (executionNode ? createManagedToolProviderSourceFactory(executionNode, resolve(projectRoot, "data/tool-providers/work")) : undefined);
+  const providerControl = new ToolProviderControlPlane(
+    new SqliteToolProviderControlStore(sqlite),
+    toolProviderTrustRoots,
+    createToolProviderRuntimeBinding(
+      (source) => toolRuntime.activateSource(source),
+      (source) => toolRuntime.deactivateSource(source),
+      (source) => { toolRuntime.drainSource(source); },
+      managedSourceFactory,
+    ),
+    new ManagedToolProviderPackageStore(resolve(projectRoot, "data/tool-providers/packages")),
+  );
+  registerToolProviderControlRoutes(app, providerControl);
   const pool = new EmbeddedScenarioWorkerPool(
     app, sqlite, provider, projectRoot, cognitiveSnapshots, modelRuntime, agentEvents, toolRuntime,
   );
@@ -290,7 +315,12 @@ export function registerEmbeddedWorkers(
   const unsubscribeChanges = changes.subscribe(() => { reconcile(); });
   app.addHook("onListen", () => {
     listening = true;
-    void toolRuntime.refresh();
+    void providerControl.recover()
+      .then((report) => {
+        if (report.enabled.length || report.failed.length) app.log.info({ report }, "Tool Provider startup recovery completed");
+        return toolRuntime.refresh();
+      })
+      .catch((error) => app.log.error({ err: error }, "Tool Provider startup recovery failed"));
     reconcile();
     timer = setInterval(reconcile, 30_000);
     timer.unref();
