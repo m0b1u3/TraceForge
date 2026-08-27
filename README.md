@@ -11,7 +11,7 @@ TraceForge 是独立运行的通用安全智能体底座。它以 Scenario Contr
 - Scenario Agent Protocol 持久化 turn/item 生命周期，支持游标重放和 WebSocket 增量同步。
 - Evidence Graph、执行会话网关、审批门禁和认知上下文快照为不同安全场景提供统一底座。
 - Execution Node 对每次进程执行强制绑定 CPU、内存、进程数量和写入 I/O 配额，并将配额证明写入执行回执。
-- Web 黑盒能力通过原生 HTTP、受控 Browser Worker、流量/证据存储及按需 MCP 工具装配。
+- Web 黑盒 HTTP 通过 Execution Node 的授权网络 Broker 执行并生成持久化回执；Browser Worker 在受控代理后端完成前保持关闭，不允许直连回退。
 
 旧聊天式 `AgentRun`/`AgentEvent` 运行时、旧 Solver、旧 BrowserSession 和 Burp 桥接已经删除，不提供兼容层。数据库启动时会直接丢弃它们对应的旧表。
 
@@ -32,12 +32,13 @@ pnpm test:fast
 pnpm build
 ```
 
-当前基线（2026-08-26）：137 个测试文件、509 项测试通过，全工作区构建通过。
+当前基线（2026-08-27）：144 个测试文件、539 项测试通过，全工作区构建通过。
 
 ## 架构文档
 
 - [Scenario Control Plane API](docs/scenario-control-plane-api.md)
 - [Security Execution Model](docs/security-execution-model.md)
+- [当前开发进度与生产化计划](docs/development-status-and-roadmap.md)
 
 ## 项目约束
 

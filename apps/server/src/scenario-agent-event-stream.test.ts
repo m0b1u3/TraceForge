@@ -22,12 +22,12 @@ describe("scenario agent event stream", () => {
     let id = 0;
     const stream = new SqliteScenarioAgentEventStream(sqlite, (event) => published.push(event.sequence), () => `event_${++id}`, () => at);
     const base = { runId: "run_1", caseId: "case_1", workId: null, turnId: "turn_1", role: "planner" as const, createdAt: at };
-    stream.append({ ...base, method: "turn/started", params: { sourceRunRevision: 1, sourceGraphRevision: 0 } });
+    stream.append({ ...base, method: "turn/started", params: { agentInstanceId: "planner:run_1", sourceRunRevision: 1, sourceGraphRevision: 0 } });
     stream.append({
       ...base, method: "item/started",
       params: { item: { type: "modelCall", id: "call_1", routeId: "primary", attempt: 1, status: "inProgress", reservedTokens: 10, usage: null, error: null } },
     });
-    stream.append({ ...base, method: "turn/completed", params: { status: "completed", error: null } });
+    stream.append({ ...base, method: "turn/completed", params: { status: "completed", outcome: "finish", checkpointRef: null, error: null } });
 
     expect(stream.list("run_1", 0, 2)).toMatchObject({ nextCursor: 2, hasMore: true });
     const tail = stream.list("run_1", 2, 2);
@@ -35,7 +35,7 @@ describe("scenario agent event stream", () => {
     expect(published).toEqual([1, 2, 3]);
 
     const reopened = new SqliteScenarioAgentEventStream(sqlite, undefined, () => `event_${++id}`, () => at);
-    reopened.append({ ...base, method: "turn/completed", params: { status: "failed", error: "retry failed" } });
+    reopened.append({ ...base, method: "turn/completed", params: { status: "failed", outcome: null, checkpointRef: null, error: "retry failed" } });
     expect(reopened.list("run_1").events.at(-1)?.sequence).toBe(4);
   });
 
@@ -45,13 +45,13 @@ describe("scenario agent event stream", () => {
     const stream = new SqliteScenarioAgentEventStream(sqlite, undefined, () => "event_1", () => at);
     stream.append({
       runId: "run_1", caseId: "case_1", workId: null, turnId: "turn_1", role: "observer",
-      method: "turn/completed", params: { status: "completed", error: null },
+      method: "turn/completed", params: { status: "completed", outcome: "finish", checkpointRef: null, error: null },
     });
     const app = Fastify();
     registerScenarioAgentEventRoutes(app, stream);
     const response = await app.inject({ method: "GET", url: "/api/scenarios/runs/run_1/agent-events?after=0&limit=10" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ nextCursor: 1, hasMore: false, events: [{ protocolVersion: 1, sequence: 1 }] });
+    expect(response.json()).toMatchObject({ nextCursor: 1, hasMore: false, events: [{ protocolVersion: 2, sequence: 1 }] });
     await app.close();
   });
 
@@ -79,6 +79,8 @@ describe("scenario agent event stream", () => {
     expect(stream.list("run_1").events.map((event) => event.method)).toEqual([
       "turn/started", "turn/completed", "item/completed", "item/completed",
     ]);
+    const terminal = stream.list("run_1").events.find((event) => event.method === "turn/completed");
+    expect(terminal?.params).toMatchObject({ status: "completed", outcome: "blocked" });
   });
 
   it("reconstructs approval Turns from the durable approval projection", () => {

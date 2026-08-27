@@ -15,6 +15,7 @@ import {
 } from "@traceforge/orchestration-core";
 import {
   BoundedOutputDistiller,
+  ExecutionToolDiscoveryRuntime,
   HttpWorkerControlPlaneClient,
   JsonFileCheckpointStore,
   LeaseWorkerRuntime,
@@ -22,6 +23,7 @@ import {
   PolicyExecutionToolGateway,
   WorkerSupervisor,
   type ExecutionToolAdapter,
+  type ExecutionToolDiscoverySource,
 } from "@traceforge/worker-runtime";
 import { StructuredWorkerModel } from "./structured-worker-model.js";
 import { ExecutionNodeProcessTool, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
@@ -41,6 +43,7 @@ import type { BlackboardChangeBus } from "./blackboard-change-bus.js";
 import type { SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
 import type { ModelExecutionRuntime } from "./model-execution-runtime.js";
 import type { ScenarioAgentEventWriter } from "./scenario-agent-event-stream.js";
+import { registerExecutionToolRuntimeRoutes } from "./execution-tool-runtime-routes.js";
 
 function serverBaseUrl(app: FastifyInstance): string {
   const address = app.server.address();
@@ -78,12 +81,10 @@ class EmbeddedScenarioWorkerPool {
     private readonly sqlite: Database.Database,
     private readonly provider: LlmProvider,
     private readonly projectRoot: string,
-    private readonly sessions: ExecutionSessionGateway,
-    private readonly evidenceGraph: SqliteEvidenceGraphStore,
     private readonly cognitiveSnapshots: SqliteCognitiveSnapshotStore,
     private readonly modelRuntime: ModelExecutionRuntime,
     private readonly agentEvents: ScenarioAgentEventWriter,
-    private readonly executionNode?: ExecutionNode,
+    private readonly toolRuntime: ExecutionToolDiscoveryRuntime,
   ) {}
 
   reconcile(): Promise<void> {
@@ -138,19 +139,8 @@ class EmbeddedScenarioWorkerPool {
 
   private createSupervisor(workerId: string, pool: ScenarioWorkerPoolDefinition): WorkerSupervisor {
     const control = new HttpWorkerControlPlaneClient(serverBaseUrl(this.app));
-    const model = new StructuredWorkerModel(this.provider, undefined, this.cognitiveSnapshots, undefined, undefined, this.modelRuntime);
+    const model = new StructuredWorkerModel(this.provider, undefined, this.cognitiveSnapshots, undefined, this.modelRuntime);
     const receipts = new SqliteToolReceiptStore(this.sqlite);
-    const authorizationGuard = new ScenarioAuthorizationGuard(this.sqlite);
-    const tools: ExecutionToolAdapter[] = [
-      new EvidenceGraphSnapshotTool(this.evidenceGraph),
-      new EvidenceGraphMutateTool(this.sqlite, this.evidenceGraph),
-      new ScenarioScopeSnapshotTool(authorizationGuard),
-      new ScenarioTrafficSnapshotTool(this.sqlite, authorizationGuard),
-      new ScenarioSessionOpenTool(authorizationGuard, this.sessions),
-      new ScenarioHttpRequestTool(this.sqlite, authorizationGuard, this.sessions),
-      new ScenarioBrowserObserveTool(this.sqlite, authorizationGuard, this.sessions),
-      ...(this.executionNode ? [new ExecutionNodeProcessTool(this.executionNode)] : []),
-    ];
     const worker: WorkerDescriptor = {
       id: workerId,
       roles: [pool.role],
@@ -160,7 +150,7 @@ class EmbeddedScenarioWorkerPool {
       heartbeatAt: new Date().toISOString(),
     };
     const gateway = new PolicyExecutionToolGateway(
-      tools,
+      this.toolRuntime.registry,
       { async authorize(input) { return { decision: "pending", approvalRef: `approval:${input.invocation.id}` }; } },
       receipts,
       {
@@ -178,7 +168,7 @@ class EmbeddedScenarioWorkerPool {
                   write: [{ path: this.projectRoot, scope: "tree" }],
                   deny: [],
                 },
-                network: "direct",
+                network: "brokered",
                 process: { access: "sandboxed", interactive: false, background: false },
                 secrets: "plaintext",
               },
@@ -189,7 +179,7 @@ class EmbeddedScenarioWorkerPool {
                 version: 1,
                 platform,
                 filesystem: { read: [], write: [], deny: [] },
-                network: "direct",
+                network: "brokered",
                 process: { access: "deny", interactive: false, background: false },
                 secrets: "handles_only",
               },
@@ -197,6 +187,7 @@ class EmbeddedScenarioWorkerPool {
           ];
         },
       },
+      this.toolRuntime,
     );
     const runtime = new LeaseWorkerRuntime(
       worker,
@@ -208,6 +199,22 @@ class EmbeddedScenarioWorkerPool {
       new BoundedOutputDistiller(),
       {
         onLifecycleEvent: (event) => {
+          if (event.type === "turn_progress") {
+            this.agentEvents.append({
+              method: "turn/progress", runId: event.assignment.runId, caseId: event.assignment.runContext.caseId,
+              workId: event.assignment.work.id, turnId: event.turnId, role: "worker",
+              params: { phase: event.phase, summary: event.summary, refs: event.refs },
+            });
+            return;
+          }
+          if (event.type === "turn_completed") {
+            this.agentEvents.append({
+              method: "turn/completed", runId: event.assignment.runId, caseId: event.assignment.runContext.caseId,
+              workId: event.assignment.work.id, turnId: event.turnId, role: "worker",
+              params: { status: event.status, outcome: event.outcome, checkpointRef: event.checkpointRef, error: event.error },
+            });
+            return;
+          }
           const item = {
             type: "toolCall" as const,
             id: event.invocationId,
@@ -253,9 +260,26 @@ export function registerEmbeddedWorkers(
   modelRuntime: ModelExecutionRuntime,
   agentEvents: ScenarioAgentEventWriter,
   executionNode?: ExecutionNode,
+  externalToolSources: readonly ExecutionToolDiscoverySource[] = [],
 ): void {
+  const authorizationGuard = new ScenarioAuthorizationGuard(sqlite);
+  const builtinTools: ExecutionToolAdapter[] = [
+    new EvidenceGraphSnapshotTool(evidenceGraph),
+    new EvidenceGraphMutateTool(sqlite, evidenceGraph),
+    new ScenarioScopeSnapshotTool(authorizationGuard),
+    new ScenarioTrafficSnapshotTool(sqlite, authorizationGuard),
+    new ScenarioSessionOpenTool(authorizationGuard, sessions),
+    ...(executionNode ? [new ScenarioHttpRequestTool(sqlite, authorizationGuard, sessions, executionNode)] : []),
+    new ScenarioBrowserObserveTool(sqlite, authorizationGuard, sessions),
+    ...(executionNode ? [new ExecutionNodeProcessTool(executionNode)] : []),
+  ];
+  const toolRuntime = new ExecutionToolDiscoveryRuntime([
+    { source: "traceforge.builtin", async discover() { return builtinTools; } },
+    ...externalToolSources,
+  ]);
+  registerExecutionToolRuntimeRoutes(app, toolRuntime);
   const pool = new EmbeddedScenarioWorkerPool(
-    app, sqlite, provider, projectRoot, sessions, evidenceGraph, cognitiveSnapshots, modelRuntime, agentEvents, executionNode,
+    app, sqlite, provider, projectRoot, cognitiveSnapshots, modelRuntime, agentEvents, toolRuntime,
   );
   let listening = false;
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -266,6 +290,7 @@ export function registerEmbeddedWorkers(
   const unsubscribeChanges = changes.subscribe(() => { reconcile(); });
   app.addHook("onListen", () => {
     listening = true;
+    void toolRuntime.refresh();
     reconcile();
     timer = setInterval(reconcile, 30_000);
     timer.unref();
@@ -275,5 +300,6 @@ export function registerEmbeddedWorkers(
     unsubscribeChanges();
     if (timer) clearInterval(timer);
     await pool.stop();
+    await toolRuntime.close();
   });
 }

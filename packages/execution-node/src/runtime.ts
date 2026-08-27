@@ -13,6 +13,8 @@ import {
   resourceLimitsFingerprint,
   type AdoptProcessRequest,
   type AdoptProcessResponse,
+  type BrokeredHttpRequest,
+  type BrokeredHttpResponse,
   type CanonicalizePathRequest,
   type DirectoryEntry,
   type ExecutionHandshakeRequest,
@@ -44,6 +46,7 @@ import {
   type WriteFileChunkResponse,
   type WriteProcessInputRequest,
 } from "./protocol.js";
+import type { ExecutionHttpBroker } from "./network-broker.js";
 
 export interface ManagedProcess {
   readonly pid: number;
@@ -235,6 +238,7 @@ export interface LocalExecutionNodeOptions {
   maximumWriteBytesPerProcess?: number;
   maximumFileChunkBytes?: number;
   maximumListEntries?: number;
+  httpBroker?: ExecutionHttpBroker;
 }
 
 type EventPayload<T = ProcessEvent> = T extends ProcessEvent ? Omit<T, "sequence" | "processId" | "at"> : never;
@@ -286,10 +290,11 @@ export class LocalExecutionNode implements ExecutionNode {
   private readonly processByIdempotencyKey = new Map<string, string>();
   private readonly writeReceipts = new Map<string, WriteReceipt>();
   private readonly now: () => string;
+  private readonly httpBroker: ExecutionHttpBroker | undefined;
 
   constructor(private readonly launcher: ProcessLauncher, options: LocalExecutionNodeOptions) {
-    if (!options.sandboxBackends.length) throw new Error("Execution Node requires at least one sandbox backend");
     this.now = options.now ?? (() => new Date().toISOString());
+    this.httpBroker = options.httpBroker;
     const capabilities: ExecutionNodeCapabilities = {
       process: {
         spawn: true,
@@ -310,10 +315,21 @@ export class LocalExecutionNode implements ExecutionNode {
         maximumListEntries: options.maximumListEntries ?? 10_000,
         ...options.capabilities?.filesystem,
       },
-      network: { brokered: false, ...options.capabilities?.network },
-      http: { streaming: false, ...options.capabilities?.http },
+      network: { brokered: Boolean(options.httpBroker) },
+      http: { request: Boolean(options.httpBroker), streaming: false },
       sandbox: { backends: [...new Set(options.sandboxBackends)], ...options.capabilities?.sandbox },
     };
+    if (options.capabilities?.network?.brokered !== undefined
+      && options.capabilities.network.brokered !== capabilities.network.brokered) {
+      throw new Error("Execution Node brokered network capability must be derived from an installed HTTP broker");
+    }
+    if (options.capabilities?.http?.request !== undefined
+      && options.capabilities.http.request !== capabilities.http.request) {
+      throw new Error("Execution Node HTTP request capability must be derived from an installed HTTP broker");
+    }
+    if (capabilities.process.spawn && !capabilities.sandbox.backends.length) {
+      throw new Error("A process-capable Execution Node requires at least one sandbox backend");
+    }
     if (capabilities.filesystem.maximumChunkBytes < 1 || capabilities.filesystem.maximumListEntries < 1) {
       throw new Error("Execution Node filesystem limits must be positive");
     }
@@ -339,6 +355,10 @@ export class LocalExecutionNode implements ExecutionNode {
         maximumProcesses, maximumOutputBytesPerProcess, maximumRetainedEventsPerProcess,
         maximumCpuTimeMsPerProcess, maximumMemoryBytesPerProcess,
         maximumProcessesPerExecution, maximumWriteBytesPerProcess,
+        maximumHttpRequestBytes: options.httpBroker?.limits.maximumRequestBytes ?? 0,
+        maximumHttpResponseBytes: options.httpBroker?.limits.maximumResponseBytes ?? 0,
+        maximumHttpHeaders: options.httpBroker?.limits.maximumHeaders ?? 0,
+        maximumConcurrentHttpRequests: options.httpBroker?.limits.maximumConcurrentRequests ?? 0,
       },
       startedAt: this.now(),
     };
@@ -346,6 +366,15 @@ export class LocalExecutionNode implements ExecutionNode {
 
   async handshake(request: ExecutionHandshakeRequest): Promise<ExecutionHandshakeResponse> {
     return negotiateExecutionProtocol(request, this.descriptor);
+  }
+
+  async requestHttp(request: BrokeredHttpRequest): Promise<BrokeredHttpResponse> {
+    if (!this.descriptor.capabilities.network.brokered || !this.descriptor.capabilities.http.request || !this.httpBroker) {
+      throw new Error("Execution Node does not provide brokered HTTP requests");
+    }
+    this.assertAttribution(request.attribution);
+    this.assertPermissionPlatform(request.permissions);
+    return this.httpBroker.execute(this.descriptor.id, structuredClone(request));
   }
 
   async startProcess(request: StartProcessRequest): Promise<StartProcessResponse> {

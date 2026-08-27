@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentTurnOutcomeSchema, AgentTurnPhaseSchema } from "./agent-turn.js";
 
 export const ScenarioAgentRoleSchema = z.enum(["planner", "observer", "worker", "replay", "system"]);
 export type ScenarioAgentRole = z.infer<typeof ScenarioAgentRoleSchema>;
@@ -37,7 +38,7 @@ export const ScenarioAgentItemSchema = z.discriminatedUnion("type", [
 export type ScenarioAgentItem = z.infer<typeof ScenarioAgentItemSchema>;
 
 const envelope = z.object({
-  protocolVersion: z.literal(1), id: z.string().min(1), sequence: z.number().int().positive(),
+  protocolVersion: z.literal(2), id: z.string().min(1), sequence: z.number().int().positive(),
   runId: z.string().min(1), caseId: z.string().min(1), workId: z.string().min(1).nullable(),
   turnId: z.string().min(1), role: ScenarioAgentRoleSchema, createdAt: z.string().datetime(),
 });
@@ -45,11 +46,22 @@ const envelope = z.object({
 export const ScenarioAgentEventSchema = z.discriminatedUnion("method", [
   envelope.extend({
     method: z.literal("turn/started"),
-    params: z.object({ sourceRunRevision: z.number().int().nonnegative(), sourceGraphRevision: z.number().int().nonnegative().nullable() }),
+    params: z.object({
+      agentInstanceId: z.string().min(1), sourceRunRevision: z.number().int().nonnegative(),
+      sourceGraphRevision: z.number().int().nonnegative().nullable(),
+    }),
+  }),
+  envelope.extend({
+    method: z.literal("turn/progress"),
+    params: z.object({ phase: AgentTurnPhaseSchema, summary: z.string().min(1), refs: z.array(z.string()).default([]) }),
   }),
   envelope.extend({
     method: z.literal("turn/completed"),
-    params: z.object({ status: z.enum(["completed", "failed", "interrupted", "cancelled"]), error: z.string().nullable().default(null) }),
+    params: z.object({
+      status: z.enum(["completed", "failed", "interrupted", "cancelled"]),
+      outcome: AgentTurnOutcomeSchema.nullable().default(null), checkpointRef: z.string().nullable().default(null),
+      error: z.string().nullable().default(null),
+    }),
   }),
   envelope.extend({ method: z.literal("item/started"), params: z.object({ item: ScenarioAgentItemSchema }) }),
   envelope.extend({ method: z.literal("item/updated"), params: z.object({ item: ScenarioAgentItemSchema }) }),

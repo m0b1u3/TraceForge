@@ -3,7 +3,9 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import type Database from "better-sqlite3";
 import {
+  BrokeredHttpGateway,
   EXECUTION_PROTOCOL_VERSION,
   ExecutionNodeRpcClient,
   ExecutionNodeRpcServer,
@@ -21,9 +23,11 @@ import {
   type ProcessLauncher,
   type StartProcessRequest,
 } from "@traceforge/execution-node";
+import { ScenarioAuthorizationGuard } from "./scenario-web-tools.js";
 
 export interface LocalExecutionNodeService {
   client: ExecutionNode;
+  processReady: boolean;
   close(): Promise<void>;
 }
 
@@ -53,6 +57,12 @@ class PlatformSandboxLauncher implements ProcessLauncher {
       return this.conpty.launch(request);
     }
     return this.stdio.launch(request);
+  }
+}
+
+class UnavailableProcessLauncher implements ProcessLauncher {
+  async launch(_request: StartProcessRequest): Promise<never> {
+    throw new Error("Execution Node has no enforceable process sandbox backend");
   }
 }
 
@@ -86,24 +96,46 @@ async function probeSandboxBackend(executable: string): Promise<boolean> {
   }
 }
 
-export async function startLocalExecutionNodeService(projectRoot: string): Promise<LocalExecutionNodeService | null> {
-  if (process.platform !== "win32" && process.platform !== "linux") return null;
+export async function startLocalExecutionNodeService(projectRoot: string, sqlite: Database.Database): Promise<LocalExecutionNodeService> {
+  const platform = process.platform === "win32" ? "windows" as const
+    : process.platform === "darwin" ? "darwin" as const : "linux" as const;
   const backendExecutable = resolveSandboxBackend(projectRoot);
-  if (!backendExecutable) return null;
-  if (!await probeSandboxBackend(backendExecutable)) return null;
-  const platform = process.platform === "win32" ? "windows" as const : "linux" as const;
+  const sandboxBackendReady = Boolean(backendExecutable && await probeSandboxBackend(backendExecutable));
+  const processReady = platform === "windows" && sandboxBackendReady;
   const backend = platform === "windows" ? "traceforge-windows-native" : "bubblewrap";
-  const node = new LocalExecutionNode(new PlatformSandboxLauncher(backendExecutable), {
+  const authorizationGuard = new ScenarioAuthorizationGuard(sqlite);
+  const httpBroker = new BrokeredHttpGateway({
+    authorizer: {
+      authorize(input) {
+        const { authorization, url } = authorizationGuard.requireUrl(
+          input.attribution.scopeRef,
+          input.attribution.caseId,
+          input.authorizationAction,
+          input.url,
+        );
+        return {
+          authorizationRef: authorization.id,
+          canonicalUrl: url.href,
+          expiresAt: authorization.expiresAt,
+        };
+      },
+    },
+  });
+  const launcher = processReady && backendExecutable
+    ? new PlatformSandboxLauncher(backendExecutable)
+    : new UnavailableProcessLauncher();
+  const node = new LocalExecutionNode(launcher, {
     platform,
-    sandboxBackends: [backend],
+    sandboxBackends: processReady ? [backend] : [],
+    httpBroker,
     capabilities: {
       process: {
-        spawn: true,
-        stdio: true,
-        tty: platform === "windows",
-        adoption: true,
-        resourceLimits: platform === "windows",
-        signals: ["interrupt", "terminate", "kill"],
+        spawn: processReady,
+        stdio: processReady,
+        tty: processReady && platform === "windows",
+        adoption: processReady,
+        resourceLimits: processReady && platform === "windows",
+        signals: processReady ? ["interrupt", "terminate", "kill"] : [],
       },
     },
   });
@@ -115,7 +147,7 @@ export async function startLocalExecutionNodeService(projectRoot: string): Promi
     await client.handshake({
       clientId: "traceforge-security-agent-foundation",
       protocol: EXECUTION_PROTOCOL_VERSION,
-      requiredCapabilities: ["process.spawn", "process.stdio", "process.resource_limits", "filesystem.read", "filesystem.write"],
+      requiredCapabilities: ["network.brokered", "http.request", "filesystem.read", "filesystem.write"],
     });
   } catch (error) {
     client.disconnect();
@@ -124,6 +156,7 @@ export async function startLocalExecutionNodeService(projectRoot: string): Promi
   }
   return {
     client,
+    processReady,
     async close() {
       client.disconnect();
       await server.close();

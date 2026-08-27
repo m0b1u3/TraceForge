@@ -33,6 +33,7 @@ describe("server listen configuration", () => {
       llmConfigured: false,
       mcpTools: 0,
       executionNodeReady: expect.any(Boolean),
+      executionProcessReady: expect.any(Boolean),
     });
     expect(response.body).not.toMatch(/api.?key|secret/i);
     await app.close();

@@ -141,6 +141,7 @@ describe("Blackboard wake-up and context distillation", () => {
       finishedAt: null,
     };
     const request: WorkerModelRequest = {
+      turnId: "turn_1",
       worker: { id: "worker_1", roles: ["researcher"], capabilities, maxConcurrentWork: 1, status: "online", heartbeatAt: at },
       assignment: {
         runId: state.id,
@@ -151,6 +152,7 @@ describe("Blackboard wake-up and context distillation", () => {
         work,
       },
       tools: [],
+      toolResolution: { requestedCapabilities: [], unresolvedCapabilities: [], registryRevision: 1 },
       transcript: [1, 2, 3].map((turn) => ({ turn, kind: "tool" as const, summary: String(turn).repeat(100), refs: [`ref_${turn}`] })),
       steering: ["first", "first", "second"],
     };

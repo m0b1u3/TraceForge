@@ -21,8 +21,13 @@ export interface LeaseWorkerOptions {
 }
 
 export type WorkerLifecycleEvent =
+  | { type: "turn_progress"; assignment: WorkerAssignment; turnId: string; phase: WorkerTurnPhase; summary: string; refs: string[] }
+  | { type: "turn_completed"; assignment: WorkerAssignment; turnId: string; status: "completed" | "failed" | "interrupted"; outcome: WorkerTurnOutcome | null; checkpointRef: string | null; error: string | null }
   | { type: "tool_started"; assignment: WorkerAssignment; turnId: string; invocationId: string; tool: string; risk: ExecutionRisk }
   | { type: "tool_completed"; assignment: WorkerAssignment; turnId: string; invocationId: string; tool: string; risk: ExecutionRisk; status: "completed" | "failed" | "waitingApproval"; summary: string; refs: string[] };
+
+export type WorkerTurnPhase = "actionRequested" | "toolExecuted" | "observationApplied" | "checkpointed";
+export type WorkerTurnOutcome = "continue" | "finish" | "waitingApproval" | "blocked";
 
 export interface WorkerRunResult {
   runId: string;
@@ -98,20 +103,30 @@ export class LeaseWorkerRuntime {
       return { runId: assignment.runId, workId: assignment.work.id, outcome: "blocked", turns: 0, reason };
     }
     let repeatedFailureCount = 0;
+    let activeTurnId: string | undefined;
 
     try {
       for (let turn = checkpoint.turn + 1; turn <= this.options.maxTurns; turn += 1) {
+        const turnId = `worker:${this.worker.id}:work:${assignment.work.id}:attempt:${assignment.work.attempt}:turn:${turn}`;
+        activeTurnId = undefined;
         assignment = await this.control.refresh(assignment);
         this.applyRunDirectives(assignment, checkpoint);
         assignment = await this.renewIfNeeded(assignment, turn);
         const catalog = await this.tools.catalog(this.worker, assignment);
         const decision = await this.model.decide({
+          turnId,
           worker: this.worker,
           assignment,
-          tools: catalog,
+          tools: catalog.tools,
+          toolResolution: {
+            requestedCapabilities: catalog.requestedCapabilities,
+            unresolvedCapabilities: catalog.unresolvedCapabilities,
+            registryRevision: catalog.registryRevision,
+          },
           transcript: checkpoint.transcript,
           steering: checkpoint.steering,
         });
+        activeTurnId = turnId;
         checkpoint.transcript.push({ turn, kind: "model", summary: this.describeDecision(decision), refs: [] });
 
         const observation = await this.observer.review({
@@ -123,14 +138,18 @@ export class LeaseWorkerRuntime {
           repeatedFailureCount,
         });
         if (observation.action === "stop") {
-          assignment = await this.persistCheckpoint(assignment, checkpoint, turn, observation.reason);
+          this.turnProgress(assignment, turnId, "observationApplied", observation.reason, []);
+          assignment = await this.persistCheckpoint(assignment, checkpoint, turn, observation.reason, turnId);
           await this.control.block(assignment, `block:${assignment.leaseId}:observer:${turn}`, observation.reason);
+          this.turnCompleted(assignment, turnId, "blocked", assignment.work.latestCheckpoint?.payloadRef ?? null);
           return { runId: assignment.runId, workId: assignment.work.id, outcome: "blocked", turns: turn, reason: observation.reason };
         }
         if (observation.action === "steer") {
           checkpoint.steering.push(observation.instruction);
           checkpoint.transcript.push({ turn, kind: "observer", summary: observation.instruction, refs: [] });
-          assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Observer correction persisted");
+          this.turnProgress(assignment, turnId, "observationApplied", observation.instruction, []);
+          assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Observer correction persisted", turnId);
+          this.turnCompleted(assignment, turnId, "continue", assignment.work.latestCheckpoint?.payloadRef ?? null);
           continue;
         }
 
@@ -139,30 +158,38 @@ export class LeaseWorkerRuntime {
           if (invalidOutput) {
             checkpoint.steering.push(invalidOutput);
             checkpoint.transcript.push({ turn, kind: "observer", summary: invalidOutput, refs: [] });
-            assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Ungrounded output rejected");
+            this.turnProgress(assignment, turnId, "observationApplied", invalidOutput, []);
+            assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Ungrounded output rejected", turnId);
+            this.turnCompleted(assignment, turnId, "continue", assignment.work.latestCheckpoint?.payloadRef ?? null);
             continue;
           }
           await this.control.complete(assignment, `complete:${assignment.leaseId}`, decision.summary, decision.outputs);
+          this.turnCompleted(assignment, turnId, "finish", null);
           return { runId: assignment.runId, workId: assignment.work.id, outcome: "completed", turns: turn };
         }
         if (decision.type === "block") {
-          assignment = await this.persistCheckpoint(assignment, checkpoint, turn, decision.reason);
+          assignment = await this.persistCheckpoint(assignment, checkpoint, turn, decision.reason, turnId);
           await this.control.block(assignment, `block:${assignment.leaseId}:model`, decision.reason);
+          this.turnCompleted(assignment, turnId, "blocked", assignment.work.latestCheckpoint?.payloadRef ?? null);
           return { runId: assignment.runId, workId: assignment.work.id, outcome: "blocked", turns: turn, reason: decision.reason };
         }
 
         if (checkpoint.completedInvocationIds.includes(decision.invocation.id)) {
           checkpoint.steering.push(`Invocation ${decision.invocation.id} was already committed; choose a new action or complete the work.`);
-          assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Duplicate invocation suppressed");
+          this.turnProgress(assignment, turnId, "observationApplied", "Duplicate invocation suppressed", []);
+          assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Duplicate invocation suppressed", turnId);
+          this.turnCompleted(assignment, turnId, "continue", assignment.work.latestCheckpoint?.payloadRef ?? null);
           continue;
         }
-        const knownTool = catalog.some((tool) => tool.name === decision.invocation.tool);
+        this.turnProgress(assignment, turnId, "actionRequested", `Action requested: ${decision.invocation.tool}`, []);
+        const knownTool = catalog.tools.some((tool) => tool.name === decision.invocation.tool);
         if (!knownTool) {
           repeatedFailureCount += 1;
           checkpoint.transcript.push({ turn, kind: "tool", summary: `Rejected unknown or unauthorized tool ${decision.invocation.tool}`, refs: [] });
+          this.turnProgress(assignment, turnId, "toolExecuted", `Rejected unknown or unauthorized tool ${decision.invocation.tool}`, []);
+          this.turnProgress(assignment, turnId, "observationApplied", "Unauthorized action rejection applied", []);
         } else {
-          const toolSpec = catalog.find((tool) => tool.name === decision.invocation.tool)!;
-          const turnId = decision.protocolTurnId ?? `work:${assignment.work.id}:attempt:${assignment.work.attempt}`;
+          const toolSpec = catalog.tools.find((tool) => tool.name === decision.invocation.tool)!;
           this.options.onLifecycleEvent?.({
             type: "tool_started", assignment, turnId, invocationId: decision.invocation.id,
             tool: decision.invocation.tool, risk: toolSpec.risk,
@@ -184,6 +211,7 @@ export class LeaseWorkerRuntime {
             throw error;
           }
           const distilled = await this.distiller.distill(result, this.options.maxDistilledCharacters);
+          this.turnProgress(assignment, turnId, "toolExecuted", `Tool ${decision.invocation.tool} returned ${result.status}`, result.refs);
           this.options.onLifecycleEvent?.({
             type: "tool_completed", assignment, turnId, invocationId: decision.invocation.id,
             tool: decision.invocation.tool, risk: toolSpec.risk,
@@ -191,16 +219,17 @@ export class LeaseWorkerRuntime {
             summary: distilled.summary, refs: distilled.refs,
           });
           checkpoint.transcript.push({ turn, kind: "tool", summary: distilled.summary, refs: distilled.refs });
+          this.turnProgress(assignment, turnId, "observationApplied", distilled.summary, distilled.refs);
           repeatedFailureCount = result.status === "succeeded" ? 0 : repeatedFailureCount + 1;
           if (result.status === "approval_required") {
             const approvalId = result.approvalRef ?? `approval:${assignment.work.id}:${decision.invocation.id}`;
             const actionKey = `${assignment.work.idempotencyKey}:${decision.invocation.id}`;
             const reason = `Tool ${decision.invocation.tool} requires approval (${approvalId}); retry this exact invocation after approval.`;
             checkpoint.steering.push(reason);
-            assignment = await this.persistCheckpoint(assignment, checkpoint, turn, reason);
+            assignment = await this.persistCheckpoint(assignment, checkpoint, turn, reason, turnId);
             const inputRef = assignment.work.latestCheckpoint?.payloadRef;
             if (!inputRef) throw new Error("Approval checkpoint was not reflected in the assignment");
-            const risk = catalog.find((tool) => tool.name === decision.invocation.tool)?.risk;
+            const risk = catalog.tools.find((tool) => tool.name === decision.invocation.tool)?.risk;
             if (!risk) throw new Error(`Approval tool ${decision.invocation.tool} disappeared from the catalog`);
             await this.control.requestApproval(assignment, {
               commandId: `request-approval:${approvalId}`,
@@ -211,33 +240,44 @@ export class LeaseWorkerRuntime {
               rationale: decision.invocation.rationale,
               inputRef,
             });
+            this.turnCompleted(assignment, turnId, "waitingApproval", assignment.work.latestCheckpoint?.payloadRef ?? null);
             return { runId: assignment.runId, workId: assignment.work.id, outcome: "waiting_approval", turns: turn, reason };
           }
           checkpoint.completedInvocationIds.push(decision.invocation.id);
         }
 
-        assignment = await this.persistCheckpoint(assignment, checkpoint, turn, `Turn ${turn} committed`);
+        assignment = await this.persistCheckpoint(assignment, checkpoint, turn, `Turn ${turn} committed`, turnId);
         if (repeatedFailureCount >= this.options.repeatedFailureLimit) {
           const reason = `Execution stopped after ${repeatedFailureCount} consecutive failed or unauthorized actions`;
           await this.control.block(assignment, `block:${assignment.leaseId}:failures`, reason);
+          this.turnCompleted(assignment, turnId, "blocked", assignment.work.latestCheckpoint?.payloadRef ?? null);
           return { runId: assignment.runId, workId: assignment.work.id, outcome: "blocked", turns: turn, reason };
         }
+        if (turn === this.options.maxTurns) {
+          const reason = `Worker turn budget exhausted after ${this.options.maxTurns} turns`;
+          await this.control.block(assignment, `block:${assignment.leaseId}:budget`, reason);
+          this.turnCompleted(assignment, turnId, "blocked", assignment.work.latestCheckpoint?.payloadRef ?? null);
+          return { runId: assignment.runId, workId: assignment.work.id, outcome: "blocked", turns: turn, reason };
+        }
+        this.turnCompleted(assignment, turnId, "continue", assignment.work.latestCheckpoint?.payloadRef ?? null);
       }
-      const reason = `Worker turn budget exhausted after ${this.options.maxTurns} turns`;
-      assignment = await this.persistCheckpoint(assignment, checkpoint, this.options.maxTurns, reason);
-      await this.control.block(assignment, `block:${assignment.leaseId}:budget`, reason);
-      return { runId: assignment.runId, workId: assignment.work.id, outcome: "blocked", turns: this.options.maxTurns, reason };
+      throw new Error("Worker loop exited without a terminal outcome");
     } catch (error) {
       if (error instanceof LeaseLostError) {
+        if (activeTurnId) this.turnFailed(assignment, activeTurnId, "interrupted", error.message);
         return { runId: assignment.runId, workId: assignment.work.id, outcome: "lease_lost", turns: checkpoint.turn, reason: error.message };
       }
       const reason = error instanceof Error ? error.message : "Unknown worker runtime failure";
       try {
         await this.control.fail(assignment, `fail:${assignment.leaseId}`, reason);
       } catch (failure) {
-        if (failure instanceof LeaseLostError) return { runId: assignment.runId, workId: assignment.work.id, outcome: "lease_lost", turns: checkpoint.turn, reason };
+        if (failure instanceof LeaseLostError) {
+          if (activeTurnId) this.turnFailed(assignment, activeTurnId, "interrupted", failure.message);
+          return { runId: assignment.runId, workId: assignment.work.id, outcome: "lease_lost", turns: checkpoint.turn, reason };
+        }
         throw failure;
       }
+      if (activeTurnId) this.turnFailed(assignment, activeTurnId, "failed", reason);
       return { runId: assignment.runId, workId: assignment.work.id, outcome: "failed", turns: checkpoint.turn, reason };
     }
   }
@@ -288,17 +328,32 @@ export class LeaseWorkerRuntime {
     checkpoint: WorkerCheckpointDocument,
     turn: number,
     progressSummary: string,
+    turnId: string,
   ): Promise<WorkerAssignment> {
     checkpoint.turn = turn;
     checkpoint.leaseId = assignment.leaseId;
     checkpoint.savedAt = this.now();
     const payloadRef = await this.checkpoints.save(checkpoint);
-    return this.control.checkpoint(assignment, {
+    const updated = await this.control.checkpoint(assignment, {
       commandId: `checkpoint:${assignment.leaseId}:${turn}`,
       checkpointId: `${assignment.work.id}:${assignment.work.attempt}:${turn}`,
       progressSummary,
       payloadRef,
     });
+    this.turnProgress(updated, turnId, "checkpointed", progressSummary, [payloadRef]);
+    return updated;
+  }
+
+  private turnProgress(assignment: WorkerAssignment, turnId: string, phase: WorkerTurnPhase, summary: string, refs: string[]): void {
+    this.options.onLifecycleEvent?.({ type: "turn_progress", assignment, turnId, phase, summary, refs });
+  }
+
+  private turnCompleted(assignment: WorkerAssignment, turnId: string, outcome: WorkerTurnOutcome, checkpointRef: string | null): void {
+    this.options.onLifecycleEvent?.({ type: "turn_completed", assignment, turnId, status: "completed", outcome, checkpointRef, error: null });
+  }
+
+  private turnFailed(assignment: WorkerAssignment, turnId: string, status: "failed" | "interrupted", error: string): void {
+    this.options.onLifecycleEvent?.({ type: "turn_completed", assignment, turnId, status, outcome: null, checkpointRef: null, error });
   }
 
   private describeDecision(decision: Awaited<ReturnType<WorkerModel["decide"]>>): string {

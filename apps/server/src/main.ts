@@ -85,7 +85,7 @@ export async function buildServer(
     app.log.warn({ err }, "LLM provider not initialized from config; save settings before running Agent");
   }
   const provider = llmService.getProvider();
-  const executionNodeService = await startLocalExecutionNodeService(projectRoot);
+  const executionNodeService = await startLocalExecutionNodeService(projectRoot, getSqliteClient(db));
 
   registerRoutes(app, db, bus, provider, mcp, llmService, projectRoot);
   registerSecurityAgentFoundation(app, getSqliteClient(db), provider, projectRoot, () => llmService.hasProvider(), {
@@ -93,14 +93,15 @@ export async function buildServer(
     modelPolicies: llmService.getRolePolicies(),
     modelResourcePolicy: llmService.getResourcePolicy(),
     onAgentEvent: (event) => bus.emit({ type: "scenario_agent_event", event }),
-    executionNode: executionNodeService?.client,
+    executionNode: executionNodeService.client,
   });
 
   app.get("/api/health", async () => ({
     status: "ok",
     llmConfigured,
     mcpTools: mcp.listTools().length,
-    executionNodeReady: executionNodeService !== null,
+    executionNodeReady: true,
+    executionProcessReady: executionNodeService.processReady,
   }));
 
   app.get("/ws", { websocket: true }, (socket) => {
@@ -109,7 +110,7 @@ export async function buildServer(
   });
 
   app.addHook("onClose", async () => {
-    await Promise.all([mcp.closeAll(), executionNodeService?.close()]);
+    await Promise.all([mcp.closeAll(), executionNodeService.close()]);
   });
 
   return app;

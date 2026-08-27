@@ -97,6 +97,32 @@ export const trafficEntries = sqliteTable("traffic_entries", {
   createdAt: text("created_at").notNull(),
 });
 
+export const executionNetworkReceipts = sqliteTable("execution_network_receipts", {
+  id: text("id").primaryKey(),
+  nodeId: text("node_id").notNull(),
+  requestId: text("request_id").notNull(),
+  caseId: text("case_id").notNull(),
+  runId: text("run_id").notNull(),
+  workId: text("work_id").notNull(),
+  workerId: text("worker_id").notNull(),
+  scopeRef: text("scope_ref").notNull(),
+  leaseId: text("lease_id").notNull(),
+  idempotencyKey: text("idempotency_key").notNull().unique(),
+  authorizationRef: text("authorization_ref").notNull(),
+  authorizationAction: text("authorization_action").notNull(),
+  url: text("url").notNull(),
+  method: text("method").notNull(),
+  status: integer("status").notNull(),
+  requestBytes: integer("request_bytes").notNull(),
+  responseBytes: integer("response_bytes").notNull(),
+  responseBodyTruncated: integer("response_body_truncated", { mode: "boolean" }).notNull(),
+  permissionProfileFingerprint: text("permission_profile_fingerprint").notNull(),
+  redirectFollowed: integer("redirect_followed", { mode: "boolean" }).notNull(),
+  trafficId: text("traffic_id").notNull(),
+  startedAt: text("started_at").notNull(),
+  completedAt: text("completed_at").notNull(),
+});
+
 export const artifacts = sqliteTable("artifacts", {
   id: text("id").primaryKey(),
   caseId: text("case_id").notNull(),

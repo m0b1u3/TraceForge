@@ -1,4 +1,4 @@
-import type { ScenarioAgentEvent, ScenarioAgentItem, ScenarioAgentRole } from "@traceforge/shared";
+import type { AgentTurnOutcome, AgentTurnPhase, ScenarioAgentEvent, ScenarioAgentItem, ScenarioAgentRole } from "@traceforge/shared";
 
 export type AgentProtocolTurnStatus = "running" | "completed" | "failed" | "interrupted" | "cancelled";
 
@@ -17,7 +17,11 @@ export interface AgentProtocolTurnProjection {
   caseId: string;
   workId: string | null;
   role: ScenarioAgentRole;
+  agentInstanceId: string | null;
   status: AgentProtocolTurnStatus;
+  phase: AgentTurnPhase | null;
+  outcome: AgentTurnOutcome | null;
+  checkpointRef: string | null;
   sourceRunRevision: number | null;
   sourceGraphRevision: number | null;
   startedAt: string;
@@ -46,7 +50,11 @@ function createTurn(event: ScenarioAgentEvent): AgentProtocolTurnProjection {
     caseId: event.caseId,
     workId: event.workId,
     role: event.role,
+    agentInstanceId: event.method === "turn/started" ? event.params.agentInstanceId : null,
     status: "running",
+    phase: null,
+    outcome: null,
+    checkpointRef: null,
     sourceRunRevision: event.method === "turn/started" ? event.params.sourceRunRevision : null,
     sourceGraphRevision: event.method === "turn/started" ? event.params.sourceGraphRevision : null,
     startedAt: event.createdAt,
@@ -64,13 +72,19 @@ function applyEvent(projection: AgentProtocolProjection, event: ScenarioAgentEve
     turn = {
       ...turn,
       role: event.role,
+      agentInstanceId: event.params.agentInstanceId,
       workId: event.workId,
       sourceRunRevision: event.params.sourceRunRevision,
       sourceGraphRevision: event.params.sourceGraphRevision,
       startedAt: event.createdAt,
     };
+  } else if (event.method === "turn/progress") {
+    turn = { ...turn, phase: event.params.phase };
   } else if (event.method === "turn/completed") {
-    turn = { ...turn, status: event.params.status, completedAt: event.createdAt, error: event.params.error };
+    turn = {
+      ...turn, status: event.params.status, outcome: event.params.outcome,
+      checkpointRef: event.params.checkpointRef, completedAt: event.createdAt, error: event.params.error,
+    };
   } else {
     const item = event.params.item;
     const existing = turn.items[item.id];

@@ -6,6 +6,8 @@ import { createConnection, createServer, type AddressInfo, type Server, type Soc
 import type {
   AdoptProcessRequest,
   AdoptProcessResponse,
+  BrokeredHttpRequest,
+  BrokeredHttpResponse,
   CanonicalizePathRequest,
   ExecutionHandshakeRequest,
   ExecutionHandshakeResponse,
@@ -30,7 +32,7 @@ import type {
   WriteProcessInputRequest,
 } from "./protocol.js";
 
-export const EXECUTION_RPC_WIRE_VERSION = 1 as const;
+export const EXECUTION_RPC_WIRE_VERSION = 2 as const;
 
 export type ExecutionRpcMethod =
   | "node.handshake"
@@ -47,7 +49,8 @@ export type ExecutionRpcMethod =
   | "filesystem.readChunk"
   | "filesystem.writeChunk"
   | "filesystem.list"
-  | "filesystem.stat";
+  | "filesystem.stat"
+  | "network.httpRequest";
 
 export interface ExecutionRpcRequest {
   version: typeof EXECUTION_RPC_WIRE_VERSION;
@@ -156,6 +159,7 @@ export class ExecutionRpcDispatcher {
       case "filesystem.writeChunk": return this.node.writeFileChunk(params as WriteFileChunkRequest);
       case "filesystem.list": return this.node.listDirectory(params as ListDirectoryRequest);
       case "filesystem.stat": return this.node.statPath(params as StatPathRequest);
+      case "network.httpRequest": return this.node.requestHttp(params as BrokeredHttpRequest);
       default: throw new Error(`Unknown Execution RPC method ${String(method)}`);
     }
   }
@@ -329,6 +333,7 @@ export class ExecutionNodeRpcClient implements ExecutionNode {
   writeFileChunk(request: WriteFileChunkRequest): Promise<WriteFileChunkResponse> { return this.call("filesystem.writeChunk", request); }
   listDirectory(request: ListDirectoryRequest): Promise<ListDirectoryResponse> { return this.call("filesystem.list", request); }
   statPath(request: StatPathRequest): Promise<StatPathResponse> { return this.call("filesystem.stat", request); }
+  requestHttp(request: BrokeredHttpRequest): Promise<BrokeredHttpResponse> { return this.call("network.httpRequest", request); }
 
   disconnect(): void {
     const socket = this.socket;

@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { LlmProvider } from "@traceforge/llm";
 import type { ScenarioAgentEvent } from "@traceforge/shared";
 import type { ExecutionNode } from "@traceforge/execution-node";
+import type { ExecutionToolDiscoverySource } from "@traceforge/worker-runtime";
 import { registerEmbeddedWorkers } from "./embedded-workers.js";
 import { registerScenarioRoutes } from "./scenario-routes.js";
 import { ExecutionSessionGateway, loadOrCreateVaultKey, SqliteEncryptedSecretVault } from "./execution-session-gateway.js";
@@ -43,6 +44,7 @@ export interface SecurityAgentFoundationOptions {
   modelResourcePolicy?: ModelResourcePolicyOverrides;
   onAgentEvent?: (event: ScenarioAgentEvent) => void;
   executionNode?: ExecutionNode;
+  toolDiscoverySources?: readonly ExecutionToolDiscoverySource[];
 }
 
 /**
@@ -141,7 +143,7 @@ export function registerSecurityAgentFoundation(
   registerScenarioAgentEventRoutes(app, agentEvents);
   registerEmbeddedWorkers(
     app, sqlite, provider, projectRoot, providerReady, sessions, evidenceGraph, changes,
-    cognitiveSnapshots, modelRuntime, agentEvents, options.executionNode,
+    cognitiveSnapshots, modelRuntime, agentEvents, options.executionNode, options.toolDiscoverySources,
   );
   const publishControlEvents = (change: Extract<Parameters<Parameters<typeof changes.subscribe>[0]>[0], { kind: "run" }>) => {
     const run = scenarioRuntime.load(change.runId);
@@ -154,7 +156,7 @@ export function registerSecurityAgentFoundation(
         const turnId = `approval:${event.approval.id}`;
         agentEvents.append({
           method: "turn/started", runId: run.id, caseId: run.caseId, workId: event.workId, turnId, role: "system",
-          createdAt: event.at, params: { sourceRunRevision: revision, sourceGraphRevision: null },
+          createdAt: event.at, params: { agentInstanceId: "approval-gate", sourceRunRevision: revision, sourceGraphRevision: null },
         });
         agentEvents.append({
           method: "item/started", runId: run.id, caseId: run.caseId, workId: event.workId, turnId, role: "system",
@@ -174,7 +176,7 @@ export function registerSecurityAgentFoundation(
         });
         agentEvents.append({
           method: "turn/completed", runId: run.id, caseId: run.caseId, workId: event.workId, turnId, role: "system", createdAt: event.at,
-          params: { status: row.status === "cancelled" ? "cancelled" : "completed", error: null },
+          params: { status: row.status === "cancelled" ? "cancelled" : "completed", outcome: row.status === "approved" ? "continue" : "blocked", checkpointRef: null, error: null },
         });
         return;
       }
@@ -202,7 +204,7 @@ export function registerSecurityAgentFoundation(
           });
           agentEvents.append({
             method: "turn/completed", runId: run.id, caseId: run.caseId, workId: approval.work_id, turnId, role: "system", createdAt: event.at,
-            params: { status: "cancelled", error: null },
+            params: { status: "cancelled", outcome: "blocked", checkpointRef: null, error: null },
           });
         }
       }
@@ -224,7 +226,7 @@ export function registerSecurityAgentFoundation(
       const turnId = `control:${run.id}:${revision}`;
       agentEvents.append({
         method: "turn/started", runId: run.id, caseId: run.caseId, workId: control.workId, turnId, role: "system",
-        createdAt: eventAt, params: { sourceRunRevision: revision, sourceGraphRevision: null },
+        createdAt: eventAt, params: { agentInstanceId: "scenario-control-plane", sourceRunRevision: revision, sourceGraphRevision: null },
       });
       agentEvents.append({
         method: "item/completed", runId: run.id, caseId: run.caseId, workId: control.workId, turnId, role: "system", createdAt: eventAt,
@@ -232,7 +234,11 @@ export function registerSecurityAgentFoundation(
       });
       agentEvents.append({
         method: "turn/completed", runId: run.id, caseId: run.caseId, workId: control.workId, turnId, role: "system", createdAt: eventAt,
-        params: { status: event.type.includes("cancelled") ? "cancelled" : event.type === "work_failed" ? "failed" : "completed", error: event.type === "work_failed" ? event.error : null },
+        params: {
+          status: event.type.includes("cancelled") ? "cancelled" : event.type === "work_failed" ? "failed" : "completed",
+          outcome: event.type === "work_blocked" ? "blocked" : event.type === "work_completed" || event.type === "run_completed" ? "finish" : "continue",
+          checkpointRef: null, error: event.type === "work_failed" ? event.error : null,
+        },
       });
     });
   };

@@ -64,6 +64,19 @@ export function createDb(path: string) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_traffic_case ON traffic_entries(case_id);
+    CREATE TABLE IF NOT EXISTS execution_network_receipts (
+      id TEXT PRIMARY KEY, node_id TEXT NOT NULL, request_id TEXT NOT NULL,
+      case_id TEXT NOT NULL, run_id TEXT NOT NULL, work_id TEXT NOT NULL, worker_id TEXT NOT NULL,
+      scope_ref TEXT NOT NULL, lease_id TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
+      authorization_ref TEXT NOT NULL, authorization_action TEXT NOT NULL,
+      url TEXT NOT NULL, method TEXT NOT NULL, status INTEGER NOT NULL,
+      request_bytes INTEGER NOT NULL, response_bytes INTEGER NOT NULL,
+      response_body_truncated INTEGER NOT NULL, permission_profile_fingerprint TEXT NOT NULL,
+      redirect_followed INTEGER NOT NULL, traffic_id TEXT NOT NULL,
+      started_at TEXT NOT NULL, completed_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_execution_network_receipts_run
+      ON execution_network_receipts(case_id, run_id, completed_at);
     CREATE TABLE IF NOT EXISTS artifacts (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, source_url TEXT,
       filename TEXT NOT NULL, relative_path TEXT NOT NULL, byte_size INTEGER NOT NULL,

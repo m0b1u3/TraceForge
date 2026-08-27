@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
 import type { LlmProvider } from "@traceforge/llm";
 import type { WorkerDecision, WorkerModel, WorkerModelRequest } from "@traceforge/worker-runtime";
 import { CognitiveContextDistiller } from "./cognitive-context-distiller.js";
@@ -60,7 +59,6 @@ export class StructuredWorkerModel implements WorkerModel {
     private readonly provider: LlmProvider,
     private readonly distiller = new CognitiveContextDistiller(),
     private readonly snapshots?: SqliteCognitiveSnapshotStore,
-    private readonly createId: () => string = randomUUID,
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly modelRuntime?: ModelExecutionRuntime,
   ) {}
@@ -81,9 +79,10 @@ export class StructuredWorkerModel implements WorkerModel {
       }),
       schema: jsonSchema,
     };
-    const snapshotId = this.createId();
+    const snapshotId = request.turnId;
     this.snapshots?.prepare({
       id: snapshotId,
+      agentInstanceId: request.worker.id,
       consumer: "worker",
       runId: request.assignment.runId,
       caseId: request.assignment.runContext.caseId,
@@ -107,8 +106,7 @@ export class StructuredWorkerModel implements WorkerModel {
       if (parsed.type === "invoke_tool" && !("input" in parsed.invocation)) {
         throw new Error("Worker model tool invocation omitted input");
       }
-      this.snapshots?.complete(snapshotId, parsed, this.now());
-      Object.defineProperty(parsed, "protocolTurnId", { value: snapshotId, enumerable: false });
+      this.snapshots?.complete(snapshotId, parsed, this.now(), { deferTurnCompletion: true, decisionKind: parsed.type });
       return parsed as WorkerDecision;
     } catch (error) {
       this.snapshots?.fail(snapshotId, error, this.now());

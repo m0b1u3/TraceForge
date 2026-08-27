@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
+import type { BrokeredHttpRequest, BrokeredHttpResponse, ExecutionNode } from "@traceforge/execution-node";
+import { satisfiesPermissionRequirements } from "@traceforge/orchestration-core";
 import { createDb, getSqliteClient } from "./db/client.js";
 import {
   ScenarioAuthorizationGuard,
@@ -8,7 +10,6 @@ import {
   ScenarioScopeSnapshotTool,
   ScenarioTrafficSnapshotTool,
   type ScenarioBrowserTransport,
-  type ScenarioHttpTransport,
 } from "./scenario-web-tools.js";
 import { ExecutionSessionGateway, SqliteEncryptedSecretVault } from "./execution-session-gateway.js";
 
@@ -16,7 +17,39 @@ const databases: Database.Database[] = [];
 const context = {
   workerId: "worker_1", runId: "run_1", workId: "work_1", caseId: "case_1", scopeRef: "scope_1",
   leaseId: "lease_1", leaseExpiresAt: "2026-08-24T09:30:00.000Z", idempotencyKey: "effect:call_1",
+  effectivePermissions: {
+    version: 1 as const,
+    platform: (process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : "linux") as "windows" | "linux" | "darwin",
+    filesystem: { read: [], write: [], deny: [] },
+    network: "brokered" as const,
+    process: { access: "deny" as const, interactive: false, background: false },
+    secrets: "handles_only" as const,
+    sources: ["test"],
+  },
 };
+
+function brokerResponse(request: BrokeredHttpRequest): BrokeredHttpResponse {
+  return {
+    receipt: {
+      id: "netreceipt_1", nodeId: "node_1", requestId: request.requestId,
+      attribution: request.attribution, authorizationRef: "scope_1",
+      authorizationAction: request.authorizationAction, url: request.url, method: request.method,
+      status: 302, requestBytes: 0, responseBytes: 8, responseBodyTruncated: false,
+      permissionProfileFingerprint: "0".repeat(64), redirectFollowed: false,
+      startedAt: "2026-08-24T09:01:00.000Z", completedAt: "2026-08-24T09:01:00.000Z",
+    },
+    status: 302,
+    headers: [
+      { name: "location", value: "https://outside.example/" },
+      { name: "content-type", value: "text/plain" },
+      { name: "set-cookie", value: "rotated=secret-cookie" },
+    ],
+    bodyBase64: Buffer.from("redirect").toString("base64"),
+    responseBytes: 8,
+    bodyTruncated: false,
+    replayed: false,
+  };
+}
 
 function setup(actions = ["scope.read", "web.traffic.read", "web.request.replay", "web.browser.navigate"]) {
   const sqlite = getSqliteClient(createDb(":memory:"));
@@ -54,6 +87,15 @@ afterEach(() => {
 });
 
 describe("scenario Web execution tools", () => {
+  it("exposes brokered HTTP but keeps the direct Browser transport outside the brokered-only profile", () => {
+    const { sqlite, guard, sessions } = setup();
+    const executionNode = { requestHttp: vi.fn() } as unknown as ExecutionNode;
+    const http = new ScenarioHttpRequestTool(sqlite, guard, sessions, executionNode);
+    const browser = new ScenarioBrowserObserveTool(sqlite, guard, sessions);
+    expect(satisfiesPermissionRequirements(context.effectivePermissions, http.permissionRequirements)).toBe(true);
+    expect(satisfiesPermissionRequirements(context.effectivePermissions, browser.permissionRequirements)).toBe(false);
+  });
+
   it("executes an in-scope HTTP request, does not follow redirects, and records an attributed receipt", async () => {
     const { sqlite, guard, sessions } = setup();
     const identity = sessions.createIdentity({
@@ -61,23 +103,23 @@ describe("scenario Web execution tools", () => {
       secret: { headers: { Authorization: "Bearer secret" }, cookies: [] },
     });
     const session = sessions.openSession({ caseId: "case_1", runId: "run_1", scopeRef: "scope_1", identityId: identity.id });
-    const transport = vi.fn<ScenarioHttpTransport>(async (request) => {
+    const requestHttp = vi.fn(async (request: BrokeredHttpRequest) => {
       expect(request.url).toBe("https://authorized.example/api");
-      return {
-        status: 302,
-        headers: { location: "https://outside.example/", "content-type": "text/plain", "set-cookie": "rotated=secret-cookie" },
-        body: "redirect",
-        cookies: [{ name: "rotated", value: "secret-cookie", domain: "authorized.example" }],
-      };
+      expect(request.permissions.network).toBe("brokered");
+      expect(request.headers.Authorization).toBe("Bearer secret");
+      return brokerResponse(request);
     });
-    const result = await new ScenarioHttpRequestTool(sqlite, guard, sessions, transport, () => "2026-08-24T09:01:00.000Z")
+    const executionNode = { requestHttp } as unknown as ExecutionNode;
+    const result = await new ScenarioHttpRequestTool(sqlite, guard, sessions, executionNode, () => "2026-08-24T09:01:00.000Z")
       .execute({ sessionId: session.id, url: "https://authorized.example/api", headers: { Accept: "text/plain" } }, context);
 
     expect(result.status).toBe("succeeded");
     expect(result.summary).toContain("status 302");
     expect(result.refs[0]).toMatch(/^traffic:/);
+    const trafficId = result.refs[0]!.slice("traffic:".length);
     expect(result.raw).not.toContain("secret-cookie");
-    expect(transport).toHaveBeenCalledOnce();
+    expect(requestHttp).toHaveBeenCalledOnce();
+    expect(result.refs).toContain("network-receipt:netreceipt_1");
     const row = sqlite.prepare("SELECT run_id, request_headers_json, response_status FROM traffic_entries").get() as {
       run_id: string; request_headers_json: string; response_status: number;
     };
@@ -88,17 +130,25 @@ describe("scenario Web execution tools", () => {
     expect(material.cookies).toContainEqual(expect.objectContaining({ name: "rotated", value: "secret-cookie" }));
     const responseHeaders = sqlite.prepare("SELECT response_headers_json FROM traffic_entries").pluck().get() as string;
     expect(JSON.parse(responseHeaders)["set-cookie"]).toBe("[REDACTED]");
+    expect(sqlite.prepare(`
+      SELECT case_id, run_id, work_id, worker_id, authorization_ref, traffic_id, redirect_followed
+      FROM execution_network_receipts WHERE id = 'netreceipt_1'
+    `).get()).toEqual({
+      case_id: "case_1", run_id: "run_1", work_id: "work_1", worker_id: "worker_1",
+      authorization_ref: "scope_1", traffic_id: trafficId,
+      redirect_followed: 0,
+    });
   });
 
   it("rejects out-of-scope and revoked execution before touching the transport", async () => {
     const { sqlite, guard, sessions } = setup();
     const session = sessions.openSession({ caseId: "case_1", runId: "run_1", scopeRef: "scope_1" });
-    const transport = vi.fn<ScenarioHttpTransport>();
-    const tool = new ScenarioHttpRequestTool(sqlite, guard, sessions, transport);
+    const requestHttp = vi.fn();
+    const tool = new ScenarioHttpRequestTool(sqlite, guard, sessions, { requestHttp } as unknown as ExecutionNode);
     await expect(tool.execute({ sessionId: session.id, url: "https://outside.example/" }, context)).rejects.toThrow(/outside authorization/);
     sqlite.prepare("UPDATE scenario_authorizations SET status = 'revoked' WHERE id = 'scope_1'").run();
     await expect(tool.execute({ sessionId: session.id, url: "https://authorized.example/" }, context)).rejects.toThrow(/expired or revoked/);
-    expect(transport).not.toHaveBeenCalled();
+    expect(requestHttp).not.toHaveBeenCalled();
   });
 
   it("exposes only authorization-bound scope and Case traffic", async () => {

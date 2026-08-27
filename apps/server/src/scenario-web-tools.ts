@@ -5,7 +5,8 @@ import { z } from "zod";
 import { checkScope } from "@traceforge/tool-resolver";
 import type { ScopeRule } from "@traceforge/shared";
 import { WEB_BLACKBOX_ACTIONS, type ScenarioKind } from "@traceforge/orchestration-core";
-import type { ExecutionToolAdapter, ToolExecutionResult } from "@traceforge/worker-runtime";
+import type { ExecutionNode } from "@traceforge/execution-node";
+import type { ExecutionToolAdapter, ToolExecutionContext, ToolExecutionResult } from "@traceforge/worker-runtime";
 import {
   type ExecutionCookie,
   type ExecutionSessionGateway,
@@ -79,46 +80,7 @@ function scopeRules(authorization: ActiveScenarioAuthorization): ScopeRule[] {
   return [{ caseId: authorization.caseId, allowHosts, denyHosts: [] }];
 }
 
-interface ToolContext {
-  workerId: string;
-  workId: string;
-  runId: string;
-  caseId: string;
-  scopeRef: string;
-  leaseId: string;
-  leaseExpiresAt: string;
-}
-
-interface HttpResponseSnapshot {
-  status: number;
-  headers: Record<string, string>;
-  body: string;
-  cookies?: ExecutionCookie[];
-}
-
-export type ScenarioHttpTransport = (request: {
-  url: string;
-  method: string;
-  headers: Record<string, string>;
-  body?: string;
-  signal: AbortSignal;
-}) => Promise<HttpResponseSnapshot>;
-
-const defaultHttpTransport: ScenarioHttpTransport = async (request) => {
-  const response = await fetch(request.url, {
-    method: request.method,
-    headers: request.headers,
-    body: request.body,
-    redirect: "manual",
-    signal: request.signal,
-  });
-  const headers: Record<string, string> = {};
-  response.headers.forEach((value, key) => { headers[key] = value; });
-  const body = (await response.text()).slice(0, 256_000);
-  const values = (response.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.()
-    ?? (response.headers.get("set-cookie") ? [response.headers.get("set-cookie")!] : []);
-  return { status: response.status, headers, body, cookies: values.flatMap((value) => parseSetCookie(value, new URL(request.url))) };
-};
+type ToolContext = ToolExecutionContext;
 
 const httpInput = z.object({
   sessionId: z.string().min(1),
@@ -130,6 +92,9 @@ const httpInput = z.object({
 
 export class ScenarioHttpRequestTool implements ExecutionToolAdapter {
   readonly name = "web.http.request";
+  readonly source = "traceforge.builtin";
+  readonly version = "1.0.0";
+  readonly priority = 100;
   readonly description = "Send one bounded HTTP request to an explicitly authorized target. Redirects are returned but never followed implicitly.";
   readonly inputSchema = {
     type: "object",
@@ -143,7 +108,8 @@ export class ScenarioHttpRequestTool implements ExecutionToolAdapter {
     required: ["sessionId", "url"],
     additionalProperties: false,
   };
-  readonly requiredCapabilities = [WEB_BLACKBOX_ACTIONS.requestReplay];
+  readonly providedCapabilities = [WEB_BLACKBOX_ACTIONS.requestReplay];
+  readonly dependencyCapabilities = ["execution.session.open"];
   readonly permissionRequirements = { network: "brokered" as const };
   readonly risk = "bounded_write" as const;
   readonly timeoutMs = 25_000;
@@ -152,48 +118,114 @@ export class ScenarioHttpRequestTool implements ExecutionToolAdapter {
     private readonly sqlite: Database.Database,
     private readonly guard: ScenarioAuthorizationGuard,
     private readonly sessions: ExecutionSessionGateway,
-    private readonly transport: ScenarioHttpTransport = defaultHttpTransport,
+    private readonly executionNode: ExecutionNode,
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
-  async execute(input: unknown, context: ToolContext): Promise<ToolExecutionResult> {
+  async execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
     const request = httpInput.parse(input);
     const { url } = this.guard.requireUrl(context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.requestReplay, request.url);
     const material = this.sessions.use(request.sessionId, sessionContext(context));
     const headers = { ...request.headers, ...material.headers };
     const cookie = cookieHeader(material.cookies, url);
     if (cookie) headers.cookie = cookie;
-    const response = await this.transport({
+    const response = await this.executionNode.requestHttp({
+      requestId: context.idempotencyKey,
+      attribution: {
+        caseId: context.caseId,
+        runId: context.runId,
+        workId: context.workId,
+        workerId: context.workerId,
+        scopeRef: context.scopeRef,
+        leaseId: context.leaseId,
+        leaseExpiresAt: context.leaseExpiresAt,
+        actionId: context.idempotencyKey,
+        idempotencyKey: context.idempotencyKey,
+      },
+      permissions: context.effectivePermissions,
+      authorizationAction: WEB_BLACKBOX_ACTIONS.requestReplay,
       url: url.href,
       method: request.method,
       headers,
-      ...(request.body === undefined ? {} : { body: request.body }),
-      signal: AbortSignal.timeout(20_000),
+      ...(request.body === undefined ? {} : { bodyBase64: Buffer.from(request.body).toString("base64") }),
+      timeoutMs: 20_000,
+      responseLimitBytes: 256_000,
     });
-    if (response.cookies?.length) this.sessions.updateCookies(request.sessionId, response.cookies);
+    const responseHeaders: Record<string, string> = {};
+    for (const header of response.headers) responseHeaders[header.name] = header.value;
+    const responseBody = Buffer.from(response.bodyBase64, "base64").toString("utf8");
+    const cookies = response.headers
+      .filter((header) => header.name.toLowerCase() === "set-cookie")
+      .flatMap((header) => parseSetCookie(header.value, url));
+    if (response.receipt.attribution.caseId !== context.caseId
+      || response.receipt.attribution.runId !== context.runId
+      || response.receipt.attribution.workId !== context.workId
+      || response.receipt.attribution.workerId !== context.workerId
+      || response.receipt.attribution.scopeRef !== context.scopeRef
+      || response.receipt.authorizationRef !== context.scopeRef
+      || response.receipt.url !== url.href
+      || response.receipt.method !== request.method
+      || response.receipt.redirectFollowed !== false) {
+      throw new Error("Execution Node returned a network receipt that does not match the assigned operation");
+    }
     const trafficId = `traf_${randomUUID()}`;
     const createdAt = this.now();
-    this.sqlite.prepare(`
-      INSERT INTO traffic_entries
-        (id, case_id, run_id, identity_id, identity_version, attribution_source, parent_traffic_id,
-         url, method, request_headers_json, request_body, response_status, response_headers_json,
-         response_size, content_type, response_body, created_at)
-      VALUES (?, ?, ?, NULL, NULL, 'agent', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      trafficId,
-      context.caseId,
-      context.runId,
-      url.href,
-      request.method,
-      JSON.stringify(redactHeaders(headers)),
-      request.body ?? null,
-      response.status,
-      JSON.stringify(redactHeaders(response.headers)),
-      Buffer.byteLength(response.body),
-      response.headers["content-type"] ?? null,
-      safeBody(response.body, response.headers["content-type"]),
-      createdAt,
-    );
+    this.sqlite.transaction(() => {
+      this.sqlite.prepare(`
+        INSERT INTO traffic_entries
+          (id, case_id, run_id, identity_id, identity_version, attribution_source, parent_traffic_id,
+           url, method, request_headers_json, request_body, response_status, response_headers_json,
+           response_size, content_type, response_body, created_at)
+        VALUES (?, ?, ?, NULL, NULL, 'agent', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        trafficId,
+        context.caseId,
+        context.runId,
+        url.href,
+        request.method,
+        JSON.stringify(redactHeaders(headers)),
+        request.body ?? null,
+        response.status,
+        JSON.stringify(redactHeaders(responseHeaders)),
+        response.responseBytes,
+        responseHeaders["content-type"] ?? null,
+        safeBody(responseBody, responseHeaders["content-type"]),
+        createdAt,
+      );
+      this.sqlite.prepare(`
+        INSERT INTO execution_network_receipts
+          (id, node_id, request_id, case_id, run_id, work_id, worker_id, scope_ref, lease_id,
+           idempotency_key, authorization_ref, authorization_action, url, method, status,
+           request_bytes, response_bytes, response_body_truncated, permission_profile_fingerprint,
+           redirect_followed, traffic_id, started_at, completed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        response.receipt.id,
+        response.receipt.nodeId,
+        response.receipt.requestId,
+        context.caseId,
+        context.runId,
+        context.workId,
+        context.workerId,
+        context.scopeRef,
+        context.leaseId,
+        context.idempotencyKey,
+        response.receipt.authorizationRef,
+        response.receipt.authorizationAction,
+        response.receipt.url,
+        response.receipt.method,
+        response.receipt.status,
+        response.receipt.requestBytes,
+        response.receipt.responseBytes,
+        response.receipt.responseBodyTruncated ? 1 : 0,
+        response.receipt.permissionProfileFingerprint,
+        0,
+        trafficId,
+        response.receipt.startedAt,
+        response.receipt.completedAt,
+      );
+    })();
+    if (cookies.length) this.sessions.updateCookies(request.sessionId, cookies);
     return {
       status: "succeeded",
       summary: `HTTP ${request.method} completed with status ${response.status}; response was recorded as ${trafficId}`,
@@ -202,13 +234,15 @@ export class ScenarioHttpRequestTool implements ExecutionToolAdapter {
         url: url.href,
         method: request.method,
         status: response.status,
-        headers: redactHeaders(response.headers),
-        bodyPreview: response.body.slice(0, 32_000),
+        headers: redactHeaders(responseHeaders),
+        bodyPreview: responseBody.slice(0, 32_000),
+        bodyTruncated: response.bodyTruncated,
+        networkReceiptId: response.receipt.id,
         redirectFollowed: false,
       }),
-      refs: [`traffic:${trafficId}`],
+      refs: [`traffic:${trafficId}`, `network-receipt:${response.receipt.id}`],
       retryable: response.status >= 500,
-      metadata: { status: response.status, trafficId },
+      metadata: { status: response.status, trafficId, networkReceiptId: response.receipt.id },
     };
   }
 }
@@ -217,13 +251,17 @@ const trafficInput = z.object({ limit: z.number().int().min(1).max(200).default(
 
 export class ScenarioTrafficSnapshotTool implements ExecutionToolAdapter {
   readonly name = "web.traffic.snapshot";
+  readonly source = "traceforge.builtin";
+  readonly version = "1.0.0";
+  readonly priority = 100;
   readonly description = "Read a bounded list of attributed HTTP observations recorded for the assigned Case.";
   readonly inputSchema = {
     type: "object",
     properties: { limit: { type: "integer", minimum: 1, maximum: 200, default: 50 } },
     additionalProperties: false,
   };
-  readonly requiredCapabilities = [WEB_BLACKBOX_ACTIONS.trafficRead];
+  readonly providedCapabilities = [WEB_BLACKBOX_ACTIONS.trafficRead];
+  readonly dependencyCapabilities: string[] = [];
   readonly permissionRequirements = {};
   readonly risk = "read_only" as const;
   readonly timeoutMs = 5_000;
@@ -249,9 +287,13 @@ export class ScenarioTrafficSnapshotTool implements ExecutionToolAdapter {
 
 export class ScenarioScopeSnapshotTool implements ExecutionToolAdapter {
   readonly name = "scope.authorization.snapshot";
+  readonly source = "traceforge.builtin";
+  readonly version = "1.0.0";
+  readonly priority = 100;
   readonly description = "Read the exact active authorization bound to the assigned Run.";
   readonly inputSchema = { type: "object", additionalProperties: false };
-  readonly requiredCapabilities = [WEB_BLACKBOX_ACTIONS.scopeRead];
+  readonly providedCapabilities = [WEB_BLACKBOX_ACTIONS.scopeRead];
+  readonly dependencyCapabilities: string[] = [];
   readonly permissionRequirements = {};
   readonly risk = "read_only" as const;
   readonly timeoutMs = 5_000;
@@ -330,6 +372,9 @@ const defaultBrowserTransport: ScenarioBrowserTransport = async (url, allowed, m
 
 export class ScenarioBrowserObserveTool implements ExecutionToolAdapter {
   readonly name = "web.browser.observe";
+  readonly source = "traceforge.builtin";
+  readonly version = "1.0.0";
+  readonly priority = 100;
   readonly description = "Open one authorized page in an isolated headless browser and return bounded rendered text and in-scope links.";
   readonly inputSchema = {
     type: "object",
@@ -337,8 +382,9 @@ export class ScenarioBrowserObserveTool implements ExecutionToolAdapter {
     required: ["sessionId", "url"],
     additionalProperties: false,
   };
-  readonly requiredCapabilities = [WEB_BLACKBOX_ACTIONS.browserNavigate];
-  readonly permissionRequirements = { network: "brokered" as const };
+  readonly providedCapabilities = [WEB_BLACKBOX_ACTIONS.browserNavigate];
+  readonly dependencyCapabilities = ["execution.session.open"];
+  readonly permissionRequirements = { network: "direct" as const };
   readonly risk = "bounded_write" as const;
   readonly timeoutMs = 30_000;
 
@@ -390,13 +436,17 @@ export class ScenarioBrowserObserveTool implements ExecutionToolAdapter {
 
 export class ScenarioSessionOpenTool implements ExecutionToolAdapter {
   readonly name = "execution.session.open";
+  readonly source = "traceforge.builtin";
+  readonly version = "1.0.0";
+  readonly priority = 100;
   readonly description = "Open a Run-bound execution Session using an operator-provisioned identity reference; secret material is never returned.";
   readonly inputSchema = {
     type: "object",
     properties: { identityId: { type: "string" }, ttlMinutes: { type: "integer", minimum: 1, maximum: 1_440 } },
     additionalProperties: false,
   };
-  readonly requiredCapabilities = [WEB_BLACKBOX_ACTIONS.scopeRead];
+  readonly providedCapabilities = ["execution.session.open"];
+  readonly dependencyCapabilities: string[] = [];
   readonly permissionRequirements = { secrets: "handles_only" as const };
   readonly risk = "bounded_write" as const;
   readonly timeoutMs = 5_000;

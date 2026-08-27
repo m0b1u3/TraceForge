@@ -97,7 +97,7 @@ Before a Provider attempt starts, it must acquire a permit from the model admiss
 
 ## Unified Agent event protocol
 
-Scenario Agents publish a versioned, durable protocol stream using the same lifecycle shape for replay and live WebSocket delivery. A cognitive evaluation is a `turn`; model admission, Provider execution, Worker tool execution, approval and control-plane transitions are typed `item`s. Item progress follows `item/started` → optional `item/updated` → `item/completed`, while every cognitive turn ends with `turn/completed`. The completed event is the protocol terminal state and carries only structured metadata, bounded summaries and evidence references—never raw credentials, private reasoning or unrestricted tool output.
+Scenario Agents publish the version 2 durable protocol stream using the same lifecycle shape for replay and live WebSocket delivery. A cognitive evaluation is a `turn`; model admission, Provider execution, Worker tool execution, approval and control-plane transitions are typed `item`s. A Turn is owned by the runtime, names its `agentInstanceId`, and advances through explicit `turn/progress` phases: `prepared` → `contextBuilt` → `modelInvoked` → `decisionProduced`, followed when applicable by `actionRequested` → `toolExecuted` → `observationApplied` → `checkpointed`. Item progress follows `item/started` → optional `item/updated` → `item/completed`. The terminal `turn/completed` records the outcome (`continue`, `finish`, `waitingApproval`, or `blocked`) and checkpoint reference. Events carry only structured metadata, bounded summaries and evidence references—never raw credentials, private reasoning or unrestricted tool output. Protocol v1 Turn objects are intentionally unsupported.
 
 The design follows the Codex app-server principle that clients consume typed Turn and Item lifecycle notifications instead of reconstructing state from console logs. TraceForge adds `runId`, `caseId`, `workId`, role and durable per-Run sequence numbers. SQLite remains the source of truth; startup reconciliation backfills terminal events for model calls, admissions and cognitive snapshots interrupted between a projection commit and event publication.
 
@@ -111,6 +111,20 @@ The primary provider is route `primary`. Additional OpenAI-compatible or Anthrop
 - `GET /api/scenarios/runs/:runId/model-calls` returns every route attempt, status, snapshot reference, usage and failure.
 - `GET /api/scenarios/runs/:runId/model-usage?role=worker` returns committed and conservatively accounted Run usage.
 
+## Security Tool Runtime V2
+
+Worker tools are registered as versioned capability providers rather than assembled into a fixed model-visible array. Each provider declares its discovery source, supplied capabilities, transitive capability dependencies, priority, permission requirements, risk and timeout. The active Work Package supplies capability demand; the gateway intersects that demand with Worker capabilities and effective authorization, then resolves the smallest deterministic provider set. Only that set's schemas is included in the Worker model request. The request also records requested capabilities, unresolved dependencies and the registry revision so a decision can be traced to the exact runtime catalog.
+
+Provider discovery is synchronized per source. Newly discovered providers become active, disappeared providers enter `draining`, and a changed version retires and replaces the prior provider. Health is tracked independently as `healthy`, `degraded` or `unavailable`; retryable execution failures degrade a provider and remove it after the configured threshold, allowing an eligible fallback to be selected without changing Planner logic. Retired providers cannot be silently reactivated. These lifecycle rules are generic and do not encode targets, vulnerability classes or scenario-specific attack logic.
+
+The standalone composition root owns one shared discovery runtime for all elastic Workers. Built-in tools and explicitly injected external discovery sources use the same contract. Due sources are refreshed before a Work receives its model-visible catalog, concurrent refreshes for one source are coalesced, and a failed refresh preserves the last successfully validated catalog while marking the source degraded. A complete discovery result is validated before any provider lifecycle is changed.
+
+`GET /api/security-tools/runtime` returns the registry revision, aggregate runtime status, source refresh state and provider lifecycle/health metadata. It never returns executable implementations, credentials or unrestricted tool output. External sources can be installed only through the trusted standalone composition root; discovering a tool does not bypass Worker capability matching, Scenario permissions, risk policy or approval gates.
+
+External process providers use Tool Provider RPC version 1 over private length-prefixed stdio. The host performs an explicit protocol handshake, bounds frame size, request time, stderr retention and in-flight calls, launches without a shell, validates every discovered tool and result, and restarts the process on the next request after a crash. Provider execution errors explicitly marked retryable feed the shared provider-health circuit. Runtime diagnostics expose only process state, generation, negotiated provider identity and sandbox attestation.
+
+Process separation is not treated as a security boundary. The local process client rejects an unsandboxed provider unless development mode is explicitly enabled. Production providers must be launched with a verifiable sandbox attestation; their declared tools still receive only the effective Work context selected by the Tool Gateway. Application shutdown closes all provider processes. A provider version change is applied through the registry's retire-and-replace transition, enabling controlled hot upgrades without retaining the old executable implementation in a model catalog.
+
 ## Web black-box Worker tools
 
 The standalone Worker runtime currently exposes these foundation-native tools; none delegates execution to the retired chat-oriented AgentRuntime:
@@ -120,8 +134,8 @@ The standalone Worker runtime currently exposes these foundation-native tools; n
 - `knowledge.graph.mutate` appends one generic node, relation, lifecycle transition, or invalidation. Evidence nodes may reference only durable tool receipts, traffic, or artifacts, and Case/Run ownership is injected by the Worker gateway.
 - `web.traffic.snapshot` reads bounded, Case-attributed traffic metadata.
 - `execution.session.open` creates a Run- and authorization-bound Session using an operator-provisioned identity reference.
-- `web.http.request` uses a Session to send one scope-checked request, refuses implicit redirects, redacts credential headers from its traffic record, updates encrypted Cookie state, and returns a traceable traffic reference.
-- `web.browser.observe` uses the same Session Cookie and identity state in an isolated headless browser and returns only bounded rendered content and in-scope links.
+- `web.http.request` uses a Session and the Execution Node Network Broker to send one independently re-authorized request, refuses implicit redirects, redacts credential headers, atomically persists its Traffic and Network Receipt, and updates encrypted Cookie state.
+- `web.browser.observe` has an isolated headless-browser adapter, but the brokered-only Web profile does not expose it until browser traffic has an enforceable proxy backend. It cannot fall back to direct networking.
 
 HTTP and Browser actions are classified as `bounded_write` because they interact with the authorized target even when the protocol method is observational. Tool exceptions are converted into durable failed observations and returned to the Worker model; they do not crash the Work executor. Privileged and destructive tools remain subject to the native checkpoint-and-approval protocol.
 

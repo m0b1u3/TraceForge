@@ -30,6 +30,7 @@ export interface DistilledWorkerContext {
   work: WorkerModelRequest["assignment"]["work"];
   worker: Pick<WorkerModelRequest["worker"], "id" | "roles" | "capabilities">;
   tools: WorkerModelRequest["tools"];
+  toolResolution: WorkerModelRequest["toolResolution"];
   transcript: WorkerTranscriptEntry[];
   steering: string[];
   manifest: { omittedTranscriptEntries: number; omittedTranscriptCharacters: number };
@@ -144,6 +145,7 @@ export class CognitiveContextDistiller {
       work: request.assignment.work,
       worker: { id: request.worker.id, roles: request.worker.roles, capabilities: request.worker.capabilities },
       tools: request.tools,
+      toolResolution: request.toolResolution,
       transcript: selected,
       steering: [...new Set(request.steering)].slice(-maximumTranscriptEntries),
       manifest: {

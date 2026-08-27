@@ -85,18 +85,21 @@ class SequenceModel implements WorkerModel {
 }
 
 const continueObserver: WorkerObserver = { async review() { return { action: "continue" }; } };
+const resolvedCatalog = (tools: Awaited<ReturnType<ExecutionToolGateway["catalog"]>>["tools"]) => ({
+  tools, requestedCapabilities: [], unresolvedCapabilities: [], registryRevision: 1,
+});
 
 describe("LeaseWorkerRuntime", () => {
   it("executes a tool, checkpoints the distilled result, and completes work", async () => {
     const control = new FakeControl();
     const checkpoints = new MemoryCheckpoints();
     const gateway: ExecutionToolGateway = {
-      async catalog() { return [{ name: "read", description: "Read data", inputSchema: {}, requiredCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000 }]; },
+      async catalog() { return resolvedCatalog([{ name: "read", source: "test", version: "1.0.0", priority: 100, description: "Read data", inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000 }]); },
       async execute() { return { status: "succeeded", summary: "Observation captured", raw: "raw observation", refs: ["evidence_1"], retryable: false }; },
     };
     const lifecycle: WorkerLifecycleEvent[] = [];
     const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
-      { type: "invoke_tool", invocation: { id: "call_1", tool: "read", input: {}, rationale: "Collect evidence" }, protocolTurnId: "turn_1" },
+      { type: "invoke_tool", invocation: { id: "call_1", tool: "read", input: {}, rationale: "Collect evidence" } },
       { type: "complete", summary: "Work complete", outputs: [{ id: "output_1", kind: "evidence", summary: "Evidence", refs: ["evidence_1"] }] },
     ]), gateway, continueObserver, checkpoints, new BoundedOutputDistiller(), { onLifecycleEvent: (event) => lifecycle.push(event) }, () => "2026-08-24T08:00:10.000Z");
 
@@ -106,7 +109,13 @@ describe("LeaseWorkerRuntime", () => {
     expect(control.completed?.outputs[0].refs).toEqual(["evidence_1"]);
     expect(checkpoints.document?.completedInvocationIds).toEqual(["call_1"]);
     expect(checkpoints.document?.transcript.some((entry) => entry.summary.includes("raw-sha256="))).toBe(true);
-    expect(lifecycle.map((event) => [event.type, event.turnId])).toEqual([["tool_started", "turn_1"], ["tool_completed", "turn_1"]]);
+    const turnId = "worker:worker_1:work:work_1:attempt:1:turn:1";
+    expect(lifecycle.filter((event) => event.type === "tool_started" || event.type === "tool_completed")
+      .map((event) => [event.type, event.turnId])).toEqual([["tool_started", turnId], ["tool_completed", turnId]]);
+    expect(lifecycle.filter((event) => event.type === "turn_progress").map((event) => event.phase)).toEqual([
+      "actionRequested", "toolExecuted", "observationApplied", "checkpointed",
+    ]);
+    expect(lifecycle.find((event) => event.type === "turn_completed")).toMatchObject({ outcome: "continue" });
   });
 
   it("refreshes independent Run Observer directives into Worker steering before every decision", async () => {
@@ -126,7 +135,7 @@ describe("LeaseWorkerRuntime", () => {
     };
     const runtime = new LeaseWorkerRuntime(
       worker, control, model,
-      { async catalog() { return []; }, async execute() { throw new Error("not used"); } },
+      { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("not used"); } },
       continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(), {}, () => "2026-08-24T08:00:10.000Z",
     );
     await runtime.execute(current);
@@ -137,7 +146,7 @@ describe("LeaseWorkerRuntime", () => {
     let executions = 0;
     const control = new FakeControl();
     const gateway: ExecutionToolGateway = {
-      async catalog() { return [{ name: "read", description: "Read", inputSchema: {}, requiredCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000 }]; },
+      async catalog() { return resolvedCatalog([{ name: "read", source: "test", version: "1.0.0", priority: 100, description: "Read", inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000 }]); },
       async execute() { executions += 1; return { status: "succeeded", summary: "done", raw: "done", refs: [], retryable: false }; },
     };
     const duplicate = { type: "invoke_tool" as const, invocation: { id: "call_2", tool: "read", input: { key: "same" }, rationale: "repeat" } };
@@ -157,7 +166,7 @@ describe("LeaseWorkerRuntime", () => {
     const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
       { type: "invoke_tool", invocation: { id: "call_1", tool: "read", input: {}, rationale: "read" } },
     ]), {
-      async catalog() { return [{ name: "read", description: "Read", inputSchema: {}, requiredCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000 }]; },
+      async catalog() { return resolvedCatalog([{ name: "read", source: "test", version: "1.0.0", priority: 100, description: "Read", inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000 }]); },
       async execute() { return { status: "succeeded", summary: "done", raw: "done", refs: [], retryable: false }; },
     }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller());
     const result = await runtime.execute(assignment());
@@ -165,12 +174,27 @@ describe("LeaseWorkerRuntime", () => {
     expect(control.failed).toBeUndefined();
   });
 
+  it("terminates the active Turn when tool execution fails unexpectedly", async () => {
+    const lifecycle: WorkerLifecycleEvent[] = [];
+    const control = new FakeControl();
+    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
+      { type: "invoke_tool", invocation: { id: "call_1", tool: "read", input: {}, rationale: "read" } },
+    ]), {
+      async catalog() { return resolvedCatalog([{ name: "read", source: "test", version: "1.0.0", priority: 100, description: "Read", inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000 }]); },
+      async execute() { throw new Error("adapter disconnected"); },
+    }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(), { onLifecycleEvent: (event) => lifecycle.push(event) });
+
+    await expect(runtime.execute(assignment())).resolves.toMatchObject({ outcome: "failed" });
+    expect(control.failed).toBe("adapter disconnected");
+    expect(lifecycle.at(-1)).toMatchObject({ type: "turn_completed", status: "failed", error: "adapter disconnected" });
+  });
+
   it("rejects model outputs that cite references absent from the evidence context", async () => {
     const control = new FakeControl();
     const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
       { type: "complete", summary: "Unsupported", outputs: [{ id: "output_1", kind: "evidence", summary: "Claim", refs: ["invented_ref"] }] },
       { type: "complete", summary: "Grounded", outputs: [{ id: "output_2", kind: "scope_snapshot", summary: "Authorized scope", refs: ["scope_1"] }] },
-    ]), { async catalog() { return []; }, async execute() { throw new Error("not used"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller());
+    ]), { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("not used"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller());
     const result = await runtime.execute(assignment());
     expect(result.outcome).toBe("completed");
     expect(control.checkpoints).toBe(1);
@@ -183,7 +207,7 @@ describe("LeaseWorkerRuntime", () => {
     const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
       { type: "invoke_tool", invocation: { id: "call_1", tool: "privileged", input: { operation: "bounded" }, rationale: "Validate the hypothesis" } },
     ]), {
-      async catalog() { return [{ name: "privileged", description: "Privileged", inputSchema: {}, requiredCapabilities: [], permissionRequirements: {}, risk: "privileged", timeoutMs: 1_000 }]; },
+      async catalog() { return resolvedCatalog([{ name: "privileged", source: "test", version: "1.0.0", priority: 100, description: "Privileged", inputSchema: {}, providedCapabilities: ["host.privileged"], dependencyCapabilities: [], permissionRequirements: {}, risk: "privileged", timeoutMs: 1_000 }]); },
       async execute() { return { status: "approval_required", summary: "Approval required", raw: "", refs: [], retryable: true, approvalRef: "approval_1" }; },
     }, continueObserver, checkpoints, new BoundedOutputDistiller());
     const result = await runtime.execute(assignment());
@@ -203,7 +227,7 @@ describe("LeaseWorkerRuntime", () => {
     const control = new FakeControl(current);
     const runtime = new LeaseWorkerRuntime(
       worker, control, new SequenceModel([]),
-      { async catalog() { return []; }, async execute() { throw new Error("not used"); } },
+      { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("not used"); } },
       continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(), {},
       () => "2026-08-24T08:00:10.000Z",
     );

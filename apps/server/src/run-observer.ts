@@ -105,7 +105,10 @@ export class StructuredRunObserverModel implements RunObserverModel {
           }, request)
         : await this.provider.extractJson(request);
       const parsed = observerDecision.parse(value);
-      this.snapshots?.complete(snapshot.contextId, parsed, this.now());
+      this.snapshots?.complete(snapshot.contextId, parsed, this.now(), {
+        decisionKind: parsed.action,
+        outcome: parsed.action === "terminate_branch" || parsed.action === "terminate_run" ? "blocked" : "continue",
+      });
       return parsed;
     } catch (error) {
       this.snapshots?.fail(snapshot.contextId, error, this.now());

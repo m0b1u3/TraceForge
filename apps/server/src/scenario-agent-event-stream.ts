@@ -30,7 +30,7 @@ export class SqliteScenarioAgentEventStream implements ScenarioAgentEventWriter 
         .get(draft.runId) as { last_sequence: number };
       const value = ScenarioAgentEventSchema.parse({
         ...draft,
-        protocolVersion: 1,
+        protocolVersion: 2,
         id: this.createId(),
         sequence: stream.last_sequence + 1,
         createdAt: draft.createdAt ?? this.now(),
@@ -71,27 +71,28 @@ export class SqliteScenarioAgentEventStream implements ScenarioAgentEventWriter 
     const hasTurnStarted = this.sqlite.prepare("SELECT 1 FROM scenario_agent_protocol_events WHERE run_id = ? AND turn_id = ? AND method = 'turn/started' LIMIT 1");
     const hasTurnTerminal = this.sqlite.prepare("SELECT 1 FROM scenario_agent_protocol_events WHERE run_id = ? AND turn_id = ? AND method = 'turn/completed' LIMIT 1");
     const snapshots = this.sqlite.prepare(`
-      SELECT id, run_id, case_id, work_id, consumer, source_run_revision, source_graph_revision, status, error, completed_at
+      SELECT id, run_id, case_id, work_id, consumer, source_run_revision, source_graph_revision, status, output_json, error, completed_at
       FROM scenario_cognitive_snapshots WHERE status IN ('completed', 'failed')
     `).all() as Array<{
       id: string; run_id: string; case_id: string; work_id: string | null; consumer: "planner" | "observer" | "worker" | "replay";
       source_run_revision: number; source_graph_revision: number | null; status: "completed" | "failed"; error: string | null; completed_at: string | null;
+      output_json: string | null;
     }>;
     for (const row of snapshots) {
       if (!hasTurnStarted.get(row.run_id, row.id)) {
         this.append({
           method: "turn/started", runId: row.run_id, caseId: row.case_id, workId: row.work_id, turnId: row.id, role: row.consumer,
-          params: { sourceRunRevision: row.source_run_revision, sourceGraphRevision: row.source_graph_revision },
+          params: { agentInstanceId: `${row.consumer}:${row.run_id}`, sourceRunRevision: row.source_run_revision, sourceGraphRevision: row.source_graph_revision },
         });
         appended += 1;
       }
       if (hasTurnTerminal.get(row.run_id, row.id)) continue;
+      const recovered = recoveredTurnTerminal(row.consumer, row.status, row.output_json, row.error);
       this.append({
         method: "turn/completed", runId: row.run_id, caseId: row.case_id, workId: row.work_id, turnId: row.id, role: row.consumer,
         createdAt: row.completed_at ?? this.now(),
         params: {
-          status: row.error?.includes("runtime restarted") ? "interrupted" : row.status,
-          error: row.error,
+          status: recovered.status, outcome: recovered.outcome, checkpointRef: null, error: recovered.error,
         },
       });
       appended += 1;
@@ -162,7 +163,7 @@ export class SqliteScenarioAgentEventStream implements ScenarioAgentEventWriter 
       if (!hasTurnStarted.get(row.run_id, turnId)) {
         this.append({
           method: "turn/started", runId: row.run_id, caseId: row.case_id, workId: row.work_id, turnId, role: "system",
-          createdAt: row.created_at, params: { sourceRunRevision: 0, sourceGraphRevision: null },
+          createdAt: row.created_at, params: { agentInstanceId: "approval-gate", sourceRunRevision: 0, sourceGraphRevision: null },
         });
         appended += 1;
       }
@@ -185,13 +186,33 @@ export class SqliteScenarioAgentEventStream implements ScenarioAgentEventWriter 
         this.append({
           method: "turn/completed", runId: row.run_id, caseId: row.case_id, workId: row.work_id, turnId, role: "system",
           createdAt: row.resolved_at ?? this.now(),
-          params: { status: row.status === "cancelled" ? "cancelled" : "completed", error: null },
+          params: { status: row.status === "cancelled" ? "cancelled" : "completed", outcome: row.status === "approved" ? "continue" : "blocked", checkpointRef: null, error: null },
         });
         appended += 1;
       }
     }
     return appended;
   }
+}
+
+function recoveredTurnTerminal(
+  consumer: "planner" | "observer" | "worker" | "replay",
+  status: "completed" | "failed",
+  outputJson: string | null,
+  error: string | null,
+): { status: "completed" | "failed" | "interrupted"; outcome: "continue" | "finish" | "blocked" | null; error: string | null } {
+  if (error?.includes("runtime restarted")) return { status: "interrupted", outcome: null, error };
+  if (status === "failed") return { status: "failed", outcome: null, error };
+  const output = outputJson ? JSON.parse(outputJson) as { action?: string; type?: string } : {};
+  if (consumer === "worker") {
+    if (output.type === "invoke_tool") return { status: "interrupted", outcome: null, error: "runtime restarted before action lifecycle completed" };
+    return { status: "completed", outcome: output.type === "block" ? "blocked" : "finish", error: null };
+  }
+  if (consumer === "observer") {
+    return { status: "completed", outcome: output.action?.startsWith("terminate_") ? "blocked" : "continue", error: null };
+  }
+  if (consumer === "planner") return { status: "completed", outcome: output.action === "wait" ? "continue" : "finish", error: null };
+  return { status: "completed", outcome: "finish", error: null };
 }
 
 export function registerScenarioAgentEventRoutes(app: FastifyInstance, stream: SqliteScenarioAgentEventStream): void {

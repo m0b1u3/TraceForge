@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { EffectivePermissionProfile } from "@traceforge/orchestration-core";
 import type { ManagedProcess, ProcessLauncher } from "./runtime.js";
 import { LocalExecutionNode } from "./runtime.js";
+import { BrokeredHttpGateway } from "./network-broker.js";
 import {
   EXECUTION_PROTOCOL_VERSION,
   permissionProfileFingerprint,
@@ -106,6 +107,14 @@ function request(workspace: string): StartProcessRequest {
 
 function fixture() {
   const launcher = new RpcTestLauncher();
+  const httpBroker = new BrokeredHttpGateway({
+    now: () => now,
+    authorizer: { authorize: () => ({
+      authorizationRef: "scope_rpc", canonicalUrl: "https://authorized.example/",
+      expiresAt: "2026-08-26T09:00:00.000Z",
+    }) },
+    transport: async () => ({ status: 200, headers: [{ name: "content-type", value: "text/plain" }], body: Buffer.from("brokered"), bodyTruncated: false }),
+  });
   const node = new LocalExecutionNode(launcher, {
     id: "rpc_node",
     platform,
@@ -119,6 +128,7 @@ function fixture() {
     maximumMemoryBytesPerProcess: 1024 * 1024 * 1024,
     maximumProcessesPerExecution: 16,
     maximumWriteBytesPerProcess: 64 * 1024 * 1024,
+    httpBroker,
     capabilities: { process: { spawn: true, stdio: true, tty: false, adoption: true, resourceLimits: true, signals: ["interrupt", "terminate", "kill"] } },
   });
   return { launcher, node };
@@ -151,9 +161,18 @@ describe("Execution Node RPC transport", () => {
     const client = new ExecutionNodeRpcClient(address, { authToken: token });
     try {
       const handshake = await client.handshake({
-        clientId: "controller_rpc", protocol: EXECUTION_PROTOCOL_VERSION, requiredCapabilities: ["process.spawn", "process.adopt"],
+        clientId: "controller_rpc", protocol: EXECUTION_PROTOCOL_VERSION, requiredCapabilities: ["process.spawn", "process.adopt", "network.brokered", "http.request"],
       });
       expect(handshake.node.id).toBe("rpc_node");
+      const networkPermissions = permissions(workspace);
+      networkPermissions.network = "brokered";
+      const brokered = await client.requestHttp({
+        requestId: "http_rpc", attribution: attribution({ idempotencyKey: "effect_http_rpc" }), permissions: networkPermissions,
+        authorizationAction: "network.request", url: "https://authorized.example/", method: "GET", headers: {},
+        timeoutMs: 5_000, responseLimitBytes: 1024,
+      });
+      expect(Buffer.from(brokered.bodyBase64, "base64").toString()).toBe("brokered");
+      expect(brokered.receipt.nodeId).toBe("rpc_node");
       const started = await client.startProcess(request(workspace));
       launcher.processes[0]!.output("remote-output");
       const output = await client.readProcessEvents({

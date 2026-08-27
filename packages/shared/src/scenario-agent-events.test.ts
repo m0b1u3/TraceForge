@@ -4,7 +4,7 @@ import { ScenarioAgentEventSchema } from "./scenario-agent-events.js";
 describe("ScenarioAgentEventSchema", () => {
   it("parses a versioned authoritative item lifecycle event", () => {
     const event = ScenarioAgentEventSchema.parse({
-      protocolVersion: 1,
+      protocolVersion: 2,
       id: "event_1",
       sequence: 1,
       runId: "run_1",
@@ -32,7 +32,7 @@ describe("ScenarioAgentEventSchema", () => {
 
   it("rejects unknown protocol versions and non-terminal completed items", () => {
     expect(() => ScenarioAgentEventSchema.parse({
-      protocolVersion: 2, id: "event_1", sequence: 1, runId: "run_1", caseId: "case_1",
+      protocolVersion: 1, id: "event_1", sequence: 1, runId: "run_1", caseId: "case_1",
       workId: null, turnId: "turn_1", role: "planner", method: "turn/completed",
       createdAt: "2026-08-25T12:00:00.000Z", params: { status: "running", error: null },
     })).toThrow();

@@ -100,6 +100,7 @@ export class SqliteCognitiveSnapshotStore {
 
   prepare(input: {
     id: string;
+    agentInstanceId?: string;
     parentSnapshotId?: string;
     consumer: CognitiveConsumer;
     runId: string;
@@ -145,12 +146,23 @@ export class SqliteCognitiveSnapshotStore {
     this.events?.append({
       method: "turn/started", runId: created.runId, caseId: created.caseId, workId: created.workId,
       turnId: created.id, role: created.consumer as ScenarioAgentRole, createdAt: input.at,
-      params: { sourceRunRevision: created.sourceRunRevision, sourceGraphRevision: created.sourceGraphRevision },
+      params: {
+        agentInstanceId: input.agentInstanceId ?? `${created.consumer}:${created.runId}`,
+        sourceRunRevision: created.sourceRunRevision, sourceGraphRevision: created.sourceGraphRevision,
+      },
     });
+    this.emitProgress(created, "prepared", "Agent Turn prepared", [], input.at);
+    this.emitProgress(created, "contextBuilt", "Bounded context snapshot persisted", [created.id], input.at);
+    this.emitProgress(created, "modelInvoked", "Model invocation requested", [created.id], input.at);
     return created;
   }
 
-  complete(id: string, output: unknown, at: string): CognitiveSnapshotRecord {
+  complete(
+    id: string,
+    output: unknown,
+    at: string,
+    options: { deferTurnCompletion?: boolean; decisionKind?: string; outcome?: import("@traceforge/shared").AgentTurnOutcome } = {},
+  ): CognitiveSnapshotRecord {
     const row = this.row(id);
     if (!row) throw new Error(`Unknown cognitive snapshot ${id}`);
     const serialized = JSON.stringify(output);
@@ -164,7 +176,8 @@ export class SqliteCognitiveSnapshotStore {
       SET status = 'completed', output_json = ?, error = NULL, completed_at = ? WHERE id = ?
     `).run(serialized, at, id);
     const completed = this.get(id)!;
-    this.emitTurnCompleted(completed, "completed", null, at);
+    this.emitProgress(completed, "decisionProduced", `Structured decision produced${options.decisionKind ? `: ${options.decisionKind}` : ""}`, [completed.id], at);
+    if (!options.deferTurnCompletion) this.emitTurnCompleted(completed, "completed", null, at, options.outcome ?? "finish");
     return completed;
   }
 
@@ -196,10 +209,24 @@ export class SqliteCognitiveSnapshotStore {
     return this.sqlite.prepare(`SELECT ${columns} FROM scenario_cognitive_snapshots WHERE id = ?`).get(id) as SnapshotRow | undefined;
   }
 
-  private emitTurnCompleted(snapshot: CognitiveSnapshotRecord, status: "completed" | "failed" | "interrupted", error: string | null, at: string): void {
+  private emitProgress(snapshot: CognitiveSnapshotRecord, phase: import("@traceforge/shared").AgentTurnPhase, summary: string, refs: string[], at: string): void {
+    this.events?.append({
+      method: "turn/progress", runId: snapshot.runId, caseId: snapshot.caseId, workId: snapshot.workId,
+      turnId: snapshot.id, role: snapshot.consumer as ScenarioAgentRole, createdAt: at, params: { phase, summary, refs },
+    });
+  }
+
+  private emitTurnCompleted(
+    snapshot: CognitiveSnapshotRecord,
+    status: "completed" | "failed" | "interrupted",
+    error: string | null,
+    at: string,
+    outcome: import("@traceforge/shared").AgentTurnOutcome | null = null,
+  ): void {
     this.events?.append({
       method: "turn/completed", runId: snapshot.runId, caseId: snapshot.caseId, workId: snapshot.workId,
-      turnId: snapshot.id, role: snapshot.consumer as ScenarioAgentRole, createdAt: at, params: { status, error },
+      turnId: snapshot.id, role: snapshot.consumer as ScenarioAgentRole, createdAt: at,
+      params: { status, outcome, checkpointRef: null, error },
     });
   }
 }

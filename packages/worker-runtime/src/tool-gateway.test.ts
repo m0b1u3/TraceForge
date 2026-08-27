@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { PermissionProfile } from "@traceforge/orchestration-core";
 import type { ToolExecutionResult } from "./model.js";
-import { PolicyExecutionToolGateway, type ToolGatewayPolicy, type ToolReceiptStore } from "./tool-gateway.js";
+import { createExecutionToolRegistry, PolicyExecutionToolGateway, type ToolGatewayPolicy, type ToolReceiptStore } from "./tool-gateway.js";
+import { ExecutionToolDiscoveryRuntime } from "./tool-discovery.js";
 import { assignment } from "./test-fixtures.js";
 
 class Receipts implements ToolReceiptStore {
@@ -25,20 +26,37 @@ const policy: ToolGatewayPolicy = {
 };
 
 describe("PolicyExecutionToolGateway", () => {
+  it("refreshes due discovery sources before resolving the model catalog", async () => {
+    const adapter = {
+      name: "discovered", source: "external", version: "1.0.0", priority: 100, description: "Discovered", inputSchema: {},
+      providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only" as const, timeoutMs: 1_000,
+      async execute() { return { status: "succeeded" as const, summary: "done", raw: "", refs: [], retryable: false }; },
+    };
+    const discovery = new ExecutionToolDiscoveryRuntime([{ source: "external", async discover() { return [adapter]; } }]);
+    const gateway = new PolicyExecutionToolGateway(
+      discovery.registry, { async authorize() { return { decision: "approved" }; } }, new Receipts(), policy, discovery,
+    );
+    const input = assignment();
+    input.assignment.work.requiredCapabilities = ["evidence.read"];
+    expect((await gateway.catalog(input.worker, input.assignment)).tools.map((tool) => tool.name)).toEqual(["discovered"]);
+    expect(discovery.snapshot().sources[0].status).toBe("ready");
+  });
+
   it("filters tools by capability and persists idempotent receipts", async () => {
     let executions = 0;
     let permissionSources: string[] = [];
     const receipts = new Receipts();
-    const gateway = new PolicyExecutionToolGateway([{
-      name: "read", description: "Read", inputSchema: {}, requiredCapabilities: ["evidence.read"], permissionRequirements: { network: "brokered" }, risk: "read_only", timeoutMs: 1_000,
+    const gateway = new PolicyExecutionToolGateway(createExecutionToolRegistry([{
+      name: "read", source: "test", version: "1.0.0", priority: 100, description: "Read", inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: { network: "brokered" }, risk: "read_only", timeoutMs: 1_000,
       async execute(_input, context) {
         executions += 1;
         permissionSources = context.effectivePermissions.sources;
         return { status: "succeeded", summary: "done", raw: "raw", refs: [], retryable: false };
       },
-    }], { async authorize() { return { decision: "approved" }; } }, receipts, policy);
+    }]), { async authorize() { return { decision: "approved" }; } }, receipts, policy);
     const input = assignment();
-    expect((await gateway.catalog(input.worker, input.assignment)).map((tool) => tool.name)).toEqual(["read"]);
+    input.assignment.work.requiredCapabilities = ["evidence.read"];
+    expect((await gateway.catalog(input.worker, input.assignment)).tools.map((tool) => tool.name)).toEqual(["read"]);
     const request = { worker: input.worker, assignment: input.assignment, invocation: { id: "call_1", tool: "read", input: {}, rationale: "read" }, idempotencyKey: "effect:call_1" };
     const first = await gateway.execute(request);
     await gateway.execute(request);
@@ -48,15 +66,17 @@ describe("PolicyExecutionToolGateway", () => {
   });
 
   it("removes tools whose permission requirements exceed the effective profile", async () => {
-    const gateway = new PolicyExecutionToolGateway([{
-      name: "network", description: "Network", inputSchema: {}, requiredCapabilities: [], permissionRequirements: { network: "brokered" }, risk: "read_only", timeoutMs: 1_000,
+    const gateway = new PolicyExecutionToolGateway(createExecutionToolRegistry([{
+      name: "network", source: "test", version: "1.0.0", priority: 100, description: "Network", inputSchema: {}, providedCapabilities: ["network.read"], dependencyCapabilities: [], permissionRequirements: { network: "brokered" }, risk: "read_only", timeoutMs: 1_000,
       async execute() { return { status: "succeeded", summary: "done", raw: "", refs: [], retryable: false }; },
-    }], { async authorize() { return { decision: "approved" }; } }, new Receipts(), {
+    }]), { async authorize() { return { decision: "approved" }; } }, new Receipts(), {
       allowedRisks: ["read_only"],
       permissionLayers: () => [{ source: "offline-run", profile: { ...permissions, network: "deny" } }],
     });
     const input = assignment();
-    expect(await gateway.catalog(input.worker, input.assignment)).toEqual([]);
+    input.worker.capabilities.push("network.read");
+    input.assignment.work.requiredCapabilities = ["network.read"];
+    expect((await gateway.catalog(input.worker, input.assignment)).tools).toEqual([]);
     await expect(gateway.execute({
       worker: input.worker,
       assignment: input.assignment,
@@ -67,11 +87,13 @@ describe("PolicyExecutionToolGateway", () => {
 
   it("returns an approval requirement without executing privileged tools", async () => {
     let executions = 0;
-    const gateway = new PolicyExecutionToolGateway([{
-      name: "privileged", description: "Privileged", inputSchema: {}, requiredCapabilities: [], permissionRequirements: {}, risk: "privileged", timeoutMs: 1_000,
+    const gateway = new PolicyExecutionToolGateway(createExecutionToolRegistry([{
+      name: "privileged", source: "test", version: "1.0.0", priority: 100, description: "Privileged", inputSchema: {}, providedCapabilities: ["host.privileged"], dependencyCapabilities: [], permissionRequirements: {}, risk: "privileged", timeoutMs: 1_000,
       async execute() { executions += 1; return { status: "succeeded", summary: "done", raw: "", refs: [], retryable: false }; },
-    }], { async authorize() { return { decision: "pending", approvalRef: "approval_1" }; } }, new Receipts(), { ...policy, allowedRisks: ["privileged"] });
+    }]), { async authorize() { return { decision: "pending", approvalRef: "approval_1" }; } }, new Receipts(), { ...policy, allowedRisks: ["privileged"] });
     const input = assignment();
+    input.worker.capabilities.push("host.privileged");
+    input.assignment.work.requiredCapabilities = ["host.privileged"];
     const result = await gateway.execute({
       worker: input.worker, assignment: input.assignment,
       invocation: { id: "call_1", tool: "privileged", input: {}, rationale: "required action" }, idempotencyKey: "effect:call_1",
@@ -90,11 +112,12 @@ describe("PolicyExecutionToolGateway", () => {
   it("returns adapter failures as durable observations instead of crashing the Work", async () => {
     let executions = 0;
     const receipts = new Receipts();
-    const gateway = new PolicyExecutionToolGateway([{
-      name: "read", description: "Read", inputSchema: {}, requiredCapabilities: ["evidence.read"], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000,
+    const gateway = new PolicyExecutionToolGateway(createExecutionToolRegistry([{
+      name: "read", source: "test", version: "1.0.0", priority: 100, description: "Read", inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000,
       async execute() { executions += 1; throw new Error("target is outside authorization"); },
-    }], { async authorize() { return { decision: "approved" }; } }, receipts, policy);
+    }]), { async authorize() { return { decision: "approved" }; } }, receipts, policy);
     const input = assignment();
+    input.assignment.work.requiredCapabilities = ["evidence.read"];
     const request = {
       worker: input.worker,
       assignment: input.assignment,
@@ -107,5 +130,79 @@ describe("PolicyExecutionToolGateway", () => {
     expect(first.summary).toContain("outside authorization");
     expect(replay).toEqual(first);
     expect(executions).toBe(1);
+  });
+
+  it("exposes only the minimal provider set including transitive dependencies", async () => {
+    const registry = createExecutionToolRegistry([{
+      name: "request", source: "test", version: "1.0.0", priority: 100, description: "Request", inputSchema: {},
+      providedCapabilities: ["web.request"], dependencyCapabilities: ["session.open"], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000,
+      async execute() { return { status: "succeeded", summary: "done", raw: "", refs: [], retryable: false }; },
+    }, {
+      name: "session", source: "test", version: "1.0.0", priority: 100, description: "Session", inputSchema: {},
+      providedCapabilities: ["session.open"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000,
+      async execute() { return { status: "succeeded", summary: "done", raw: "", refs: [], retryable: false }; },
+    }, {
+      name: "unrelated", source: "test", version: "1.0.0", priority: 100, description: "Unrelated", inputSchema: {},
+      providedCapabilities: ["filesystem.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000,
+      async execute() { return { status: "succeeded", summary: "done", raw: "", refs: [], retryable: false }; },
+    }]);
+    const gateway = new PolicyExecutionToolGateway(registry, { async authorize() { return { decision: "approved" }; } }, new Receipts(), policy);
+    const input = assignment();
+    input.worker.capabilities.push("web.request", "session.open", "filesystem.read");
+    input.assignment.work.requiredCapabilities = ["web.request"];
+    expect((await gateway.catalog(input.worker, input.assignment)).tools.map((tool) => tool.name)).toEqual(["request", "session"]);
+  });
+
+  it("removes unhealthy and draining providers from future catalogs", async () => {
+    const adapter = (name: string, priority: number) => ({
+      name, source: "test", version: "1.0.0", priority, description: name, inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [],
+      permissionRequirements: {}, risk: "read_only" as const, timeoutMs: 1_000,
+      async execute() { return { status: "succeeded" as const, summary: "done", raw: "", refs: [], retryable: false }; },
+    });
+    const registry = createExecutionToolRegistry([adapter("primary", 100), adapter("fallback", 10)]);
+    const gateway = new PolicyExecutionToolGateway(registry, { async authorize() { return { decision: "approved" }; } }, new Receipts(), policy);
+    const input = assignment();
+    input.assignment.work.requiredCapabilities = ["evidence.read"];
+    expect((await gateway.catalog(input.worker, input.assignment)).tools.map((tool) => tool.name)).toEqual(["primary"]);
+    registry.setHealth("primary", "unavailable", "health probe failed");
+    expect((await gateway.catalog(input.worker, input.assignment)).tools.map((tool) => tool.name)).toEqual(["fallback"]);
+    registry.setLifecycle("fallback", "draining");
+    expect((await gateway.catalog(input.worker, input.assignment)).tools).toEqual([]);
+  });
+
+  it("removes a provider after repeated retryable results", async () => {
+    const registry = createExecutionToolRegistry([{
+      name: "unstable", source: "test", version: "1.0.0", priority: 100, description: "Unstable", inputSchema: {},
+      providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000,
+      async execute() { return { status: "failed" as const, summary: "temporary transport failure", raw: "", refs: [], retryable: true }; },
+    }], 2);
+    const gateway = new PolicyExecutionToolGateway(registry, { async authorize() { return { decision: "approved" }; } }, new Receipts(), policy);
+    const input = assignment();
+    input.assignment.work.requiredCapabilities = ["evidence.read"];
+    for (const id of ["first", "second"]) {
+      await gateway.execute({
+        worker: input.worker, assignment: input.assignment,
+        invocation: { id, tool: "unstable", input: {}, rationale: "read" }, idempotencyKey: `effect:${id}`,
+      });
+    }
+    expect(registry.get("unstable")).toMatchObject({ health: "unavailable", consecutiveFailures: 2 });
+    expect((await gateway.catalog(input.worker, input.assignment)).tools).toEqual([]);
+  });
+
+  it("honors an adapter's explicit retryable transport error", async () => {
+    const registry = createExecutionToolRegistry([{
+      name: "remote", source: "test", version: "1.0.0", priority: 100, description: "Remote", inputSchema: {},
+      providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000,
+      async execute() { throw Object.assign(new Error("provider disconnected"), { retryable: true }); },
+    }], 1);
+    const gateway = new PolicyExecutionToolGateway(registry, { async authorize() { return { decision: "approved" }; } }, new Receipts(), policy);
+    const input = assignment();
+    input.assignment.work.requiredCapabilities = ["evidence.read"];
+    const result = await gateway.execute({
+      worker: input.worker, assignment: input.assignment,
+      invocation: { id: "remote", tool: "remote", input: {}, rationale: "read" }, idempotencyKey: "effect:remote",
+    });
+    expect(result).toMatchObject({ status: "failed", retryable: true });
+    expect(registry.get("remote")).toMatchObject({ health: "unavailable" });
   });
 });

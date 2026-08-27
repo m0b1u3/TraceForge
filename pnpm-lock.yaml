@@ -270,9 +270,15 @@ importers:
 
   packages/worker-runtime:
     dependencies:
+      '@traceforge/execution-node':
+        specifier: workspace:*
+        version: link:../execution-node
       '@traceforge/orchestration-core':
         specifier: workspace:*
         version: link:../orchestration-core
+      '@traceforge/tool-resolver':
+        specifier: workspace:*
+        version: link:../tool-resolver
 
 packages:
 

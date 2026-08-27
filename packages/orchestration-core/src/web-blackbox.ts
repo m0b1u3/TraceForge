@@ -49,6 +49,7 @@ export const WEB_BLACKBOX_SCENARIO: ScenarioDefinition = {
           WEB_BLACKBOX_CAPABILITIES.scopeRead, WEB_BLACKBOX_CAPABILITIES.evidenceWrite,
           WEB_BLACKBOX_CAPABILITIES.browserNavigate, WEB_BLACKBOX_CAPABILITIES.trafficRead,
           WEB_BLACKBOX_CAPABILITIES.requestReplay, "knowledge.graph.read", "knowledge.graph.write",
+          "execution.session.open",
         ],
       },
       {
@@ -62,6 +63,7 @@ export const WEB_BLACKBOX_SCENARIO: ScenarioDefinition = {
           WEB_BLACKBOX_CAPABILITIES.scopeRead, WEB_BLACKBOX_CAPABILITIES.evidenceWrite,
           WEB_BLACKBOX_CAPABILITIES.browserNavigate, WEB_BLACKBOX_CAPABILITIES.trafficRead,
           WEB_BLACKBOX_CAPABILITIES.requestReplay, "knowledge.graph.read", "knowledge.graph.write",
+          "execution.session.open",
         ],
       },
       {

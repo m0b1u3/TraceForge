@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { EffectivePermissionProfile } from "@traceforge/orchestration-core";
 
-export const EXECUTION_PROTOCOL_VERSION = { major: 1, minor: 3 } as const;
+export const EXECUTION_PROTOCOL_VERSION = { major: 1, minor: 4 } as const;
 
 export interface ExecutionProtocolVersion {
   major: number;
@@ -20,6 +20,7 @@ export type ExecutionCapabilityName =
   | "filesystem.list"
   | "filesystem.stat"
   | "network.brokered"
+  | "http.request"
   | "http.streaming";
 
 export interface ExecutionNodeCapabilities {
@@ -41,7 +42,7 @@ export interface ExecutionNodeCapabilities {
     maximumListEntries: number;
   };
   network: { brokered: boolean };
-  http: { streaming: boolean };
+  http: { request: boolean; streaming: boolean };
   sandbox: { backends: string[] };
 }
 
@@ -59,6 +60,10 @@ export interface ExecutionNodeDescriptor {
     maximumMemoryBytesPerProcess: number;
     maximumProcessesPerExecution: number;
     maximumWriteBytesPerProcess: number;
+    maximumHttpRequestBytes: number;
+    maximumHttpResponseBytes: number;
+    maximumHttpHeaders: number;
+    maximumConcurrentHttpRequests: number;
   };
   startedAt: string;
 }
@@ -319,6 +324,53 @@ export interface StatPathResponse {
   modifiedAt: string;
 }
 
+export interface BrokeredHttpHeader {
+  name: string;
+  value: string;
+}
+
+export interface BrokeredHttpRequest {
+  requestId: string;
+  attribution: ExecutionAttribution;
+  permissions: EffectivePermissionProfile;
+  authorizationAction: string;
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  bodyBase64?: string;
+  timeoutMs: number;
+  responseLimitBytes: number;
+}
+
+export interface BrokeredNetworkReceipt {
+  id: string;
+  nodeId: string;
+  requestId: string;
+  attribution: ExecutionAttribution;
+  authorizationRef: string;
+  authorizationAction: string;
+  url: string;
+  method: string;
+  status: number;
+  requestBytes: number;
+  responseBytes: number;
+  responseBodyTruncated: boolean;
+  permissionProfileFingerprint: string;
+  redirectFollowed: false;
+  startedAt: string;
+  completedAt: string;
+}
+
+export interface BrokeredHttpResponse {
+  receipt: BrokeredNetworkReceipt;
+  status: number;
+  headers: BrokeredHttpHeader[];
+  bodyBase64: string;
+  responseBytes: number;
+  bodyTruncated: boolean;
+  replayed: boolean;
+}
+
 export interface ExecutionNode {
   handshake(request: ExecutionHandshakeRequest): Promise<ExecutionHandshakeResponse>;
   startProcess(request: StartProcessRequest): Promise<StartProcessResponse>;
@@ -335,6 +387,7 @@ export interface ExecutionNode {
   writeFileChunk(request: WriteFileChunkRequest): Promise<WriteFileChunkResponse>;
   listDirectory(request: ListDirectoryRequest): Promise<ListDirectoryResponse>;
   statPath(request: StatPathRequest): Promise<StatPathResponse>;
+  requestHttp(request: BrokeredHttpRequest): Promise<BrokeredHttpResponse>;
 }
 
 export function capabilityNames(capabilities: ExecutionNodeCapabilities): ExecutionCapabilityName[] {
@@ -350,6 +403,7 @@ export function capabilityNames(capabilities: ExecutionNodeCapabilities): Execut
   if (capabilities.filesystem.list) names.push("filesystem.list");
   if (capabilities.filesystem.stat) names.push("filesystem.stat");
   if (capabilities.network.brokered) names.push("network.brokered");
+  if (capabilities.http.request) names.push("http.request");
   if (capabilities.http.streaming) names.push("http.streaming");
   return names;
 }

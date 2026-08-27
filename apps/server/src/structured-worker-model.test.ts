@@ -8,6 +8,7 @@ import { SqliteScenarioAgentEventStream } from "./scenario-agent-event-stream.js
 
 function request(): WorkerModelRequest {
   return {
+    turnId: "worker_context_1",
     worker: {
       id: "worker_1", roles: ["researcher"], capabilities: ["knowledge.graph.read"], maxConcurrentWork: 1,
       status: "online", heartbeatAt: "2026-08-24T08:00:00.000Z",
@@ -23,7 +24,7 @@ function request(): WorkerModelRequest {
         createdAt: "2026-08-24T08:00:00.000Z", startedAt: "2026-08-24T08:00:01.000Z", finishedAt: null,
       },
     },
-    tools: [], transcript: [], steering: [],
+    tools: [], toolResolution: { requestedCapabilities: [], unresolvedCapabilities: [], registryRevision: 1 }, transcript: [], steering: [],
   };
 }
 
@@ -66,7 +67,6 @@ describe("StructuredWorkerModel", () => {
       provider({ type: "block", reason: "The assigned Work lacks a required reference." }),
       undefined,
       snapshots,
-      () => "worker_context_1",
       () => "2026-08-24T08:00:02.000Z",
     );
     await expect(model.decide(request())).resolves.toEqual({ type: "block", reason: "The assigned Work lacks a required reference." });
@@ -77,7 +77,9 @@ describe("StructuredWorkerModel", () => {
       status: "completed",
       output: { type: "block", reason: "The assigned Work lacks a required reference." },
     });
-    expect(events.list("run_1").events.map((event) => event.method)).toEqual(["turn/started", "turn/completed"]);
+    expect(events.list("run_1").events.map((event) => event.method)).toEqual([
+      "turn/started", "turn/progress", "turn/progress", "turn/progress", "turn/progress",
+    ]);
     sqlite.close();
   });
 });

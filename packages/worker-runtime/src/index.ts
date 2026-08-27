@@ -5,4 +5,7 @@ export * from "./checkpoint-store.js";
 export * from "./control-plane-client.js";
 export * from "./observer.js";
 export * from "./tool-gateway.js";
+export * from "./tool-discovery.js";
+export * from "./tool-provider-rpc.js";
+export * from "./tool-provider-execution-node.js";
 export * from "./supervisor.js";

@@ -28,9 +28,13 @@ export type ExecutionRisk = "read_only" | "bounded_write" | "privileged" | "dest
 
 export interface ExecutionToolSpec {
   name: string;
+  source: string;
+  version: string;
+  priority: number;
   description: string;
   inputSchema: Record<string, unknown>;
-  requiredCapabilities: string[];
+  providedCapabilities: string[];
+  dependencyCapabilities: string[];
   permissionRequirements: PermissionRequirements;
   risk: ExecutionRisk;
   timeoutMs: number;
@@ -73,9 +77,9 @@ export interface WorkerOutputDraft {
 }
 
 export type WorkerDecision =
-  | { type: "invoke_tool"; invocation: ToolInvocation; protocolTurnId?: string }
-  | { type: "complete"; summary: string; outputs: WorkerOutputDraft[]; protocolTurnId?: string }
-  | { type: "block"; reason: string; protocolTurnId?: string };
+  | { type: "invoke_tool"; invocation: ToolInvocation }
+  | { type: "complete"; summary: string; outputs: WorkerOutputDraft[] }
+  | { type: "block"; reason: string };
 
 export interface WorkerTranscriptEntry {
   turn: number;
@@ -85,11 +89,24 @@ export interface WorkerTranscriptEntry {
 }
 
 export interface WorkerModelRequest {
+  turnId: string;
   worker: WorkerDescriptor;
   assignment: WorkerAssignment;
   tools: ExecutionToolSpec[];
+  toolResolution: {
+    requestedCapabilities: string[];
+    unresolvedCapabilities: string[];
+    registryRevision: number;
+  };
   transcript: WorkerTranscriptEntry[];
   steering: string[];
+}
+
+export interface ExecutionToolCatalog {
+  tools: ExecutionToolSpec[];
+  requestedCapabilities: string[];
+  unresolvedCapabilities: string[];
+  registryRevision: number;
 }
 
 export interface WorkerModel {
@@ -97,7 +114,7 @@ export interface WorkerModel {
 }
 
 export interface ExecutionToolGateway {
-  catalog(worker: WorkerDescriptor, assignment: WorkerAssignment): Promise<ExecutionToolSpec[]>;
+  catalog(worker: WorkerDescriptor, assignment: WorkerAssignment): Promise<ExecutionToolCatalog>;
   execute(request: {
     worker: WorkerDescriptor;
     assignment: WorkerAssignment;

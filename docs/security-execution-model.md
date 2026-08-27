@@ -80,19 +80,57 @@ Execution is platform-native and fail-closed:
 - On Linux, `bubblewrap` alone cannot prove process-tree CPU, memory, process-count
   and write-I/O budgets. The Linux compiler therefore rejects process execution
   until a managed cgroup backend is installed. It does not silently launch an
-  unbounded bubblewrap process. Brokered networking and PTY execution remain
-  unavailable until their native backends exist.
+  unbounded bubblewrap process. Brokered process networking and PTY execution
+  remain unavailable until their native backends exist.
 
 If the required native resource-limiting backend is absent, or the Windows helper
-fails its versioned execution-contract probe, the server does not advertise an
-Execution Node and does not register `process_execute`. The health response
-exposes this as `executionNodeReady`. Desktop release verification executes the
-same probe on the packaged helper. There is no direct-spawn, unbounded, or
-unsandboxed compatibility path.
+fails its versioned execution-contract probe, the Execution Node remains
+available for brokered HTTP and bounded filesystem operations but does not
+advertise process capabilities or register `process_execute`. The health
+response separates `executionNodeReady` from `executionProcessReady`. Desktop
+release verification executes the same probe on the packaged helper. There is
+no direct-spawn, unbounded, or unsandboxed compatibility path.
 TraceForge packages and invokes its own helper;
 it does not require the Codex application, CLI, configuration, or runtime to be
 installed. Direct network permission is not target authorization, so Scope
 Guard and human approval remain authoritative.
+
+## External Tool Provider execution
+
+Production Tool Provider RPC processes use `ExecutionNodeToolProviderClient` rather than the development-only local process client. Before launch, the client negotiates `process.spawn`, `process.stdio`, and `process.resource_limits`. It sends an explicit executable and argument vector, fixed environment, provider-service attribution, a least-privilege permission profile, and mandatory CPU, memory, process-count and write-byte limits.
+
+The RPC handshake is not attempted until the returned process descriptor proves all of the following: sandbox execution, filesystem policy enforcement, resource-limit enforcement, the expected sandbox backend when pinned, the exact permission-profile fingerprint, the exact resource-limit fingerprint, and the requested network mode. A missing or mismatched proof terminates the process. The caller cannot supply a replacement attestation object for this path.
+
+Provider stdout is reserved exclusively for the length-prefixed protocol. Lost Execution Node events, truncated output, PTY output, invalid frames, or a resource-limit event invalidate the Provider and terminate it. Stderr is bounded and retained only for diagnostics. The operating-system permission profile remains fixed for the lifetime of the Provider; per-call Work context cannot widen it. Tool discovery still passes through the shared capability registry and every invocation still passes through Worker policy and approval gates.
+
+## Brokered network execution
+
+Security Worker HTTP requests do not call the host network stack directly. The
+Worker Tool Gateway intersects the platform and Scenario permission profiles to
+produce a `brokered`-only network grant, then sends the operation through the
+authenticated Execution Node RPC protocol. The request is attributed to its
+Case, Run, Work, Worker, scope, lease, action and idempotency key.
+
+Before opening a connection, the Execution Node independently asks the server
+authorization resolver to revalidate the action, target and authorization
+expiry. Only absolute HTTP and HTTPS URLs are accepted. Embedded credentials,
+CONNECT requests, hop-by-hop and proxy-control headers, invalid or expired
+leases, and direct-network permission profiles are rejected. Redirects are
+returned to the Worker and are never followed implicitly; a follow-up target is
+a new attributed request and must pass authorization again.
+
+Request bytes, response bytes, headers, timeout and concurrency are bounded by
+node-advertised limits. Each completed request returns a secret-free Network
+Receipt containing the enforcement attribution, authorization reference,
+permission fingerprint and response metadata. The server stores that receipt
+atomically with the corresponding Traffic record. Session credentials and
+cookies travel only across the authenticated local RPC channel and are redacted
+from receipts, events and model-visible summaries.
+
+The native Browser Worker still requires direct networking and is therefore not
+exposed by the brokered-only Web profile. It will be re-enabled only after its
+browser process is connected through an enforceable proxy transport; there is
+no direct fallback.
 
 ## Context and recovery
 

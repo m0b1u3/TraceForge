@@ -42,6 +42,9 @@ const processInput = z.object({
 
 export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
   readonly name = "process_execute";
+  readonly source = "traceforge.builtin";
+  readonly version = "1.0.0";
+  readonly priority = 100;
   readonly description = "Execute an explicit program and argument vector through the attributed Execution Node sandbox.";
   readonly inputSchema = {
     type: "object",
@@ -68,7 +71,8 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
     required: ["executable", "workingDirectory"],
     additionalProperties: false,
   };
-  readonly requiredCapabilities = ["process.execute"];
+  readonly providedCapabilities = ["process.execute"];
+  readonly dependencyCapabilities: string[] = [];
   readonly permissionRequirements = { process: "sandboxed" as const };
   readonly risk = "privileged" as const;
   readonly timeoutMs = 310_000;

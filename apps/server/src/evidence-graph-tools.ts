@@ -32,6 +32,9 @@ type ToolContext = Parameters<ExecutionToolAdapter["execute"]>[1];
 
 export class EvidenceGraphSnapshotTool implements ExecutionToolAdapter {
   readonly name = "knowledge.graph.snapshot";
+  readonly source = "traceforge.builtin";
+  readonly version = "1.0.0";
+  readonly priority = 100;
   readonly description = "Read a bounded, typed snapshot of the assigned Case Evidence Graph, including lifecycle state and traceable relations.";
   readonly inputSchema = {
     type: "object",
@@ -42,7 +45,8 @@ export class EvidenceGraphSnapshotTool implements ExecutionToolAdapter {
     },
     additionalProperties: false,
   };
-  readonly requiredCapabilities = [KNOWLEDGE_GRAPH_CAPABILITIES.read];
+  readonly providedCapabilities = [KNOWLEDGE_GRAPH_CAPABILITIES.read];
+  readonly dependencyCapabilities: string[] = [];
   readonly permissionRequirements = {};
   readonly risk = "read_only" as const;
   readonly timeoutMs = 5_000;
@@ -70,6 +74,9 @@ export class EvidenceGraphSnapshotTool implements ExecutionToolAdapter {
 
 export class EvidenceGraphMutateTool implements ExecutionToolAdapter {
   readonly name = "knowledge.graph.mutate";
+  readonly source = "traceforge.builtin";
+  readonly version = "1.0.0";
+  readonly priority = 100;
   readonly description = "Apply one typed, auditable Evidence Graph mutation. Evidence sources must reference persisted tool receipts, traffic, or artifacts.";
   readonly inputSchema = {
     oneOf: [
@@ -107,7 +114,8 @@ export class EvidenceGraphMutateTool implements ExecutionToolAdapter {
       { type: "object", required: ["type", "nodeId", "reason"], additionalProperties: false, properties: { type: { const: "invalidate_node" }, nodeId: { type: "string", minLength: 1 }, reason: { type: "string", minLength: 1 } } },
     ],
   };
-  readonly requiredCapabilities = [KNOWLEDGE_GRAPH_CAPABILITIES.write];
+  readonly providedCapabilities = [KNOWLEDGE_GRAPH_CAPABILITIES.write, "evidence.write"];
+  readonly dependencyCapabilities: string[] = [];
   readonly permissionRequirements = {};
   readonly risk = "bounded_write" as const;
   readonly timeoutMs = 5_000;

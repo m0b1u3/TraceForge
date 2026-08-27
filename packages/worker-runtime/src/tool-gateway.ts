@@ -4,15 +4,18 @@ import {
   type PermissionProfileLayer,
   type WorkerDescriptor,
 } from "@traceforge/orchestration-core";
+import { CapabilityProviderRegistry } from "@traceforge/tool-resolver";
 import type {
   ExecutionRisk,
   ExecutionToolGateway,
+  ExecutionToolCatalog,
   ExecutionToolSpec,
   ToolExecutionResult,
   ToolExecutionContext,
   ToolInvocation,
   WorkerAssignment,
 } from "./model.js";
+import type { ExecutionToolDiscoveryRuntime } from "./tool-discovery.js";
 
 export interface ExecutionToolAdapter extends ExecutionToolSpec {
   execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult>;
@@ -48,31 +51,26 @@ function hasCapabilities(required: string[], worker: WorkerDescriptor): boolean 
 }
 
 export class PolicyExecutionToolGateway implements ExecutionToolGateway {
-  private readonly tools = new Map<string, ExecutionToolAdapter>();
-
   constructor(
-    adapters: ExecutionToolAdapter[],
+    private readonly registry: CapabilityProviderRegistry<ExecutionToolAdapter>,
     private readonly approvals: ToolApprovalController,
     private readonly receipts: ToolReceiptStore,
     private readonly policy: ToolGatewayPolicy,
-  ) {
-    for (const adapter of adapters) {
-      if (this.tools.has(adapter.name)) throw new Error(`Duplicate execution tool ${adapter.name}`);
-      if (adapter.timeoutMs < 1) throw new Error(`Execution tool ${adapter.name} requires a positive timeout`);
-      this.tools.set(adapter.name, adapter);
-    }
-  }
+    private readonly discovery?: ExecutionToolDiscoveryRuntime,
+  ) {}
 
-  async catalog(worker: WorkerDescriptor, assignment: WorkerAssignment): Promise<ExecutionToolSpec[]> {
+  async catalog(worker: WorkerDescriptor, assignment: WorkerAssignment): Promise<ExecutionToolCatalog> {
+    await this.discovery?.refreshDue();
     const names = this.policy.allowedTools ? new Set(this.policy.allowedTools) : undefined;
-    return [...this.tools.values()]
-      .filter((tool) => {
-        if ((names && !names.has(tool.name)) || !this.policy.allowedRisks.includes(tool.risk) || !hasCapabilities(tool.requiredCapabilities, worker)) return false;
-        const effective = intersectPermissionProfiles(this.policy.permissionLayers({ worker, assignment, tool }));
-        return satisfiesPermissionRequirements(effective, tool.permissionRequirements);
-      })
+    const resolution = this.registry.resolve(assignment.work.requiredCapabilities, ({ provider: tool }) => {
+      if ((names && !names.has(tool.name)) || !this.policy.allowedRisks.includes(tool.risk) || !hasCapabilities(tool.providedCapabilities, worker)) return false;
+      const effective = intersectPermissionProfiles(this.policy.permissionLayers({ worker, assignment, tool }));
+      return satisfiesPermissionRequirements(effective, tool.permissionRequirements);
+    });
+    const tools = resolution.providers
       .map(({ execute: _execute, ...spec }) => spec)
       .sort((left, right) => left.name.localeCompare(right.name));
+    return { tools, requestedCapabilities: resolution.requestedCapabilities, unresolvedCapabilities: resolution.unresolvedCapabilities, registryRevision: resolution.registryRevision };
   }
 
   async execute(request: {
@@ -83,8 +81,8 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
   }): Promise<ToolExecutionResult> {
     const recorded = await this.receipts.get(request.idempotencyKey);
     if (recorded) return recorded;
-    const tool = this.tools.get(request.invocation.tool);
-    const eligible = tool && (await this.catalog(request.worker, request.assignment)).some((candidate) => candidate.name === tool.name);
+    const tool = this.registry.get(request.invocation.tool)?.provider;
+    const eligible = tool && (await this.catalog(request.worker, request.assignment)).tools.some((candidate) => candidate.name === tool.name);
     if (!tool || !eligible) throw new Error(`Tool ${request.invocation.tool} is unknown or outside worker policy`);
     const effectivePermissions = intersectPermissionProfiles(this.policy.permissionLayers({
       worker: request.worker,
@@ -128,15 +126,18 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown execution tool failure";
+      const explicitlyRetryable = Boolean(error && typeof error === "object" && "retryable" in error && error.retryable === true);
       result = {
         status: "failed",
         summary: `Tool ${tool.name} failed: ${message}`,
         raw: "",
         refs: [],
-        retryable: /(?:timed out|timeout|temporar|network|fetch|ECONN|EAI_AGAIN)/i.test(message),
+        retryable: explicitlyRetryable || /(?:timed out|timeout|temporar|network|fetch|ECONN|EAI_AGAIN)/i.test(message),
         metadata: { errorType: error instanceof Error ? error.name : "UnknownError" },
       };
     }
+    if (result.status === "succeeded") this.registry.recordSuccess(tool.name);
+    else if (result.retryable) this.registry.recordFailure(tool.name, result.summary);
     result = {
       ...result,
       metadata: { ...result.metadata, effectivePermissions },
@@ -144,6 +145,19 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
     await this.receipts.put(request.idempotencyKey, result);
     return result;
   }
+}
+
+export function createExecutionToolRegistry(
+  adapters: ExecutionToolAdapter[],
+  unavailableAfterFailures = 3,
+): CapabilityProviderRegistry<ExecutionToolAdapter> {
+  const registry = new CapabilityProviderRegistry<ExecutionToolAdapter>(unavailableAfterFailures);
+  for (const adapter of adapters) {
+    if (adapter.timeoutMs < 1) throw new Error(`Execution tool ${adapter.name} requires a positive timeout`);
+  }
+  const sources = [...new Set(adapters.map((adapter) => adapter.source))];
+  for (const source of sources) registry.synchronize(source, adapters.filter((adapter) => adapter.source === source));
+  return registry;
 }
 
 async function withTimeout<T>(operation: () => Promise<T>, timeoutMs: number): Promise<T> {

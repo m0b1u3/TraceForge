@@ -144,7 +144,9 @@ export class StructuredRunPlannerModel implements RunPlannerModel {
           }, request)
         : await this.provider.extractJson(request);
       const parsed = plannerDecision.parse(value);
-      this.snapshots?.complete(snapshot.contextId, parsed, this.now());
+      this.snapshots?.complete(snapshot.contextId, parsed, this.now(), {
+        decisionKind: parsed.action, outcome: parsed.action === "wait" ? "continue" : "finish",
+      });
       return parsed;
     } catch (error) {
       this.snapshots?.fail(snapshot.contextId, error, this.now());
