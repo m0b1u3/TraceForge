@@ -1,6 +1,6 @@
 # TraceForge 当前开发进度与生产化计划
 
-更新日期：2026-08-27
+更新日期：2026-08-28
 
 ## 1. 项目目标
 
@@ -16,13 +16,53 @@ TraceForge 的目标不是通用编程 Agent，也不是某个漏洞扫描器，
 
 | 范围 | 完成度估算 | 说明 |
 | --- | ---: | --- |
-| 通用安全智能体底座 | 约 75% | 核心架构与 Provider 控制主链已经成型，缺少反向能力 Broker、完整回执恢复、生产观测与部分执行闭环 |
+| 通用安全智能体底座 | 约 68% | 调度、证据、执行与 Provider 主链已经成型，但 Scenario 仍侵入 Core、类型系统和组合根，必须先完成场景抽离 |
 | 单机生产化能力 | 约 63% | 已具备持久化、门禁、Execution Node、原子 Provider 安装和调用感知升级，但分发、垃圾回收和长稳测试未完成 |
 | Web 黑盒实战场景 | 约 35% | HTTP、会话、授权、流量和证据工具已接入；受控浏览器和完整探索/验证策略仍未闭环 |
 | 白盒代码审计场景 | 尚未正式开发 | 只复用底座，不在当前开发主线上加入 AST、污点规则等场景工具 |
 | 红队内网横向场景 | 尚未正式开发 | PTY、隧道、长期远程会话和高风险审批策略仍待后续装配 |
 
 这些百分比是按目标能力和生产验收项估算，不是按代码行数或测试覆盖率计算。
+
+当前最准确的产品定位是：TraceForge 已经是一套可运行、可持久化、可恢复、具备安全执行主链的
+Security Agent Runtime，并进入底座生产化阶段；但它仍是以 Web 黑盒作为首个纵向场景演进出来的
+Web-aware Runtime，尚未达到“Core 完全不知道任何 Application/Scenario 语义”的目标状态。
+
+关键能力的实际状态如下：
+
+| 能力 | 当前状态 |
+| --- | --- |
+| Event-sourced Run、Work/Lease/Checkpoint/Recovery | 已实现 |
+| Planner、Observer、Worker Loop | 已实现 |
+| Evidence Graph、Finding 生命周期门禁 | 已实现 |
+| Cognitive Snapshot、Model Runtime、预算与并发准入 | 已实现 |
+| Capability Registry、Tool Discovery、Risk/Permission Gateway | 已实现 |
+| Managed Provider、签名/哈希、generation draining | 生产主链已实现 |
+| Execution Node RPC、Scope 再授权、Brokered HTTP | 主链已实现 |
+| Windows 可证明执行约束 | 主链已实现 |
+| Scenario 插件化、零场景运行 | 未实现 |
+| Provider-to-Host 反向能力 Broker | 未实现 |
+| Linux 可证明沙箱后端 | 未实现，保持关闭 |
+| Brokered Browser、多节点执行、统一运维控制台 | 未实现 |
+
+目标依赖方向按六层约束，依赖只能向下指向 Contract，底层不得反向认识 Application：
+
+```text
+Application / Scenario Packages
+            ↓
+Cognitive / Agent Runtime
+            ↓
+Orchestration Runtime
+            ↓
+Knowledge / State Runtime
+            ↓
+Capability / Tool Runtime
+            ↓
+Security Execution Runtime
+```
+
+这不是要求立即拆成六个同名包，而是用于判断职责与 import 方向。包拆分必须服务于可替换、可测试和
+多宿主复用，不能为了目录对称制造新的抽象层。
 
 ## 3. 已经落地的底座能力
 
@@ -34,6 +74,8 @@ TraceForge 的目标不是通用编程 Agent，也不是某个漏洞扫描器，
 - Worker 使用能力匹配、租约、心跳、幂等键、检查点、重试和过期回收机制执行 Work。
 - 同一 Run 可保留多个假设和排队任务，但一次只允许一个验证任务拥有执行权。
 - SQLite 事件存储是当前单机黑板事实来源，进程内事件总线负责低延迟唤醒，定时扫描只承担恢复职责。
+- 上述运行机制本身大体数据驱动，但当前 `web_blackbox` Definition、部分场景类型、Worker 装配和授权工具
+  仍被编译进 `orchestration-core` 与 Server Composition Root；因此“Scenario 已完全解耦”尚不成立。
 
 ### 3.2 统一证据图谱
 
@@ -90,26 +132,36 @@ TraceForge 的目标不是通用编程 Agent，也不是某个漏洞扫描器，
 
 ## 4. 当前尚未达到生产要求的部分
 
-### 4.1 Tool Provider 控制面仍需完成生产化后半段
+### 4.1 Scenario 尚未从 Core 和 Composition Root 真正抽离
+
+当前 Web 黑盒不只是一个可选 Profile：`ScenarioKind`、部分 Work/Role/Output 类型、
+`orchestration-core` 中的 Web Definition、Embedded Worker 拓扑、授权 Guard 和 Server 内置工具
+都认识具体场景。这会导致新增取证、恶意代码分析、云安全或移动审计时必须修改并重新编译 Core。
+
+在完成抽离前，TraceForge 只能称为“具备通用运行机制的 Web-aware 应用底座”，不能宣称 Scenario
+已经插件化。不得继续向 Core、通用 Server 或默认 builtin tool source 增加任何场景名称、能力、阶段、
+角色、输出类型、Prompt、工具或授权动作。
+
+### 4.2 Tool Provider 控制面仍需完成生产化后半段
 
 签名 Manifest、信任根、文件/包哈希、只读原子目录发布、持久化生命周期、控制 API、显式回滚、
 启动恢复和按调用归属的生产托管来源工厂已经落地。尚缺归档上传与安全解包、签名发布工具、刷新 API、
 未完成调用的持久化回执对账、持久化健康/发现 revision、坏版本自动隔离，
 以及安装和调用暂存目录的垃圾回收。调用感知的 generation 排空和中断生命周期对账已经完成。
 
-### 4.2 Provider 还缺少反向能力 Broker
+### 4.3 Provider 还缺少反向能力 Broker
 
 Provider 进程现在必须使用固定的最小 OS 权限。需要网络、文件、浏览器或秘密句柄的 Provider 不应获得直接权限，而应通过 Provider-to-Host Broker 请求带 Work 归属的受控能力。该反向 RPC 和每次调用的授权证明尚未实现。
 
-### 4.3 Web Browser 尚未进入可用执行链
+### 4.4 Web Browser 尚未进入可用执行链
 
 原生 HTTP 已经走 Broker，但 Browser Worker 目前仍因缺少强制代理后端而关闭。需要完成浏览器进程沙箱、CDP 控制通道、所有页面/弹窗/下载/Service Worker 流量强制代理、人工接管和会话恢复，才能禁止直连的同时投入黑盒场景。
 
-### 4.4 Web 黑盒的场景认知策略还不完整
+### 4.5 Web 黑盒的场景认知策略还不完整
 
 当前底座能调度 Research 与 Validation Work，但还缺少生产级的资产面建模、页面状态覆盖、身份矩阵、业务流程状态机、参数与数据关系学习、验证矩阵、受控外带回调和最终覆盖评估。具体 Payload 和漏洞知识应放入 Web Scenario 工具/知识包，不进入通用底座。
 
-### 4.5 运维与可靠性仍需补齐
+### 4.6 运维与可靠性仍需补齐
 
 - 工具、Worker、Planner、Observer、模型预算和执行节点虽有 API/事件，但缺少统一运维控制台。
 - 缺少长时间运行、断电恢复、磁盘耗尽、Provider 频繁崩溃、模型供应商波动和高并发任务的系统级验证。
@@ -117,11 +169,116 @@ Provider 进程现在必须使用固定的最小 OS 权限。需要网络、文�
 - Linux 进程执行因缺少可证明的托管 cgroup 后端保持关闭。
 - 凭据实体可以进入受权限控制的黑板，但面向操作者的查看、脱敏、授权与审计体验还未完成闭环。
 
+### 4.7 `apps/server` 同时承担 API、组合根和大量 Runtime 实现
+
+当前 `apps/server` 不只是 Fastify Adapter：Planner/Observer、Hypothesis 与 Artifact 调度、认知上下文、
+Model Runtime/Admission、Evidence Store、Execution Session 和 Provider Control Plane 的大量实现都位于其中；
+而 `packages/reasoning-core` 相对较薄。这会迫使未来 Desktop、CLI 或分布式 Coordinator 依赖 Server 内部代码，
+也让 Application、Runtime、Persistence Adapter 与 Transport 边界难以验证。
+
+这一问题不能通过按文件数量机械拆包解决。应先完成 Scenario Contract 和依赖方向，再按稳定职责逐步提取
+可独立测试的 Runtime；Fastify 路由、WebSocket、配置加载、SQLite 适配和 Composition Root 留在 Server，
+领域状态机与不依赖传输/数据库实现的 Runtime 移入 packages。
+
 ## 5. 接下来的开发计划
 
 以下顺序按生产依赖关系排列，不是原型阶段划分。
 
-### P0：持久化 Tool Provider Manifest 与供应链控制面
+当前实际执行队列：
+
+1. Scenario Extraction 与零场景运行边界。
+2. Provider-to-Host Capability Broker。
+3. Tool Runtime 的恢复、隔离和故障治理。
+4. Provider 归档分发、签名工具、持久化调用回执与旧包回收。
+5. Linux 可证明执行后端。
+6. 在 Contract 稳定后逐步将 Runtime 从 `apps/server` 提取为可复用 packages。
+7. Web 黑盒包内的 Brokered Browser 与场景闭环。
+
+同一优先级内只允许并行处理依赖方向已经稳定、不会扩大场景耦合的工作；不得以“并行开发”为由
+绕过 Scenario Extraction 的冻结边界。
+
+### P0：Scenario Extraction 与通用运行时边界
+
+当前状态：这是下一项必须先完成的架构修正。Provider 分发、Browser 和任何具体场景能力开发在此项
+验收前暂停，避免继续扩大反向依赖。目标不是移动文件，而是让 Core 在不知道任何场景名称和领域语义
+的情况下完成构建、启动、调度和持久化恢复。
+
+阶段 A：冻结与依赖边界
+
+- 建立依赖规则：`orchestration-core`、`worker-runtime`、`execution-node`、`evidence-graph` 和通用 Server
+  不得导入任何 Scenario Package，也不得声明 `web_blackbox`、`code_audit`、`red_team_lateral` 等具体值。
+- 暂停新增 Web 工具、黑盒 Planner 策略、Browser 能力和场景专属数据库分支；允许修复不扩大耦合的缺陷。
+- 形成场景侵入清单，覆盖类型、Definition、Worker 拓扑、授权、工具、路由、Prompt、Schema、持久化投影和测试夹具。
+
+阶段 B：定义真正通用的 Scenario Package Contract
+
+- 将 `ScenarioKind`、Worker Role、Work Kind 和 Output Kind 改为经过命名空间与格式验证的开放标识符，
+  Core 只比较身份、版本、能力集合和生命周期，不解释其领域语义。
+- Planner 与 Observer 可以继续作为平台级认知职责存在，但其具体策略、Prompt、阶段解释和 Worker Role
+  不能由 Core 固定；Scenario Worker Role 必须是开放标识符并通过能力/策略匹配。
+- Core 只保留通用 `ScenarioDefinition`、Phase/Transition、Worker Pool、Capability Demand、Authorization
+  Requirement 和 Output Envelope；具体输出 Schema 由 Scenario Package 注册并按版本验证。
+- 定义 `ScenarioPackage`：包含 Definition、Worker 策略、Tool Discovery Sources、授权策略、输出 Schema、
+  Prompt/知识资源和可选持久化迁移；安装与启用必须经过显式 Registry，不允许模块导入产生隐式注册副作用。
+- Core 只持久化通用 Authorization Envelope（归属、策略类型、版本、状态、有效期和不透明 scope payload）；
+  具体目标、动作和 Scope 判断由当前 Run 绑定的 Scenario Authorization Policy 解释。
+- Run 创建时必须持久化准确的 Scenario Package id/version/schema revision。运行中的 Run 固定使用该版本，
+  不因 Registry 刷新静默迁移；禁用包只阻止新 Run，已有 Run 必须明确排空、完成或由迁移命令处理。
+- Server Composition Root 只依赖 Scenario Registry/Loader 接口。零 Scenario 时仍可启动、查询健康状态、
+  管理 Provider，并明确返回“未安装场景”，而不是默认装配 Web Worker。
+
+阶段 C：抽离 Web 黑盒包
+
+- 新建独立 `scenarios/web-blackbox` workspace package，将 Web Definition、能力、Worker 拓扑、阶段、
+  授权 Guard、HTTP/Traffic/Session/Browser 工具、输出 Schema、策略和测试移入该包。
+- 删除 `orchestration-core` 对 Web Definition/常量的导出，删除 Embedded Worker 对 Web Profile 和 Web 工具的直接引用。
+- Web 包通过通用 Contract 显式注册；只有配置安装并启用该包时，Registry 才出现 `web_blackbox@版本`，
+  Tool Runtime 才出现 `web.*` 能力，相应 Worker Pool 才能创建。
+- 保持现有 Run/Event/Evidence 数据可读；迁移只转换标识符和注册归属，不伪造生命周期事件或执行回执。
+- Scenario Package 与 Tool Provider 是两个独立概念：前者定义调查语义、策略和装配，后者提供受控执行能力；
+  Web 包可以声明所需 Provider capability，但不得绕过 Tool Runtime、Provider 签名或权限门禁直接启动工具。
+
+阶段 D：架构验收与防回退
+
+- 增加 Core/Server import-boundary 测试，禁止通用层引用 `scenarios/*` 或具体场景常量。
+- 增加零场景启动测试：Core、Server、Worker Runtime、Execution Node、Evidence Graph 全部构建并运行，
+  Scenario Registry 为 0，默认工具目录不含任何 `web.*`、代码审计或红队能力。
+- 增加 Web 包装配测试：启用后才注册 Definition、工具、授权策略和 Worker Pools；禁用或移除后通用底座仍通过测试。
+- CI 增加“排除整个 Web Scenario Package 的底座构建”任务，防止通过间接 import 再次把场景拉回 Core。
+- 增加开放扩展示例或中性测试包，只使用 `first scenario`、`first role`、`first output` 等名称证明新增场景无需修改 Core。
+
+迁移提交顺序：
+
+1. **边界清单与 CI 门禁**：只增加依赖检查和现状失败清单，不改变运行行为。
+2. **开放标识符与兼容读取**：先让 Core 接受注册的字符串身份，同时继续读取现有持久化值；不移动 Web 实现。
+3. **Package Contract 与零场景宿主**：建立显式 Registry/Loader、版本绑定和空 Registry 启动路径。
+4. **Web 包迁移**：按 Definition/Policy → Worker 策略 → Authorization → Tools/Schema 的顺序迁移，每一步保持测试可运行。
+5. **删除兼容入口**：移除 Core/Server 的 Web export、默认注册和旧 import，启用“排除 Web 包构建”作为强制 CI。
+
+每一步形成独立可回滚提交，不允许在同一个提交中同时泛化全部类型、移动全部文件、改数据库格式并重写
+Composition Root。任何阶段失败时，应能回退该阶段而不破坏之前的 Run/Event/Evidence 数据。
+
+持久化兼容策略：
+
+- 现有 `web_blackbox`、角色、阶段和输出字符串按原值保留，不通过批量重写伪造新事件历史。
+- Event/Projection Reader 通过显式 schema version 和兼容 decoder 读取旧记录；新写入使用开放标识符与 package binding。
+- 找不到 Run 所绑定的 Scenario Package/version 时，Run 进入可诊断的 blocked/recovery-required 状态，
+  不默认套用当前 Web 包、不自动升级，也不丢弃已有 Work、Approval、Evidence 或 Receipt。
+- Scenario 自有持久化数据使用命名空间和显式 migration manifest；通用 Core 表不增加某个场景专属列或 enum constraint。
+
+验收条件：
+
+- `orchestration-core` 和通用 Server Composition Root 中不存在具体场景 Definition、能力、角色、阶段、输出类型和工具装配。
+- Core 的场景、角色、Work 和输出身份不再是枚举具体应用的闭合 union；未知但合法、已注册的标识符可工作。
+- 删除或排除 `scenarios/web-blackbox` 后，全底座能够 build、启动和通过非场景测试，Registry 显示 0 installed scenarios。
+- 显式启用 Web 包后才出现 Web Profile、Worker Pools、授权动作和 `web.*` 工具，且停用后不再对新 Work 可见。
+- 新增第二个中性 Scenario Package 不修改 Core、通用 Server、Worker Runtime、Execution Node 或 Evidence Graph。
+- 旧 Web Run 的 replay digest、关键 Projection 和 Evidence 引用在迁移前后保持一致；需要变化时必须由版本化迁移测试解释。
+
+在这一验收完成前，不接受“只是把 `web-blackbox.ts` 换个目录”、继续保留闭合场景 union、由 Server
+直接 import Web 工具，或启动时默认隐式注册 Web Profile 的表面修复。
+
+### P0（主链已完成，Scenario Extraction 期间暂缓后半段）：持久化 Tool Provider Manifest 与供应链控制面
 
 当前状态：包级安装和生产启动纵切片已完成。签名清单、文件/包哈希、信任根、只读原子发布、
 生命周期事件/投影、控制 API、隐式降级拒绝、显式回滚、启动恢复和按调用归属的 Execution Node
@@ -138,6 +295,9 @@ Provider 进程现在必须使用固定的最小 OS 权限。需要网络、文�
 
 ### P0：Provider-to-Host Capability Broker
 
+当前状态：Scenario Extraction 验收后的第一项新能力。Broker 本身保持场景无关，只消费当前 Run 所绑定
+Scenario Package 提供的 Authorization Policy 和平台权限交集，不能重新在 Host 中硬编码 Web action。
+
 开发内容：
 
 - 扩展双向 RPC，使 Provider 只能通过 Host Broker 请求 HTTP、文件、会话、浏览器、秘密句柄和 Artifact 能力。
@@ -147,6 +307,9 @@ Provider 进程现在必须使用固定的最小 OS 权限。需要网络、文�
 - 限制反向调用深度、并发、字节、超时和递归，防止 Provider 形成代理逃逸或调用风暴。
 
 验收条件：一个网络 deny 的 Provider 可以完成经过授权的 Brokered HTTP，但无法自行访问未授权目标；所有调用均有可追溯回执。
+
+补充验收：用中性 Scenario/Capability fixture 证明 Broker 不认识 URL、浏览器、代码仓库或横向移动语义；
+Web HTTP 只是 Web 包注册的一种 Broker capability adapter，而不是 Host Broker 的默认业务规则。
 
 ### P0：Tool Runtime 恢复、隔离和故障治理
 
@@ -160,7 +323,62 @@ Provider 进程现在必须使用固定的最小 OS 权限。需要网络、文�
 
 验收条件：连续崩溃不会拖垮主进程；坏版本自动隔离；健康 Provider 和正在运行的 Work 不受无关来源故障影响。
 
-### P1：Brokered Browser Execution
+### P1：Linux 可证明执行后端
+
+当前状态：Linux 进程执行在缺少可验证后端时保持关闭。Provider、代码审计和大量安全工具不能以普通
+`child_process.spawn()` 作为生产回退，因此这一项是实际安全场景扩展的基础设施前置条件。
+
+开发内容：
+
+- 建立独立 Linux native helper 与能力探测，明确内核、cgroup v2、namespace、seccomp/Landlock 等可用约束，
+  不把“命令成功启动”等同于“策略已执行”。
+- 对 CPU、内存、进程数、写入字节、文件系统可见范围和网络模式生成可验证 attestation，并与请求指纹绑定。
+- 使用独立 user/pid/mount/network namespace、受控工作目录和最小 capability；不允许继承宿主敏感环境变量或凭据。
+- 定义 rootless 与受管 helper 两种部署能力边界；缺少某项强制属性时按能力关闭，而不是降级为弱沙箱。
+- 增加逃逸、资源耗尽、孤儿进程、租约过期、helper 崩溃、主机重启和不受支持内核的集成测试。
+
+验收条件：Linux 后端只能在所有声明约束均有可验证证明时返回成功；Provider 和工具无法绕过网络、
+文件系统或资源策略；不满足生产策略的主机明确报告 unavailable，且不存在直接 spawn 回退。
+
+### P1：将 Runtime 从 `apps/server` 提取为可复用 packages
+
+当前状态：在 Scenario Extraction 的 Contract 和依赖方向稳定后开始，不能与其混成一次大爆炸重构。
+目标是让 Server 回到 Transport、Adapter、Persistence Wiring 与 Composition Root，而不是简单追求目录变小。
+
+阶段 A：依赖图与 Ports
+
+- 为 Scenario、Cognitive、Model、Evidence、Tool 和 Execution 六层绘制实际 import 图，标出领域逻辑、端口、
+  SQLite/Fastify Adapter 与 Composition 代码；先消除循环依赖，再决定包边界。
+- Runtime 通过 Store、Clock、Event Writer、Model Provider、Execution Node、Tool Registry 等显式端口工作，
+  不直接 import Fastify、具体数据库 client、桌面 API 或某个 Scenario Package。
+
+阶段 B：按稳定职责提取
+
+- `scenario-runtime`：通用 Run/Work/Lease/Checkpoint/Recovery、Definition Registry 与调度协议。
+- `cognitive-runtime`：通用 Planner/Observer/Worker Loop、上下文蒸馏与认知快照协议；具体策略由 Scenario 提供。
+- `model-runtime`：模型路由、Admission、预算、重试、熔断和调用审计协议。
+- Evidence、Tool 和 Execution 继续复用现有 packages；只有在职责和依赖证明确有需要时再拆分或重命名，
+  不为追求对称目录制造空壳包。
+- `apps/server` 保留 HTTP/WebSocket Routes、配置、SQLite 实现、进程生命周期和显式装配。
+
+阶段 C：多宿主验收
+
+- 建立不依赖 Fastify 的 Runtime integration harness，证明 Run、Planner/Observer、Worker 和 Tool Gateway 可直接组合。
+- 增加最小 CLI/测试宿主，只依赖 packages 和端口实现，不 import `apps/server/src/*`。
+- 增加 package dependency-boundary 测试和循环依赖检查，禁止 Runtime 反向依赖 Server、Desktop 或 Scenario 实现包。
+
+验收条件：Server 仅承担 Adapter 与 Composition 职责；核心 Runtime 可在测试宿主或未来 CLI/Coordinator 中
+复用；删除 Fastify 路由不影响 Runtime 包构建；包拆分不改变 Run/Event/Evidence 的持久化语义和重放摘要。
+
+合并门禁：
+
+- 每次只迁移一个有清晰端口的 Runtime slice，并保持公开行为、事件 schema 和测试基线不变。
+- 新 package 必须至少有两个消费者或一个明确的非 Server integration harness；否则先保留模块边界，不创建空壳包。
+- 禁止 Runtime package import `apps/*`，禁止 package 之间形成环，禁止为了消除类型错误复制领域模型。
+- SQLite 查询与 Fastify request/reply 类型不得泄漏到 Runtime public API；Adapter 负责转换。
+- 提取完成后删除 Server 中的旧实现，不长期保留双写、双运行时或兼容代理层。
+
+### P1：Web 黑盒包内的 Brokered Browser Execution
 
 开发内容：
 
@@ -172,7 +390,7 @@ Provider 进程现在必须使用固定的最小 OS 权限。需要网络、文�
 
 验收条件：浏览器无法绕过授权代理；身份撤销或租约过期立即冻结会话；人工接管后 Worker 能从持久化状态继续。
 
-### P1：Web 黑盒场景闭环
+### P1：Web 黑盒 Scenario Package 闭环
 
 开发内容：
 
@@ -207,14 +425,16 @@ Provider 进程现在必须使用固定的最小 OS 权限。需要网络、文�
 
 验收条件：发布包在干净 Windows 环境独立安装运行；升级和崩溃不破坏 Run、Evidence、Approval 和 Provider 状态；关键指标具备稳定基线。
 
-### 后续场景装配
+### 后续独立 Scenario Packages
 
-Web 黑盒闭环达到验收标准后，再复用同一底座开发：
+Scenario Extraction 验收后，各场景按独立包推进，不再通过修改 Core 增加场景：
 
 - 白盒代码审计 Profile：仓库快照、增量 Diff、AST/语义索引、Source-Sink 数据流、验证与修复证据。
 - 红队横向 Profile：PTY、远程 Session、跳板与隧道、凭据实体、网络拓扑以及更严格的审批策略。
 
-这两个场景不会复制底座，只增加各自的 Profile、Worker 策略、图谱映射和工具 Provider。
+这些场景不会复制底座，只通过 `ScenarioPackage` Contract 注册自己的 Profile、Worker 策略、
+授权策略、输出 Schema、图谱映射和工具 Provider。Web 黑盒是否完成不再是创建其他场景包的代码依赖，
+但产品排期仍可选择先完成一个场景的端到端验收。
 
 ## 6. 当前质量基线
 
@@ -228,5 +448,7 @@ Web 黑盒闭环达到验收标准后，再复用同一底座开发：
 
 ## 7. 最近的明确开发目标
 
-下一项应完成“Provider 归档分发、安全解包与签名发布工具”，随后补齐刷新 API、持久化调用回执对账和旧包回收。
-这些能力完成前，不应继续堆叠新的具体漏洞工具，也不应把开发注入来源当作生产 Provider 启动链。
+下一项只做“Scenario Extraction 与通用运行时边界”，先建立开放标识符、Scenario Package Contract、
+零场景启动能力和 import-boundary 测试，再抽离 Web 黑盒包。该项验收前暂停 Provider 分发、Browser、
+Web 黑盒策略和其他具体场景开发；允许继续修复不扩大场景耦合的安全或数据一致性缺陷。抽离验收后
+立即进入 Provider-to-Host Capability Broker，而不是先继续堆积具体工具或场景功能。

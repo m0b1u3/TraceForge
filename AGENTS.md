@@ -12,3 +12,14 @@ TraceForge is a general-purpose AI security-agent workbench. It is not designed 
 - When several suspicious points exist, preserve all of them as separate hypotheses and queued tasks, but execute only one validation task at a time within a Run.
 
 Before committing an orchestration or reasoning change, review it against these rules and remove sample-specific assumptions.
+
+## Plan and status synchronization
+
+Every completed code change must update the project plan in `docs/development-status-and-roadmap.md` in the same development cycle.
+
+- Record what actually became implemented; do not describe intended or partial work as complete.
+- Update remaining gaps, risks, dependencies, acceptance criteria, and the next explicit development priority when they changed.
+- Update the documented test/build baseline after running the required verification.
+- Reconcile architecture descriptions with the implementation, especially Scenario/Core boundaries and production-security claims.
+- A code change is not considered complete and must not be committed or pushed until the plan has been reviewed and synchronized.
+- Documentation-only turns may update the plan without running code tests, but must still pass `git diff --check`.

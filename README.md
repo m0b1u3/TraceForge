@@ -2,6 +2,11 @@
 
 TraceForge 是独立运行的通用安全智能体底座。它以 Scenario Control Plane、共享黑板、结构化证据、弹性 Worker、模型执行与安全门禁为核心，不依赖 Codex，也不围绕某个漏洞、工具或目标写死产品逻辑。
 
+当前实现仍存在一项已确认的 P0 架构债务：Web 黑盒 Definition、部分类型、授权与工具装配尚未完全
+从 Core 和 Server Composition Root 抽离。因此下面描述的是目标架构；在完成
+[Scenario Extraction 计划](docs/development-status-and-roadmap.md#p0scenario-extraction-与通用运行时边界)前，
+不宣称 Scenario 已经完全插件化，也不继续向通用层增加具体场景逻辑。
+
 当前代码只保留新的 Scenario 运行链路：
 
 - Scenario Profile 定义目标、阶段、能力需求和授权边界。
