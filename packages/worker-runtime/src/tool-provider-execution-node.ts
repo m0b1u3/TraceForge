@@ -24,10 +24,20 @@ import {
   type ToolProviderProcessAttestation,
   type ToolProviderProcessStatus,
   type ToolProviderRpcClient,
-  type ToolProviderRpcMethod,
+  type ToolProviderCommandMethod,
   type ToolProviderRpcRequest,
   type ToolProviderRpcResponse,
+  type ProviderHostCapabilityCallParams,
+  validateProviderHostCapabilityCall,
 } from "./tool-provider-rpc.js";
+import type { ProviderCapabilityHost, ProviderCapabilityInvocation } from "./provider-capability-broker.js";
+import {
+  createToolProviderDiagnostic,
+  diagnosticPublicMessage,
+  publicToolProviderDiagnosticSummary,
+  type ToolProviderDiagnosticCategory,
+  type ToolProviderDiagnosticWriter,
+} from "./tool-provider-diagnostics.js";
 
 export interface ExecutionNodeToolProviderOptions {
   node: ExecutionNode;
@@ -47,12 +57,15 @@ export interface ExecutionNodeToolProviderOptions {
   maximumStderrBytes?: number;
   expectedProviderId?: string;
   expectedProviderVersion?: string;
+  capabilityHost?: ProviderCapabilityHost;
+  diagnosticWriter?: ToolProviderDiagnosticWriter;
 }
 
 interface PendingRequest {
   resolve(value: unknown): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
+  context?: ToolExecutionContext;
 }
 
 export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
@@ -69,7 +82,9 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
   private state: ToolProviderProcessStatus["state"] = "stopped";
   private lastExit: ToolProviderProcessStatus["lastExit"] = null;
   private lastError: string | null = null;
+  private lastDiagnosticRef: string | null = null;
   private stderr = Buffer.alloc(0);
+  private omittedStderrBytes = 0;
   private attestation: ToolProviderProcessAttestation;
   private readonly processTimeoutMs: number;
   private readonly outputLimitBytes: number;
@@ -77,6 +92,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
   private readonly maximumFrameBytes: number;
   private readonly maximumInFlight: number;
   private readonly maximumStderrBytes: number;
+  private readonly reversePending = new Set<string>();
 
   constructor(private readonly options: ExecutionNodeToolProviderOptions) {
     if (options.permissions.network === "direct") throw new Error("Execution Node Tool Provider cannot use direct networking");
@@ -100,7 +116,8 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
   }
 
   async callTool(tool: string, input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
-    return validateToolProviderResult(await this.request("tools.call", { tool, input, context }));
+    const { signal: _signal, ...rpcContext } = context;
+    return validateToolProviderResult(await this.request("tools.call", { tool, input, context: rpcContext }, context));
   }
 
   async restart(): Promise<void> {
@@ -122,17 +139,18 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
       provider: this.provider ? { ...this.provider } : null,
       lastExit: this.lastExit ? { ...this.lastExit } : null,
       lastError: this.lastError,
+      lastDiagnosticRef: this.lastDiagnosticRef,
       attestation: { ...this.attestation },
     };
   }
 
-  private async request(method: ToolProviderRpcMethod, params: unknown): Promise<unknown> {
+  private async request(method: ToolProviderCommandMethod, params: unknown, context?: ToolExecutionContext): Promise<unknown> {
     if (Date.parse(this.options.attribution.leaseExpiresAt) <= Date.now()) {
       await this.stopProcess();
       throw new Error(`Tool Provider service lease ${this.options.attribution.leaseId} has expired`);
     }
     await this.ensureReady();
-    return this.send(method, params);
+    return this.send(method, params, context);
   }
 
   private ensureReady(): Promise<void> {
@@ -147,6 +165,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     this.state = "starting";
     this.provider = null;
     this.stderr = Buffer.alloc(0);
+    this.omittedStderrBytes = 0;
     this.decoder = new LengthPrefixedJsonDecoder(this.maximumFrameBytes);
     this.cursor = 0;
     try {
@@ -176,7 +195,10 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
       this.generation += 1;
       const epoch = ++this.epoch;
       void this.pump(epoch);
-      this.provider = validateToolProviderHandshake(await this.send("provider.handshake", { protocolVersion: TOOL_PROVIDER_RPC_VERSION }));
+      this.provider = validateToolProviderHandshake(await this.send("provider.handshake", {
+        protocolVersion: TOOL_PROVIDER_RPC_VERSION,
+        hostMethods: this.options.capabilityHost ? ["host.capability.call"] : [],
+      }));
       if (this.options.expectedProviderId && this.provider.providerId !== this.options.expectedProviderId) {
         throw new Error(`Execution Node Tool Provider identity mismatch: expected ${this.options.expectedProviderId}`);
       }
@@ -213,7 +235,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     this.attestation = { sandboxed: true, backend: enforcement.sandboxBackend, network: enforcement.network };
   }
 
-  private send(method: ToolProviderRpcMethod, params: unknown): Promise<unknown> {
+  private send(method: ToolProviderCommandMethod, params: unknown, context?: ToolExecutionContext): Promise<unknown> {
     const access = this.access;
     if (!access) return Promise.reject(new ToolProviderRpcTransportError("Execution Node Tool Provider process is unavailable"));
     if (this.pending.size >= this.maximumInFlight) return Promise.reject(new Error("Execution Node Tool Provider in-flight request limit exceeded"));
@@ -226,7 +248,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
         reject(new ToolProviderRpcTransportError(`Execution Node Tool Provider request ${method} timed out after ${this.requestTimeoutMs}ms`));
         void this.stopProcess();
       }, this.requestTimeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, context });
       void this.options.node.writeProcessInput({ ...access, dataBase64: frame.toString("base64") }).catch((error) => {
         const pending = this.pending.get(id);
         if (!pending) return;
@@ -284,10 +306,14 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
       this.transportFailed(error instanceof Error ? error : new Error("Execution Node Tool Provider returned an invalid frame"));
       return;
     }
-    for (const value of values) this.onResponse(value);
+    for (const value of values) this.onFrame(value);
   }
 
-  private onResponse(value: unknown): void {
+  private onFrame(value: unknown): void {
+    if (isProviderHostRpcRequest(value)) {
+      this.onProviderRequest(value);
+      return;
+    }
     if (!isRecord(value) || value.version !== TOOL_PROVIDER_RPC_VERSION || typeof value.id !== "string" || typeof value.ok !== "boolean") {
       this.transportFailed(new Error("Execution Node Tool Provider returned an invalid RPC response"));
       return;
@@ -299,12 +325,96 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     this.pending.delete(response.id);
     if (response.ok) pending.resolve(response.result);
     else if (isRecord(response.error) && typeof response.error.code === "string" && typeof response.error.message === "string" && typeof response.error.retryable === "boolean") {
-      pending.reject(new ToolProviderRpcRemoteError(response.error.code, response.error.message, response.error.retryable));
+      pending.reject(new ToolProviderRpcRemoteError(
+        response.error.code,
+        this.diagnostic("remote_error", "Tool Provider reported an error", `${response.error.code}: ${response.error.message}`, pending.context),
+        response.error.retryable,
+      ));
     } else pending.reject(new Error("Execution Node Tool Provider returned an invalid RPC error"));
   }
 
+  private onProviderRequest(request: ToolProviderRpcRequest): void {
+    const access = this.access;
+    const generation = this.generation;
+    if (!access) return;
+    if (request.method !== "host.capability.call") {
+      void this.writeHostResponse(access, generation, request.id, false,
+        rpcError("method_not_found", `Provider host method ${request.method} is not supported`));
+      return;
+    }
+    let params: ProviderHostCapabilityCallParams;
+    try {
+      params = validateProviderHostCapabilityCall(request.params);
+    } catch (error) {
+      void this.writeHostResponse(access, generation, request.id, false, rpcError("invalid_params", errorMessage(error)));
+      return;
+    }
+    const context = this.pending.get(params.parentRequestId)?.context;
+    if (!context) {
+      void this.writeHostResponse(access, generation, request.id, false,
+        rpcError("unknown_parent", "Provider capability parent tools.call is not active"));
+      return;
+    }
+    const provider = this.provider;
+    if (!provider || !this.options.capabilityHost) {
+      void this.writeHostResponse(access, generation, request.id, false,
+        rpcError("capability_unavailable", "Provider host capability broker is unavailable"));
+      return;
+    }
+    if (this.reversePending.has(request.id) || this.reversePending.size >= this.maximumInFlight) {
+      void this.writeHostResponse(access, generation, request.id, false,
+        rpcError("reverse_limit", "Provider host capability in-flight limit exceeded", true));
+      return;
+    }
+    const invocation: ProviderCapabilityInvocation = {
+      provider: { id: provider.providerId, version: provider.providerVersion, generation },
+      parentRequestId: params.parentRequestId,
+      capability: params.capability,
+      action: params.action,
+      idempotencyKey: params.idempotencyKey,
+      input: params.input,
+      attribution: context,
+      depth: 1,
+    };
+    this.reversePending.add(request.id);
+    void this.options.capabilityHost.invoke(invocation)
+      .then((receipt) => this.writeHostResponse(access, generation, request.id, true, receipt))
+      .catch((error) => this.writeHostResponse(access, generation, request.id, false,
+        rpcError("capability_failed", errorMessage(error), isRetryableError(error))))
+      .finally(() => { this.reversePending.delete(request.id); });
+  }
+
+  private async writeHostResponse(
+    access: ProcessAccess,
+    generation: number,
+    id: string,
+    ok: boolean,
+    value: unknown,
+  ): Promise<void> {
+    if (!this.access || this.access.processId !== access.processId || this.access.adoptionToken !== access.adoptionToken
+      || this.generation !== generation) return;
+    const response: ToolProviderRpcResponse = ok
+      ? { version: TOOL_PROVIDER_RPC_VERSION, id, ok: true, result: value }
+      : { version: TOOL_PROVIDER_RPC_VERSION, id, ok: false, error: value as { code: string; message: string; retryable: boolean } };
+    let frame: Buffer;
+    try {
+      frame = encodeLengthPrefixedJson(response, this.maximumFrameBytes);
+    } catch (error) {
+      this.transportFailed(error instanceof Error ? error : new Error("Provider host response exceeded protocol limits"));
+      return;
+    }
+    await this.options.node.writeProcessInput({ ...access, dataBase64: frame.toString("base64") }).catch((error) => {
+      if (this.access?.processId === access.processId && this.access.adoptionToken === access.adoptionToken
+        && this.generation === generation) {
+        this.transportFailed(error instanceof Error ? error : new Error("Execution Node Provider host response failed"));
+      }
+    });
+  }
+
   private onStderr(chunk: Buffer): void {
-    this.stderr = Buffer.concat([this.stderr, chunk]).subarray(-this.maximumStderrBytes);
+    const combined = Buffer.concat([this.stderr, chunk]);
+    this.omittedStderrBytes += Math.max(0, combined.length - this.maximumStderrBytes);
+    this.stderr = combined.subarray(-this.maximumStderrBytes);
   }
 
   private processExited(process: ProcessDescriptor): void {
@@ -314,13 +424,15 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     this.provider = null;
     if (!this.closing) this.state = process.exitCode === 0 ? "stopped" : "failed";
     const detail = this.stderr.toString("utf8").trim();
-    this.lastError = process.exitCode === 0 ? null
-      : detail ? `Tool Provider exited with code ${String(process.exitCode)}: ${detail}` : `Tool Provider exited with code ${String(process.exitCode)}`;
+    if (process.exitCode === 0) this.lastError = null;
+    else if (!this.lastError) this.lastError = this.diagnostic(
+      "process_exit", `Tool Provider exited with code ${String(process.exitCode)}`, detail, undefined, this.omittedStderrBytes,
+    );
     this.rejectPending(new ToolProviderRpcTransportError(this.lastError ?? "Execution Node Tool Provider process exited"));
   }
 
   private transportFailed(error: Error): void {
-    this.lastError = error.message;
+    this.lastError = this.diagnostic("transport", "Tool Provider transport failed", error.message);
     this.state = "failed";
     this.rejectPending(error instanceof ToolProviderRpcTransportError ? error : new ToolProviderRpcTransportError(error.message));
     void this.stopProcess();
@@ -332,6 +444,35 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
       pending.reject(error);
     }
     this.pending.clear();
+    this.reversePending.clear();
+  }
+
+  private diagnostic(
+    category: ToolProviderDiagnosticCategory,
+    summary: string,
+    detail: string,
+    context?: ToolExecutionContext,
+    previouslyOmittedDetailBytes = 0,
+  ): string {
+    if (!this.options.diagnosticWriter) return publicToolProviderDiagnosticSummary(summary);
+    const identity = this.provider
+      ? { id: this.provider.providerId, version: this.provider.providerVersion, generation: this.generation }
+      : this.options.expectedProviderId && this.options.expectedProviderVersion
+        ? { id: this.options.expectedProviderId, version: this.options.expectedProviderVersion, generation: this.generation }
+        : null;
+    const record = createToolProviderDiagnostic({
+      provider: identity,
+      category,
+      summary,
+      detail, previouslyOmittedDetailBytes,
+      attribution: context
+        ? { caseId: context.caseId, runId: context.runId, workId: context.workId }
+        : { caseId: this.options.attribution.caseId, runId: this.options.attribution.runId, workId: this.options.attribution.workId },
+    });
+    try { this.options.diagnosticWriter.write(record); }
+    catch { return publicToolProviderDiagnosticSummary(summary); }
+    this.lastDiagnosticRef = record.id;
+    return diagnosticPublicMessage(record);
   }
 
   private async stopProcess(): Promise<void> {
@@ -353,4 +494,21 @@ function positiveInteger(value: number, label: string): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isProviderHostRpcRequest(value: unknown): value is ToolProviderRpcRequest {
+  return isRecord(value) && value.version === TOOL_PROVIDER_RPC_VERSION
+    && typeof value.id === "string" && typeof value.method === "string" && "params" in value;
+}
+
+function rpcError(code: string, message: string, retryable = false): { code: string; message: string; retryable: boolean } {
+  return { code, message, retryable };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown Provider host capability failure";
+}
+
+function isRetryableError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "retryable" in error && error.retryable === true);
 }

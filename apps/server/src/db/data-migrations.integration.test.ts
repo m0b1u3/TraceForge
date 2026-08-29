@@ -1,4 +1,7 @@
 import Database from "better-sqlite3";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   applyDataMigrations,
@@ -57,5 +60,39 @@ describe("data migrations with real SQLite", () => {
     expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scenario_event_streams'").get())
       .toEqual({ name: "scenario_event_streams" });
     sqlite.close();
+  });
+
+  it("adds nullable Scenario Package binding columns without inventing a binding for legacy Runs", () => {
+    const directory = mkdtempSync(join(tmpdir(), "traceforge-package-binding-"));
+    const path = join(directory, "legacy.sqlite");
+    const legacy = new Database(path);
+    legacy.exec(`
+      CREATE TABLE scenario_event_streams (
+        run_id TEXT PRIMARY KEY, case_id TEXT NOT NULL, definition_kind TEXT NOT NULL,
+        definition_version INTEGER NOT NULL, status TEXT NOT NULL, active_phase_id TEXT NOT NULL,
+        revision INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO scenario_event_streams
+        (run_id, case_id, definition_kind, definition_version, status, active_phase_id, revision, created_at, updated_at)
+      VALUES ('legacy_run', 'case_1', 'first_scenario', 1, 'paused', 'first_phase', 1,
+        '2026-08-28T00:00:00.000Z', '2026-08-28T00:00:00.000Z');
+    `);
+    legacy.close();
+
+    const migrated = getSqliteClient(createDb(path));
+    const columns = migrated.prepare("PRAGMA table_info(scenario_event_streams)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "scenario_package_id", "scenario_package_version", "scenario_schema_revision",
+    ]));
+    expect(migrated.prepare(`
+      SELECT scenario_package_id, scenario_package_version, scenario_schema_revision
+      FROM scenario_event_streams WHERE run_id = 'legacy_run'
+    `).get()).toEqual({
+      scenario_package_id: null,
+      scenario_package_version: null,
+      scenario_schema_revision: null,
+    });
+    migrated.close();
+    rmSync(directory, { recursive: true, force: true });
   });
 });

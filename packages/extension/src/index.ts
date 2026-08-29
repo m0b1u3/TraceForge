@@ -5,7 +5,8 @@ export type {
 export { TOOL_SECURITY } from "./tool.js";
 export { ToolRegistry } from "./registry.js";
 export type {
-  LlmProvider, ExtractJsonArgs, ToolCall, TurnMessage, RunTurn, RunToolsArgs, StreamToolsHandlers, UsageSnapshot, EmbedArgs,
+  LlmProvider, ExtractJsonArgs, ToolCall, TurnMessage, RunTurn, LlmToolDefinition,
+  RunToolsArgs, StreamToolsHandlers, UsageSnapshot, EmbedArgs,
 } from "./provider.js";
 export {
   diagnoseToolFailure,

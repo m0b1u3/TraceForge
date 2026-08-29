@@ -4,13 +4,16 @@ import type Database from "better-sqlite3";
 import {
   DurableScenarioRuntime,
   ScenarioDefinitionRegistry,
-  WEB_BLACKBOX_CAPABILITIES,
-  WEB_BLACKBOX_SCENARIO,
 } from "@traceforge/orchestration-core";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "@traceforge/scenario-web-blackbox";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteScenarioEventStore, SqliteWorkerRegistry } from "./scenario-event-store.js";
+import { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
+import { ScenarioEvidenceGraphAdapter } from "./scenario-evidence-store.js";
 import { registerScenarioRunRecoveryRoutes, ScenarioRunRecoveryService } from "./scenario-run-recovery.js";
 import { registerScenarioRoutes } from "./scenario-routes.js";
+import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
 
 const databases: Database.Database[] = [];
 const recoveries = new WeakMap<object, ScenarioRunRecoveryService>();
@@ -24,6 +27,9 @@ async function setup(autoScheduleIntervalMs?: number) {
     .run("case_1", "Authorized assessment", "active", "{}", "2026-08-24T08:00:00.000Z");
   const ids = ["lease_1", "lease_2"];
   registerScenarioRoutes(app, sqlite, {
+    definitions: new ScenarioDefinitionRegistry([WEB_BLACKBOX_SCENARIO]),
+    packages: new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]),
+    evidence: new ScenarioEvidenceGraphAdapter(new SqliteEvidenceGraphStore(sqlite)),
     now: () => "2026-08-24T08:00:10.000Z",
     createId: () => ids.shift()!,
     controlPlane: { leaseDurationMs: 60_000, heartbeatTimeoutMs: 30_000, concurrencyRetries: 3 },
@@ -69,6 +75,19 @@ afterEach(() => {
 });
 
 describe("scenario control-plane routes", () => {
+  it("starts with an empty definition catalog when no scenario is installed", async () => {
+    const app = Fastify();
+    const db = createDb(":memory:");
+    const sqlite = getSqliteClient(db);
+    databases.push(sqlite);
+    registerScenarioRoutes(app, sqlite);
+    await app.ready();
+    const response = await app.inject({ method: "GET", url: "/api/scenarios/definitions" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual([]);
+    await app.close();
+  });
+
   it("exposes registered Scenario Profiles and their authorization contract", async () => {
     const app = await setup();
     const response = await app.inject({ method: "GET", url: "/api/scenarios/definitions" });
@@ -80,6 +99,51 @@ describe("scenario control-plane routes", () => {
       authorizationActions: expect.arrayContaining(["scope.read", "web.request.replay", "report.write"]),
       agentTopology: expect.objectContaining({ planner: expect.objectContaining({ enabled: true }) }),
     })]);
+  });
+
+  it("keeps an unavailable Package binding diagnosable without silently using the installed version", async () => {
+    const app = await setup();
+    expect((await authorize(app)).statusCode).toBe(201);
+    const started = await app.inject({
+      method: "POST",
+      url: "/api/scenarios/runs",
+      payload: {
+        commandId: "command_start_unavailable",
+        runId: "run_unavailable",
+        caseId: "case_1",
+        goal: "Preserve exact Package ownership",
+        scopeRef: "scope_1",
+        scenarioKind: "web_blackbox",
+        definitionVersion: 1,
+      },
+    });
+    expect(started.statusCode).toBe(201);
+
+    const sqlite = databases.at(-1)!;
+    const row = sqlite.prepare("SELECT payload_json FROM scenario_events WHERE run_id = ? AND sequence = 1")
+      .get("run_unavailable") as { payload_json: string };
+    const event = JSON.parse(row.payload_json) as { state: { scenarioPackage: { version: string } } };
+    event.state.scenarioPackage.version = "0.0.9";
+    sqlite.prepare("UPDATE scenario_events SET payload_json = ? WHERE run_id = ? AND sequence = 1")
+      .run(JSON.stringify(event), "run_unavailable");
+    sqlite.prepare("UPDATE scenario_event_streams SET scenario_package_version = ? WHERE run_id = ?")
+      .run("0.0.9", "run_unavailable");
+
+    const bindingList = await app.inject({ method: "GET", url: "/api/scenarios/runs?caseId=case_1" });
+    expect(bindingList.json()[0]).toMatchObject({
+      runId: "run_unavailable",
+      packageAvailability: "recovery_required",
+      packageDiagnostic: expect.stringContaining("required by Run is not installed"),
+    });
+    const loaded = await app.inject({ method: "GET", url: "/api/scenarios/runs/run_unavailable" });
+    expect(loaded.statusCode).toBe(409);
+    expect(loaded.json()).toMatchObject({ recoveryRequired: true });
+    expect(loaded.json().error).toContain("traceforge.web-blackbox@0.0.9");
+    const revoked = await app.inject({
+      method: "POST", url: "/api/scenarios/authorizations/scope_1/revoke",
+    });
+    expect(revoked.statusCode).toBe(200);
+    expect(revoked.json().cancelledRunIds).toEqual([]);
   });
 
   it("runs the worker dispatch, checkpoint, completion, and phase transition protocol", async () => {
@@ -110,9 +174,19 @@ describe("scenario control-plane routes", () => {
     const started = await app.inject({ method: "POST", url: "/api/scenarios/runs", payload: startPayload });
     expect(started.statusCode).toBe(201);
     expect(started.json().state.revision).toBe(1);
+    expect(started.json().state.scenarioPackage).toEqual({
+      id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1,
+    });
     const replayed = await app.inject({ method: "POST", url: "/api/scenarios/runs", payload: startPayload });
     expect(replayed.statusCode).toBe(200);
     expect(replayed.json().idempotentReplay).toBe(true);
+
+    const bindingList = await app.inject({ method: "GET", url: "/api/scenarios/runs?caseId=case_1" });
+    expect(bindingList.json()[0]).toMatchObject({
+      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
+      packageAvailability: "available",
+      packageDiagnostic: null,
+    });
 
     const proposed = await app.inject({
       method: "POST",
@@ -227,6 +301,20 @@ describe("scenario control-plane routes", () => {
     });
     expect(completed.statusCode).toBe(200);
     expect(completed.json().state.revision).toBe(8);
+    expect(completed.json().state.outputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "output_scope", schemaVersion: 1 }),
+      expect.objectContaining({ id: "output_inventory", schemaVersion: 1 }),
+    ]));
+    expect(completed.json().evidenceRefs).toEqual(expect.arrayContaining([
+      "knowledge-node:scenario-output:run_1:output_scope",
+      "knowledge-node:scenario-output:run_1:output_inventory",
+    ]));
+    expect(databases.at(-1)!.prepare(`
+      SELECT id, kind, run_id FROM evidence_graph_nodes WHERE run_id = 'run_1' ORDER BY id
+    `).all()).toEqual([
+      { id: "scenario-output:run_1:output_inventory", kind: "fact", run_id: "run_1" },
+      { id: "scenario-output:run_1:output_scope", kind: "fact", run_id: "run_1" },
+    ]);
 
     const advanced = await app.inject({
       method: "POST",

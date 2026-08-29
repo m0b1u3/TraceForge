@@ -5,6 +5,12 @@ import { z } from "zod";
 import type { EvidenceGraphState, KnowledgeNode } from "@traceforge/evidence-graph";
 import type { LlmProvider } from "@traceforge/llm";
 import {
+  CognitiveContextDistiller,
+  CognitiveEvaluationRunner,
+  CognitiveLoopScheduler,
+  type CognitiveEvaluationSnapshotPort,
+} from "@traceforge/cognitive-runtime";
+import {
   RevisionConflictError,
   transitionAllowed,
   type DurableScenarioRuntime,
@@ -16,11 +22,9 @@ import {
 } from "@traceforge/orchestration-core";
 import type { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
 import type { SqliteScenarioEventStore } from "./scenario-event-store.js";
-import { CognitiveContextDistiller } from "./cognitive-context-distiller.js";
-import type { SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
 import type { ModelExecutionRuntime } from "./model-execution-runtime.js";
 
-const workKind = z.enum(["research", "validation", "review", "report"]);
+const workKind = z.string().min(1);
 const proposal = z.object({
   kind: workKind,
   title: z.string().min(1),
@@ -66,7 +70,7 @@ const decisionSchema = {
       properties: {
         action: { const: "plan" }, rationale: { type: "string" },
         proposals: { type: "array", items: { type: "object", additionalProperties: false, properties: {
-          kind: { enum: workKind.options }, title: { type: "string" }, objective: { type: "string" }, priority: { type: "integer", minimum: 0, maximum: 100 },
+          kind: { type: "string" }, title: { type: "string" }, objective: { type: "string" }, priority: { type: "integer", minimum: 0, maximum: 100 },
           requiredCapabilities: { type: "array", items: { type: "string" } }, hypothesisIds: { type: "array", items: { type: "string" } },
           evidenceRefs: { type: "array", items: { type: "string" } }, maxAttempts: { type: "integer", minimum: 1, maximum: 20 },
         }, required: ["kind", "title", "objective", "priority", "requiredCapabilities", "hypothesisIds", "evidenceRefs", "maxAttempts"] } },
@@ -84,13 +88,17 @@ function relevantNodes(run: ScenarioRunState, graph: EvidenceGraphState, limit: 
 }
 
 export class StructuredRunPlannerModel implements RunPlannerModel {
+  private readonly evaluations: CognitiveEvaluationRunner;
+
   constructor(
     private readonly provider: LlmProvider,
     private readonly distiller = new CognitiveContextDistiller(),
-    private readonly snapshots?: SqliteCognitiveSnapshotStore,
-    private readonly now: () => string = () => new Date().toISOString(),
+    snapshots?: CognitiveEvaluationSnapshotPort,
+    now: () => string = () => new Date().toISOString(),
     private readonly modelRuntime?: ModelExecutionRuntime,
-  ) {}
+  ) {
+    this.evaluations = new CognitiveEvaluationRunner(snapshots, now);
+  }
 
   async evaluate(snapshot: RunPlannerSnapshot): Promise<RunPlannerDecision> {
     const phase = snapshot.definition.phases.find((candidate) => candidate.id === snapshot.run.activePhaseId);
@@ -124,34 +132,32 @@ export class StructuredRunPlannerModel implements RunPlannerModel {
       }),
       schema: decisionSchema,
     };
-    this.snapshots?.prepare({
-      id: snapshot.contextId,
-      consumer: "planner",
-      runId: snapshot.run.id,
-      caseId: snapshot.run.caseId,
-      evaluationId: snapshot.contextId,
-      sourceRunRevision: snapshot.run.revision,
-      sourceGraphRevision: snapshot.graph.revision,
-      semanticFingerprint: context.semanticFingerprint,
-      request,
-      contextManifest: context.manifest,
-      at: this.now(),
+    return this.evaluations.run({
+      snapshot: {
+        id: snapshot.contextId,
+        consumer: "planner",
+        runId: snapshot.run.id,
+        caseId: snapshot.run.caseId,
+        evaluationId: snapshot.contextId,
+        sourceRunRevision: snapshot.run.revision,
+        sourceGraphRevision: snapshot.graph.revision,
+        semanticFingerprint: context.semanticFingerprint,
+        request,
+        contextManifest: context.manifest,
+      },
+      model: {
+        extractJson: (modelRequest) => this.modelRuntime
+          ? this.modelRuntime.extractJson({
+              role: "planner", snapshotId: snapshot.contextId, runId: snapshot.run.id, caseId: snapshot.run.caseId,
+            }, modelRequest)
+          : this.provider.extractJson(modelRequest),
+      },
+      parse: (value) => plannerDecision.parse(value),
+      completion: (parsed) => ({
+        decisionKind: parsed.action,
+        outcome: parsed.action === "wait" ? "continue" : "finish",
+      }),
     });
-    try {
-      const value = this.modelRuntime
-        ? await this.modelRuntime.extractJson({
-            role: "planner", snapshotId: snapshot.contextId, runId: snapshot.run.id, caseId: snapshot.run.caseId,
-          }, request)
-        : await this.provider.extractJson(request);
-      const parsed = plannerDecision.parse(value);
-      this.snapshots?.complete(snapshot.contextId, parsed, this.now(), {
-        decisionKind: parsed.action, outcome: parsed.action === "wait" ? "continue" : "finish",
-      });
-      return parsed;
-    } catch (error) {
-      this.snapshots?.fail(snapshot.contextId, error, this.now());
-      throw error;
-    }
   }
 }
 
@@ -241,15 +247,8 @@ export class SqliteRunPlannerStore {
   }
 }
 
-const roleByKind: Record<WorkKind, "researcher" | "validator" | "reviewer" | "reporter"> = {
-  research: "researcher", validation: "validator", review: "reviewer", report: "reporter",
-};
-
 export class RunPlannerSupervisor {
-  private timer: ReturnType<typeof setTimeout> | undefined;
-  private running = false;
-  private activeTick: Promise<void> | undefined;
-  private wakeRequested = false;
+  private readonly loop: CognitiveLoopScheduler;
 
   constructor(
     private readonly runtime: DurableScenarioRuntime,
@@ -261,27 +260,21 @@ export class RunPlannerSupervisor {
     private readonly concurrencyRetries = 4,
     private readonly createId: () => string = randomUUID,
     private readonly now: () => string = () => new Date().toISOString(),
-    private readonly onError: (error: unknown) => void = () => undefined,
-  ) {}
-
-  start(): void { if (!this.running) { this.running = true; this.schedule(0); } }
-
-  wake(): void {
-    if (!this.running) return;
-    if (this.activeTick) {
-      this.wakeRequested = true;
-      return;
-    }
-    if (this.timer) clearTimeout(this.timer);
-    this.schedule(0);
+    onError: (error: unknown) => void = () => undefined,
+  ) {
+    this.loop = new CognitiveLoopScheduler({
+      tick: () => this.tick(),
+      nextPollDelayMs: () => this.minimumPollInterval(),
+      errorBackoffMs: 5_000,
+      onError,
+    });
   }
 
-  async stop(): Promise<void> {
-    this.running = false;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
-    await this.activeTick;
-  }
+  start(): void { this.loop.start(); }
+
+  wake(): void { this.loop.wake(); }
+
+  stop(): Promise<void> { return this.loop.stop(); }
 
   async tick(): Promise<void> {
     for (const summary of this.scenarioEvents.listRuns().filter((run) => run.status === "running")) {
@@ -344,15 +337,19 @@ export class RunPlannerSupervisor {
       if (!phase.allowedWorkKinds.includes(item.kind)) throw new Error(`Planner proposed ${item.kind} outside phase ${phase.id}`);
       const unknownHypotheses = item.hypothesisIds.filter((id) => !knownHypotheses.has(id));
       if (unknownHypotheses.length) throw new Error(`Planner referenced unknown Hypotheses: ${unknownHypotheses.join(", ")}`);
-      if (item.kind === "validation" && item.hypothesisIds.length === 0) throw new Error("Planner validation Work requires a Hypothesis");
+      const workKindDefinition = definition.workKinds.find((candidate) => candidate.id === item.kind);
+      if (!workKindDefinition) throw new Error(`Planner proposed unknown work kind ${item.kind}`);
+      if (item.hypothesisIds.length < (workKindDefinition.minimumHypothesisRefs ?? 0)) {
+        throw new Error(`Planner Work ${item.kind} requires at least ${workKindDefinition.minimumHypothesisRefs} Hypothesis reference(s)`);
+      }
       const unknownRefs = item.evidenceRefs.filter((ref) => !knownRefs.has(ref));
       if (unknownRefs.length) throw new Error(`Planner referenced unknown Evidence: ${unknownRefs.join(", ")}`);
       const required = [...new Set([...phase.requiredCapabilities, ...item.requiredCapabilities])];
       const unavailable = required.filter((capability) => !available.has(capability));
       if (unavailable.length) throw new Error(`Planner requested unavailable capabilities: ${unavailable.join(", ")}`);
-      const pool = definition.agentTopology.workerPools.find((candidate) => candidate.role === roleByKind[item.kind]);
+      const pool = definition.agentTopology.workerPools.find((candidate) => candidate.workKinds.includes(item.kind));
       if (!pool || required.some((capability) => !pool.capabilities.includes(capability))) {
-        throw new Error(`No ${roleByKind[item.kind]} Worker pool can execute the proposed Work`);
+        throw new Error(`No Worker pool can execute the proposed ${item.kind} Work`);
       }
       const signature = this.workSignature(item.kind, item.title, item.objective);
       if (signatures.has(signature)) throw new Error(`Planner proposed duplicate Work ${item.title}`);
@@ -440,21 +437,6 @@ export class RunPlannerSupervisor {
 
   private workSignature(kind: WorkKind, title: string, objective: string): string {
     return `${kind}:${title.trim().toLowerCase()}:${objective.trim().toLowerCase()}`;
-  }
-
-  private schedule(delayMs: number): void {
-    if (!this.running) return;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      this.activeTick = this.tick().catch(this.onError).finally(() => {
-        this.activeTick = undefined;
-        const delay = this.wakeRequested ? 0 : this.minimumPollInterval();
-        this.wakeRequested = false;
-        this.schedule(delay);
-      });
-    }, delayMs);
-    this.timer.unref();
   }
 
   private minimumPollInterval(): number {

@@ -1,14 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type Database from "better-sqlite3";
+import { BlackboardChangeBus, CognitiveContextDistiller, type BlackboardChange } from "@traceforge/cognitive-runtime";
 import {
   DurableScenarioRuntime,
   ScenarioDefinitionRegistry,
-  WEB_BLACKBOX_CAPABILITIES,
-  WEB_BLACKBOX_SCENARIO,
 } from "@traceforge/orchestration-core";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "@traceforge/scenario-web-blackbox";
 import type { WorkerModelRequest } from "@traceforge/worker-runtime";
-import { BlackboardChangeBus, type BlackboardChange } from "./blackboard-change-bus.js";
-import { CognitiveContextDistiller } from "./cognitive-context-distiller.js";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
 import { SqliteScenarioEventStore } from "./scenario-event-store.js";
@@ -36,6 +34,7 @@ function setup() {
       caseId: "case_1",
       goal: "Assess authorized surface",
       scopeRef: "scope_1",
+      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
       availableCapabilities: capabilities,
       at,
     },

@@ -1,17 +1,18 @@
-export type ScenarioKind = "web_blackbox" | "code_audit" | "red_team_lateral";
+export type ScenarioKind = string;
 
-export type WorkKind = "research" | "validation" | "review" | "report";
+export type WorkKind = string;
 export type WorkStatus = "queued" | "running" | "waiting_approval" | "completed" | "blocked" | "failed" | "cancelled";
 export type RunStatus = "running" | "paused" | "blocked" | "completed" | "cancelled";
-export type WorkerRole = "coordinator" | "observer" | "researcher" | "validator" | "reviewer" | "reporter";
+export type WorkerRole = string;
 export type WorkerStatus = "online" | "draining" | "offline";
 
-export type ExecutionWorkerRole = "researcher" | "validator" | "reviewer" | "reporter";
+export type ExecutionWorkerRole = string;
 export type WorkerPoolActivation = "resident" | "on_demand";
 
 export interface ScenarioWorkerPoolDefinition {
   id: string;
   role: ExecutionWorkerRole;
+  workKinds: WorkKind[];
   activation: WorkerPoolActivation;
   minimumInstances: number;
   maximumInstances: number;
@@ -68,27 +69,22 @@ export interface WorkApprovalRecord {
   resolutionReason: string | null;
 }
 
-export type ScenarioOutputKind =
-  | "scope_snapshot"
-  | "capability_inventory"
-  | "surface_observation"
-  | "coverage_assessment"
-  | "hypothesis"
-  | "evidence"
-  | "validation_conclusion"
-  | "limitation"
-  | "evidence_review"
-  | "report";
+export type ScenarioOutputKind = string;
 
 export interface ScenarioOutput {
   id: string;
   kind: ScenarioOutputKind;
+  schemaVersion: number | null;
   summary: string;
   refs: string[];
   phaseId: string;
   producedByWorkId: string;
   createdAt: string;
 }
+
+export type ScenarioOutputDraft = Omit<ScenarioOutput, "phaseId" | "producedByWorkId" | "schemaVersion"> & {
+  schemaVersion?: number | null;
+};
 
 export interface ScenarioWorkItem {
   id: string;
@@ -150,12 +146,23 @@ export interface ScenarioPhaseDefinition {
   transitions: ScenarioTransition[];
 }
 
+export interface ScenarioWorkKindDefinition {
+  id: WorkKind;
+  defaultWorkerRoles: WorkerRole[];
+  maximumActiveItems?: number;
+  minimumHypothesisRefs?: number;
+  completion?: {
+    anyOfOutputKinds: ScenarioOutputKind[];
+  };
+}
+
 export interface ScenarioDefinition {
   kind: ScenarioKind;
   version: number;
   title: string;
   authorizationActions: string[];
   requiredCapabilities: string[];
+  workKinds: ScenarioWorkKindDefinition[];
   initialPhaseId: string;
   agentTopology: ScenarioAgentTopology;
   phases: ScenarioPhaseDefinition[];
@@ -171,11 +178,18 @@ export interface RunDirective {
   createdAt: string;
 }
 
+export interface ScenarioPackageBinding {
+  id: string;
+  version: string;
+  schemaRevision: number;
+}
+
 export interface ScenarioRunState {
   id: string;
   caseId: string;
   definitionKind: ScenarioKind;
   definitionVersion: number;
+  scenarioPackage: ScenarioPackageBinding | null;
   goal: string;
   scopeRef: string;
   status: RunStatus;
@@ -213,6 +227,7 @@ export type ScenarioCommand =
       caseId: string;
       goal: string;
       scopeRef: string;
+      scenarioPackage: ScenarioPackageBinding;
       availableCapabilities: string[];
       at: string;
     }
@@ -246,7 +261,7 @@ export type ScenarioCommand =
       at: string;
     }
   | { type: "resolve_work_approval"; workId: string; approvalId: string; approved: boolean; reason: string; at: string }
-  | { type: "complete_work"; workId: string; leaseId: string; summary: string; outputs: Omit<ScenarioOutput, "phaseId" | "producedByWorkId">[]; at: string }
+  | { type: "complete_work"; workId: string; leaseId: string; summary: string; outputs: ScenarioOutputDraft[]; at: string }
   | { type: "fail_work"; workId: string; leaseId: string; error: string; at: string }
   | { type: "block_work"; workId: string; leaseId: string; reason: string; at: string }
   | { type: "cancel_work"; workId: string; leaseId?: string; reason: string; at: string }

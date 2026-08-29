@@ -38,13 +38,16 @@ export interface LlmConfigInput {
 
 export interface ScenarioRunSummary {
   runId: string; caseId: string; definitionKind: string; definitionVersion: number;
+  scenarioPackage: { id: string; version: string; schemaRevision: number } | null;
+  packageAvailability: "available" | "recovery_required";
+  packageDiagnostic: string | null;
   status: string; activePhaseId: string; revision: number; createdAt: string; updatedAt: string;
 }
 
 export interface ScenarioAuthorization {
   id: string;
   caseId: string;
-  scenarioKind: "web_blackbox";
+  scenarioKind: string;
   scope: { targets: string[]; allowedActions: string[]; deniedActions: string[]; notes?: string };
   approvedBy: string;
   status: "active" | "revoked";
@@ -71,7 +74,7 @@ export interface ScenarioApproval {
 }
 
 export interface ScenarioDefinitionView {
-  kind: "web_blackbox" | "code_audit" | "red_team_lateral";
+  kind: string;
   version: number;
   title: string;
   authorizationActions: string[];
@@ -90,13 +93,14 @@ export interface ScenarioRunState {
   caseId: string;
   definitionKind: ScenarioDefinitionView["kind"];
   definitionVersion: number;
+  scenarioPackage: { id: string; version: string; schemaRevision: number };
   goal: string;
   scopeRef: string;
   status: "running" | "paused" | "blocked" | "completed" | "cancelled";
   activePhaseId: string;
   availableCapabilities: string[];
   workItems: Array<{
-    id: string; runId: string; phaseId: string; kind: "research" | "validation" | "review" | "report";
+    id: string; runId: string; phaseId: string; kind: string;
     title: string; objective: string; priority: number;
     status: "queued" | "running" | "waiting_approval" | "completed" | "blocked" | "failed" | "cancelled";
     allowedWorkerRoles: string[]; requiredCapabilities: string[]; hypothesisIds: string[]; evidenceRefs: string[];

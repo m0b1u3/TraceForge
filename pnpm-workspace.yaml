@@ -1,6 +1,7 @@
 packages:
   - "apps/*"
   - "packages/*"
+  - "scenarios/*"
 allowBuilds:
   better-sqlite3: true
   electron: true

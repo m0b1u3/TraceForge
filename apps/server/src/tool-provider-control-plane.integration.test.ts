@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import Fastify from "fastify";
+import type { ToolInvocationBindingStore } from "@traceforge/worker-runtime";
 import { createDb, getSqliteClient } from "./db/client.js";
 import {
   canonicalJson,
@@ -33,7 +34,7 @@ function makeTreeWritable(root: string): void {
   for (const name of readdirSync(root)) makeTreeWritable(join(root, name));
 }
 
-function fixture() {
+function fixture(invocationBindings?: Pick<ToolInvocationBindingStore, "hasOpenBindings" | "closeAdmission" | "openAdmission">) {
   const directory = mkdtempSync(join(tmpdir(), "traceforge-provider-control-"));
   temporaryDirectories.push(directory);
   const sourceRoot = join(directory, "source");
@@ -60,6 +61,7 @@ function fixture() {
     runtime,
     packages,
     () => "2026-08-27T12:00:00.000Z",
+    invocationBindings,
   );
   const manifest = (version = "1.0.0"): ToolProviderManifest => ({
     schemaVersion: 1,
@@ -193,6 +195,127 @@ describe("Tool Provider supply-chain control plane", () => {
     context.sqlite.close();
   });
 
+  it("blocks a contract-breaking upgrade before runtime activation and persists the assessment", async () => {
+    const context = fixture();
+    const first = context.manifest("1.0.0");
+    const second = context.manifest("2.0.0");
+    second.tools[0] = {
+      ...second.tools[0]!,
+      inputSchema: {
+        type: "object",
+        properties: { mode: { type: "string" } },
+        required: ["mode"],
+      },
+    };
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    context.control.install(second, context.signature(second), context.sourceRoot, "operator", "install-2");
+
+    await expect(context.control.enable(second.providerId, second.version, "operator", "enable-2"))
+      .rejects.toThrow(/contract-breaking.*input_schema_breaking/);
+    expect(context.activations).toEqual(["neutral-provider@1.0.0"]);
+    expect(context.store.get(second.providerId, second.version)?.state).toBe("installed");
+    expect(context.control.listCompatibility(second.providerId)).toMatchObject([{
+      commandId: "enable-2:compatibility:1.0.0",
+      report: {
+        fromVersion: "1.0.0",
+        toVersion: "2.0.0",
+        classification: "breaking",
+        changes: [expect.objectContaining({ code: "input_schema_breaking", classification: "breaking" })],
+      },
+    }]);
+    context.sqlite.close();
+  });
+
+  it("blocks upgrade, drain, and disable while an invocation binding is unfinished", async () => {
+    let open = true;
+    const closed = new Set<string>();
+    const context = fixture({
+      async hasOpenBindings() { return open; },
+      async closeAdmission(source, version) { closed.add(`${source}@${version}`); },
+      async openAdmission(source, version) { closed.delete(`${source}@${version}`); },
+    });
+    const first = context.manifest("1.0.0");
+    const second = context.manifest("1.1.0");
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    context.control.install(second, context.signature(second), context.sourceRoot, "operator", "install-2");
+
+    await expect(context.control.enable(second.providerId, second.version, "operator", "enable-2"))
+      .rejects.toThrow(/unfinished Tool Invocation bindings.*upgrade/);
+    await expect(context.control.drain(first.providerId, first.version, "maintenance", "operator", "drain-1"))
+      .rejects.toThrow(/unfinished Tool Invocation bindings.*drain/);
+    await expect(context.control.disable(first.providerId, first.version, "maintenance", "operator", "disable-1"))
+      .rejects.toThrow(/unfinished Tool Invocation bindings.*disable/);
+    expect(context.activations).toEqual(["neutral-provider@1.0.0"]);
+    expect(context.drains).toEqual([]);
+    expect(context.deactivations).toEqual([]);
+    expect(closed.size).toBe(0);
+
+    open = false;
+    await expect(context.control.enable(second.providerId, second.version, "operator", "enable-3"))
+      .resolves.toMatchObject({ state: "enabled", manifest: { version: "1.1.0" } });
+    expect(closed).toEqual(new Set(["managed.neutral-provider@1.0.0"]));
+    context.sqlite.close();
+  });
+
+  it("reopens the active version and closes the failed target when activation cannot commit", async () => {
+    const closed = new Set<string>();
+    const context = fixture({
+      async hasOpenBindings() { return false; },
+      async closeAdmission(source, version) { closed.add(`${source}@${version}`); },
+      async openAdmission(source, version) { closed.delete(`${source}@${version}`); },
+    });
+    const first = context.manifest("1.0.0");
+    const second = context.manifest("1.1.0");
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    context.control.install(second, context.signature(second), context.sourceRoot, "operator", "install-2");
+    context.runtime.activate = async (installation) => {
+      if (installation.manifest.version === second.version) throw new Error("activation failed");
+    };
+
+    await expect(context.control.enable(second.providerId, second.version, "operator", "enable-2"))
+      .resolves.toMatchObject({ state: "failed", manifest: { version: "1.1.0" } });
+    expect(context.store.get(first.providerId, first.version)?.state).toBe("enabled");
+    expect(closed).toEqual(new Set(["managed.neutral-provider@1.1.0"]));
+    context.sqlite.close();
+  });
+
+  it("allows a resource change through generation draining and records requires_drain", async () => {
+    const context = fixture();
+    const first = context.manifest("1.0.0");
+    const second = context.manifest("1.1.0");
+    second.resources = { ...second.resources, memoryBytes: second.resources.memoryBytes + 1 };
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    context.control.install(second, context.signature(second), context.sourceRoot, "operator", "install-2");
+
+    await expect(context.control.enable(second.providerId, second.version, "operator", "enable-2"))
+      .resolves.toMatchObject({ state: "enabled", manifest: { version: "1.1.0" } });
+    expect(context.store.get(first.providerId, first.version)?.state).toBe("disabled");
+    expect(context.control.listCompatibility(second.providerId)[0]).toMatchObject({
+      report: {
+        classification: "requires_drain",
+        changes: [expect.objectContaining({ code: "resources_changed" })],
+      },
+    });
+    context.sqlite.close();
+  });
+
+  it("rejects corrupted compatibility audit records", async () => {
+    const context = fixture();
+    const first = context.manifest("1.0.0");
+    const second = context.manifest("1.1.0");
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    context.control.install(second, context.signature(second), context.sourceRoot, "operator", "install-2");
+    await context.control.enable(second.providerId, second.version, "operator", "enable-2");
+    context.sqlite.prepare("UPDATE tool_provider_compatibility_audits SET report_json = '{'").run();
+    expect(() => context.control.listCompatibility(first.providerId)).toThrow(/invalid JSON/);
+    context.sqlite.close();
+  });
+
   it("reconciles a durable interrupted drain after restart without replaying old invocation ownership", async () => {
     const context = fixture();
     const first = context.manifest("1.0.0");
@@ -263,7 +386,7 @@ describe("Tool Provider supply-chain control plane", () => {
     const context = fixture();
     const manifest = context.manifest();
     const app = Fastify();
-    registerToolProviderControlRoutes(app, context.control);
+    registerToolProviderControlRoutes(app, context.control, { allowLocalPackageInstall: true });
 
     const installed = await app.inject({
       method: "POST", url: "/api/security-tools/providers/install",
@@ -281,6 +404,22 @@ describe("Tool Provider supply-chain control plane", () => {
     expect(inventory.json()).toMatchObject({ providers: [{ state: "enabled" }] });
     const audit = await app.inject({ method: "GET", url: "/api/security-tools/providers/events?providerId=neutral-provider" });
     expect(audit.json()).toMatchObject({ events: [{ type: "installed" }, { type: "enabled" }] });
+    const compatibility = await app.inject({ method: "GET", url: "/api/security-tools/providers/compatibility?providerId=neutral-provider" });
+    expect(compatibility.json()).toEqual({ audits: [] });
+    await app.close();
+    context.sqlite.close();
+  });
+
+  it("keeps the local packageRoot installation route closed by default", async () => {
+    const context = fixture();
+    const app = Fastify();
+    registerToolProviderControlRoutes(app, context.control);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/security-tools/providers/install",
+      payload: { actor: "operator", commandId: "bypass-attempt" },
+    });
+    expect(response.statusCode).toBe(404);
     await app.close();
     context.sqlite.close();
   });

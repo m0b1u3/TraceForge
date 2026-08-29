@@ -25,6 +25,7 @@ function run(): ScenarioRunState {
   });
   return {
     id: "run_1", caseId: "case_1", definitionKind: "web_blackbox", definitionVersion: 1,
+    scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
     goal: "Assess the authorized target", scopeRef: authorization.id, status: "running",
     activePhaseId: "surface_mapping", availableCapabilities: [],
     workItems: [work("completed", "completed"), work("running", "running"), work("queued", "queued"), work("approval", "waiting_approval")],

@@ -1,0 +1,14 @@
+{
+  "name": "@traceforge/scenario-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "build": "tsc -p tsconfig.json" },
+  "dependencies": {
+    "@traceforge/evidence-graph": "workspace:*",
+    "@traceforge/execution-node": "workspace:*",
+    "@traceforge/orchestration-core": "workspace:*",
+    "@traceforge/worker-runtime": "workspace:*"
+  }
+}

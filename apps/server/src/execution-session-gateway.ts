@@ -2,17 +2,15 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type Database from "better-sqlite3";
+import type {
+  ExecutionCookie,
+  ExecutionSessionDescriptor,
+  ScenarioSessionPort,
+  SessionMaterial,
+  SessionUseContext,
+} from "@traceforge/scenario-sdk";
 
-export interface ExecutionCookie {
-  name: string;
-  value: string;
-  domain?: string;
-  path?: string;
-  expires?: number;
-  httpOnly?: boolean;
-  secure?: boolean;
-  sameSite?: "Strict" | "Lax" | "None";
-}
+export type { ExecutionCookie, ExecutionSessionDescriptor, SessionMaterial, SessionUseContext } from "@traceforge/scenario-sdk";
 
 export interface ExecutionIdentitySecret {
   headers: Record<string, string>;
@@ -30,23 +28,6 @@ export interface ExecutionIdentityDescriptor {
   updatedAt: string;
 }
 
-export interface ExecutionSessionDescriptor {
-  id: string;
-  caseId: string;
-  runId: string;
-  scopeRef: string;
-  identityId: string | null;
-  identityVersion: number | null;
-  status: "active" | "frozen" | "closed" | "expired";
-  lastWorkerId: string | null;
-  lastWorkId: string | null;
-  lastLeaseId: string | null;
-  lastLeaseExpiresAt: string | null;
-  expiresAt: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 interface SessionSecretState { cookies: ExecutionCookie[] }
 interface IdentityRow {
   id: string; case_id: string; name: string; kind: ExecutionIdentityDescriptor["kind"];
@@ -56,22 +37,6 @@ interface SessionRow {
   id: string; case_id: string; run_id: string; scope_ref: string; identity_id: string | null; identity_version: number | null;
   state_secret_ref: string; status: ExecutionSessionDescriptor["status"]; last_worker_id: string | null; last_work_id: string | null;
   last_lease_id: string | null; last_lease_expires_at: string | null; expires_at: string; created_at: string; updated_at: string;
-}
-
-export interface SessionUseContext {
-  workerId: string;
-  workId: string;
-  caseId: string;
-  runId: string;
-  scopeRef: string;
-  leaseId: string;
-  leaseExpiresAt: string;
-}
-
-export interface SessionMaterial {
-  session: ExecutionSessionDescriptor;
-  headers: Record<string, string>;
-  cookies: ExecutionCookie[];
 }
 
 export class SqliteEncryptedSecretVault {
@@ -135,7 +100,7 @@ export function loadOrCreateVaultKey(projectRoot: string): Buffer {
   return key;
 }
 
-export class ExecutionSessionGateway {
+export class ExecutionSessionGateway implements ScenarioSessionPort {
   constructor(
     private readonly sqlite: Database.Database,
     private readonly vault: SqliteEncryptedSecretVault,

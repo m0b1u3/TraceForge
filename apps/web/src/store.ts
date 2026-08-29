@@ -147,7 +147,10 @@ export const useStore = create<State>((set, get) => ({
         listScenarioRuns(caseId),
         listScenarioApprovals(caseId, "pending"),
       ]);
-      const selected = runs.find((run) => run.status === "running") ?? runs.find((run) => run.status === "paused") ?? runs[0];
+      const availableRuns = runs.filter((run) => run.packageAvailability === "available");
+      const selected = availableRuns.find((run) => run.status === "running")
+        ?? availableRuns.find((run) => run.status === "paused")
+        ?? availableRuns[0];
       const activeScenarioRun = selected ? await getScenarioRun(selected.runId) : null;
       const scenarioCollaboration = selected ? await getScenarioCollaboration(selected.runId) : null;
       const scenarioRecovery = selected ? await getScenarioRunRecovery(selected.runId) : null;

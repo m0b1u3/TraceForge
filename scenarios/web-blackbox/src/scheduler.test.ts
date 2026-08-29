@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ScenarioKernel } from "./kernel.js";
-import type { ScenarioRunState, ScenarioWorkItem, WorkerDescriptor } from "./model.js";
-import { CapabilityScheduler } from "./scheduler.js";
-import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "./web-blackbox.js";
+import {
+  CapabilityScheduler,
+  ScenarioKernel,
+  type ScenarioRunState,
+  type ScenarioWorkItem,
+  type WorkerDescriptor,
+} from "@traceforge/orchestration-core";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "./index.js";
 
 const now = "2026-08-24T08:00:10.000Z";
 
@@ -46,6 +50,7 @@ function state(items: ScenarioWorkItem[]): ScenarioRunState {
     caseId: "case_1",
     definitionKind: "web_blackbox",
     definitionVersion: 1,
+    scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
     goal: "Assess authorized scope",
     scopeRef: "scope_1",
     status: "running",

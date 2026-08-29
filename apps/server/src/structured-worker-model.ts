@@ -1,14 +1,14 @@
 import { z } from "zod";
+import {
+  CognitiveContextDistiller,
+  CognitiveEvaluationRunner,
+  type CognitiveEvaluationSnapshotPort,
+} from "@traceforge/cognitive-runtime";
 import type { LlmProvider } from "@traceforge/llm";
 import type { WorkerDecision, WorkerModel, WorkerModelRequest } from "@traceforge/worker-runtime";
-import { CognitiveContextDistiller } from "./cognitive-context-distiller.js";
-import type { SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
 import type { ModelExecutionRuntime } from "./model-execution-runtime.js";
 
-const outputKind = z.enum([
-  "scope_snapshot", "capability_inventory", "surface_observation", "coverage_assessment", "hypothesis",
-  "evidence", "validation_conclusion", "limitation", "evidence_review", "report",
-]);
+const outputKind = z.string().min(1);
 const decision = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("invoke_tool"),
@@ -55,13 +55,17 @@ const jsonSchema = {
 } satisfies Record<string, unknown>;
 
 export class StructuredWorkerModel implements WorkerModel {
+  private readonly evaluations: CognitiveEvaluationRunner;
+
   constructor(
     private readonly provider: LlmProvider,
     private readonly distiller = new CognitiveContextDistiller(),
-    private readonly snapshots?: SqliteCognitiveSnapshotStore,
-    private readonly now: () => string = () => new Date().toISOString(),
+    snapshots?: CognitiveEvaluationSnapshotPort,
+    now: () => string = () => new Date().toISOString(),
     private readonly modelRuntime?: ModelExecutionRuntime,
-  ) {}
+  ) {
+    this.evaluations = new CognitiveEvaluationRunner(snapshots, now);
+  }
 
   async decide(request: WorkerModelRequest): Promise<WorkerDecision> {
     const context = this.distiller.distillWorker(request);
@@ -80,37 +84,37 @@ export class StructuredWorkerModel implements WorkerModel {
       schema: jsonSchema,
     };
     const snapshotId = request.turnId;
-    this.snapshots?.prepare({
-      id: snapshotId,
-      agentInstanceId: request.worker.id,
-      consumer: "worker",
-      runId: request.assignment.runId,
-      caseId: request.assignment.runContext.caseId,
-      workId: request.assignment.work.id,
-      sourceRunRevision: request.assignment.runRevision,
-      request: modelRequest,
-      contextManifest: context.manifest,
-      at: this.now(),
+    return this.evaluations.run({
+      snapshot: {
+        id: snapshotId,
+        agentInstanceId: request.worker.id,
+        consumer: "worker",
+        runId: request.assignment.runId,
+        caseId: request.assignment.runContext.caseId,
+        workId: request.assignment.work.id,
+        sourceRunRevision: request.assignment.runRevision,
+        request: modelRequest,
+        contextManifest: context.manifest,
+      },
+      model: {
+        extractJson: (requestInput) => this.modelRuntime
+          ? this.modelRuntime.extractJson({
+              role: "worker",
+              snapshotId,
+              runId: request.assignment.runId,
+              caseId: request.assignment.runContext.caseId,
+              workId: request.assignment.work.id,
+            }, requestInput)
+          : this.provider.extractJson(requestInput),
+      },
+      parse: (value): WorkerDecision => {
+        const parsed = decision.parse(value);
+        if (parsed.type === "invoke_tool" && !("input" in parsed.invocation)) {
+          throw new Error("Worker model tool invocation omitted input");
+        }
+        return parsed as WorkerDecision;
+      },
+      completion: (parsed) => ({ deferTurnCompletion: true, decisionKind: parsed.type }),
     });
-    try {
-      const value = this.modelRuntime
-        ? await this.modelRuntime.extractJson({
-            role: "worker",
-            snapshotId,
-            runId: request.assignment.runId,
-            caseId: request.assignment.runContext.caseId,
-            workId: request.assignment.work.id,
-          }, modelRequest)
-        : await this.provider.extractJson(modelRequest);
-      const parsed = decision.parse(value);
-      if (parsed.type === "invoke_tool" && !("input" in parsed.invocation)) {
-        throw new Error("Worker model tool invocation omitted input");
-      }
-      this.snapshots?.complete(snapshotId, parsed, this.now(), { deferTurnCompletion: true, decisionKind: parsed.type });
-      return parsed as WorkerDecision;
-    } catch (error) {
-      this.snapshots?.fail(snapshotId, error, this.now());
-      throw error;
-    }
   }
 }

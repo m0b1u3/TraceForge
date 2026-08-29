@@ -9,16 +9,9 @@ import type {
   ScenarioTransition,
   ScenarioWorkItem,
   WorkKind,
-  WorkerRole,
 } from "./model.js";
 
 const terminalWork = new Set(["completed", "blocked", "failed", "cancelled"]);
-const defaultRolesByWorkKind: Record<WorkKind, WorkerRole[]> = {
-  research: ["researcher"],
-  validation: ["validator"],
-  review: ["observer", "reviewer"],
-  report: ["reporter"],
-};
 
 function requireFuture(instant: string, after: string, label: string): void {
   const value = Date.parse(instant);
@@ -36,6 +29,12 @@ function requirePhase(definition: ScenarioDefinition, phaseId: string): Scenario
   const phase = definition.phases.find((candidate) => candidate.id === phaseId);
   if (!phase) throw new Error(`Scenario definition ${definition.kind}@${definition.version} has no phase ${phaseId}`);
   return phase;
+}
+
+function requireWorkKind(definition: ScenarioDefinition, kind: WorkKind) {
+  const workKind = definition.workKinds.find((candidate) => candidate.id === kind);
+  if (!workKind) throw new Error(`Scenario definition ${definition.kind}@${definition.version} has no work kind ${kind}`);
+  return workKind;
 }
 
 function missingCapabilities(required: string[], available: string[]): string[] {
@@ -73,7 +72,7 @@ export function transitionAllowed(state: ScenarioRunState, transition: ScenarioT
 }
 
 export function evolve(state: ScenarioRunState | undefined, event: ScenarioEvent): ScenarioRunState {
-  if (event.type === "run_started") return event.state;
+  if (event.type === "run_started") return { ...event.state, scenarioPackage: event.state.scenarioPackage ?? null };
   if (!state) throw new Error(`Cannot apply ${event.type} before run_started`);
   const revision = state.revision + 1;
   switch (event.type) {
@@ -291,7 +290,24 @@ function requireLiveLease(work: ScenarioWorkItem, leaseId: string, at: string): 
 
 export class ScenarioKernel {
   constructor(readonly definition: ScenarioDefinition) {
+    if (!definition.kind.trim()) throw new Error("Scenario kind is required");
+    if (!Number.isInteger(definition.version) || definition.version < 1) throw new Error("Scenario version must be a positive integer");
     requirePhase(definition, definition.initialPhaseId);
+    const workKindIds = new Set<string>();
+    for (const workKind of definition.workKinds) {
+      if (!workKind.id.trim() || workKindIds.has(workKind.id)) throw new Error(`Duplicate or empty work kind ${workKind.id}`);
+      workKindIds.add(workKind.id);
+      if (workKind.defaultWorkerRoles.length === 0) throw new Error(`Work kind ${workKind.id} requires a default Worker role`);
+      if (workKind.maximumActiveItems !== undefined && workKind.maximumActiveItems < 1) {
+        throw new Error(`Work kind ${workKind.id} has an invalid active item limit`);
+      }
+      if (workKind.minimumHypothesisRefs !== undefined && workKind.minimumHypothesisRefs < 0) {
+        throw new Error(`Work kind ${workKind.id} has an invalid Hypothesis reference minimum`);
+      }
+      if (workKind.completion && workKind.completion.anyOfOutputKinds.length === 0) {
+        throw new Error(`Work kind ${workKind.id} has an empty completion output policy`);
+      }
+    }
     const ids = new Set<string>();
     for (const phase of definition.phases) {
       if (ids.has(phase.id)) throw new Error(`Duplicate phase ${phase.id}`);
@@ -306,6 +322,9 @@ export class ScenarioKernel {
         throw new Error(`Worker pool ${pool.id} has invalid capacity`);
       }
       if (pool.capabilities.length === 0) throw new Error(`Worker pool ${pool.id} requires capabilities`);
+      if (pool.workKinds.length === 0 || pool.workKinds.some((kind) => !workKindIds.has(kind))) {
+        throw new Error(`Worker pool ${pool.id} references no valid work kinds`);
+      }
     }
     if (definition.agentTopology.observer.enabled && definition.agentTopology.observer.pollIntervalMs < 100) {
       throw new Error("Observer poll interval must be at least 100ms");
@@ -325,6 +344,9 @@ export class ScenarioKernel {
       definition.agentTopology.planner.maximumProposalsPerEvaluation,
     ].some((limit) => limit < 1)) throw new Error("Planner context limits must be positive");
     for (const phase of definition.phases) {
+      if (phase.allowedWorkKinds.some((kind) => !workKindIds.has(kind))) {
+        throw new Error(`Phase ${phase.id} references an unknown work kind`);
+      }
       for (const transition of phase.transitions) {
         if (transition.to !== "complete" && !ids.has(transition.to)) {
           throw new Error(`Phase ${phase.id} transitions to unknown phase ${transition.to}`);
@@ -344,6 +366,9 @@ export class ScenarioKernel {
       if (current) throw new Error(`Scenario run ${current.id} already started`);
       if (!command.goal.trim()) throw new Error("Scenario goal is required");
       if (!command.scopeRef.trim()) throw new Error("An authorized scope reference is required");
+      if (!command.scenarioPackage.id.trim() || !command.scenarioPackage.version.trim() || command.scenarioPackage.schemaRevision < 1) {
+        throw new Error("A valid Scenario Package binding is required");
+      }
       const missing = missingCapabilities(this.definition.requiredCapabilities, command.availableCapabilities);
       if (missing.length) throw new Error(`Scenario cannot start; missing capabilities: ${missing.join(", ")}`);
       return [{
@@ -353,6 +378,7 @@ export class ScenarioKernel {
           caseId: command.caseId,
           definitionKind: this.definition.kind,
           definitionVersion: this.definition.version,
+          scenarioPackage: { ...command.scenarioPackage },
           goal: command.goal,
           scopeRef: command.scopeRef,
           status: "running",
@@ -402,6 +428,7 @@ export class ScenarioKernel {
         if (!phase.allowedWorkKinds.includes(command.proposal.kind)) {
           throw new Error(`Phase ${phase.id} does not allow ${command.proposal.kind} work`);
         }
+        const workKind = requireWorkKind(this.definition, command.proposal.kind);
         if (!command.proposal.title.trim() || !command.proposal.objective.trim()) throw new Error("Work title and objective are required");
         const required = [...new Set([...phase.requiredCapabilities, ...(command.proposal.requiredCapabilities ?? [])])];
         const missing = missingCapabilities(required, state.availableCapabilities);
@@ -415,7 +442,7 @@ export class ScenarioKernel {
           objective: command.proposal.objective,
           priority: Math.max(0, Math.min(100, Math.round(command.proposal.priority ?? 50))),
           status: "queued",
-          allowedWorkerRoles: [...new Set(command.proposal.allowedWorkerRoles ?? defaultRolesByWorkKind[command.proposal.kind])],
+          allowedWorkerRoles: [...new Set(command.proposal.allowedWorkerRoles ?? workKind.defaultWorkerRoles)],
           requiredCapabilities: required,
           hypothesisIds: [...new Set(command.proposal.hypothesisIds ?? [])],
           evidenceRefs: [...new Set(command.proposal.evidenceRefs ?? [])],
@@ -442,6 +469,7 @@ export class ScenarioKernel {
       }
       case "claim_work": {
         const work = requireWork(state, command.workId);
+        const workKind = requireWorkKind(this.definition, work.kind);
         if (work.status !== "queued") throw new Error(`Work ${work.id} is ${work.status}, not queued`);
         if (!work.resumeFromCheckpoint && work.attempt >= work.maxAttempts) throw new Error(`Work ${work.id} exhausted its attempt limit`);
         requireFuture(command.leaseExpiresAt, command.at, "Lease expiry");
@@ -455,10 +483,12 @@ export class ScenarioKernel {
         }
         const activeInPhase = state.workItems.filter((candidate) => candidate.phaseId === phase.id && candidate.status === "running");
         if (activeInPhase.length >= phase.maxParallelWork) throw new Error(`Phase ${phase.id} has reached its parallel work limit`);
-        if (work.kind === "validation") {
-          const validation = state.workItems.find((candidate) => candidate.kind === "validation" && candidate.status === "running");
-          if (validation) throw new Error(`Validation work ${validation.id} already owns execution`);
-          if (work.hypothesisIds.length === 0) throw new Error(`Validation work ${work.id} must reference a hypothesis`);
+        if (workKind.maximumActiveItems !== undefined) {
+          const active = state.workItems.filter((candidate) => candidate.kind === work.kind && candidate.status === "running");
+          if (active.length >= workKind.maximumActiveItems) throw new Error(`Work kind ${work.kind} has reached its active item limit`);
+        }
+        if (work.hypothesisIds.length < (workKind.minimumHypothesisRefs ?? 0)) {
+          throw new Error(`Work ${work.id} requires at least ${workKind.minimumHypothesisRefs} Hypothesis reference(s)`);
         }
         return [{
           type: "work_claimed",
@@ -577,12 +607,18 @@ export class ScenarioKernel {
       }
       case "complete_work": {
         const work = requireWork(state, command.workId);
+        const workKind = requireWorkKind(this.definition, work.kind);
         requireLiveLease(work, command.leaseId, command.at);
         const duplicate = command.outputs.find((output) => state.outputs.some((existing) => existing.id === output.id));
         if (duplicate) throw new Error(`Duplicate output ${duplicate.id}`);
-        const outputs = command.outputs.map((output) => ({ ...output, phaseId: work.phaseId, producedByWorkId: work.id }));
-        if (work.kind === "validation" && !outputs.some((output) => output.kind === "validation_conclusion" || output.kind === "limitation")) {
-          throw new Error(`Validation work ${work.id} must produce a validation conclusion or limitation`);
+        const outputs = command.outputs.map((output) => ({
+          ...output,
+          schemaVersion: output.schemaVersion ?? null,
+          phaseId: work.phaseId,
+          producedByWorkId: work.id,
+        }));
+        if (workKind.completion && !outputs.some((output) => workKind.completion!.anyOfOutputKinds.includes(output.kind))) {
+          throw new Error(`Work ${work.id} must produce one of: ${workKind.completion.anyOfOutputKinds.join(", ")}`);
         }
         return [{ type: "work_completed", workId: work.id, leaseId: command.leaseId, summary: command.summary, outputs, at: command.at }];
       }

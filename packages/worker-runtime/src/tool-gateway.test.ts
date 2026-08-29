@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { PermissionProfile } from "@traceforge/orchestration-core";
 import type { ToolExecutionResult } from "./model.js";
-import { createExecutionToolRegistry, PolicyExecutionToolGateway, type ToolGatewayPolicy, type ToolReceiptStore } from "./tool-gateway.js";
+import {
+  createExecutionToolRegistry,
+  PolicyExecutionToolGateway,
+  type ToolGatewayPolicy,
+  type ToolInvocationBinding,
+  type ToolInvocationBindingInput,
+  type ToolInvocationBindingStore,
+  type ToolReceiptStore,
+} from "./tool-gateway.js";
 import { ExecutionToolDiscoveryRuntime } from "./tool-discovery.js";
 import { assignment } from "./test-fixtures.js";
 
@@ -9,6 +17,39 @@ class Receipts implements ToolReceiptStore {
   values = new Map<string, ToolExecutionResult>();
   async get(key: string) { return this.values.get(key); }
   async put(key: string, value: ToolExecutionResult) { this.values.set(key, value); }
+}
+
+class Bindings implements ToolInvocationBindingStore {
+  values = new Map<string, ToolInvocationBinding>();
+  closed = new Set<string>();
+  async prepare(input: ToolInvocationBindingInput) {
+    const existing = this.values.get(input.idempotencyKey);
+    if (existing) {
+      const comparable = { ...existing, schemaVersion: undefined, status: undefined, createdAt: undefined, updatedAt: undefined };
+      if (JSON.stringify(comparable) !== JSON.stringify(input)) throw new Error("binding conflict");
+      return existing;
+    }
+    if (this.closed.has(`${input.tool.source}@${input.tool.version}`)) throw new Error("admission closed");
+    const value: ToolInvocationBinding = {
+      schemaVersion: 1, ...structuredClone(input), status: "prepared",
+      createdAt: "2026-08-29T00:00:00.000Z", updatedAt: "2026-08-29T00:00:00.000Z",
+    };
+    this.values.set(input.idempotencyKey, value);
+    return value;
+  }
+  async complete(key: string) {
+    const value = this.values.get(key);
+    if (value) this.values.set(key, { ...value, status: "completed" });
+  }
+  async release(key: string, _reason: string) {
+    const value = this.values.get(key);
+    if (value) this.values.set(key, { ...value, status: "released" });
+  }
+  async hasOpenBindings(source: string, version: string) {
+    return [...this.values.values()].some((value) => value.tool.source === source && value.tool.version === version && value.status === "prepared");
+  }
+  async closeAdmission(source: string, version: string, _reason: string) { this.closed.add(`${source}@${version}`); }
+  async openAdmission(source: string, version: string) { this.closed.delete(`${source}@${version}`); }
 }
 
 const permissions: PermissionProfile = {
@@ -107,6 +148,48 @@ describe("PolicyExecutionToolGateway", () => {
     });
     expect(resumed.status).toBe("succeeded");
     expect(executions).toBe(1);
+  });
+
+  it("pins a prepared invocation to its exact tool contract across approval resume", async () => {
+    const bindings = new Bindings();
+    const registry = createExecutionToolRegistry([{
+      name: "bounded", source: "managed.neutral", version: "1.0.0", priority: 100, description: "Bounded",
+      inputSchema: { type: "object" }, providedCapabilities: ["host.bounded"], dependencyCapabilities: [],
+      permissionRequirements: {}, risk: "privileged" as const, timeoutMs: 1_000,
+      async execute() { return { status: "succeeded" as const, summary: "done", raw: "", refs: [], retryable: false }; },
+    }]);
+    const gateway = new PolicyExecutionToolGateway(
+      registry,
+      { async authorize() { return { decision: "pending" as const, approvalRef: "approval-binding" }; } },
+      new Receipts(),
+      { ...policy, allowedRisks: ["privileged"] },
+      undefined,
+      bindings,
+    );
+    const input = assignment();
+    input.worker.capabilities.push("host.bounded");
+    input.assignment.work.requiredCapabilities = ["host.bounded"];
+    const request = {
+      worker: input.worker, assignment: input.assignment,
+      invocation: { id: "binding-call", tool: "bounded", input: { candidate: "first" }, rationale: "inspect" },
+      idempotencyKey: "effect:binding-call",
+    };
+    await expect(gateway.execute(request)).resolves.toMatchObject({ status: "approval_required" });
+    expect(bindings.values.get(request.idempotencyKey)).toMatchObject({
+      status: "prepared",
+      tool: { name: "bounded", source: "managed.neutral", version: "1.0.0", contractFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      inputFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      attribution: { caseId: input.assignment.runContext.caseId, runId: input.assignment.runId, workId: input.assignment.work.id },
+    });
+
+    registry.synchronize("managed.neutral", [{
+      ...registry.get("bounded")!.provider,
+      version: "2.0.0",
+      async execute() { return { status: "succeeded" as const, summary: "new", raw: "", refs: [], retryable: false }; },
+    }]);
+    input.assignment.work.grantedActionKeys.push(request.idempotencyKey);
+    await expect(gateway.execute(request)).rejects.toThrow("binding conflict");
+    expect(bindings.values.get(request.idempotencyKey)?.status).toBe("prepared");
   });
 
   it("returns adapter failures as durable observations instead of crashing the Work", async () => {

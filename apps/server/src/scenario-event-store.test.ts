@@ -4,9 +4,8 @@ import {
   IdempotencyConflictError,
   RevisionConflictError,
   ScenarioDefinitionRegistry,
-  WEB_BLACKBOX_CAPABILITIES,
-  WEB_BLACKBOX_SCENARIO,
 } from "@traceforge/orchestration-core";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "@traceforge/scenario-web-blackbox";
 import type Database from "better-sqlite3";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteScenarioEventStore, SqliteWorkerRegistry } from "./scenario-event-store.js";
@@ -38,6 +37,7 @@ function start(runtime: DurableScenarioRuntime) {
       caseId: "case_1",
       goal: "Assess the authorized application",
       scopeRef: "scope_1",
+      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
       availableCapabilities: capabilities,
       at: now,
     },
@@ -54,6 +54,8 @@ describe("durable scenario control plane", () => {
     const started = start(runtime);
     const restored = new DurableScenarioRuntime(store, new ScenarioDefinitionRegistry([WEB_BLACKBOX_SCENARIO])).load("run_1");
     expect(restored).toEqual(started.state);
+    expect(restored?.scenarioPackage).toEqual({ id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 });
+    expect(store.listRuns()[0]?.scenarioPackage).toEqual(restored?.scenarioPackage);
     expect(store.load("run_1").revision).toBe(1);
   });
 
@@ -181,6 +183,7 @@ function startCommand() {
     caseId: "case_1",
     goal: "Assess the authorized application",
     scopeRef: "scope_1",
+    scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
     availableCapabilities: capabilities,
     at: now,
   };

@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import type Database from "better-sqlite3";
 import {
   BrokeredHttpGateway,
   EXECUTION_PROTOCOL_VERSION,
@@ -23,7 +22,7 @@ import {
   type ProcessLauncher,
   type StartProcessRequest,
 } from "@traceforge/execution-node";
-import { ScenarioAuthorizationGuard } from "./scenario-web-tools.js";
+import type { ScenarioAuthorizationPort } from "@traceforge/scenario-sdk";
 
 export interface LocalExecutionNodeService {
   client: ExecutionNode;
@@ -96,27 +95,30 @@ async function probeSandboxBackend(executable: string): Promise<boolean> {
   }
 }
 
-export async function startLocalExecutionNodeService(projectRoot: string, sqlite: Database.Database): Promise<LocalExecutionNodeService> {
+export async function startLocalExecutionNodeService(
+  projectRoot: string,
+  authorization: ScenarioAuthorizationPort,
+): Promise<LocalExecutionNodeService> {
   const platform = process.platform === "win32" ? "windows" as const
     : process.platform === "darwin" ? "darwin" as const : "linux" as const;
   const backendExecutable = resolveSandboxBackend(projectRoot);
   const sandboxBackendReady = Boolean(backendExecutable && await probeSandboxBackend(backendExecutable));
   const processReady = platform === "windows" && sandboxBackendReady;
   const backend = platform === "windows" ? "traceforge-windows-native" : "bubblewrap";
-  const authorizationGuard = new ScenarioAuthorizationGuard(sqlite);
   const httpBroker = new BrokeredHttpGateway({
     authorizer: {
       authorize(input) {
-        const { authorization, url } = authorizationGuard.requireUrl(
+        const grant = authorization.authorizeResource(
           input.attribution.scopeRef,
           input.attribution.caseId,
           input.authorizationAction,
+          "network.url",
           input.url,
         );
         return {
-          authorizationRef: authorization.id,
-          canonicalUrl: url.href,
-          expiresAt: authorization.expiresAt,
+          authorizationRef: grant.id,
+          canonicalUrl: grant.canonicalValue,
+          expiresAt: grant.expiresAt,
         };
       },
     },

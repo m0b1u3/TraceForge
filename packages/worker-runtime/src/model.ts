@@ -67,6 +67,8 @@ export interface ToolExecutionContext {
   leaseExpiresAt: string;
   idempotencyKey: string;
   effectivePermissions: EffectivePermissionProfile;
+  /** Host-local cancellation only; it is intentionally non-enumerable on RPC-bound contexts. */
+  signal?: AbortSignal;
 }
 
 export interface WorkerOutputDraft {

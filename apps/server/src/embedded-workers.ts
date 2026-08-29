@@ -6,10 +6,10 @@ import type { ExecutionNode } from "@traceforge/execution-node";
 import {
   DurableScenarioRuntime,
   ScenarioDefinitionRegistry,
-  WEB_BLACKBOX_SCENARIO,
-  type ExecutionWorkerRole,
+  type ScenarioDefinition,
   type PermissionProfile,
   type ScenarioRunState,
+  type ScenarioRunBindingValidator,
   type ScenarioWorkerPoolDefinition,
   type WorkerDescriptor,
 } from "@traceforge/orchestration-core";
@@ -21,25 +21,19 @@ import {
   LeaseWorkerRuntime,
   LoopGuardObserver,
   PolicyExecutionToolGateway,
+  ToolProviderFairScheduler,
   WorkerSupervisor,
   type ExecutionToolAdapter,
   type ExecutionToolDiscoverySource,
+  type ProviderCapabilityHost,
+  type ToolProviderRecoverySnapshot,
 } from "@traceforge/worker-runtime";
 import { StructuredWorkerModel } from "./structured-worker-model.js";
-import { ExecutionNodeProcessTool, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
-import {
-  ScenarioAuthorizationGuard,
-  ScenarioBrowserObserveTool,
-  ScenarioHttpRequestTool,
-  ScenarioSessionOpenTool,
-  ScenarioScopeSnapshotTool,
-  ScenarioTrafficSnapshotTool,
-} from "./scenario-web-tools.js";
-import type { ExecutionSessionGateway } from "./execution-session-gateway.js";
+import { ExecutionNodeProcessTool, SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 import { EvidenceGraphMutateTool, EvidenceGraphSnapshotTool } from "./evidence-graph-tools.js";
 import type { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
 import { SqliteScenarioEventStore, SqliteWorkerRegistry } from "./scenario-event-store.js";
-import type { BlackboardChangeBus } from "./blackboard-change-bus.js";
+import type { BlackboardChangeBus } from "@traceforge/cognitive-runtime";
 import type { SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
 import type { ModelExecutionRuntime } from "./model-execution-runtime.js";
 import type { ScenarioAgentEventWriter } from "./scenario-agent-event-stream.js";
@@ -53,19 +47,24 @@ import {
 } from "./tool-provider-control-plane.js";
 import { ManagedToolProviderPackageStore } from "./tool-provider-package-store.js";
 import { createManagedToolProviderSourceFactory } from "./managed-tool-provider-source.js";
+import { SqliteToolProviderRecoveryStateStore } from "./tool-provider-recovery-adapter.js";
+import { SqliteExecutionToolDiscoveryStateStore } from "./tool-discovery-state-adapter.js";
+import { ToolProviderRecoveryReconciler } from "./tool-provider-recovery-reconciler.js";
+import { recoverToolRuntimeStartup } from "./tool-runtime-startup-recovery.js";
+import { SqliteToolProviderDiagnosticStore } from "./tool-provider-diagnostic-adapter.js";
+import { SqliteToolProviderSchedulingAuditStore } from "./tool-provider-scheduling-adapter.js";
+import { ToolProviderGarbageCollector } from "./tool-provider-garbage-collector.js";
+import {
+  registerToolProviderArchiveImportRoutes,
+  ToolProviderArchiveImportService,
+  type ToolProviderArchiveImportAuthorizer,
+} from "./tool-provider-archive-import.js";
 
 function serverBaseUrl(app: FastifyInstance): string {
   const address = app.server.address();
   if (!address || typeof address === "string") throw new Error("Embedded workers require a TCP server address");
   return `http://127.0.0.1:${address.port}`;
 }
-
-const workKindByRole: Record<ExecutionWorkerRole, ScenarioRunState["workItems"][number]["kind"]> = {
-  researcher: "research",
-  validator: "validation",
-  reviewer: "review",
-  reporter: "report",
-};
 
 function executorPlatform(): PermissionProfile["platform"] {
   if (process.platform === "win32") return "windows";
@@ -74,15 +73,15 @@ function executorPlatform(): PermissionProfile["platform"] {
 }
 
 export function desiredWorkerCount(pool: ScenarioWorkerPoolDefinition, runs: ScenarioRunState[]): number {
-  const kind = workKindByRole[pool.role];
+  const supportedWorkKinds = new Set(pool.workKinds);
   const demand = runs.reduce((count, run) => count + run.workItems.filter((work) =>
-    work.kind === kind && ["queued", "running"].includes(work.status)).length, 0);
+    supportedWorkKinds.has(work.kind) && ["queued", "running"].includes(work.status)).length, 0);
   if (demand === 0) return pool.activation === "resident" ? pool.minimumInstances : 0;
   return Math.min(pool.maximumInstances, Math.max(pool.minimumInstances, demand));
 }
 
 class EmbeddedScenarioWorkerPool {
-  private readonly supervisors = new Map<string, { supervisor: WorkerSupervisor; pool: ScenarioWorkerPoolDefinition }>();
+  private readonly supervisors = new Map<string, { workerId: string; supervisor: WorkerSupervisor; pool: ScenarioWorkerPoolDefinition }>();
   private reconcilePromise: Promise<void> | undefined;
 
   constructor(
@@ -94,6 +93,9 @@ class EmbeddedScenarioWorkerPool {
     private readonly modelRuntime: ModelExecutionRuntime,
     private readonly agentEvents: ScenarioAgentEventWriter,
     private readonly toolRuntime: ExecutionToolDiscoveryRuntime,
+    private readonly definitions: ScenarioDefinitionRegistry,
+    private readonly bindingValidator: ScenarioRunBindingValidator,
+    private readonly invocationBindings: SqliteToolInvocationBindingStore,
   ) {}
 
   reconcile(): Promise<void> {
@@ -105,48 +107,56 @@ class EmbeddedScenarioWorkerPool {
   async stop(): Promise<void> {
     await this.reconcilePromise;
     const registry = new SqliteWorkerRegistry(this.sqlite);
-    await Promise.all([...this.supervisors.entries()].map(async ([workerId, managed]) => {
+    await Promise.all([...this.supervisors.values()].map(async (managed) => {
       await managed.supervisor.stop();
-      registry.setStatus(workerId, "offline", new Date().toISOString());
+      registry.setStatus(managed.workerId, "offline", new Date().toISOString());
     }));
     this.supervisors.clear();
   }
 
   private async reconcileOnce(): Promise<void> {
-    const definitions = new ScenarioDefinitionRegistry([WEB_BLACKBOX_SCENARIO]);
     const eventStore = new SqliteScenarioEventStore(this.sqlite);
-    const runtime = new DurableScenarioRuntime(eventStore, definitions);
-    const runs = eventStore.listRuns()
-      .filter((summary) => summary.status === "running")
-      .map((summary) => runtime.load(summary.runId))
-      .filter((run): run is ScenarioRunState => Boolean(run));
-    for (const pool of WEB_BLACKBOX_SCENARIO.agentTopology.workerPools) {
-      await this.resize(pool, desiredWorkerCount(pool, runs));
+    const runtime = new DurableScenarioRuntime(eventStore, this.definitions, this.bindingValidator);
+    const runs: ScenarioRunState[] = [];
+    for (const summary of eventStore.listRuns().filter((candidate) => candidate.status === "running")) {
+      try {
+        const run = runtime.load(summary.runId);
+        if (run) runs.push(run);
+      } catch (error) {
+        this.app.log.warn({ runId: summary.runId, err: error }, "Skipping Scenario Run that requires Package recovery");
+      }
+    }
+    for (const definition of this.definitions.list()) {
+      const definitionRuns = runs.filter((run) => run.definitionKind === definition.kind && run.definitionVersion === definition.version);
+      for (const pool of definition.agentTopology.workerPools) {
+        await this.resize(definition, pool, desiredWorkerCount(pool, definitionRuns));
+      }
     }
   }
 
-  private async resize(pool: ScenarioWorkerPoolDefinition, desired: number): Promise<void> {
+  private async resize(definition: ScenarioDefinition, pool: ScenarioWorkerPoolDefinition, desired: number): Promise<void> {
+    const poolKey = `${definition.kind}@${definition.version}:${pool.id}`;
     const current = [...this.supervisors.entries()]
-      .filter(([, managed]) => managed.pool.id === pool.id)
+      .filter(([key]) => key.startsWith(`${poolKey}:`))
       .sort(([left], [right]) => left.localeCompare(right));
     for (let index = current.length + 1; index <= desired; index += 1) {
-      const workerId = `embedded-${pool.id}-${index}`;
-      const supervisor = this.createSupervisor(workerId, pool);
+      const workerId = `embedded-${definition.kind}-${pool.id}-${index}`.replace(/[^a-zA-Z0-9_-]/g, "-");
+      const supervisor = this.createSupervisor(workerId, definition, pool);
       await supervisor.start();
-      this.supervisors.set(workerId, { supervisor, pool });
+      this.supervisors.set(`${poolKey}:${workerId}`, { workerId, supervisor, pool });
     }
     if (current.length <= desired) return;
     const registry = new SqliteWorkerRegistry(this.sqlite);
-    for (const [workerId, managed] of current.slice(desired).reverse()) {
-      const active = this.sqlite.prepare("SELECT 1 FROM scenario_work_leases WHERE worker_id = ? LIMIT 1").get(workerId);
+    for (const [key, managed] of current.slice(desired).reverse()) {
+      const active = this.sqlite.prepare("SELECT 1 FROM scenario_work_leases WHERE worker_id = ? LIMIT 1").get(managed.workerId);
       if (active) continue;
       await managed.supervisor.stop();
-      registry.setStatus(workerId, "offline", new Date().toISOString());
-      this.supervisors.delete(workerId);
+      registry.setStatus(managed.workerId, "offline", new Date().toISOString());
+      this.supervisors.delete(key);
     }
   }
 
-  private createSupervisor(workerId: string, pool: ScenarioWorkerPoolDefinition): WorkerSupervisor {
+  private createSupervisor(workerId: string, definition: ScenarioDefinition, pool: ScenarioWorkerPoolDefinition): WorkerSupervisor {
     const control = new HttpWorkerControlPlaneClient(serverBaseUrl(this.app));
     const model = new StructuredWorkerModel(this.provider, undefined, this.cognitiveSnapshots, undefined, this.modelRuntime);
     const receipts = new SqliteToolReceiptStore(this.sqlite);
@@ -183,7 +193,7 @@ class EmbeddedScenarioWorkerPool {
               },
             },
             {
-              source: `scenario:${WEB_BLACKBOX_SCENARIO.kind}@${WEB_BLACKBOX_SCENARIO.version}`,
+              source: `scenario:${definition.kind}@${definition.version}`,
               profile: {
                 version: 1,
                 platform,
@@ -197,6 +207,7 @@ class EmbeddedScenarioWorkerPool {
         },
       },
       this.toolRuntime,
+      this.invocationBindings,
     );
     const runtime = new LeaseWorkerRuntime(
       worker,
@@ -262,37 +273,54 @@ export function registerEmbeddedWorkers(
   provider: LlmProvider,
   projectRoot: string,
   providerReady: () => boolean,
-  sessions: ExecutionSessionGateway,
   evidenceGraph: SqliteEvidenceGraphStore,
   changes: BlackboardChangeBus,
   cognitiveSnapshots: SqliteCognitiveSnapshotStore,
   modelRuntime: ModelExecutionRuntime,
   agentEvents: ScenarioAgentEventWriter,
+  definitions: ScenarioDefinitionRegistry,
+  bindingValidator: ScenarioRunBindingValidator,
   executionNode?: ExecutionNode,
+  scenarioToolSources: readonly ExecutionToolDiscoverySource[] = [],
   externalToolSources: readonly ExecutionToolDiscoverySource[] = [],
   toolProviderTrustRoots: ReadonlyMap<string, string> = new Map(),
   toolProviderSourceFactory?: (installation: ToolProviderInstallation) => Promise<ExecutionToolDiscoverySource> | ExecutionToolDiscoverySource,
+  providerCapabilityHost?: ProviderCapabilityHost,
+  toolProviderArchiveImportAuthorizer?: ToolProviderArchiveImportAuthorizer,
 ): void {
-  const authorizationGuard = new ScenarioAuthorizationGuard(sqlite);
   const builtinTools: ExecutionToolAdapter[] = [
     new EvidenceGraphSnapshotTool(evidenceGraph),
     new EvidenceGraphMutateTool(sqlite, evidenceGraph),
-    new ScenarioScopeSnapshotTool(authorizationGuard),
-    new ScenarioTrafficSnapshotTool(sqlite, authorizationGuard),
-    new ScenarioSessionOpenTool(authorizationGuard, sessions),
-    ...(executionNode ? [new ScenarioHttpRequestTool(sqlite, authorizationGuard, sessions, executionNode)] : []),
-    new ScenarioBrowserObserveTool(sqlite, authorizationGuard, sessions),
     ...(executionNode ? [new ExecutionNodeProcessTool(executionNode)] : []),
   ];
   const toolRuntime = new ExecutionToolDiscoveryRuntime([
     { source: "traceforge.builtin", async discover() { return builtinTools; } },
+    ...scenarioToolSources,
     ...externalToolSources,
-  ]);
+  ], 30_000, 3, () => new Date(), new SqliteExecutionToolDiscoveryStateStore(sqlite));
   registerExecutionToolRuntimeRoutes(app, toolRuntime);
+  const providerRecoveryState = new SqliteToolProviderRecoveryStateStore(sqlite);
+  const providerDiagnostics = new SqliteToolProviderDiagnosticStore(sqlite);
+  const providerScheduler = new ToolProviderFairScheduler({}, new SqliteToolProviderSchedulingAuditStore(sqlite));
+  const invocationBindings = new SqliteToolInvocationBindingStore(sqlite);
+  let projectRecoveryQuarantine = (_snapshot: ToolProviderRecoverySnapshot) => undefined;
   const managedSourceFactory = toolProviderSourceFactory
-    ?? (executionNode ? createManagedToolProviderSourceFactory(executionNode, resolve(projectRoot, "data/tool-providers/work")) : undefined);
+    ?? (executionNode ? createManagedToolProviderSourceFactory(
+      executionNode,
+      resolve(projectRoot, "data/tool-providers/work"),
+      providerCapabilityHost,
+      {
+        state: providerRecoveryState,
+        diagnostics: providerDiagnostics,
+        scheduler: providerScheduler,
+        onQuarantined: (snapshot) => { projectRecoveryQuarantine(snapshot); },
+      },
+    ) : undefined);
+  const providerControlStore = new SqliteToolProviderControlStore(sqlite);
+  const providerPackageStore = new ManagedToolProviderPackageStore(resolve(projectRoot, "data/tool-providers/packages"));
+  const providerWorkRoot = resolve(projectRoot, "data/tool-providers/work");
   const providerControl = new ToolProviderControlPlane(
-    new SqliteToolProviderControlStore(sqlite),
+    providerControlStore,
     toolProviderTrustRoots,
     createToolProviderRuntimeBinding(
       (source) => toolRuntime.activateSource(source),
@@ -300,29 +328,95 @@ export function registerEmbeddedWorkers(
       (source) => { toolRuntime.drainSource(source); },
       managedSourceFactory,
     ),
-    new ManagedToolProviderPackageStore(resolve(projectRoot, "data/tool-providers/packages")),
+    providerPackageStore,
+    () => new Date().toISOString(),
+    invocationBindings,
   );
+  const providerGarbageCollector = new ToolProviderGarbageCollector(
+    sqlite, providerControlStore, providerPackageStore, providerWorkRoot, () => toolRuntime.snapshot(),
+  );
+  projectRecoveryQuarantine = (snapshot) => {
+    queueMicrotask(() => {
+      void providerControl.quarantine(
+        snapshot.identity.providerId,
+        snapshot.identity.version,
+        snapshot.quarantineReason ?? "Provider recovery failure budget exhausted",
+        "provider-recovery-supervisor",
+        `provider-recovery:${snapshot.identity.providerId}:${snapshot.identity.version}:${snapshot.revision}`,
+      ).catch((error) => app.log.error({ err: error, provider: snapshot.identity }, "Tool Provider quarantine projection failed"));
+    });
+  };
+  const providerRecoveryReconciler = new ToolProviderRecoveryReconciler(providerRecoveryState, providerControl);
   registerToolProviderControlRoutes(app, providerControl);
+  const providerArchiveImports = new ToolProviderArchiveImportService(
+    sqlite,
+    providerControl,
+    providerControlStore,
+    toolProviderTrustRoots,
+    resolve(projectRoot, "data/tool-providers/imports"),
+    toolProviderArchiveImportAuthorizer ?? {
+      async authorize() { return { decision: "denied", reason: "No Tool Provider archive import authorizer is configured" }; },
+    },
+  );
+  const archiveRecovery = providerArchiveImports.recoverInterrupted();
+  if (archiveRecovery.installed || archiveRecovery.rejected || archiveRecovery.orphaned || archiveRecovery.cleanupFailures) {
+    app.log.info({ report: archiveRecovery }, "Tool Provider archive import recovery completed");
+  }
+  registerToolProviderArchiveImportRoutes(app, providerArchiveImports);
   const pool = new EmbeddedScenarioWorkerPool(
-    app, sqlite, provider, projectRoot, cognitiveSnapshots, modelRuntime, agentEvents, toolRuntime,
+    app, sqlite, provider, projectRoot, cognitiveSnapshots, modelRuntime, agentEvents, toolRuntime, definitions, bindingValidator,
+    invocationBindings,
   );
   let listening = false;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let lastGarbageCollectionAt = 0;
   const reconcile = () => {
     if (!listening || !providerReady()) return;
     pool.reconcile().catch((error) => app.log.error({ err: error }, "Embedded Worker pool reconciliation failed"));
   };
+  const maintainProviderDiagnostics = () => {
+    if (!listening) return;
+    try {
+      const report = providerDiagnostics.cleanup(new Date().toISOString(), "scheduled");
+      if (report.purgedRecords || !report.capacitySatisfied) {
+        app.log.info({ report }, "Tool Provider diagnostic retention maintenance completed");
+      }
+    } catch (error) {
+      app.log.error({ err: error }, "Tool Provider diagnostic retention maintenance failed");
+    }
+  };
+  const collectProviderGarbage = (force = false) => {
+    if (!listening) return;
+    const current = Date.now();
+    if (!force && current - lastGarbageCollectionAt < 60 * 60 * 1_000) return;
+    lastGarbageCollectionAt = current;
+    try {
+      const report = providerGarbageCollector.collect({ dryRun: false });
+      if (report.deleted || report.failures) app.log.info({ report }, "Tool Provider garbage collection completed");
+    } catch (error) {
+      app.log.error({ err: error }, "Tool Provider garbage collection failed");
+    }
+  };
   const unsubscribeChanges = changes.subscribe(() => { reconcile(); });
   app.addHook("onListen", () => {
     listening = true;
-    void providerControl.recover()
+    void recoverToolRuntimeStartup(toolRuntime, providerRecoveryReconciler, providerControl)
       .then((report) => {
-        if (report.enabled.length || report.failed.length) app.log.info({ report }, "Tool Provider startup recovery completed");
-        return toolRuntime.refresh();
+        if (report.reconciliation.projectedToControl.length || report.reconciliation.projectedToRecovery.length) {
+          app.log.info({ report: report.reconciliation }, "Tool Provider recovery quarantine reconciliation completed");
+        }
+        if (report.providers.enabled.length || report.providers.failed.length) {
+          app.log.info({ report: report.providers }, "Tool Provider startup recovery completed");
+        }
+        collectProviderGarbage(true);
       })
-      .catch((error) => app.log.error({ err: error }, "Tool Provider startup recovery failed"));
+      .catch((error) => app.log.error({ err: error }, "Tool runtime startup recovery failed"));
     reconcile();
-    timer = setInterval(reconcile, 30_000);
+    timer = setInterval(() => {
+      reconcile();
+      maintainProviderDiagnostics();
+      collectProviderGarbage();
+    }, 30_000);
     timer.unref();
   });
   app.addHook("onClose", async () => {

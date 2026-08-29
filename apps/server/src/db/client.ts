@@ -89,6 +89,9 @@ export function createDb(path: string) {
       case_id TEXT NOT NULL,
       definition_kind TEXT NOT NULL,
       definition_version INTEGER NOT NULL,
+      scenario_package_id TEXT,
+      scenario_package_version TEXT,
+      scenario_schema_revision INTEGER,
       status TEXT NOT NULL,
       active_phase_id TEXT NOT NULL,
       revision INTEGER NOT NULL,
@@ -151,6 +154,58 @@ export function createDb(path: string) {
       result_json TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS tool_invocation_bindings (
+      idempotency_key TEXT PRIMARY KEY,
+      invocation_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      tool_source TEXT NOT NULL,
+      tool_version TEXT NOT NULL,
+      contract_fingerprint TEXT NOT NULL,
+      input_fingerprint TEXT NOT NULL,
+      case_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      work_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('prepared', 'completed', 'released')),
+      release_reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_invocation_bindings_contract
+      ON tool_invocation_bindings(tool_source, tool_version, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_tool_invocation_bindings_run
+      ON tool_invocation_bindings(case_id, run_id, work_id, updated_at);
+    CREATE TABLE IF NOT EXISTS tool_invocation_admission_fences (
+      tool_source TEXT NOT NULL,
+      tool_version TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('open', 'closed')),
+      reason TEXT,
+      revision INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (tool_source, tool_version)
+    );
+    CREATE TABLE IF NOT EXISTS provider_capability_receipts (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      provider_version TEXT NOT NULL,
+      provider_generation INTEGER NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      input_fingerprint TEXT NOT NULL,
+      status TEXT NOT NULL,
+      case_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      work_id TEXT NOT NULL,
+      worker_id TEXT NOT NULL,
+      scope_ref TEXT NOT NULL,
+      lease_id TEXT NOT NULL,
+      capability TEXT NOT NULL,
+      action TEXT NOT NULL,
+      receipt_json TEXT NOT NULL,
+      completed_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_provider_capability_receipts_effect
+      ON provider_capability_receipts(provider_id, idempotency_key, completed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_provider_capability_receipts_run
+      ON provider_capability_receipts(case_id, run_id, completed_at);
     CREATE TABLE IF NOT EXISTS tool_provider_manifests (
       provider_id TEXT NOT NULL,
       version TEXT NOT NULL,
@@ -189,6 +244,156 @@ export function createDb(path: string) {
     );
     CREATE INDEX IF NOT EXISTS idx_tool_provider_events_provider
       ON tool_provider_events(provider_id, sequence);
+    CREATE TABLE IF NOT EXISTS tool_provider_compatibility_audits (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      from_version TEXT NOT NULL,
+      to_version TEXT NOT NULL,
+      classification TEXT NOT NULL CHECK (classification IN ('compatible', 'requires_drain', 'breaking')),
+      report_fingerprint TEXT NOT NULL,
+      report_json TEXT NOT NULL,
+      command_id TEXT NOT NULL UNIQUE,
+      actor TEXT NOT NULL,
+      assessed_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_provider_compatibility_provider
+      ON tool_provider_compatibility_audits(provider_id, assessed_at);
+    CREATE TABLE IF NOT EXISTS tool_provider_archive_imports (
+      command_id TEXT PRIMARY KEY,
+      request_fingerprint TEXT NOT NULL,
+      archive_sha256 TEXT NOT NULL,
+      archive_bytes INTEGER NOT NULL CHECK (archive_bytes > 0),
+      actor TEXT NOT NULL,
+      authorization_decision TEXT NOT NULL CHECK (authorization_decision IN ('allowed', 'denied')),
+      authorization_reason TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK (outcome IN ('receiving', 'installed', 'rejected')),
+      provider_id TEXT,
+      provider_version TEXT,
+      signer_id TEXT,
+      failure_reason TEXT,
+      upload_path TEXT,
+      staging_path TEXT,
+      upload_cleanup TEXT NOT NULL CHECK (upload_cleanup IN ('not_required', 'pending', 'completed', 'failed')),
+      package_cleanup TEXT NOT NULL CHECK (package_cleanup IN ('not_required', 'pending', 'completed', 'failed')),
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_provider_archive_imports_outcome
+      ON tool_provider_archive_imports(outcome, created_at);
+    CREATE TABLE IF NOT EXISTS tool_provider_archive_cleanup_runs (
+      id TEXT PRIMARY KEY,
+      recovered_installed INTEGER NOT NULL,
+      recovered_rejected INTEGER NOT NULL,
+      orphaned INTEGER NOT NULL,
+      cleanup_failures INTEGER NOT NULL,
+      completed_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS tool_provider_recovery_states (
+      provider_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (provider_id, version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_provider_recovery_states_status
+      ON tool_provider_recovery_states(status, updated_at);
+    CREATE TABLE IF NOT EXISTS tool_provider_diagnostics (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT,
+      provider_version TEXT,
+      generation INTEGER,
+      category TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      detail TEXT NOT NULL,
+      detail_bytes INTEGER NOT NULL,
+      omitted_detail_bytes INTEGER NOT NULL,
+      case_id TEXT,
+      run_id TEXT,
+      work_id TEXT,
+      detail_retained INTEGER NOT NULL DEFAULT 1 CHECK (detail_retained IN (0, 1)),
+      detail_purged_at TEXT,
+      detail_purge_reason TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_provider_diagnostics_provider
+      ON tool_provider_diagnostics(provider_id, provider_version, created_at);
+    CREATE INDEX IF NOT EXISTS idx_tool_provider_diagnostics_run
+      ON tool_provider_diagnostics(case_id, run_id, created_at);
+    CREATE TABLE IF NOT EXISTS tool_provider_diagnostic_access_audit (
+      id TEXT PRIMARY KEY,
+      diagnostic_id TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      decision TEXT NOT NULL CHECK (decision IN ('allowed', 'denied', 'not_found', 'detail_purged')),
+      decision_reason TEXT NOT NULL,
+      requested_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_provider_diagnostic_access
+      ON tool_provider_diagnostic_access_audit(diagnostic_id, requested_at);
+    CREATE TABLE IF NOT EXISTS tool_provider_diagnostic_cleanup_audit (
+      id TEXT PRIMARY KEY,
+      trigger TEXT NOT NULL,
+      cutoff_at TEXT NOT NULL,
+      purged_records INTEGER NOT NULL,
+      reclaimed_bytes INTEGER NOT NULL,
+      remaining_records INTEGER NOT NULL,
+      remaining_bytes INTEGER NOT NULL,
+      capacity_satisfied INTEGER NOT NULL CHECK (capacity_satisfied IN (0, 1)),
+      completed_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS tool_provider_gc_runs (
+      id TEXT PRIMARY KEY,
+      dry_run INTEGER NOT NULL CHECK (dry_run IN (0, 1)),
+      cutoff_at TEXT NOT NULL,
+      examined INTEGER NOT NULL,
+      eligible INTEGER NOT NULL,
+      deleted INTEGER NOT NULL,
+      reclaimed_bytes INTEGER NOT NULL,
+      failures INTEGER NOT NULL,
+      started_at TEXT NOT NULL,
+      completed_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS tool_provider_gc_candidates (
+      run_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('package', 'scratch')),
+      path TEXT NOT NULL,
+      provider_id TEXT,
+      provider_version TEXT,
+      decision TEXT NOT NULL CHECK (decision IN ('eligible', 'skipped', 'deleted', 'failed')),
+      reason TEXT NOT NULL,
+      bytes INTEGER NOT NULL,
+      PRIMARY KEY (run_id, sequence)
+    );
+    CREATE TABLE IF NOT EXISTS tool_provider_scheduling_audit (
+      id TEXT PRIMARY KEY,
+      outcome TEXT NOT NULL CHECK (outcome IN ('rejected', 'timed_out', 'cancelled')),
+      reason TEXT NOT NULL CHECK (reason IN ('queue_full', 'wait_timeout', 'cancelled')),
+      provider_id TEXT NOT NULL,
+      provider_version TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      case_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      work_id TEXT NOT NULL,
+      queued_at TEXT NOT NULL,
+      decided_at TEXT NOT NULL,
+      wait_ms INTEGER NOT NULL CHECK (wait_ms >= 0)
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_provider_scheduling_audit_provider
+      ON tool_provider_scheduling_audit(provider_id, provider_version, decided_at);
+    CREATE INDEX IF NOT EXISTS idx_tool_provider_scheduling_audit_run
+      ON tool_provider_scheduling_audit(case_id, run_id, decided_at);
+    CREATE TABLE IF NOT EXISTS tool_discovery_states (
+      source TEXT PRIMARY KEY,
+      revision INTEGER NOT NULL,
+      outcome TEXT NOT NULL,
+      state_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_discovery_states_outcome
+      ON tool_discovery_states(outcome, updated_at);
     CREATE TABLE IF NOT EXISTS scenario_work_approvals (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL,
@@ -620,6 +825,28 @@ export function createDb(path: string) {
     );
     CREATE INDEX IF NOT EXISTS idx_run_cognitive_state_case ON run_cognitive_state(case_id);
   `);
+  const currentScenarioStreamColumns = sqlite.prepare("PRAGMA table_info(scenario_event_streams)").all() as Array<{ name: string }>;
+  if (!currentScenarioStreamColumns.some((column) => column.name === "scenario_package_id")) {
+    sqlite.exec("ALTER TABLE scenario_event_streams ADD COLUMN scenario_package_id TEXT");
+  }
+  if (!currentScenarioStreamColumns.some((column) => column.name === "scenario_package_version")) {
+    sqlite.exec("ALTER TABLE scenario_event_streams ADD COLUMN scenario_package_version TEXT");
+  }
+  if (!currentScenarioStreamColumns.some((column) => column.name === "scenario_schema_revision")) {
+    sqlite.exec("ALTER TABLE scenario_event_streams ADD COLUMN scenario_schema_revision INTEGER");
+  }
+  const diagnosticColumns = sqlite.prepare("PRAGMA table_info(tool_provider_diagnostics)").all() as Array<{ name: string }>;
+  if (!diagnosticColumns.some((column) => column.name === "detail_retained")) {
+    sqlite.exec("ALTER TABLE tool_provider_diagnostics ADD COLUMN detail_retained INTEGER NOT NULL DEFAULT 1 CHECK (detail_retained IN (0, 1))");
+  }
+  if (!diagnosticColumns.some((column) => column.name === "detail_purged_at")) {
+    sqlite.exec("ALTER TABLE tool_provider_diagnostics ADD COLUMN detail_purged_at TEXT");
+  }
+  if (!diagnosticColumns.some((column) => column.name === "detail_purge_reason")) {
+    sqlite.exec("ALTER TABLE tool_provider_diagnostics ADD COLUMN detail_purge_reason TEXT");
+  }
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_tool_provider_diagnostics_retention
+    ON tool_provider_diagnostics(detail_retained, created_at)`);
   const warningColumns = sqlite.prepare("PRAGMA table_info(observer_warnings)").all() as Array<{ name: string }>;
   const hasWarningColumn = (name: string) => warningColumns.some((column) => column.name === name);
   if (!hasWarningColumn("status")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");

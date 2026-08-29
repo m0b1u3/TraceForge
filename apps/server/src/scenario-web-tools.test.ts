@@ -4,14 +4,17 @@ import type { BrokeredHttpRequest, BrokeredHttpResponse, ExecutionNode } from "@
 import { satisfiesPermissionRequirements } from "@traceforge/orchestration-core";
 import { createDb, getSqliteClient } from "./db/client.js";
 import {
-  ScenarioAuthorizationGuard,
   ScenarioBrowserObserveTool,
   ScenarioHttpRequestTool,
   ScenarioScopeSnapshotTool,
   ScenarioTrafficSnapshotTool,
   type ScenarioBrowserTransport,
-} from "./scenario-web-tools.js";
+} from "@traceforge/scenario-web-blackbox";
 import { ExecutionSessionGateway, SqliteEncryptedSecretVault } from "./execution-session-gateway.js";
+import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
+import { SqliteScenarioTrafficStore } from "./scenario-traffic-store.js";
+import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
 
 const databases: Database.Database[] = [];
 const context = {
@@ -78,7 +81,13 @@ function setup(actions = ["scope.read", "web.traffic.read", "web.request.replay"
     new SqliteEncryptedSecretVault(sqlite, Buffer.alloc(32, 7), () => "2026-08-24T09:00:00.000Z"),
     () => "2026-08-24T09:00:00.000Z",
   );
-  return { sqlite, sessions, guard: new ScenarioAuthorizationGuard(sqlite, () => Date.parse("2026-08-24T09:00:00.000Z")) };
+  const authorization = new SqliteScenarioAuthorizationService(
+    sqlite,
+    new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]),
+    () => Date.parse("2026-08-24T09:00:00.000Z"),
+  );
+  const traffic = new SqliteScenarioTrafficStore(sqlite);
+  return { sqlite, sessions, authorization, traffic };
 }
 
 afterEach(() => {
@@ -88,16 +97,16 @@ afterEach(() => {
 
 describe("scenario Web execution tools", () => {
   it("exposes brokered HTTP but keeps the direct Browser transport outside the brokered-only profile", () => {
-    const { sqlite, guard, sessions } = setup();
+    const { authorization, sessions, traffic } = setup();
     const executionNode = { requestHttp: vi.fn() } as unknown as ExecutionNode;
-    const http = new ScenarioHttpRequestTool(sqlite, guard, sessions, executionNode);
-    const browser = new ScenarioBrowserObserveTool(sqlite, guard, sessions);
+    const http = new ScenarioHttpRequestTool(authorization, sessions, traffic, executionNode);
+    const browser = new ScenarioBrowserObserveTool(authorization, sessions, traffic);
     expect(satisfiesPermissionRequirements(context.effectivePermissions, http.permissionRequirements)).toBe(true);
     expect(satisfiesPermissionRequirements(context.effectivePermissions, browser.permissionRequirements)).toBe(false);
   });
 
   it("executes an in-scope HTTP request, does not follow redirects, and records an attributed receipt", async () => {
-    const { sqlite, guard, sessions } = setup();
+    const { sqlite, authorization, sessions, traffic } = setup();
     const identity = sessions.createIdentity({
       id: "identity_1", caseId: "case_1", name: "User", kind: "user",
       secret: { headers: { Authorization: "Bearer secret" }, cookies: [] },
@@ -110,7 +119,7 @@ describe("scenario Web execution tools", () => {
       return brokerResponse(request);
     });
     const executionNode = { requestHttp } as unknown as ExecutionNode;
-    const result = await new ScenarioHttpRequestTool(sqlite, guard, sessions, executionNode, () => "2026-08-24T09:01:00.000Z")
+    const result = await new ScenarioHttpRequestTool(authorization, sessions, traffic, executionNode, () => "2026-08-24T09:01:00.000Z")
       .execute({ sessionId: session.id, url: "https://authorized.example/api", headers: { Accept: "text/plain" } }, context);
 
     expect(result.status).toBe("succeeded");
@@ -141,10 +150,10 @@ describe("scenario Web execution tools", () => {
   });
 
   it("rejects out-of-scope and revoked execution before touching the transport", async () => {
-    const { sqlite, guard, sessions } = setup();
+    const { sqlite, authorization, sessions, traffic } = setup();
     const session = sessions.openSession({ caseId: "case_1", runId: "run_1", scopeRef: "scope_1" });
     const requestHttp = vi.fn();
-    const tool = new ScenarioHttpRequestTool(sqlite, guard, sessions, { requestHttp } as unknown as ExecutionNode);
+    const tool = new ScenarioHttpRequestTool(authorization, sessions, traffic, { requestHttp } as unknown as ExecutionNode);
     await expect(tool.execute({ sessionId: session.id, url: "https://outside.example/" }, context)).rejects.toThrow(/outside authorization/);
     sqlite.prepare("UPDATE scenario_authorizations SET status = 'revoked' WHERE id = 'scope_1'").run();
     await expect(tool.execute({ sessionId: session.id, url: "https://authorized.example/" }, context)).rejects.toThrow(/expired or revoked/);
@@ -152,21 +161,21 @@ describe("scenario Web execution tools", () => {
   });
 
   it("exposes only authorization-bound scope and Case traffic", async () => {
-    const { sqlite, guard } = setup();
+    const { sqlite, authorization, traffic: trafficStore } = setup();
     sqlite.prepare(`
       INSERT INTO traffic_entries
         (id, case_id, run_id, url, method, request_headers_json, response_status, created_at)
       VALUES ('traf_1', 'case_1', 'run_1', 'https://authorized.example/', 'GET', '{}', 200, '2026-08-24T09:00:00.000Z'),
              ('traf_other', 'case_2', 'run_other', 'https://other.example/', 'GET', '{}', 200, '2026-08-24T09:00:00.000Z')
     `).run();
-    const scope = await new ScenarioScopeSnapshotTool(guard).execute({}, context);
-    const traffic = await new ScenarioTrafficSnapshotTool(sqlite, guard).execute({ limit: 10 }, context);
+    const scope = await new ScenarioScopeSnapshotTool(authorization).execute({}, context);
+    const traffic = await new ScenarioTrafficSnapshotTool(authorization, trafficStore).execute({ limit: 10 }, context);
     expect(scope.refs).toEqual(["authorization:scope_1"]);
     expect(traffic.refs).toEqual(["traffic:traf_1"]);
   });
 
   it("uses an isolated browser transport and filters observations through the same scope guard", async () => {
-    const { sqlite, guard, sessions } = setup();
+    const { sqlite, authorization, sessions, traffic } = setup();
     const session = sessions.openSession({ caseId: "case_1", runId: "run_1", scopeRef: "scope_1" });
     const transport = vi.fn<ScenarioBrowserTransport>(async (url, allowed, material) => {
       expect(url).toBe("https://authorized.example/");
@@ -181,7 +190,7 @@ describe("scenario Web execution tools", () => {
         status: 200,
       };
     });
-    const result = await new ScenarioBrowserObserveTool(sqlite, guard, sessions, transport, () => "2026-08-24T09:01:00.000Z")
+    const result = await new ScenarioBrowserObserveTool(authorization, sessions, traffic, transport, () => "2026-08-24T09:01:00.000Z")
       .execute({ sessionId: session.id, url: "https://authorized.example/" }, context);
     expect(result.status).toBe("succeeded");
     expect(result.refs[0]).toMatch(/^traffic:/);

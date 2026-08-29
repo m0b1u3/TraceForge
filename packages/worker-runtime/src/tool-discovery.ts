@@ -1,6 +1,12 @@
 import { CapabilityProviderRegistry, type CapabilityProviderState } from "@traceforge/tool-resolver";
 import type { ExecutionToolSpec } from "./model.js";
 import type { ExecutionToolAdapter } from "./tool-gateway.js";
+import {
+  executionToolCatalogFingerprint,
+  snapshotToolSpec,
+  type ExecutionToolDiscoverySnapshot,
+  type ExecutionToolDiscoveryStatePort,
+} from "./tool-discovery-state.js";
 
 export interface ExecutionToolDiscoverySource {
   readonly source: string;
@@ -16,6 +22,9 @@ export interface ExecutionToolSourceStatus {
   lastSuccessAt: string | null;
   lastError: string | null;
   discoveredProviders: number;
+  discoveryRevision: number;
+  lastSuccessfulCatalogFingerprint: string | null;
+  restoredFromPersistence: boolean;
   acceptingInvocations: boolean;
   inFlightInvocations: number;
   diagnostics: Record<string, unknown> | null;
@@ -61,12 +70,15 @@ export class ExecutionToolDiscoveryRuntime {
   private readonly sourceStatuses = new Map<string, MutableSourceStatus>();
   private readonly refreshes = new Map<string, Promise<void>>();
   private readonly retirements = new Set<Promise<void>>();
+  private restorePromise: Promise<void> | undefined;
+  private readonly sourceRestorations = new Map<string, Promise<ExecutionToolDiscoverySnapshot | undefined>>();
 
   constructor(
     sources: readonly ExecutionToolDiscoverySource[],
     private readonly refreshIntervalMs = 30_000,
     unavailableAfterFailures = 3,
     private readonly now: () => Date = () => new Date(),
+    private readonly statePort?: ExecutionToolDiscoveryStatePort,
   ) {
     if (!Number.isFinite(refreshIntervalMs) || refreshIntervalMs < 0) throw new Error("Tool discovery refresh interval must be non-negative");
     this.registry = new CapabilityProviderRegistry<ExecutionToolAdapter>(unavailableAfterFailures);
@@ -82,8 +94,16 @@ export class ExecutionToolDiscoveryRuntime {
     this.sourceStatuses.set(id, {
       source: id, status: "pending", lastAttemptAt: null, lastSuccessAt: null, lastError: null,
       discoveredProviders: 0, acceptingInvocations: true, inFlightInvocations: 0,
+      discoveryRevision: 0, lastSuccessfulCatalogFingerprint: null, restoredFromPersistence: false,
       diagnostics: null, lastAttemptMs: null,
     });
+  }
+
+  restore(): Promise<void> {
+    if (!this.statePort) return Promise.resolve();
+    if (this.restorePromise) return this.restorePromise;
+    this.restorePromise = Promise.all([...this.sources.keys()].map((source) => this.restoreSource(source))).then(() => undefined);
+    return this.restorePromise;
   }
 
   hasSource(source: string): boolean {
@@ -93,6 +113,7 @@ export class ExecutionToolDiscoveryRuntime {
   async activateSource(source: ExecutionToolDiscoverySource): Promise<ExecutionToolSourceActivation> {
     const id = source.source.trim();
     if (!id) throw new Error("Tool discovery source is required");
+    const restored = await this.restoreSource(id);
     const current = this.sources.get(id);
     if (current === source) {
       await this.refresh(id);
@@ -107,18 +128,33 @@ export class ExecutionToolDiscoveryRuntime {
       .map((state) => state.provider);
     if (previousGeneration) this.beginDrain(previousGeneration);
     this.registry.drainSource(id);
+    let succeededAt = attemptedAt.toISOString();
+    let revision = Math.max(this.sourceStatuses.get(id)?.discoveryRevision ?? 0, restored?.revision ?? 0) + 1;
+    const catalog = providers.map(snapshotToolSpec);
+    const catalogFingerprint = executionToolCatalogFingerprint(catalog);
     try {
       this.registry.synchronize(id, providers);
+      succeededAt = this.now().toISOString();
+      const currentState = this.sourceStatuses.get(id);
+      revision = Math.max(currentState?.discoveryRevision ?? 0, restored?.revision ?? 0) + 1;
+      await this.saveDiscovery({
+        schemaVersion: 1, source: id, revision,
+        outcome: "ready", lastAttemptAt: attemptedAt.toISOString(), lastSuccessAt: succeededAt,
+        lastFailure: null, lastSuccessfulCatalog: catalog,
+        catalogFingerprint, updatedAt: succeededAt,
+      });
     } catch (error) {
       if (previousGeneration) this.resume(previousGeneration);
-      if (previousProviders.length) this.registry.synchronize(id, previousProviders);
+      this.registry.synchronize(id, previousProviders);
       throw error;
     }
     this.sources.set(id, source);
     this.generations.set(id, generation);
     this.sourceStatuses.set(id, {
-      source: id, status: "ready", lastAttemptAt: attemptedAt.toISOString(), lastSuccessAt: this.now().toISOString(), lastError: null,
+      source: id, status: "ready", lastAttemptAt: attemptedAt.toISOString(), lastSuccessAt: succeededAt, lastError: null,
       discoveredProviders: providers.length, acceptingInvocations: true, inFlightInvocations: 0,
+      discoveryRevision: revision,
+      lastSuccessfulCatalogFingerprint: catalogFingerprint, restoredFromPersistence: false,
       diagnostics: source.diagnostics?.() ?? null, lastAttemptMs: attemptedAt.getTime(),
     });
     const drained = previousGeneration ? this.trackRetirement(this.closeGeneration(previousGeneration)) : Promise.resolve();
@@ -193,12 +229,13 @@ export class ExecutionToolDiscoveryRuntime {
     };
   }
 
-  private refreshOne(source: string): Promise<void> {
+  private async refreshOne(source: string): Promise<void> {
+    await this.restoreSource(source);
     const existing = this.refreshes.get(source);
     if (existing) return existing;
-    if (this.generations.get(source)?.accepting === false) return Promise.resolve();
+    if (this.generations.get(source)?.accepting === false) return;
     const discovered = this.sources.get(source);
-    if (!discovered) return Promise.reject(new Error(`Unknown tool discovery source: ${source}`));
+    if (!discovered) throw new Error(`Unknown tool discovery source: ${source}`);
     const refresh = this.performRefresh(discovered).finally(() => { this.refreshes.delete(source); });
     this.refreshes.set(source, refresh);
     return refresh;
@@ -206,24 +243,86 @@ export class ExecutionToolDiscoveryRuntime {
 
   private async performRefresh(source: ExecutionToolDiscoverySource): Promise<void> {
     const state = this.sourceStatuses.get(source.source)!;
+    const restored = await this.restoreSource(source.source);
     const attemptedAt = this.now();
     state.lastAttemptMs = attemptedAt.getTime();
     state.lastAttemptAt = attemptedAt.toISOString();
+    const revision = state.discoveryRevision + 1;
+    const previousProviders = this.activeProviders(source.source);
+    let catalogCommitted = false;
     try {
       const generation = this.generations.get(source.source);
       if (!generation || generation.source !== source) throw new Error(`Tool discovery source ${source.source} is no longer active`);
       const providers = await this.discover(source, generation);
       this.registry.synchronize(source.source, providers);
+      catalogCommitted = true;
+      const succeededAt = this.now().toISOString();
+      const catalog = providers.map(snapshotToolSpec);
+      const fingerprint = executionToolCatalogFingerprint(catalog);
+      await this.saveDiscovery({
+        schemaVersion: 1, source: source.source, revision, outcome: "ready",
+        lastAttemptAt: attemptedAt.toISOString(), lastSuccessAt: succeededAt, lastFailure: null,
+        lastSuccessfulCatalog: catalog, catalogFingerprint: fingerprint, updatedAt: succeededAt,
+      });
       state.status = "ready";
-      state.lastSuccessAt = this.now().toISOString();
+      state.lastSuccessAt = succeededAt;
       state.lastError = null;
       state.discoveredProviders = providers.length;
+      state.discoveryRevision = revision;
+      state.lastSuccessfulCatalogFingerprint = fingerprint;
+      state.restoredFromPersistence = false;
       state.diagnostics = source.diagnostics?.() ?? null;
     } catch (error) {
+      if (catalogCommitted) this.registry.synchronize(source.source, previousProviders);
+      const failedAt = this.now().toISOString();
+      const failure = boundedMessage(error);
       state.status = "degraded";
-      state.lastError = error instanceof Error ? error.message : "Unknown tool discovery failure";
+      state.lastError = failure;
+      state.discoveryRevision = revision;
       state.diagnostics = source.diagnostics?.() ?? null;
+      const lastCatalog = state.restoredFromPersistence
+        ? (restored?.lastSuccessfulCatalog.map(snapshotToolSpec) ?? [])
+        : previousProviders.map(snapshotToolSpec);
+      try {
+        await this.saveDiscovery({
+          schemaVersion: 1, source: source.source, revision, outcome: "degraded",
+          lastAttemptAt: attemptedAt.toISOString(), lastSuccessAt: state.lastSuccessAt,
+          lastFailure: { message: failure, at: failedAt }, lastSuccessfulCatalog: lastCatalog,
+          catalogFingerprint: executionToolCatalogFingerprint(lastCatalog), updatedAt: failedAt,
+        });
+      } catch (persistenceError) {
+        state.lastError = boundedMessage(new Error(`${failure}; discovery state persistence failed: ${boundedMessage(persistenceError)}`));
+      }
     }
+  }
+
+  private activeProviders(source: string): ExecutionToolAdapter[] {
+    return this.registry.list().filter((state) => state.provider.source === source && state.lifecycle === "active").map((state) => state.provider);
+  }
+
+  private async saveDiscovery(snapshot: ExecutionToolDiscoverySnapshot): Promise<void> {
+    await this.statePort?.save(snapshot);
+  }
+
+  private restoreSource(source: string): Promise<ExecutionToolDiscoverySnapshot | undefined> {
+    if (!this.statePort) return Promise.resolve(undefined);
+    const existing = this.sourceRestorations.get(source);
+    if (existing) return existing;
+    const restoration = this.statePort.load(source).then((snapshot) => {
+      const state = this.sourceStatuses.get(source);
+      if (!snapshot || !state || state.status !== "pending" || state.discoveryRevision > 0) return snapshot;
+      state.lastAttemptAt = snapshot.lastAttemptAt;
+      state.lastAttemptMs = Date.parse(snapshot.lastAttemptAt);
+      state.lastSuccessAt = snapshot.lastSuccessAt;
+      state.lastError = snapshot.lastFailure?.message ?? null;
+      state.discoveredProviders = snapshot.lastSuccessfulCatalog.length;
+      state.discoveryRevision = snapshot.revision;
+      state.lastSuccessfulCatalogFingerprint = snapshot.catalogFingerprint;
+      state.restoredFromPersistence = true;
+      return snapshot;
+    });
+    this.sourceRestorations.set(source, restoration);
+    return restoration;
   }
 
   private async discover(source: ExecutionToolDiscoverySource, generation: SourceGeneration): Promise<ExecutionToolAdapter[]> {
@@ -271,6 +370,11 @@ export class ExecutionToolDiscoveryRuntime {
     void retirement.finally(() => { this.retirements.delete(retirement); }).catch(() => undefined);
     return retirement;
   }
+}
+
+function boundedMessage(error: unknown): string {
+  const value = error instanceof Error ? error.message : "Unknown tool discovery failure";
+  return value.slice(0, 1_024);
 }
 
 function createGeneration(source: ExecutionToolDiscoverySource): SourceGeneration {

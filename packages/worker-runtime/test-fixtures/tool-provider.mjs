@@ -1,5 +1,6 @@
 const version = 1;
 let buffered = Buffer.alloc(0);
+const capabilityParents = new Map();
 
 function send(value) {
   const payload = Buffer.from(JSON.stringify(value), "utf8");
@@ -11,6 +12,16 @@ function send(value) {
 
 function respond(request) {
   if (request.version !== version) return process.exit(2);
+  if (typeof request.ok === "boolean") {
+    const parent = capabilityParents.get(request.id);
+    if (!parent) return;
+    capabilityParents.delete(request.id);
+    const status = request.ok ? request.result?.status ?? "unknown" : request.error?.code ?? "error";
+    return send({ version, id: parent, ok: true, result: {
+      status: "succeeded", summary: `fixture host capability ${status}`, raw: JSON.stringify(request.result ?? request.error ?? null),
+      refs: [`host:${status}`], retryable: false,
+    } });
+  }
   if (request.method === "provider.handshake") {
     return send({ version, id: request.id, ok: true, result: { providerId: "fixture", providerVersion: "1.0.0", protocolVersion: version } });
   }
@@ -22,7 +33,32 @@ function respond(request) {
     }] });
   }
   if (request.method === "tools.call") {
+    if (request.params?.input?.crashDetail === true) {
+      process.stderr.write("sensitive-stderr-detail-".repeat(2_000));
+      return setImmediate(() => process.exit(9));
+    }
     if (request.params?.input?.crash === true) return process.exit(9);
+    if (Number.isInteger(request.params?.input?.delayMs) && request.params.input.delayMs > 0) {
+      return setTimeout(() => send({ version, id: request.id, ok: true, result: {
+        status: "succeeded", summary: "fixture completed after delay", raw: "", refs: [], retryable: false,
+      } }), request.params.input.delayMs);
+    }
+    if (request.params?.input?.broker === true || request.params?.input?.unknownParent === true) {
+      const reverseId = `reverse:${request.id}`;
+      capabilityParents.set(reverseId, request.id);
+      return send({
+        version,
+        id: reverseId,
+        method: "host.capability.call",
+        params: {
+          parentRequestId: request.params.input.unknownParent === true ? "missing-parent" : request.id,
+          capability: "fixture.lookup",
+          action: "fixture.inspect",
+          idempotencyKey: `fixture:${request.params.context?.idempotencyKey ?? request.id}`,
+          input: { subject: "first candidate" },
+        },
+      });
+    }
     return send({ version, id: request.id, ok: true, result: {
       status: "succeeded", summary: "fixture completed", raw: JSON.stringify(request.params?.input ?? null),
       refs: [`work:${request.params?.context?.workId ?? "unknown"}`], retryable: false,

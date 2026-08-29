@@ -4,9 +4,13 @@ import { isAbsolute, relative, resolve, win32 } from "node:path";
 import type Database from "better-sqlite3";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
+  assessToolProviderCompatibility,
   validateToolProviderSpec,
   type ExecutionToolDiscoverySource,
   type ExecutionToolSpec,
+  type ToolProviderCompatibilityReport,
+  type ToolProviderContractSnapshot,
+  type ToolInvocationBindingStore,
 } from "@traceforge/worker-runtime";
 import { ManagedToolProviderPackageStore } from "./tool-provider-package-store.js";
 
@@ -19,7 +23,8 @@ export type ToolProviderInstallState =
   | "draining"
   | "disabled"
   | "quarantined"
-  | "failed";
+  | "failed"
+  | "collected";
 
 export interface ToolProviderManifest {
   schemaVersion: typeof TOOL_PROVIDER_MANIFEST_VERSION;
@@ -73,13 +78,21 @@ export interface ToolProviderAuditEvent {
   sequence: number;
   providerId: string;
   version: string;
-  type: "installed" | "enabled" | "draining" | "disabled" | "quarantined" | "failed" | "rolled_back";
+  type: "installed" | "enabled" | "draining" | "disabled" | "quarantined" | "failed" | "rolled_back" | "collected";
   fromState: ToolProviderInstallState | null;
   toState: ToolProviderInstallState;
   reason: string | null;
   actor: string;
   commandId: string;
   createdAt: string;
+}
+
+export interface ToolProviderCompatibilityAudit {
+  id: string;
+  commandId: string;
+  actor: string;
+  assessedAt: string;
+  report: ToolProviderCompatibilityReport;
 }
 
 export interface ToolProviderRuntimeBinding {
@@ -116,6 +129,19 @@ interface EventRow {
   created_at: string;
 }
 
+interface CompatibilityRow {
+  id: string;
+  provider_id: string;
+  from_version: string;
+  to_version: string;
+  classification: ToolProviderCompatibilityReport["classification"];
+  report_fingerprint: string;
+  report_json: string;
+  command_id: string;
+  actor: string;
+  assessed_at: string;
+}
+
 export class ToolProviderControlError extends Error {
   constructor(message: string, readonly statusCode: 400 | 404 | 409 = 400) {
     super(message);
@@ -148,6 +174,35 @@ export class SqliteToolProviderControlStore {
       ? this.sqlite.prepare(`SELECT * FROM tool_provider_events WHERE provider_id = ? ORDER BY sequence ASC`).all(providerId)
       : this.sqlite.prepare(`SELECT * FROM tool_provider_events ORDER BY sequence ASC`).all()) as EventRow[];
     return rows.map(parseEvent);
+  }
+
+  listCompatibility(providerId?: string): ToolProviderCompatibilityAudit[] {
+    const rows = (providerId
+      ? this.sqlite.prepare("SELECT * FROM tool_provider_compatibility_audits WHERE provider_id = ? ORDER BY assessed_at ASC, id ASC").all(providerId)
+      : this.sqlite.prepare("SELECT * FROM tool_provider_compatibility_audits ORDER BY assessed_at ASC, id ASC").all()) as CompatibilityRow[];
+    return rows.map(parseCompatibilityAudit);
+  }
+
+  recordCompatibility(report: ToolProviderCompatibilityReport, commandId: string, actor: string, assessedAt: string): ToolProviderCompatibilityAudit {
+    const reportJson = canonicalJson(report);
+    const reportFingerprint = fingerprint(report);
+    const existing = this.sqlite.prepare("SELECT * FROM tool_provider_compatibility_audits WHERE command_id = ?").get(commandId) as CompatibilityRow | undefined;
+    if (existing) {
+      if (existing.report_fingerprint !== reportFingerprint) {
+        throw new ToolProviderControlError(`Compatibility command ${commandId} was already used with a different report`, 409);
+      }
+      return parseCompatibilityAudit(existing);
+    }
+    const id = randomUUID();
+    this.sqlite.prepare(`
+      INSERT INTO tool_provider_compatibility_audits
+        (id, provider_id, from_version, to_version, classification, report_fingerprint, report_json, command_id, actor, assessed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, report.providerId, report.fromVersion, report.toVersion, report.classification,
+      reportFingerprint, reportJson, commandId, required(actor, "actor"), assessedAt,
+    );
+    return this.listCompatibility(report.providerId).find((audit) => audit.id === id)!;
   }
 
   findCommand(commandId: string): ToolProviderInstallation | null {
@@ -186,13 +241,21 @@ export class SqliteToolProviderControlStore {
         throw new ToolProviderControlError(`Provider ${input.manifest.providerId} version ${input.manifest.version} is already installed with different content`, 409);
       }
       this.sqlite.transaction(() => {
+        if (existing.state === "collected") {
+          this.sqlite.prepare(`
+            UPDATE tool_provider_manifests SET state = 'installed', state_reason = NULL, updated_at = ?
+            WHERE provider_id = ? AND version = ?
+          `).run(input.at, input.manifest.providerId, input.manifest.version);
+        }
         this.recordCommand(input.commandId, input.commandFingerprint, input.manifest.providerId, input.manifest.version, input.at);
         this.appendEvent(
-          input.manifest.providerId, input.manifest.version, "installed", existing.state, existing.state,
-          "identical signed manifest already installed", input.actor, input.commandId, input.at,
+          input.manifest.providerId, input.manifest.version, "installed", existing.state,
+          existing.state === "collected" ? "installed" : existing.state,
+          existing.state === "collected" ? "identical signed package restored after collection" : "identical signed manifest already installed",
+          input.actor, input.commandId, input.at,
         );
       })();
-      return existing;
+      return this.get(input.manifest.providerId, input.manifest.version)!;
     }
     const sourceOwner = this.sqlite.prepare(`
       SELECT provider_id FROM tool_provider_manifests WHERE json_extract(manifest_json, '$.source') = ? LIMIT 1
@@ -286,6 +349,22 @@ export class SqliteToolProviderControlStore {
     return this.get(input.providerId, input.version)!;
   }
 
+  markPackageCollected(providerId: string, version: string, packageRoot: string, reason: string, at: string): ToolProviderInstallation {
+    const current = this.get(providerId, version);
+    if (!current) throw new ToolProviderControlError(`Unknown Provider ${providerId} version ${version}`, 404);
+    if (current.packageRoot !== packageRoot) throw new ToolProviderControlError("Tool Provider package collection target changed", 409);
+    if (current.state === "collected") return current;
+    if (current.state !== "disabled" && current.state !== "failed") {
+      throw new ToolProviderControlError(`Provider ${providerId}@${version} cannot collect package from state ${current.state}`, 409);
+    }
+    const commandId = `provider-gc:${providerId}:${version}:${createHash("sha256").update(`${packageRoot}\0${at}`).digest("hex")}`;
+    return this.transition({
+      providerId, version, toState: "collected", eventType: "collected", reason,
+      actor: "provider-garbage-collector", commandId,
+      fingerprint: fingerprint({ action: "collect-package", providerId, version, packageRoot, at }), at,
+    });
+  }
+
   private recordCommand(commandId: string, fingerprint: string, providerId: string, version: string, at: string): void {
     this.sqlite.prepare(`
       INSERT INTO tool_provider_commands (command_id, fingerprint, provider_id, version, created_at)
@@ -321,10 +400,12 @@ export class ToolProviderControlPlane {
     private readonly runtime: ToolProviderRuntimeBinding,
     private readonly packages: ManagedToolProviderPackageStore,
     private readonly now: () => string = () => new Date().toISOString(),
+    private readonly invocationBindings?: Pick<ToolInvocationBindingStore, "hasOpenBindings" | "closeAdmission" | "openAdmission">,
   ) {}
 
   list(): ToolProviderInstallation[] { return this.store.list(); }
   listEvents(providerId?: string): ToolProviderAuditEvent[] { return this.store.listEvents(providerId); }
+  listCompatibility(providerId?: string): ToolProviderCompatibilityAudit[] { return this.store.listCompatibility(providerId); }
 
   async recover(): Promise<{ enabled: string[]; failed: string[] }> {
     const enabled: string[] = [];
@@ -342,6 +423,7 @@ export class ToolProviderControlPlane {
       recoverable.push(versions[0]!);
       for (const duplicate of versions.slice(1)) {
         const reason = `multiple enabled versions detected; ${versions[0]!.manifest.version} retained`;
+        await this.closeAdmission(duplicate, reason);
         this.store.transition({
           providerId: duplicate.manifest.providerId, version: duplicate.manifest.version,
           toState: "failed", eventType: "failed", reason, actor: "startup-recovery",
@@ -353,10 +435,12 @@ export class ToolProviderControlPlane {
     for (const installation of recoverable) {
       try {
         this.verifyInstallation(installation.manifest, installation.signature, installation.packageRoot);
+        await this.openAdmission(installation);
         const activation = await this.runtime.activate(installation);
         await activation?.drained;
         enabled.push(`${installation.manifest.providerId}@${installation.manifest.version}`);
       } catch (error) {
+        await this.closeAdmission(installation, "startup activation failed");
         const reason = message(error);
         this.store.transition({
           providerId: installation.manifest.providerId, version: installation.manifest.version,
@@ -368,6 +452,7 @@ export class ToolProviderControlPlane {
     }
     for (const installation of interruptedDrains) {
       const reason = "startup recovery reconciled an interrupted drain; no invocation process is adopted across host restart";
+      await this.closeAdmission(installation, reason);
       this.store.transition({
         providerId: installation.manifest.providerId, version: installation.manifest.version,
         toState: "disabled", eventType: "disabled", reason, actor: "startup-recovery",
@@ -380,8 +465,8 @@ export class ToolProviderControlPlane {
   install(manifestValue: unknown, signatureValue: unknown, packageRootValue: unknown, actor: string, commandId: string): ToolProviderInstallation {
     const replay = this.replay(commandId, { action: "install", manifestValue, signatureValue, packageRootValue });
     if (replay) return replay;
-    const manifest = validateManifest(manifestValue);
-    const signature = validateSignature(signatureValue);
+    const manifest = validateToolProviderManifest(manifestValue);
+    const signature = validateToolProviderSignature(signatureValue);
     const importRoot = validatePackageRoot(packageRootValue);
     const manifestFingerprint = this.verifyInstallation(manifest, signature, importRoot);
     const packageRoot = this.packages.publish(
@@ -413,15 +498,36 @@ export class ToolProviderControlPlane {
     );
     if (newer) throw new ToolProviderControlError(`Refusing implicit downgrade from ${newer.manifest.version} to ${version}; use rollback`, 409);
     this.verifyInstallation(installation.manifest, installation.signature, installation.packageRoot);
-    let activation: { drained: Promise<void> } | void;
-    try {
-      activation = await this.runtime.activate(installation);
-    } catch (error) {
-      return this.failActivation(installation, actor, commandId, command, message(error));
-    }
     const previous = this.store.list().filter((entry) =>
       entry.manifest.providerId === providerId && entry.manifest.version !== version && entry.state === "enabled",
     );
+    const fenced: ToolProviderInstallation[] = [];
+    try {
+      for (const current of previous) {
+        await this.fenceAndAssertNoOpenBindings(current, "upgrade");
+        fenced.push(current);
+        const report = assessToolProviderCompatibility(manifestContract(current.manifest), manifestContract(installation.manifest));
+        this.store.recordCompatibility(
+          report, `${required(commandId, "commandId")}:compatibility:${current.manifest.version}`, required(actor, "actor"), this.now(),
+        );
+        if (report.classification === "breaking") {
+          const breaking = report.changes.filter((change) => change.classification === "breaking").map((change) => change.code).join(", ");
+          throw new ToolProviderControlError(`Provider upgrade is contract-breaking: ${breaking}`, 409);
+        }
+      }
+    } catch (error) {
+      await this.reopenAdmissions(fenced);
+      throw error;
+    }
+    let activation: { drained: Promise<void> } | void;
+    try {
+      await this.openAdmission(installation);
+      activation = await this.runtime.activate(installation);
+    } catch (error) {
+      await this.closeAdmission(installation, "activation failed");
+      await this.reopenAdmissions(fenced);
+      return this.failActivation(installation, actor, commandId, command, message(error));
+    }
     const at = this.now();
     const enabled = this.store.activateVersion({
       providerId, version, previous, eventType: "enabled", reason: null,
@@ -434,7 +540,11 @@ export class ToolProviderControlPlane {
   async drain(providerId: string, version: string, reason: string, actor: string, commandId: string): Promise<ToolProviderInstallation> {
     return this.serialize(providerId, () => this.changeState(
       "drain", providerId, version, "draining", "draining", reason, actor, commandId,
-      async (installation) => this.runtime.drain(installation.manifest.source),
+      async (installation) => {
+        await this.fenceAndAssertNoOpenBindings(installation, "drain");
+        try { await this.runtime.drain(installation.manifest.source); }
+        catch (error) { await this.openAdmission(installation); throw error; }
+      },
     ));
   }
 
@@ -443,7 +553,9 @@ export class ToolProviderControlPlane {
       "disable", providerId, version, "disabled", "disabled", reason, actor, commandId,
       async (installation) => {
         if (installation.state === "enabled" || installation.state === "draining") {
-          await this.runtime.deactivate(installation.manifest.source);
+          await this.fenceAndAssertNoOpenBindings(installation, "disable");
+          try { await this.runtime.deactivate(installation.manifest.source); }
+          catch (error) { await this.openAdmission(installation); throw error; }
         }
       },
     ));
@@ -453,6 +565,7 @@ export class ToolProviderControlPlane {
     return this.serialize(providerId, () => this.changeState(
       "quarantine", providerId, version, "quarantined", "quarantined", reason, actor, commandId,
       async (installation) => {
+        await this.closeAdmission(installation, `quarantine: ${reason}`);
         if (installation.state === "enabled" || installation.state === "draining") {
           await this.runtime.deactivate(installation.manifest.source);
         }
@@ -478,7 +591,20 @@ export class ToolProviderControlPlane {
       throw new ToolProviderControlError(`Rollback target ${providerId}@${toVersion} is not eligible from state ${target.state}`, 409);
     }
     this.verifyInstallation(target.manifest, target.signature, target.packageRoot);
-    const activation = await this.runtime.activate(target);
+    await this.fenceAndAssertNoOpenBindings(current, "rollback");
+    const report = assessToolProviderCompatibility(manifestContract(current.manifest), manifestContract(target.manifest));
+    this.store.recordCompatibility(
+      report, `${required(commandId, "commandId")}:compatibility:${fromVersion}`, required(actor, "actor"), this.now(),
+    );
+    let activation: { drained: Promise<void> } | void;
+    try {
+      await this.openAdmission(target);
+      activation = await this.runtime.activate(target);
+    } catch (error) {
+      await this.closeAdmission(target, "rollback activation failed");
+      if (current.state === "enabled") await this.openAdmission(current);
+      throw error;
+    }
     const at = this.now();
     const rolledBack = this.store.activateVersion({
       providerId, version: toVersion, previous: [current], eventType: "rolled_back", reason: required(reason, "reason"),
@@ -575,6 +701,29 @@ export class ToolProviderControlPlane {
     });
   }
 
+  private async fenceAndAssertNoOpenBindings(installation: ToolProviderInstallation, action: string): Promise<void> {
+    await this.closeAdmission(installation, `${action} admission fence`);
+    if (await this.invocationBindings?.hasOpenBindings(installation.manifest.source, installation.manifest.version)) {
+      await this.openAdmission(installation);
+      throw new ToolProviderControlError(
+        `Provider ${installation.manifest.providerId}@${installation.manifest.version} has unfinished Tool Invocation bindings and cannot ${action}`,
+        409,
+      );
+    }
+  }
+
+  private async closeAdmission(installation: ToolProviderInstallation, reason: string): Promise<void> {
+    await this.invocationBindings?.closeAdmission(installation.manifest.source, installation.manifest.version, reason);
+  }
+
+  private async openAdmission(installation: ToolProviderInstallation): Promise<void> {
+    await this.invocationBindings?.openAdmission(installation.manifest.source, installation.manifest.version);
+  }
+
+  private async reopenAdmissions(installations: ToolProviderInstallation[]): Promise<void> {
+    await Promise.all(installations.map((installation) => this.openAdmission(installation)));
+  }
+
   private replay(commandId: string, command: unknown): ToolProviderInstallation | null {
     required(commandId, "commandId");
     const existing = this.store.findCommand(commandId);
@@ -625,18 +774,28 @@ export class ToolProviderControlPlane {
   }
 }
 
-export function registerToolProviderControlRoutes(app: FastifyInstance, control: ToolProviderControlPlane): void {
+export function registerToolProviderControlRoutes(
+  app: FastifyInstance,
+  control: ToolProviderControlPlane,
+  options: { allowLocalPackageInstall?: boolean } = {},
+): void {
   app.get("/api/security-tools/providers", async () => ({ providers: control.list() }));
   app.get("/api/security-tools/providers/events", async (request) => {
     const providerId = (request.query as { providerId?: string }).providerId;
     return { events: control.listEvents(providerId) };
   });
-  app.post("/api/security-tools/providers/install", async (request, reply) => {
-    try {
-      const body = request.body as { manifest?: unknown; signature?: unknown; packageRoot?: unknown; actor?: string; commandId?: string };
-      return reply.code(201).send(control.install(body.manifest, body.signature, body.packageRoot, body.actor ?? "", body.commandId ?? ""));
-    } catch (error) { return controlError(reply, error); }
+  app.get("/api/security-tools/providers/compatibility", async (request) => {
+    const providerId = (request.query as { providerId?: string }).providerId;
+    return { audits: control.listCompatibility(providerId) };
   });
+  if (options.allowLocalPackageInstall) {
+    app.post("/api/security-tools/providers/install", async (request, reply) => {
+      try {
+        const body = request.body as { manifest?: unknown; signature?: unknown; packageRoot?: unknown; actor?: string; commandId?: string };
+        return reply.code(201).send(control.install(body.manifest, body.signature, body.packageRoot, body.actor ?? "", body.commandId ?? ""));
+      } catch (error) { return controlError(reply, error); }
+    });
+  }
   for (const action of ["enable", "drain", "disable", "quarantine"] as const) {
     app.post(`/api/security-tools/providers/:providerId/versions/:version/${action}`, async (request, reply) => {
       try {
@@ -718,7 +877,7 @@ export function canonicalJson(value: unknown): string {
   throw new ToolProviderControlError("Manifest contains an unsupported value");
 }
 
-function validateManifest(value: unknown): ToolProviderManifest {
+export function validateToolProviderManifest(value: unknown): ToolProviderManifest {
   if (!isRecord(value)) throw new ToolProviderControlError("Tool Provider manifest is required");
   if (value.schemaVersion !== TOOL_PROVIDER_MANIFEST_VERSION || value.protocolVersion !== TOOL_PROVIDER_PROTOCOL_VERSION) {
     throw new ToolProviderControlError("Tool Provider manifest or protocol version is incompatible");
@@ -779,7 +938,7 @@ function validateManifest(value: unknown): ToolProviderManifest {
   };
 }
 
-function validateSignature(value: unknown): ToolProviderSignature {
+export function validateToolProviderSignature(value: unknown): ToolProviderSignature {
   if (!isRecord(value) || value.algorithm !== "ed25519") throw new ToolProviderControlError("Tool Provider signature must use Ed25519");
   return { algorithm: "ed25519", keyId: identifier(value.keyId, "signature.keyId"), value: requiredString(value.value, "signature.value") };
 }
@@ -848,6 +1007,52 @@ function parseEvent(row: EventRow): ToolProviderAuditEvent {
     id: row.id, sequence: row.sequence, providerId: row.provider_id, version: row.version,
     type: row.event_type, fromState: row.from_state, toState: row.to_state, reason: row.reason,
     actor: row.actor, commandId: row.command_id, createdAt: row.created_at,
+  };
+}
+
+function manifestContract(manifest: ToolProviderManifest): ToolProviderContractSnapshot {
+  return {
+    providerId: manifest.providerId,
+    version: manifest.version,
+    source: manifest.source,
+    protocolVersion: manifest.protocolVersion,
+    capabilities: [...manifest.capabilities],
+    permissions: { ...manifest.permissions },
+    resources: { ...manifest.resources },
+    platforms: [...manifest.platforms],
+    executionFingerprint: fingerprint({ entrypoint: manifest.entrypoint, artifact: manifest.artifact }),
+    tools: manifest.tools.map((tool) => structuredClone(tool)),
+  };
+}
+
+function parseCompatibilityAudit(row: CompatibilityRow): ToolProviderCompatibilityAudit {
+  let value: unknown;
+  try { value = JSON.parse(row.report_json); }
+  catch { throw new ToolProviderControlError(`Tool Provider compatibility audit ${row.id} contains invalid JSON`, 409); }
+  if (!isRecord(value)
+    || value.schemaVersion !== 1
+    || value.providerId !== row.provider_id
+    || value.fromVersion !== row.from_version
+    || value.toVersion !== row.to_version
+    || value.classification !== row.classification
+    || !["compatible", "requires_drain", "breaking"].includes(String(value.classification))
+    || typeof value.fromFingerprint !== "string"
+    || typeof value.toFingerprint !== "string"
+    || !Array.isArray(value.changes)
+    || value.changes.some((change) => !isRecord(change)
+      || typeof change.code !== "string" || typeof change.path !== "string" || typeof change.summary !== "string"
+      || !["compatible", "requires_drain", "breaking"].includes(String(change.classification)))) {
+    throw new ToolProviderControlError(`Tool Provider compatibility audit ${row.id} is invalid`, 409);
+  }
+  if (fingerprint(value) !== row.report_fingerprint) {
+    throw new ToolProviderControlError(`Tool Provider compatibility audit ${row.id} fingerprint does not match`, 409);
+  }
+  return {
+    id: row.id,
+    commandId: row.command_id,
+    actor: row.actor,
+    assessedAt: row.assessed_at,
+    report: value as unknown as ToolProviderCompatibilityReport,
   };
 }
 

@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { LlmProvider } from "@traceforge/llm";
+import { WEB_BLACKBOX_CAPABILITIES } from "@traceforge/scenario-web-blackbox";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { registerSecurityAgentFoundation } from "./security-agent-foundation.js";
+import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
+import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
 
 const unavailableProvider: LlmProvider = {
   async extractJson() { throw new Error("provider is intentionally unavailable"); },
@@ -20,14 +23,21 @@ describe("security agent foundation protocol events", () => {
     const root = mkdtempSync(join(tmpdir(), "traceforge-agent-events-"));
     sqlite.prepare("INSERT INTO cases (id, name, status, scope_rules_json, created_at) VALUES (?, ?, ?, ?, ?)")
       .run("case_1", "Authorized assessment", "active", "{}", "2026-08-25T08:00:00.000Z");
-    registerSecurityAgentFoundation(app, sqlite, unavailableProvider, root, () => false, { autoScheduleIntervalMs: 60_000 });
+    registerSecurityAgentFoundation(app, sqlite, unavailableProvider, root, () => false, {
+      scenarioPackageRegistry: new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]),
+      autoScheduleIntervalMs: 60_000,
+    });
     await app.ready();
     try {
       const authorization = await app.inject({
         method: "POST", url: "/api/scenarios/authorizations",
         payload: {
           id: "scope_1", caseId: "case_1", scenarioKind: "web_blackbox",
-          scope: { targets: ["https://authorized.example"], allowedActions: ["scope.read"], deniedActions: [] },
+          scope: {
+            targets: ["https://authorized.example"],
+            allowedActions: [WEB_BLACKBOX_CAPABILITIES.scopeRead, WEB_BLACKBOX_CAPABILITIES.evidenceWrite],
+            deniedActions: [],
+          },
           approvedBy: "operator_1", expiresAt: "2027-08-25T09:00:00.000Z",
         },
       });

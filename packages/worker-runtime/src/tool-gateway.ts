@@ -16,6 +16,7 @@ import type {
   WorkerAssignment,
 } from "./model.js";
 import type { ExecutionToolDiscoveryRuntime } from "./tool-discovery.js";
+import { executionToolContractFingerprint, toolInvocationInputFingerprint } from "./tool-provider-contract.js";
 
 export interface ExecutionToolAdapter extends ExecutionToolSpec {
   execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult>;
@@ -33,6 +34,32 @@ export interface ToolApprovalController {
 export interface ToolReceiptStore {
   get(idempotencyKey: string): Promise<ToolExecutionResult | undefined>;
   put(idempotencyKey: string, result: ToolExecutionResult): Promise<void>;
+}
+
+export type ToolInvocationBindingStatus = "prepared" | "completed" | "released";
+
+export interface ToolInvocationBindingInput {
+  idempotencyKey: string;
+  invocationId: string;
+  tool: { name: string; source: string; version: string; contractFingerprint: string };
+  inputFingerprint: string;
+  attribution: { caseId: string; runId: string; workId: string };
+}
+
+export interface ToolInvocationBinding extends ToolInvocationBindingInput {
+  schemaVersion: 1;
+  status: ToolInvocationBindingStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ToolInvocationBindingStore {
+  prepare(binding: ToolInvocationBindingInput): Promise<ToolInvocationBinding>;
+  complete(idempotencyKey: string): Promise<void>;
+  release(idempotencyKey: string, reason: string): Promise<void>;
+  hasOpenBindings(source: string, version: string): Promise<boolean>;
+  closeAdmission(source: string, version: string, reason: string): Promise<void>;
+  openAdmission(source: string, version: string): Promise<void>;
 }
 
 export interface ToolGatewayPolicy {
@@ -57,6 +84,7 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
     private readonly receipts: ToolReceiptStore,
     private readonly policy: ToolGatewayPolicy,
     private readonly discovery?: ExecutionToolDiscoveryRuntime,
+    private readonly bindings?: ToolInvocationBindingStore,
   ) {}
 
   async catalog(worker: WorkerDescriptor, assignment: WorkerAssignment): Promise<ExecutionToolCatalog> {
@@ -80,7 +108,10 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
     idempotencyKey: string;
   }): Promise<ToolExecutionResult> {
     const recorded = await this.receipts.get(request.idempotencyKey);
-    if (recorded) return recorded;
+    if (recorded) {
+      await this.bindings?.complete(request.idempotencyKey);
+      return recorded;
+    }
     const tool = this.registry.get(request.invocation.tool)?.provider;
     const eligible = tool && (await this.catalog(request.worker, request.assignment)).tools.some((candidate) => candidate.name === tool.name);
     if (!tool || !eligible) throw new Error(`Tool ${request.invocation.tool} is unknown or outside worker policy`);
@@ -89,6 +120,22 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
       assignment: request.assignment,
       tool,
     }));
+    await this.bindings?.prepare({
+      idempotencyKey: request.idempotencyKey,
+      invocationId: request.invocation.id,
+      tool: {
+        name: tool.name,
+        source: tool.source,
+        version: tool.version,
+        contractFingerprint: executionToolContractFingerprint(tool),
+      },
+      inputFingerprint: toolInvocationInputFingerprint(tool.name, request.invocation.input),
+      attribution: {
+        caseId: request.assignment.runContext.caseId,
+        runId: request.assignment.runId,
+        workId: request.assignment.work.id,
+      },
+    });
 
     const hasDurableGrant = request.assignment.work.grantedActionKeys.includes(request.idempotencyKey);
     if ((tool.risk === "privileged" || tool.risk === "destructive") && !hasDurableGrant) {
@@ -103,7 +150,10 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
           approvalRef: approval.approvalRef,
           metadata: { effectivePermissions },
         };
-        if (approval.decision === "rejected") await this.receipts.put(request.idempotencyKey, result);
+        if (approval.decision === "rejected") {
+          await this.receipts.put(request.idempotencyKey, result);
+          await this.bindings?.complete(request.idempotencyKey);
+        }
         return result;
       }
     }
@@ -111,7 +161,8 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
     let result: ToolExecutionResult;
     try {
       result = await withTimeout(
-        () => tool.execute(request.invocation.input, {
+        (signal) => {
+          const context: ToolExecutionContext = {
           workerId: request.worker.id,
           runId: request.assignment.runId,
           workId: request.assignment.work.id,
@@ -121,7 +172,10 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
           leaseExpiresAt: request.assignment.leaseExpiresAt,
           idempotencyKey: request.idempotencyKey,
           effectivePermissions,
-        }),
+          };
+          Object.defineProperty(context, "signal", { value: signal, enumerable: false });
+          return tool.execute(request.invocation.input, context);
+        },
         tool.timeoutMs,
       );
     } catch (error) {
@@ -143,6 +197,7 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
       metadata: { ...result.metadata, effectivePermissions },
     };
     await this.receipts.put(request.idempotencyKey, result);
+    await this.bindings?.complete(request.idempotencyKey);
     return result;
   }
 }
@@ -160,12 +215,16 @@ export function createExecutionToolRegistry(
   return registry;
 }
 
-async function withTimeout<T>(operation: () => Promise<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancellation = new AbortController();
   try {
     return await Promise.race([
-      operation(),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`Tool timed out after ${timeoutMs}ms`)), timeoutMs); }),
+      operation(cancellation.signal),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => {
+        cancellation.abort();
+        reject(new Error(`Tool timed out after ${timeoutMs}ms`));
+      }, timeoutMs); }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);

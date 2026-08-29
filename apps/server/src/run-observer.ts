@@ -4,6 +4,14 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { LlmProvider } from "@traceforge/llm";
 import {
+  CognitiveContextDistiller,
+  CognitiveEvaluationRunner,
+  CognitiveLoopScheduler,
+  CognitiveWakeGate,
+  type CognitiveContextCursorPort,
+  type CognitiveEvaluationSnapshotPort,
+} from "@traceforge/cognitive-runtime";
+import {
   RevisionConflictError,
   type DurableScenarioRuntime,
   type ScenarioDefinitionRegistry,
@@ -13,8 +21,6 @@ import {
 import type { EvidenceGraphState } from "@traceforge/evidence-graph";
 import type { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
 import type { SqliteScenarioEventStore } from "./scenario-event-store.js";
-import { CognitiveContextDistiller, type SqliteCognitiveContextCursorStore } from "./cognitive-context-distiller.js";
-import type { SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
 import type { ModelExecutionRuntime } from "./model-execution-runtime.js";
 
 const observerDecision = z.discriminatedUnion("action", [
@@ -52,13 +58,17 @@ const decisionSchema = {
 } satisfies Record<string, unknown>;
 
 export class StructuredRunObserverModel implements RunObserverModel {
+  private readonly evaluations: CognitiveEvaluationRunner;
+
   constructor(
     private readonly provider: LlmProvider,
     private readonly distiller = new CognitiveContextDistiller(),
-    private readonly snapshots?: SqliteCognitiveSnapshotStore,
-    private readonly now: () => string = () => new Date().toISOString(),
+    snapshots?: CognitiveEvaluationSnapshotPort,
+    now: () => string = () => new Date().toISOString(),
     private readonly modelRuntime?: ModelExecutionRuntime,
-  ) {}
+  ) {
+    this.evaluations = new CognitiveEvaluationRunner(snapshots, now);
+  }
 
   async evaluate(snapshot: RunObserverSnapshot): Promise<RunObserverDecision> {
     const context = this.distiller.distillRun(snapshot.run, snapshot.graph, snapshot.recentEvents, {
@@ -85,35 +95,32 @@ export class StructuredRunObserverModel implements RunObserverModel {
       }),
       schema: decisionSchema,
     };
-    this.snapshots?.prepare({
-      id: snapshot.contextId,
-      consumer: "observer",
-      runId: snapshot.run.id,
-      caseId: snapshot.run.caseId,
-      evaluationId: snapshot.contextId,
-      sourceRunRevision: snapshot.run.revision,
-      sourceGraphRevision: snapshot.graph.revision,
-      semanticFingerprint: context.semanticFingerprint,
-      request,
-      contextManifest: context.manifest,
-      at: this.now(),
-    });
-    try {
-      const value = this.modelRuntime
-        ? await this.modelRuntime.extractJson({
-            role: "observer", snapshotId: snapshot.contextId, runId: snapshot.run.id, caseId: snapshot.run.caseId,
-          }, request)
-        : await this.provider.extractJson(request);
-      const parsed = observerDecision.parse(value);
-      this.snapshots?.complete(snapshot.contextId, parsed, this.now(), {
+    return this.evaluations.run({
+      snapshot: {
+        id: snapshot.contextId,
+        consumer: "observer",
+        runId: snapshot.run.id,
+        caseId: snapshot.run.caseId,
+        evaluationId: snapshot.contextId,
+        sourceRunRevision: snapshot.run.revision,
+        sourceGraphRevision: snapshot.graph.revision,
+        semanticFingerprint: context.semanticFingerprint,
+        request,
+        contextManifest: context.manifest,
+      },
+      model: {
+        extractJson: (modelRequest) => this.modelRuntime
+          ? this.modelRuntime.extractJson({
+              role: "observer", snapshotId: snapshot.contextId, runId: snapshot.run.id, caseId: snapshot.run.caseId,
+            }, modelRequest)
+          : this.provider.extractJson(modelRequest),
+      },
+      parse: (value) => observerDecision.parse(value),
+      completion: (parsed) => ({
         decisionKind: parsed.action,
         outcome: parsed.action === "terminate_branch" || parsed.action === "terminate_run" ? "blocked" : "continue",
-      });
-      return parsed;
-    } catch (error) {
-      this.snapshots?.fail(snapshot.contextId, error, this.now());
-      throw error;
-    }
+      }),
+    });
   }
 }
 
@@ -201,12 +208,9 @@ export interface RunObserverSupervisorOptions {
 }
 
 export class RunObserverSupervisor {
-  private timer: ReturnType<typeof setTimeout> | undefined;
-  private running = false;
-  private activeTick: Promise<void> | undefined;
-  private wakeRequested = false;
+  private readonly loop: CognitiveLoopScheduler;
   private readonly distiller = new CognitiveContextDistiller();
-  private readonly volatileSemanticCursors = new Map<string, string>();
+  private readonly wakeGate: CognitiveWakeGate;
 
   constructor(
     private readonly runtime: DurableScenarioRuntime,
@@ -218,32 +222,23 @@ export class RunObserverSupervisor {
     private readonly options: RunObserverSupervisorOptions = { errorBackoffMs: 5_000, concurrencyRetries: 4 },
     private readonly createId: () => string = randomUUID,
     private readonly now: () => string = () => new Date().toISOString(),
-    private readonly onError: (error: unknown) => void = () => undefined,
-    private readonly semanticCursors?: SqliteCognitiveContextCursorStore,
-  ) {}
-
-  start(): void {
-    if (this.running) return;
-    this.running = true;
-    this.schedule(0);
+    onError: (error: unknown) => void = () => undefined,
+    semanticCursors?: CognitiveContextCursorPort,
+  ) {
+    this.wakeGate = new CognitiveWakeGate(semanticCursors);
+    this.loop = new CognitiveLoopScheduler({
+      tick: () => this.tick(),
+      nextPollDelayMs: () => this.minimumPollInterval(),
+      errorBackoffMs: this.options.errorBackoffMs,
+      onError,
+    });
   }
 
-  wake(): void {
-    if (!this.running) return;
-    if (this.activeTick) {
-      this.wakeRequested = true;
-      return;
-    }
-    if (this.timer) clearTimeout(this.timer);
-    this.schedule(0);
-  }
+  start(): void { this.loop.start(); }
 
-  async stop(): Promise<void> {
-    this.running = false;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
-    await this.activeTick;
-  }
+  wake(): void { this.loop.wake(); }
+
+  stop(): Promise<void> { return this.loop.stop(); }
 
   async tick(): Promise<void> {
     for (const summary of this.scenarioEvents.listRuns().filter((run) => run.status === "running")) {
@@ -258,8 +253,7 @@ export class RunObserverSupervisor {
         maximumGraphNodes: topology.observer.maximumGraphNodes,
         maximumRunItems: topology.observer.maximumRunItems,
       });
-      const semanticCursor = this.semanticCursors?.cursor("observer", run.id) ?? this.volatileSemanticCursors.get(run.id);
-      if (semanticCursor === context.semanticFingerprint) continue;
+      if (!this.wakeGate.shouldEvaluate("observer", run.id, context.semanticFingerprint)) continue;
       const cursor = this.store.cursor(run.id);
       if (cursor?.runRevision === run.revision && cursor.graphRevision === graph.revision) continue;
       await this.evaluateRun(
@@ -304,18 +298,14 @@ export class RunObserverSupervisor {
       maximumGraphNodes,
       maximumRunItems,
     });
-    if (this.semanticCursors) {
-      this.semanticCursors.advance({
-        consumer: "observer",
-        runId: run.id,
-        semanticFingerprint: latestContext.semanticFingerprint,
-        sourceRunRevision: latestRun.revision,
-        sourceGraphRevision: latestGraph.revision,
-        at: this.now(),
-      });
-    } else {
-      this.volatileSemanticCursors.set(run.id, latestContext.semanticFingerprint);
-    }
+    this.wakeGate.advance({
+      consumer: "observer",
+      runId: run.id,
+      semanticFingerprint: latestContext.semanticFingerprint,
+      sourceRunRevision: latestRun.revision,
+      sourceGraphRevision: latestGraph.revision,
+      at: this.now(),
+    });
   }
 
   private applyDecision(runId: string, evaluationId: string, decision: RunObserverDecision): number {
@@ -351,23 +341,6 @@ export class RunObserverSupervisor {
       }
     }
     throw new Error(`Observer decision ${evaluationId} exhausted concurrency retries`);
-  }
-
-  private schedule(delayMs: number): void {
-    if (!this.running) return;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      this.activeTick = this.tick()
-        .catch((error) => { this.onError(error); })
-        .finally(() => {
-          this.activeTick = undefined;
-          const delay = this.wakeRequested ? 0 : this.minimumPollInterval();
-          this.wakeRequested = false;
-          this.schedule(delay);
-        });
-    }, delayMs);
-    this.timer.unref();
   }
 
   private minimumPollInterval(): number {

@@ -41,6 +41,10 @@ export interface ScenarioEventStore {
   append(request: AppendEventsRequest): AppendEventsResult;
 }
 
+export interface ScenarioRunBindingValidator {
+  requireAvailable(state: ScenarioRunState): void;
+}
+
 export class RevisionConflictError extends Error {
   constructor(readonly runId: string, readonly expectedRevision: number, readonly actualRevision: number) {
     super(`Scenario run ${runId} revision conflict: expected ${expectedRevision}, actual ${actualRevision}`);
@@ -58,8 +62,9 @@ export class IdempotencyConflictError extends Error {
 export class ScenarioDefinitionRegistry {
   private readonly definitions = new Map<string, ScenarioDefinition>();
 
-  constructor(definitions: ScenarioDefinition[]) {
+  constructor(definitions: ScenarioDefinition[] = []) {
     for (const definition of definitions) {
+      new ScenarioKernel(definition);
       const key = this.key(definition.kind, definition.version);
       if (this.definitions.has(key)) throw new Error(`Duplicate scenario definition ${key}`);
       this.definitions.set(key, definition);
@@ -114,10 +119,13 @@ export class DurableScenarioRuntime {
   constructor(
     private readonly store: ScenarioEventStore,
     private readonly definitions: ScenarioDefinitionRegistry,
+    private readonly bindingValidator?: ScenarioRunBindingValidator,
   ) {}
 
   load(runId: string): ScenarioRunState | undefined {
-    return replayScenario(this.store.load(runId).events);
+    const state = replayScenario(this.store.load(runId).events);
+    if (state) this.bindingValidator?.requireAvailable(state);
+    return state;
   }
 
   execute(envelope: CommandEnvelope): DurableCommandResult {

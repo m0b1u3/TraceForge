@@ -1,4 +1,5 @@
-import type { ScenarioDefinition, ScenarioWorkItem } from "./model.js";
+import type { ScenarioDefinition, ScenarioWorkItem } from "@traceforge/orchestration-core";
+import { z } from "zod";
 
 export const WEB_BLACKBOX_CAPABILITIES = {
   scopeRead: "scope.read",
@@ -20,12 +21,33 @@ export const WEB_BLACKBOX_ACTIONS = {
   reportWrite: WEB_BLACKBOX_CAPABILITIES.reportWrite,
 } as const;
 
+export const WEB_BLACKBOX_AUTHORIZATION_SCOPE = z.object({
+  targets: z.array(z.string().min(1)).min(1),
+  allowedActions: z.array(z.enum(Object.values(WEB_BLACKBOX_ACTIONS) as [string, ...string[]])).min(1),
+  deniedActions: z.array(z.enum(Object.values(WEB_BLACKBOX_ACTIONS) as [string, ...string[]])).default([]),
+  notes: z.string().optional(),
+});
+
+export type WebBlackboxAuthorizationScope = z.infer<typeof WEB_BLACKBOX_AUTHORIZATION_SCOPE>;
+
 export const WEB_BLACKBOX_SCENARIO: ScenarioDefinition = {
   kind: "web_blackbox",
   version: 1,
   title: "Web black-box security investigation",
   authorizationActions: Object.values(WEB_BLACKBOX_ACTIONS),
   requiredCapabilities: [WEB_BLACKBOX_CAPABILITIES.scopeRead, WEB_BLACKBOX_CAPABILITIES.evidenceWrite],
+  workKinds: [
+    { id: "research", defaultWorkerRoles: ["researcher"] },
+    {
+      id: "validation",
+      defaultWorkerRoles: ["validator"],
+      maximumActiveItems: 1,
+      minimumHypothesisRefs: 1,
+      completion: { anyOfOutputKinds: ["validation_conclusion", "limitation"] },
+    },
+    { id: "review", defaultWorkerRoles: ["observer", "reviewer"] },
+    { id: "report", defaultWorkerRoles: ["reporter"] },
+  ],
   initialPhaseId: "scope_setup",
   agentTopology: {
     planner: {
@@ -41,6 +63,7 @@ export const WEB_BLACKBOX_SCENARIO: ScenarioDefinition = {
       {
         id: "web-research",
         role: "researcher",
+        workKinds: ["research"],
         activation: "resident",
         minimumInstances: 1,
         maximumInstances: 4,
@@ -55,6 +78,7 @@ export const WEB_BLACKBOX_SCENARIO: ScenarioDefinition = {
       {
         id: "web-validation",
         role: "validator",
+        workKinds: ["validation"],
         activation: "on_demand",
         minimumInstances: 0,
         maximumInstances: 1,
@@ -69,6 +93,7 @@ export const WEB_BLACKBOX_SCENARIO: ScenarioDefinition = {
       {
         id: "web-review",
         role: "reviewer",
+        workKinds: ["review"],
         activation: "on_demand",
         minimumInstances: 0,
         maximumInstances: 1,
@@ -78,6 +103,7 @@ export const WEB_BLACKBOX_SCENARIO: ScenarioDefinition = {
       {
         id: "web-report",
         role: "reporter",
+        workKinds: ["report"],
         activation: "on_demand",
         minimumInstances: 0,
         maximumInstances: 1,

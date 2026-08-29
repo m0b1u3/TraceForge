@@ -6,7 +6,6 @@
   "exports": { ".": "./src/index.ts" },
   "scripts": { "build": "tsc -p tsconfig.json" },
   "dependencies": {
-    "@traceforge/shared": "workspace:*",
-    "@traceforge/llm": "workspace:*"
+    "@traceforge/shared": "workspace:*"
   }
 }

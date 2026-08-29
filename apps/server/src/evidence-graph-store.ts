@@ -8,7 +8,7 @@ import {
   type EvidenceGraphState,
 } from "@traceforge/evidence-graph";
 import { commandFingerprint } from "@traceforge/orchestration-core";
-import type { BlackboardChangeBus } from "./blackboard-change-bus.js";
+import type { BlackboardChangeBus } from "@traceforge/cognitive-runtime";
 
 interface StreamRow { revision: number }
 interface EventRow { payload_json: string }

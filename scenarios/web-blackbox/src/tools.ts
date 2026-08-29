@@ -1,84 +1,16 @@
 import { randomUUID } from "node:crypto";
-import type Database from "better-sqlite3";
 import { chromium } from "playwright";
 import { z } from "zod";
-import { checkScope } from "@traceforge/tool-resolver";
-import type { ScopeRule } from "@traceforge/shared";
-import { WEB_BLACKBOX_ACTIONS, type ScenarioKind } from "@traceforge/orchestration-core";
 import type { ExecutionNode } from "@traceforge/execution-node";
+import type {
+  ExecutionCookie,
+  ScenarioAuthorizationPort,
+  ScenarioSessionPort,
+  ScenarioTrafficPort,
+  SessionUseContext,
+} from "@traceforge/scenario-sdk";
 import type { ExecutionToolAdapter, ToolExecutionContext, ToolExecutionResult } from "@traceforge/worker-runtime";
-import {
-  type ExecutionCookie,
-  type ExecutionSessionGateway,
-  type SessionUseContext,
-} from "./execution-session-gateway.js";
-
-const webBlackboxAction = z.enum(Object.values(WEB_BLACKBOX_ACTIONS) as [string, ...string[]]);
-const authorizationScope = z.object({
-  targets: z.array(z.string().min(1)).min(1),
-  allowedActions: z.array(webBlackboxAction).min(1),
-  deniedActions: z.array(webBlackboxAction).default([]),
-  notes: z.string().optional(),
-});
-
-export interface ActiveScenarioAuthorization {
-  id: string;
-  caseId: string;
-  scenarioKind: ScenarioKind;
-  scope: z.infer<typeof authorizationScope>;
-  expiresAt: string;
-}
-
-interface AuthorizationRow {
-  id: string;
-  case_id: string;
-  scenario_kind: ScenarioKind;
-  scope_json: string;
-  status: string;
-  expires_at: string;
-}
-
-export class ScenarioAuthorizationGuard {
-  constructor(private readonly sqlite: Database.Database, private readonly now: () => number = Date.now) {}
-
-  require(scopeRef: string, caseId: string, action: string): ActiveScenarioAuthorization {
-    const row = this.sqlite.prepare(`
-      SELECT id, case_id, scenario_kind, scope_json, status, expires_at
-      FROM scenario_authorizations WHERE id = ?
-    `).get(scopeRef) as AuthorizationRow | undefined;
-    if (!row || row.case_id !== caseId || row.scenario_kind !== "web_blackbox") {
-      throw new Error(`Scope authorization ${scopeRef} does not belong to the assigned Web black-box Case`);
-    }
-    if (row.status !== "active" || Date.parse(row.expires_at) <= this.now()) {
-      throw new Error(`Scope authorization ${scopeRef} is expired or revoked`);
-    }
-    const scope = authorizationScope.parse(JSON.parse(row.scope_json));
-    if (scope.deniedActions.includes(action)) throw new Error(`Action ${action} is explicitly denied by ${scopeRef}`);
-    if (!scope.allowedActions.includes(action)) throw new Error(`Action ${action} is not authorized by ${scopeRef}`);
-    return { id: row.id, caseId: row.case_id, scenarioKind: row.scenario_kind, scope, expiresAt: row.expires_at };
-  }
-
-  requireUrl(scopeRef: string, caseId: string, action: string, rawUrl: string): { authorization: ActiveScenarioAuthorization; url: URL } {
-    const authorization = this.require(scopeRef, caseId, action);
-    let url: URL;
-    try { url = new URL(rawUrl); }
-    catch { throw new Error("Web tool URL must be an absolute HTTP or HTTPS URL"); }
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
-      throw new Error("Web tool URL must use HTTP or HTTPS and must not contain embedded credentials");
-    }
-    const verdict = checkScope(url.href, scopeRules(authorization));
-    if (!verdict.allowed) throw new Error(`Target is outside authorization ${scopeRef}: ${verdict.reason}`);
-    return { authorization, url };
-  }
-}
-
-function scopeRules(authorization: ActiveScenarioAuthorization): ScopeRule[] {
-  const allowHosts = authorization.scope.targets.map((target) => {
-    try { return new URL(target).host; }
-    catch { return target.trim().toLowerCase(); }
-  }).filter(Boolean);
-  return [{ caseId: authorization.caseId, allowHosts, denyHosts: [] }];
-}
+import { WEB_BLACKBOX_ACTIONS, WEB_BLACKBOX_AUTHORIZATION_SCOPE } from "./definition.js";
 
 type ToolContext = ToolExecutionContext;
 
@@ -115,16 +47,19 @@ export class ScenarioHttpRequestTool implements ExecutionToolAdapter {
   readonly timeoutMs = 25_000;
 
   constructor(
-    private readonly sqlite: Database.Database,
-    private readonly guard: ScenarioAuthorizationGuard,
-    private readonly sessions: ExecutionSessionGateway,
+    private readonly authorization: ScenarioAuthorizationPort,
+    private readonly sessions: ScenarioSessionPort,
+    private readonly traffic: ScenarioTrafficPort,
     private readonly executionNode: ExecutionNode,
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
   async execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
     const request = httpInput.parse(input);
-    const { url } = this.guard.requireUrl(context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.requestReplay, request.url);
+    const grant = this.authorization.authorizeResource(
+      context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.requestReplay, "network.url", request.url,
+    );
+    const url = new URL(grant.canonicalValue);
     const material = this.sessions.use(request.sessionId, sessionContext(context));
     const headers = { ...request.headers, ...material.headers };
     const cookie = cookieHeader(material.cookies, url);
@@ -170,61 +105,22 @@ export class ScenarioHttpRequestTool implements ExecutionToolAdapter {
     }
     const trafficId = `traf_${randomUUID()}`;
     const createdAt = this.now();
-    this.sqlite.transaction(() => {
-      this.sqlite.prepare(`
-        INSERT INTO traffic_entries
-          (id, case_id, run_id, identity_id, identity_version, attribution_source, parent_traffic_id,
-           url, method, request_headers_json, request_body, response_status, response_headers_json,
-           response_size, content_type, response_body, created_at)
-        VALUES (?, ?, ?, NULL, NULL, 'agent', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        trafficId,
-        context.caseId,
-        context.runId,
-        url.href,
-        request.method,
-        JSON.stringify(redactHeaders(headers)),
-        request.body ?? null,
-        response.status,
-        JSON.stringify(redactHeaders(responseHeaders)),
-        response.responseBytes,
-        responseHeaders["content-type"] ?? null,
-        safeBody(responseBody, responseHeaders["content-type"]),
-        createdAt,
-      );
-      this.sqlite.prepare(`
-        INSERT INTO execution_network_receipts
-          (id, node_id, request_id, case_id, run_id, work_id, worker_id, scope_ref, lease_id,
-           idempotency_key, authorization_ref, authorization_action, url, method, status,
-           request_bytes, response_bytes, response_body_truncated, permission_profile_fingerprint,
-           redirect_followed, traffic_id, started_at, completed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        response.receipt.id,
-        response.receipt.nodeId,
-        response.receipt.requestId,
-        context.caseId,
-        context.runId,
-        context.workId,
-        context.workerId,
-        context.scopeRef,
-        context.leaseId,
-        context.idempotencyKey,
-        response.receipt.authorizationRef,
-        response.receipt.authorizationAction,
-        response.receipt.url,
-        response.receipt.method,
-        response.receipt.status,
-        response.receipt.requestBytes,
-        response.receipt.responseBytes,
-        response.receipt.responseBodyTruncated ? 1 : 0,
-        response.receipt.permissionProfileFingerprint,
-        0,
-        trafficId,
-        response.receipt.startedAt,
-        response.receipt.completedAt,
-      );
-    })();
+    this.traffic.recordHttpExchange({
+      trafficId,
+      caseId: context.caseId,
+      runId: context.runId,
+      url: url.href,
+      method: request.method,
+      requestHeaders: redactHeaders(headers),
+      requestBody: request.body ?? null,
+      responseStatus: response.status,
+      responseHeaders: redactHeaders(responseHeaders),
+      responseSize: response.responseBytes,
+      contentType: responseHeaders["content-type"] ?? null,
+      responseBody: safeBody(responseBody, responseHeaders["content-type"]),
+      receipt: response.receipt,
+      createdAt,
+    });
     if (cookies.length) this.sessions.updateCookies(request.sessionId, cookies);
     return {
       status: "succeeded",
@@ -266,15 +162,12 @@ export class ScenarioTrafficSnapshotTool implements ExecutionToolAdapter {
   readonly risk = "read_only" as const;
   readonly timeoutMs = 5_000;
 
-  constructor(private readonly sqlite: Database.Database, private readonly guard: ScenarioAuthorizationGuard) {}
+  constructor(private readonly authorization: ScenarioAuthorizationPort, private readonly traffic: ScenarioTrafficPort) {}
 
   async execute(input: unknown, context: ToolContext): Promise<ToolExecutionResult> {
     const { limit } = trafficInput.parse(input ?? {});
-    this.guard.require(context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.trafficRead);
-    const entries = this.sqlite.prepare(`
-      SELECT id, run_id, url, method, response_status, response_size, content_type, created_at
-      FROM traffic_entries WHERE case_id = ? ORDER BY created_at DESC LIMIT ?
-    `).all(context.caseId, limit) as Array<{ id: string }>;
+    this.authorization.requireAction(context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.trafficRead);
+    const entries = this.traffic.list(context.caseId, limit);
     return {
       status: "succeeded",
       summary: `Loaded ${entries.length} attributed traffic observations from the assigned Case`,
@@ -298,13 +191,14 @@ export class ScenarioScopeSnapshotTool implements ExecutionToolAdapter {
   readonly risk = "read_only" as const;
   readonly timeoutMs = 5_000;
 
-  constructor(private readonly guard: ScenarioAuthorizationGuard) {}
+  constructor(private readonly authorization: ScenarioAuthorizationPort) {}
 
   async execute(_input: unknown, context: ToolContext): Promise<ToolExecutionResult> {
-    const authorization = this.guard.require(context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.scopeRead);
+    const authorization = this.authorization.requireAction(context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.scopeRead);
+    const scope = WEB_BLACKBOX_AUTHORIZATION_SCOPE.parse(authorization.scopePayload);
     return {
       status: "succeeded",
-      summary: `Loaded active authorization ${authorization.id} with ${authorization.scope.targets.length} target(s)`,
+      summary: `Loaded active authorization ${authorization.id} with ${scope.targets.length} target(s)`,
       raw: JSON.stringify(authorization),
       refs: [`authorization:${authorization.id}`],
       retryable: false,
@@ -389,40 +283,43 @@ export class ScenarioBrowserObserveTool implements ExecutionToolAdapter {
   readonly timeoutMs = 30_000;
 
   constructor(
-    private readonly sqlite: Database.Database,
-    private readonly guard: ScenarioAuthorizationGuard,
-    private readonly sessions: ExecutionSessionGateway,
+    private readonly authorization: ScenarioAuthorizationPort,
+    private readonly sessions: ScenarioSessionPort,
+    private readonly traffic: ScenarioTrafficPort,
     private readonly transport: ScenarioBrowserTransport = defaultBrowserTransport,
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
   async execute(input: unknown, context: ToolContext): Promise<ToolExecutionResult> {
     const value = browserInput.extend({ sessionId: z.string().min(1) }).parse(input);
-    const { authorization, url } = this.guard.requireUrl(context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.browserNavigate, value.url);
+    const grant = this.authorization.authorizeResource(
+      context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.browserNavigate, "network.url", value.url,
+    );
+    const url = new URL(grant.canonicalValue);
     const material = this.sessions.use(value.sessionId, sessionContext(context));
-    const rules = scopeRules(authorization);
-    const allowed = (candidate: string) => checkScope(candidate, rules).allowed;
+    const allowed = (candidate: string) => {
+      try {
+        this.authorization.authorizeResource(
+          context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.browserNavigate, "network.url", candidate,
+        );
+        return true;
+      } catch { return false; }
+    };
     const observation = await this.transport(url.href, allowed, { headers: material.headers, cookies: material.cookies });
     if (observation.cookies?.length) this.sessions.updateCookies(value.sessionId, observation.cookies);
     if (!allowed(observation.finalUrl)) throw new Error(`Browser returned an out-of-scope URL ${observation.finalUrl}`);
     const { cookies: _secretCookies, ...publicObservation } = observation;
     const trafficId = `traf_${randomUUID()}`;
-    this.sqlite.prepare(`
-      INSERT INTO traffic_entries
-        (id, case_id, run_id, identity_id, identity_version, attribution_source, parent_traffic_id,
-         url, method, request_headers_json, request_body, response_status, response_headers_json,
-         response_size, content_type, response_body, created_at)
-      VALUES (?, ?, ?, NULL, NULL, 'browser', NULL, ?, 'GET', '{}', NULL, ?, '{}', ?, 'text/html', ?, ?)
-    `).run(
+    this.traffic.recordBrowserObservation({
       trafficId,
-      context.caseId,
-      context.runId,
-      observation.finalUrl,
-      observation.status,
-      Buffer.byteLength(observation.text),
-      observation.text.slice(0, 64_000),
-      this.now(),
-    );
+      caseId: context.caseId,
+      runId: context.runId,
+      url: observation.finalUrl,
+      responseStatus: observation.status,
+      responseSize: Buffer.byteLength(observation.text),
+      responseBody: observation.text.slice(0, 64_000),
+      createdAt: this.now(),
+    });
     return {
       status: "succeeded",
       summary: `Observed ${observation.finalUrl} in an isolated browser and recorded ${trafficId}`,
@@ -451,11 +348,11 @@ export class ScenarioSessionOpenTool implements ExecutionToolAdapter {
   readonly risk = "bounded_write" as const;
   readonly timeoutMs = 5_000;
 
-  constructor(private readonly guard: ScenarioAuthorizationGuard, private readonly sessions: ExecutionSessionGateway) {}
+  constructor(private readonly authorization: ScenarioAuthorizationPort, private readonly sessions: ScenarioSessionPort) {}
 
   async execute(input: unknown, context: ToolContext): Promise<ToolExecutionResult> {
     const value = z.object({ identityId: z.string().min(1).optional(), ttlMinutes: z.number().int().min(1).max(1_440).default(60) }).parse(input ?? {});
-    this.guard.require(context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.scopeRead);
+    this.authorization.requireAction(context.scopeRef, context.caseId, WEB_BLACKBOX_ACTIONS.scopeRead);
     const session = this.sessions.openSession({
       caseId: context.caseId,
       runId: context.runId,

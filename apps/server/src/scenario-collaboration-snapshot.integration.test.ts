@@ -4,14 +4,15 @@ import type Database from "better-sqlite3";
 import {
   DurableScenarioRuntime,
   ScenarioDefinitionRegistry,
-  WEB_BLACKBOX_CAPABILITIES,
-  WEB_BLACKBOX_SCENARIO,
 } from "@traceforge/orchestration-core";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "@traceforge/scenario-web-blackbox";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
 import { SqliteRunObserverStore } from "./run-observer.js";
 import { SqliteRunPlannerStore } from "./run-planner.js";
 import { registerScenarioRoutes } from "./scenario-routes.js";
+import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
 import {
   registerScenarioCollaborationRoutes,
   ScenarioCollaborationSnapshotService,
@@ -34,6 +35,8 @@ async function setup() {
   sqlite.prepare("INSERT INTO cases (id, name, status, scope_rules_json, created_at) VALUES (?, ?, ?, ?, ?)")
     .run("case_1", "Authorized assessment", "active", "{}", "2026-08-25T08:00:00.000Z");
   registerScenarioRoutes(app, sqlite, {
+    definitions: new ScenarioDefinitionRegistry([WEB_BLACKBOX_SCENARIO]),
+    packages: new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]),
     now: () => now,
     createId: () => "lease_1",
     controlPlane: { leaseDurationMs: 60_000, heartbeatTimeoutMs: 30_000, concurrencyRetries: 3 },

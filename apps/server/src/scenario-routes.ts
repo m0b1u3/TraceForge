@@ -8,27 +8,25 @@ import {
   RevisionConflictError,
   RunLifecycleConflictError,
   ScenarioDefinitionRegistry,
-  WEB_BLACKBOX_ACTIONS,
-  WEB_BLACKBOX_CAPABILITIES,
-  WEB_BLACKBOX_SCENARIO,
   type ScenarioCommand,
   type ScenarioOutput,
 } from "@traceforge/orchestration-core";
 import { ScenarioControlPlane, type ControlPlaneOptions } from "./scenario-control-plane.js";
 import { SqliteScenarioEventStore, SqliteWorkerRegistry } from "./scenario-event-store.js";
-import type { BlackboardChangeBus } from "./blackboard-change-bus.js";
+import type { BlackboardChangeBus } from "@traceforge/cognitive-runtime";
+import {
+  ScenarioPackageBindingError,
+  ScenarioPackageRegistry,
+  type ScenarioEvidencePort,
+} from "@traceforge/scenario-sdk";
 
-const workerRole = z.enum(["coordinator", "observer", "researcher", "validator", "reviewer", "reporter"]);
+const workerRole = z.string().min(1);
 const workerStatus = z.enum(["online", "draining", "offline"]);
-const workKind = z.enum(["research", "validation", "review", "report"]);
-const outputKind = z.enum([
-  "scope_snapshot", "capability_inventory", "surface_observation", "coverage_assessment", "hypothesis",
-  "evidence", "validation_conclusion", "limitation", "evidence_review", "report",
-]);
+const workKind = z.string().min(1);
+const outputKind = z.string().min(1);
 const commandBase = z.object({ commandId: z.string().min(1), expectedRevision: z.number().int().nonnegative() });
 const workerActionBase = commandBase.extend({ workerId: z.string().min(1), leaseId: z.string().min(1) });
 const actionRisk = z.enum(["read_only", "bounded_write", "privileged", "destructive"]);
-const webBlackboxAction = z.enum(Object.values(WEB_BLACKBOX_ACTIONS) as [string, ...string[]]);
 
 const workerRegistration = z.object({
   id: z.string().min(1),
@@ -44,20 +42,15 @@ const startRun = z.object({
   caseId: z.string().min(1),
   goal: z.string().min(1),
   scopeRef: z.string().min(1),
-  scenarioKind: z.literal("web_blackbox"),
-  definitionVersion: z.literal(1),
+  scenarioKind: z.string().min(1),
+  definitionVersion: z.number().int().positive(),
 });
 
 const scenarioAuthorization = z.object({
   id: z.string().min(1),
   caseId: z.string().min(1),
-  scenarioKind: z.literal("web_blackbox"),
-  scope: z.object({
-    targets: z.array(z.string().min(1)).min(1),
-    allowedActions: z.array(webBlackboxAction).min(1),
-    deniedActions: z.array(webBlackboxAction).default([]),
-    notes: z.string().optional(),
-  }),
+  scenarioKind: z.string().min(1),
+  scope: z.unknown(),
   approvedBy: z.string().min(1),
   expiresAt: z.string().datetime(),
 });
@@ -86,11 +79,14 @@ const output = z.object({
 });
 
 export interface ScenarioRouteOptions {
+  definitions?: ScenarioDefinitionRegistry;
+  packages?: ScenarioPackageRegistry;
   now?: () => string;
   createId?: () => string;
   controlPlane?: Partial<ControlPlaneOptions>;
   autoScheduleIntervalMs?: number;
   changeBus?: BlackboardChangeBus;
+  evidence?: ScenarioEvidencePort;
 }
 
 function sendError(reply: FastifyReply, error: unknown) {
@@ -99,6 +95,9 @@ function sendError(reply: FastifyReply, error: unknown) {
     return reply.code(409).send({ error: error.message, expectedRevision: error.expectedRevision, actualRevision: error.actualRevision });
   }
   if (error instanceof IdempotencyConflictError) return reply.code(409).send({ error: error.message });
+  if (error instanceof ScenarioPackageBindingError) {
+    return reply.code(409).send({ error: error.message, recoveryRequired: true });
+  }
   if (error instanceof RunLifecycleConflictError || error instanceof WorkerLeaseConflictError) {
     return reply.code(409).send({ error: error.message });
   }
@@ -117,8 +116,9 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
   const createId = options.createId ?? randomUUID;
   const store = new SqliteScenarioEventStore(sqlite, options.changeBus);
   const workers = new SqliteWorkerRegistry(sqlite);
-  const definitions = new ScenarioDefinitionRegistry([WEB_BLACKBOX_SCENARIO]);
-  const runtime = new DurableScenarioRuntime(store, definitions);
+  const definitions = options.definitions ?? new ScenarioDefinitionRegistry();
+  const packages = options.packages ?? new ScenarioPackageRegistry();
+  const runtime = new DurableScenarioRuntime(store, definitions, packages);
   const controlPlaneOptions: ControlPlaneOptions = {
     leaseDurationMs: options.controlPlane?.leaseDurationMs ?? 60_000,
     heartbeatTimeoutMs: options.controlPlane?.heartbeatTimeoutMs ?? 30_000,
@@ -161,7 +161,14 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
 
   app.get("/api/scenarios/runs", async (request) => {
     const query = z.object({ caseId: z.string().min(1).optional() }).parse(request.query);
-    return store.listRuns(query.caseId);
+    return store.listRuns(query.caseId).map((run) => {
+      const availability = packages.bindingStatus(run.scenarioPackage, run.definitionKind, run.definitionVersion);
+      return {
+        ...run,
+        packageAvailability: availability.status,
+        packageDiagnostic: availability.status === "recovery_required" ? availability.reason : null,
+      };
+    });
   });
 
   app.get("/api/scenarios/definitions", async () => definitions.list());
@@ -194,14 +201,19 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       if (!sqlite.prepare("SELECT 1 FROM cases WHERE id = ?").get(body.caseId)) {
         return reply.code(404).send({ error: `Unknown case ${body.caseId}` });
       }
+      const scenarioPackage = packages.requireForScenario(body.scenarioKind);
+      const parsedScope = scenarioPackage.authorizationPolicy.parseScope(body.scope);
+      const declaredActions = new Set(scenarioPackage.definition.authorizationActions);
+      const unknownActions = [...parsedScope.allowedActions, ...parsedScope.deniedActions].filter((action) => !declaredActions.has(action));
+      if (unknownActions.length) return reply.code(400).send({ error: `Authorization contains undeclared actions: ${[...new Set(unknownActions)].join(", ")}` });
       const at = now();
       if (Date.parse(body.expiresAt) <= Date.parse(at)) return reply.code(400).send({ error: "Authorization expiry must be in the future" });
       sqlite.prepare(`
         INSERT INTO scenario_authorizations
           (id, case_id, scenario_kind, scope_json, approved_by, status, expires_at, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
-      `).run(body.id, body.caseId, body.scenarioKind, JSON.stringify(body.scope), body.approvedBy, body.expiresAt, at, at);
-      return reply.code(201).send({ ...body, status: "active", createdAt: at, updatedAt: at });
+      `).run(body.id, body.caseId, body.scenarioKind, JSON.stringify(parsedScope.payload), body.approvedBy, body.expiresAt, at, at);
+      return reply.code(201).send({ ...body, scope: parsedScope.payload, status: "active", createdAt: at, updatedAt: at });
     } catch (error) { return sendError(reply, error); }
   });
 
@@ -219,6 +231,7 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       `).run(at, authorizationId);
       const cancelledRunIds: string[] = [];
       for (const run of store.listRuns().filter((candidate) => candidate.status === "running" || candidate.status === "paused")) {
+        if (packages.bindingStatus(run.scenarioPackage, run.definitionKind, run.definitionVersion).status !== "available") continue;
         const state = runtime.load(run.runId);
         if (state?.scopeRef !== authorizationId) continue;
         enforceAuthorization(run.runId, at);
@@ -229,9 +242,11 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
   });
 
   app.get("/api/scenarios/runs/:runId", async (request, reply) => {
-    const { runId } = z.object({ runId: z.string().min(1) }).parse(request.params);
-    const state = runtime.load(runId);
-    return state ?? reply.code(404).send({ error: `Unknown scenario run ${runId}` });
+    try {
+      const { runId } = z.object({ runId: z.string().min(1) }).parse(request.params);
+      const state = runtime.load(runId);
+      return state ?? reply.code(404).send({ error: `Unknown scenario run ${runId}` });
+    } catch (error) { return sendError(reply, error); }
   });
 
   app.get("/api/scenarios/approvals", async (request) => {
@@ -266,15 +281,18 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       if (!caseExists) return reply.code(404).send({ error: `Unknown case ${body.caseId}` });
       const at = now();
       const authorization = sqlite.prepare(`
-        SELECT id, expires_at FROM scenario_authorizations
+        SELECT id, expires_at, scope_json FROM scenario_authorizations
         WHERE id = ? AND case_id = ? AND scenario_kind = ? AND status = 'active'
-      `).get(body.scopeRef, body.caseId, body.scenarioKind) as { id: string; expires_at: string } | undefined;
+      `).get(body.scopeRef, body.caseId, body.scenarioKind) as { id: string; expires_at: string; scope_json: string } | undefined;
       if (!authorization || Date.parse(authorization.expires_at) <= Date.parse(at)) {
         return reply.code(403).send({ error: `Scope authorization ${body.scopeRef} is missing, expired, revoked, or mismatched` });
       }
+      const scenarioPackage = packages.requireForScenario(body.scenarioKind, body.definitionVersion);
+      const scenarioPackageBinding = packages.bindingFor(scenarioPackage);
+      const scope = scenarioPackage.authorizationPolicy.parseScope(JSON.parse(authorization.scope_json));
+      const deniedActions = new Set(scope.deniedActions);
       const availableCapabilities = [...new Set([
-        WEB_BLACKBOX_CAPABILITIES.scopeRead,
-        WEB_BLACKBOX_CAPABILITIES.evidenceWrite,
+        ...scope.allowedActions.filter((action) => !deniedActions.has(action)),
         ...workers.list().filter((worker) => worker.status !== "offline").flatMap((worker) => worker.capabilities),
       ])];
       const result = runtime.execute({
@@ -289,6 +307,7 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
           caseId: body.caseId,
           goal: body.goal,
           scopeRef: body.scopeRef,
+          scenarioPackage: scenarioPackageBinding,
           availableCapabilities,
           at,
         },
@@ -343,12 +362,18 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
     try {
       const { runId, workId } = z.object({ runId: z.string().min(1), workId: z.string().min(1) }).parse(request.params);
       const body = workerActionBase.extend({ summary: z.string().min(1), outputs: z.array(output) }).parse(request.body);
-      requireWorkerLease(runId, workId, body.workerId, body.leaseId);
+      const state = requireWorkerLease(runId, workId, body.workerId, body.leaseId);
       const at = now();
-      const outputs: Omit<ScenarioOutput, "phaseId" | "producedByWorkId">[] = body.outputs.map((value) => ({ ...value, createdAt: at }));
-      return execute(runId, body.commandId, body.expectedRevision, {
+      const work = state.workItems.find((candidate) => candidate.id === workId)!;
+      const drafts: Omit<ScenarioOutput, "phaseId" | "producedByWorkId" | "schemaVersion">[] = body.outputs
+        .map((value) => ({ ...value, createdAt: at }));
+      const outputs = packages.prepareOutputs(state, drafts, work.phaseId, work.id);
+      const result = execute(runId, body.commandId, body.expectedRevision, {
         type: "complete_work", workId, leaseId: body.leaseId, summary: body.summary, outputs, at,
       });
+      if (!options.evidence && outputs.length) throw new Error("Scenario Evidence Port is unavailable");
+      const evidenceRefs = options.evidence ? packages.mapOutputsToEvidence(result.state, outputs, options.evidence) : [];
+      return { ...result, evidenceRefs };
     } catch (error) { return sendError(reply, error); }
   });
 

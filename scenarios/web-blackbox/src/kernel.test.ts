@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { evolve, ScenarioKernel } from "./kernel.js";
-import type { ScenarioEvent, ScenarioOutputKind, ScenarioRunState, WorkKind } from "./model.js";
-import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "./web-blackbox.js";
+import {
+  evolve,
+  ScenarioKernel,
+  type ScenarioEvent,
+  type ScenarioOutputKind,
+  type ScenarioRunState,
+  type WorkKind,
+} from "@traceforge/orchestration-core";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "./index.js";
 
 const at = (step: number) => `2026-08-24T00:00:${String(step).padStart(2, "0")}.000Z`;
 const capabilities = Object.values(WEB_BLACKBOX_CAPABILITIES);
@@ -13,6 +19,7 @@ function start(kernel = new ScenarioKernel(WEB_BLACKBOX_SCENARIO)): ScenarioRunS
     caseId: "case_1",
     goal: "Assess the authorized web surface",
     scopeRef: "scope_1",
+    scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
     availableCapabilities: capabilities,
     at: at(0),
   }).state;
@@ -108,6 +115,7 @@ describe("ScenarioKernel web black-box orchestration", () => {
       caseId: "case_1",
       goal: "Assess target",
       scopeRef: "scope_1",
+      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
       availableCapabilities: [WEB_BLACKBOX_CAPABILITIES.scopeRead],
       at: at(0),
     })).toThrow(/missing capabilities: evidence\.write/);
@@ -129,6 +137,7 @@ describe("ScenarioKernel web black-box orchestration", () => {
       caseId: "case_1",
       goal: "Assess target",
       scopeRef: "scope_1",
+      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
       availableCapabilities: capabilities,
       at: at(0),
     });
@@ -215,10 +224,10 @@ describe("ScenarioKernel web black-box orchestration", () => {
     }).state;
     expect(() => kernel.execute(state, {
       type: "claim_work", workId: "validation_2", workerId: "validator_2", workerRoles: ["validator"], workerCapabilities: capabilities, workerCurrentWork: 0, workerMaxConcurrentWork: 1, leaseId: "lease_2", leaseExpiresAt: at(26), at: at(16),
-    })).toThrow(/already owns execution/);
+    })).toThrow(/active item limit/);
     expect(() => kernel.execute(state, {
       type: "complete_work", workId: "validation_1", leaseId: "lease_1", summary: "done", outputs: [], at: at(17),
-    })).toThrow(/must produce a validation conclusion or limitation/);
+    })).toThrow(/must produce one of: validation_conclusion, limitation/);
   });
 
   it("does not abandon queued work during a phase transition", () => {
@@ -357,7 +366,8 @@ describe("ScenarioKernel web black-box orchestration", () => {
     const events: ScenarioEvent[] = [];
     let result = kernel.execute(undefined, {
       type: "start_run", runId: "run_pause", caseId: "case_1", goal: "Assess target",
-      scopeRef: "scope_1", availableCapabilities: capabilities, at: at(0),
+      scopeRef: "scope_1", scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
+      availableCapabilities: capabilities, at: at(0),
     });
     events.push(...result.events);
     result = kernel.execute(result.state, {

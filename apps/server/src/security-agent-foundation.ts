@@ -3,18 +3,25 @@ import type { FastifyInstance } from "fastify";
 import type { LlmProvider } from "@traceforge/llm";
 import type { ScenarioAgentEvent } from "@traceforge/shared";
 import type { ExecutionNode } from "@traceforge/execution-node";
-import type { ExecutionToolDiscoverySource } from "@traceforge/worker-runtime";
+import {
+  createProviderCapabilityHost,
+  type ExecutionToolDiscoverySource,
+  type ProviderCapabilityBrokerLimits,
+  type ProviderCapabilityHandler,
+  type ProviderCapabilityPolicy,
+} from "@traceforge/worker-runtime";
 import { registerEmbeddedWorkers } from "./embedded-workers.js";
 import { registerScenarioRoutes } from "./scenario-routes.js";
 import { ExecutionSessionGateway, loadOrCreateVaultKey, SqliteEncryptedSecretVault } from "./execution-session-gateway.js";
 import { registerExecutionSessionRoutes } from "./execution-session-routes.js";
 import { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
+import { ScenarioEvidenceGraphAdapter } from "./scenario-evidence-store.js";
 import { registerEvidenceGraphRoutes } from "./evidence-graph-routes.js";
-import { DurableScenarioRuntime, ScenarioDefinitionRegistry, WEB_BLACKBOX_SCENARIO } from "@traceforge/orchestration-core";
+import { DurableScenarioRuntime, ScenarioDefinitionRegistry } from "@traceforge/orchestration-core";
 import { SqliteScenarioEventStore, SqliteWorkerRegistry } from "./scenario-event-store.js";
 import { registerRunObserverRoutes, RunObserverSupervisor, SqliteRunObserverStore, StructuredRunObserverModel } from "./run-observer.js";
 import { registerRunPlannerRoutes, RunPlannerSupervisor, SqliteRunPlannerStore, StructuredRunPlannerModel } from "./run-planner.js";
-import { BlackboardChangeBus } from "./blackboard-change-bus.js";
+import { BlackboardChangeBus } from "@traceforge/cognitive-runtime";
 import { SqliteCognitiveContextCursorStore } from "./cognitive-context-distiller.js";
 import { registerCognitiveSnapshotRoutes, SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
 import {
@@ -37,8 +44,18 @@ import { registerScenarioAgentEventRoutes, SqliteScenarioAgentEventStream } from
 import { registerScenarioCollaborationRoutes, ScenarioCollaborationSnapshotService } from "./scenario-collaboration-snapshot.js";
 import { registerScenarioRunRecoveryRoutes, ScenarioRunRecoveryService } from "./scenario-run-recovery.js";
 import type { ToolProviderInstallation } from "./tool-provider-control-plane.js";
+import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
+import { SqliteScenarioTrafficStore } from "./scenario-traffic-store.js";
+import {
+  ScenarioProviderCapabilityScopeAuthorizer,
+  SqliteProviderCapabilityApprovalReader,
+  SqliteProviderCapabilityReceiptStore,
+} from "./provider-capability-adapters.js";
+import type { ToolProviderArchiveImportAuthorizer } from "./tool-provider-archive-import.js";
 
 export interface SecurityAgentFoundationOptions {
+  scenarioPackageRegistry?: ScenarioPackageRegistry;
   autoScheduleIntervalMs?: number;
   modelRoutes?: ReadonlyMap<string, LlmProvider>;
   modelPolicies?: Partial<Record<CognitiveModelRole, Partial<ModelRolePolicy>>>;
@@ -48,6 +65,12 @@ export interface SecurityAgentFoundationOptions {
   toolDiscoverySources?: readonly ExecutionToolDiscoverySource[];
   toolProviderTrustRoots?: ReadonlyMap<string, string>;
   toolProviderSourceFactory?: (installation: ToolProviderInstallation) => Promise<ExecutionToolDiscoverySource> | ExecutionToolDiscoverySource;
+  toolProviderArchiveImportAuthorizer?: ToolProviderArchiveImportAuthorizer;
+  providerCapabilities?: {
+    handlers: ProviderCapabilityHandler[];
+    policies: ProviderCapabilityPolicy[];
+    limits?: Partial<ProviderCapabilityBrokerLimits>;
+  };
 }
 
 /**
@@ -71,10 +94,22 @@ export function registerSecurityAgentFoundation(
   );
   const changes = new BlackboardChangeBus();
   const evidenceGraph = new SqliteEvidenceGraphStore(sqlite, changes);
-  const definitions = new ScenarioDefinitionRegistry([WEB_BLACKBOX_SCENARIO]);
+  const scenarioEvidence = new ScenarioEvidenceGraphAdapter(evidenceGraph);
+  const scenarioPackages = options.scenarioPackageRegistry ?? new ScenarioPackageRegistry();
+  const authorization = new SqliteScenarioAuthorizationService(sqlite, scenarioPackages);
+  const providerCapabilityHost = createProviderCapabilityHost({
+    handlers: options.providerCapabilities?.handlers ?? [],
+    policies: options.providerCapabilities?.policies ?? [],
+    limits: options.providerCapabilities?.limits,
+    receipts: new SqliteProviderCapabilityReceiptStore(sqlite),
+    scopes: new ScenarioProviderCapabilityScopeAuthorizer(authorization),
+    approvals: new SqliteProviderCapabilityApprovalReader(sqlite),
+  });
+  const traffic = new SqliteScenarioTrafficStore(sqlite);
+  const definitions = new ScenarioDefinitionRegistry(scenarioPackages.definitions());
   const scenarioEvents = new SqliteScenarioEventStore(sqlite, changes);
   const workers = new SqliteWorkerRegistry(sqlite);
-  const scenarioRuntime = new DurableScenarioRuntime(scenarioEvents, definitions);
+  const scenarioRuntime = new DurableScenarioRuntime(scenarioEvents, definitions, scenarioPackages);
   const observerStore = new SqliteRunObserverStore(sqlite);
   const cognitiveCursors = new SqliteCognitiveContextCursorStore(sqlite);
   const agentEvents = new SqliteScenarioAgentEventStream(sqlite, options.onAgentEvent);
@@ -124,7 +159,13 @@ export function registerSecurityAgentFoundation(
     undefined,
     (error) => app.log.error({ err: error }, "Run Planner evaluation failed"),
   );
-  registerScenarioRoutes(app, sqlite, { autoScheduleIntervalMs: options.autoScheduleIntervalMs ?? 1_000, changeBus: changes });
+  registerScenarioRoutes(app, sqlite, {
+    definitions,
+    packages: scenarioPackages,
+    evidence: scenarioEvidence,
+    autoScheduleIntervalMs: options.autoScheduleIntervalMs ?? 1_000,
+    changeBus: changes,
+  });
   registerExecutionSessionRoutes(app, sessions);
   registerEvidenceGraphRoutes(app, sqlite, evidenceGraph);
   registerRunObserverRoutes(app, observerStore);
@@ -145,9 +186,10 @@ export function registerSecurityAgentFoundation(
   registerModelAdmissionRoutes(app, modelAdmissions, modelAdmissionStore);
   registerScenarioAgentEventRoutes(app, agentEvents);
   registerEmbeddedWorkers(
-    app, sqlite, provider, projectRoot, providerReady, sessions, evidenceGraph, changes,
-    cognitiveSnapshots, modelRuntime, agentEvents, options.executionNode, options.toolDiscoverySources,
-    options.toolProviderTrustRoots, options.toolProviderSourceFactory,
+    app, sqlite, provider, projectRoot, providerReady, evidenceGraph, changes,
+    cognitiveSnapshots, modelRuntime, agentEvents, definitions, scenarioPackages, options.executionNode,
+    scenarioPackages.toolSources({ sessions, authorization, traffic, evidence: scenarioEvidence, executionNode: options.executionNode }), options.toolDiscoverySources,
+    options.toolProviderTrustRoots, options.toolProviderSourceFactory, providerCapabilityHost, options.toolProviderArchiveImportAuthorizer,
   );
   const publishControlEvents = (change: Extract<Parameters<Parameters<typeof changes.subscribe>[0]>[0], { kind: "run" }>) => {
     const run = scenarioRuntime.load(change.runId);

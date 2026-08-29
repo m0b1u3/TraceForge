@@ -13,6 +13,9 @@ import { LlmConfigService } from "./llm-config-service.js";
 import { registerSecurityAgentFoundation } from "./security-agent-foundation.js";
 import { startLocalExecutionNodeService } from "./execution-node-service.js";
 import { loadToolProviderTrustRoots } from "./tool-provider-control-plane.js";
+import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
+import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
 
 // 运行时数据固定放在项目根目录 data/ 下，避免受 process.cwd() 影响（tsx watch 从 apps/server 启动）
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -86,10 +89,14 @@ export async function buildServer(
     app.log.warn({ err }, "LLM provider not initialized from config; save settings before running Agent");
   }
   const provider = llmService.getProvider();
-  const executionNodeService = await startLocalExecutionNodeService(projectRoot, getSqliteClient(db));
+  const sqlite = getSqliteClient(db);
+  const scenarioPackages = new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]);
+  const scenarioAuthorization = new SqliteScenarioAuthorizationService(sqlite, scenarioPackages);
+  const executionNodeService = await startLocalExecutionNodeService(projectRoot, scenarioAuthorization);
 
   registerRoutes(app, db, bus, provider, mcp, llmService, projectRoot);
-  registerSecurityAgentFoundation(app, getSqliteClient(db), provider, projectRoot, () => llmService.hasProvider(), {
+  registerSecurityAgentFoundation(app, sqlite, provider, projectRoot, () => llmService.hasProvider(), {
+    scenarioPackageRegistry: scenarioPackages,
     modelRoutes: llmService.getModelRoutes(),
     modelPolicies: llmService.getRolePolicies(),
     modelResourcePolicy: llmService.getResourcePolicy(),

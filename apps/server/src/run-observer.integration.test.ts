@@ -3,9 +3,8 @@ import type Database from "better-sqlite3";
 import {
   DurableScenarioRuntime,
   ScenarioDefinitionRegistry,
-  WEB_BLACKBOX_CAPABILITIES,
-  WEB_BLACKBOX_SCENARIO,
 } from "@traceforge/orchestration-core";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "@traceforge/scenario-web-blackbox";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
 import { SqliteScenarioEventStore } from "./scenario-event-store.js";
@@ -36,7 +35,8 @@ function setup(decision: RunObserverDecision) {
     definitionKind: "web_blackbox", definitionVersion: 1,
     command: {
       type: "start_run", runId: "run_1", caseId: "case_1", goal: "Assess authorized surface",
-      scopeRef: "scope_1", availableCapabilities: Object.values(WEB_BLACKBOX_CAPABILITIES), at,
+      scopeRef: "scope_1", scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
+      availableCapabilities: Object.values(WEB_BLACKBOX_CAPABILITIES), at,
     },
   }).state;
   state = runtime.execute({

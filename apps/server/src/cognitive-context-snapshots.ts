@@ -1,34 +1,30 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { ExtractJsonArgs, LlmProvider } from "@traceforge/llm";
-import type { ScenarioAgentRole } from "@traceforge/shared";
-import { canonicalJson } from "@traceforge/orchestration-core";
+import {
+  CognitiveSnapshotRuntime,
+  type CognitiveConsumer,
+  type CognitiveSnapshotEventPort,
+  type CognitiveSnapshotLifecycleEvent,
+  type CognitiveSnapshotPersistencePort,
+  type CognitiveSnapshotRecord,
+  type CognitiveSnapshotStatus,
+  type CompleteCognitiveSnapshotOptions,
+  type PrepareCognitiveSnapshotInput,
+  type StoredCognitiveSnapshot,
+} from "@traceforge/cognitive-runtime";
+import type { LlmProvider } from "@traceforge/llm";
 import type { ScenarioAgentEventWriter } from "./scenario-agent-event-stream.js";
 
-export type CognitiveConsumer = "planner" | "observer" | "worker" | "replay";
-export type CognitiveSnapshotStatus = "prepared" | "completed" | "failed";
-
-export interface CognitiveSnapshotRecord {
-  id: string;
-  parentSnapshotId: string | null;
-  consumer: CognitiveConsumer;
-  runId: string;
-  caseId: string;
-  workId: string | null;
-  evaluationId: string | null;
-  sourceRunRevision: number;
-  sourceGraphRevision: number | null;
-  semanticFingerprint: string | null;
-  request: ExtractJsonArgs;
-  contextManifest: Record<string, unknown>;
-  status: CognitiveSnapshotStatus;
-  output: unknown;
-  error: string | null;
-  createdAt: string;
-  completedAt: string | null;
-}
+export type {
+  CognitiveConsumer,
+  CognitiveModelRequest,
+  CognitiveSnapshotRecord,
+  CognitiveSnapshotStatus,
+  CompleteCognitiveSnapshotOptions,
+  PrepareCognitiveSnapshotInput,
+} from "@traceforge/cognitive-runtime";
 
 interface SnapshotRow {
   id: string;
@@ -51,10 +47,6 @@ interface SnapshotRow {
   completed_at: string | null;
 }
 
-function requestFingerprint(request: ExtractJsonArgs): string {
-  return createHash("sha256").update(canonicalJson({ system: request.system, user: request.user, schema: request.schema })).digest("hex");
-}
-
 function parseRow(row: SnapshotRow): CognitiveSnapshotRecord {
   return {
     id: row.id,
@@ -67,7 +59,7 @@ function parseRow(row: SnapshotRow): CognitiveSnapshotRecord {
     sourceRunRevision: row.source_run_revision,
     sourceGraphRevision: row.source_graph_revision,
     semanticFingerprint: row.semantic_fingerprint,
-    request: JSON.parse(row.request_json) as ExtractJsonArgs,
+    request: JSON.parse(row.request_json) as CognitiveSnapshotRecord["request"],
     contextManifest: JSON.parse(row.context_manifest_json) as Record<string, unknown>,
     status: row.status,
     output: row.output_json === null ? null : JSON.parse(row.output_json),
@@ -83,119 +75,43 @@ const columns = `
   request_json, context_manifest_json, status, output_json, error, created_at, completed_at
 `;
 
-export class SqliteCognitiveSnapshotStore {
-  constructor(private readonly sqlite: Database.Database, private readonly events?: ScenarioAgentEventWriter) {}
+export class SqliteCognitiveSnapshotStore implements CognitiveSnapshotPersistencePort {
+  private readonly runtime: CognitiveSnapshotRuntime;
 
-  recoverPrepared(at: string): number {
-    const pending = this.sqlite.prepare(`SELECT ${columns} FROM scenario_cognitive_snapshots WHERE status = 'prepared'`)
-      .all() as SnapshotRow[];
-    const changed = this.sqlite.prepare(`
-      UPDATE scenario_cognitive_snapshots
-      SET status = 'failed', error = 'runtime restarted before cognitive evaluation completed', completed_at = ?
-      WHERE status = 'prepared'
-    `).run(at).changes;
-    for (const row of pending) this.emitTurnCompleted(parseRow(row), "interrupted", "runtime restarted before cognitive evaluation completed", at);
-    return changed;
+  constructor(private readonly sqlite: Database.Database, events?: ScenarioAgentEventWriter) {
+    const eventPort: CognitiveSnapshotEventPort | undefined = events
+      ? { append: (event) => this.appendLifecycleEvent(events, event) }
+      : undefined;
+    this.runtime = new CognitiveSnapshotRuntime(this, eventPort);
   }
 
-  prepare(input: {
-    id: string;
-    agentInstanceId?: string;
-    parentSnapshotId?: string;
-    consumer: CognitiveConsumer;
-    runId: string;
-    caseId: string;
-    workId?: string;
-    evaluationId?: string;
-    sourceRunRevision: number;
-    sourceGraphRevision?: number;
-    semanticFingerprint?: string;
-    request: ExtractJsonArgs;
-    contextManifest: Record<string, unknown>;
-    at: string;
-  }): CognitiveSnapshotRecord {
-    const fingerprint = requestFingerprint(input.request);
-    const existing = this.row(input.id);
-    if (existing) {
-      if (existing.request_fingerprint !== fingerprint) throw new Error(`Cognitive snapshot ${input.id} was reused with different model input`);
-      return parseRow(existing);
-    }
-    this.sqlite.prepare(`
-      INSERT INTO scenario_cognitive_snapshots
-        (id, parent_snapshot_id, consumer, run_id, case_id, work_id, evaluation_id,
-         source_run_revision, source_graph_revision, semantic_fingerprint, request_fingerprint,
-         request_json, context_manifest_json, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?)
-    `).run(
-      input.id,
-      input.parentSnapshotId ?? null,
-      input.consumer,
-      input.runId,
-      input.caseId,
-      input.workId ?? null,
-      input.evaluationId ?? null,
-      input.sourceRunRevision,
-      input.sourceGraphRevision ?? null,
-      input.semanticFingerprint ?? null,
-      fingerprint,
-      JSON.stringify({ system: input.request.system, user: input.request.user, schema: input.request.schema }),
-      JSON.stringify(input.contextManifest),
-      input.at,
-    );
-    const created = this.get(input.id)!;
-    this.events?.append({
-      method: "turn/started", runId: created.runId, caseId: created.caseId, workId: created.workId,
-      turnId: created.id, role: created.consumer as ScenarioAgentRole, createdAt: input.at,
-      params: {
-        agentInstanceId: input.agentInstanceId ?? `${created.consumer}:${created.runId}`,
-        sourceRunRevision: created.sourceRunRevision, sourceGraphRevision: created.sourceGraphRevision,
-      },
-    });
-    this.emitProgress(created, "prepared", "Agent Turn prepared", [], input.at);
-    this.emitProgress(created, "contextBuilt", "Bounded context snapshot persisted", [created.id], input.at);
-    this.emitProgress(created, "modelInvoked", "Model invocation requested", [created.id], input.at);
-    return created;
+  recoverPrepared(at: string): number {
+    return this.runtime.recoverPrepared(at);
+  }
+
+  prepare(input: PrepareCognitiveSnapshotInput): CognitiveSnapshotRecord {
+    return this.runtime.prepare(input);
   }
 
   complete(
     id: string,
     output: unknown,
     at: string,
-    options: { deferTurnCompletion?: boolean; decisionKind?: string; outcome?: import("@traceforge/shared").AgentTurnOutcome } = {},
+    options: CompleteCognitiveSnapshotOptions = {},
   ): CognitiveSnapshotRecord {
-    const row = this.row(id);
-    if (!row) throw new Error(`Unknown cognitive snapshot ${id}`);
-    const serialized = JSON.stringify(output);
-    if (serialized === undefined) throw new Error(`Cognitive snapshot ${id} output is not JSON-serializable`);
-    if (row.status === "completed") {
-      if (row.output_json !== serialized) throw new Error(`Cognitive snapshot ${id} already has a different output`);
-      return parseRow(row);
-    }
-    this.sqlite.prepare(`
-      UPDATE scenario_cognitive_snapshots
-      SET status = 'completed', output_json = ?, error = NULL, completed_at = ? WHERE id = ?
-    `).run(serialized, at, id);
-    const completed = this.get(id)!;
-    this.emitProgress(completed, "decisionProduced", `Structured decision produced${options.decisionKind ? `: ${options.decisionKind}` : ""}`, [completed.id], at);
-    if (!options.deferTurnCompletion) this.emitTurnCompleted(completed, "completed", null, at, options.outcome ?? "finish");
-    return completed;
+    return this.runtime.complete(id, output, at, options);
   }
 
   fail(id: string, error: unknown, at: string): CognitiveSnapshotRecord {
-    if (!this.row(id)) throw new Error(`Unknown cognitive snapshot ${id}`);
-    const message = error instanceof Error ? error.message : String(error);
-    const changed = this.sqlite.prepare(`
-      UPDATE scenario_cognitive_snapshots
-      SET status = 'failed', error = ?, completed_at = ? WHERE id = ? AND status != 'completed'
-    `).run(message, at, id).changes;
-    const failed = this.get(id)!;
-    if (changed === 1) this.emitTurnCompleted(failed, "failed", message, at);
-    return failed;
+    return this.runtime.fail(id, error, at);
+  }
+
+  replay(input: { sourceId: string; id: string; model: LlmProvider; now: () => string }): Promise<CognitiveSnapshotRecord> {
+    return this.runtime.replay(input);
   }
 
   get(id: string): CognitiveSnapshotRecord | undefined {
-    const row = this.row(id);
-    return row ? parseRow(row) : undefined;
+    return this.getStored(id)?.record;
   }
 
   list(runId: string, consumer?: CognitiveConsumer): CognitiveSnapshotRecord[] {
@@ -205,28 +121,108 @@ export class SqliteCognitiveSnapshotStore {
     return rows.map(parseRow);
   }
 
+  getStored(id: string): StoredCognitiveSnapshot | undefined {
+    const row = this.row(id);
+    return row ? { record: parseRow(row), requestFingerprint: row.request_fingerprint, outputJson: row.output_json } : undefined;
+  }
+
+  insertPrepared(record: CognitiveSnapshotRecord, requestFingerprint: string): void {
+    this.sqlite.prepare(`
+      INSERT INTO scenario_cognitive_snapshots
+        (id, parent_snapshot_id, consumer, run_id, case_id, work_id, evaluation_id,
+         source_run_revision, source_graph_revision, semantic_fingerprint, request_fingerprint,
+         request_json, context_manifest_json, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?)
+    `).run(
+      record.id,
+      record.parentSnapshotId,
+      record.consumer,
+      record.runId,
+      record.caseId,
+      record.workId,
+      record.evaluationId,
+      record.sourceRunRevision,
+      record.sourceGraphRevision,
+      record.semanticFingerprint,
+      requestFingerprint,
+      JSON.stringify(record.request),
+      JSON.stringify(record.contextManifest),
+      record.createdAt,
+    );
+  }
+
+  listPrepared(): StoredCognitiveSnapshot[] {
+    return (this.sqlite.prepare(`SELECT ${columns} FROM scenario_cognitive_snapshots WHERE status = 'prepared'`)
+      .all() as SnapshotRow[])
+      .map((row) => ({ record: parseRow(row), requestFingerprint: row.request_fingerprint, outputJson: row.output_json }));
+  }
+
+  markCompleted(id: string, _output: unknown, outputJson: string, at: string): void {
+    this.sqlite.prepare(`
+      UPDATE scenario_cognitive_snapshots
+      SET status = 'completed', output_json = ?, error = NULL, completed_at = ? WHERE id = ?
+    `).run(outputJson, at, id);
+  }
+
+  markFailed(id: string, error: string, at: string): boolean {
+    return this.sqlite.prepare(`
+      UPDATE scenario_cognitive_snapshots
+      SET status = 'failed', error = ?, completed_at = ? WHERE id = ? AND status != 'completed'
+    `).run(error, at, id).changes === 1;
+  }
+
+  failAllPrepared(error: string, at: string): number {
+    return this.sqlite.prepare(`
+      UPDATE scenario_cognitive_snapshots
+      SET status = 'failed', error = ?, completed_at = ? WHERE status = 'prepared'
+    `).run(error, at).changes;
+  }
+
   private row(id: string): SnapshotRow | undefined {
     return this.sqlite.prepare(`SELECT ${columns} FROM scenario_cognitive_snapshots WHERE id = ?`).get(id) as SnapshotRow | undefined;
   }
 
-  private emitProgress(snapshot: CognitiveSnapshotRecord, phase: import("@traceforge/shared").AgentTurnPhase, summary: string, refs: string[], at: string): void {
-    this.events?.append({
-      method: "turn/progress", runId: snapshot.runId, caseId: snapshot.caseId, workId: snapshot.workId,
-      turnId: snapshot.id, role: snapshot.consumer as ScenarioAgentRole, createdAt: at, params: { phase, summary, refs },
-    });
-  }
-
-  private emitTurnCompleted(
-    snapshot: CognitiveSnapshotRecord,
-    status: "completed" | "failed" | "interrupted",
-    error: string | null,
-    at: string,
-    outcome: import("@traceforge/shared").AgentTurnOutcome | null = null,
-  ): void {
-    this.events?.append({
-      method: "turn/completed", runId: snapshot.runId, caseId: snapshot.caseId, workId: snapshot.workId,
-      turnId: snapshot.id, role: snapshot.consumer as ScenarioAgentRole, createdAt: at,
-      params: { status, outcome, checkpointRef: null, error },
+  private appendLifecycleEvent(events: ScenarioAgentEventWriter, event: CognitiveSnapshotLifecycleEvent): void {
+    const snapshot = event.snapshot;
+    if (event.type === "turn_started") {
+      events.append({
+        method: "turn/started",
+        runId: snapshot.runId,
+        caseId: snapshot.caseId,
+        workId: snapshot.workId,
+        turnId: snapshot.id,
+        role: snapshot.consumer,
+        createdAt: event.at,
+        params: {
+          agentInstanceId: event.agentInstanceId,
+          sourceRunRevision: snapshot.sourceRunRevision,
+          sourceGraphRevision: snapshot.sourceGraphRevision,
+        },
+      });
+      return;
+    }
+    if (event.type === "turn_progress") {
+      events.append({
+        method: "turn/progress",
+        runId: snapshot.runId,
+        caseId: snapshot.caseId,
+        workId: snapshot.workId,
+        turnId: snapshot.id,
+        role: snapshot.consumer,
+        createdAt: event.at,
+        params: { phase: event.phase, summary: event.summary, refs: event.refs },
+      });
+      return;
+    }
+    events.append({
+      method: "turn/completed",
+      runId: snapshot.runId,
+      caseId: snapshot.caseId,
+      workId: snapshot.workId,
+      turnId: snapshot.id,
+      role: snapshot.consumer,
+      createdAt: event.at,
+      params: { status: event.status, outcome: event.outcome, checkpointRef: null, error: event.error },
     });
   }
 }
@@ -253,30 +249,12 @@ export function registerCognitiveSnapshotRoutes(
 
   app.post("/api/scenarios/cognitive-snapshots/:snapshotId/replay", async (request, reply) => {
     const { snapshotId } = z.object({ snapshotId: z.string().min(1) }).parse(request.params);
-    const source = store.get(snapshotId);
-    if (!source) return reply.code(404).send({ error: `Unknown cognitive snapshot ${snapshotId}` });
+    if (!store.get(snapshotId)) return reply.code(404).send({ error: `Unknown cognitive snapshot ${snapshotId}` });
     if (!providerReady()) return reply.code(409).send({ error: "LLM provider is not ready" });
     const id = createId();
-    store.prepare({
-      id,
-      parentSnapshotId: source.id,
-      consumer: "replay",
-      runId: source.runId,
-      caseId: source.caseId,
-      workId: source.workId ?? undefined,
-      evaluationId: source.evaluationId ?? undefined,
-      sourceRunRevision: source.sourceRunRevision,
-      sourceGraphRevision: source.sourceGraphRevision ?? undefined,
-      semanticFingerprint: source.semanticFingerprint ?? undefined,
-      request: source.request,
-      contextManifest: { ...source.contextManifest, replayOf: source.id },
-      at: now(),
-    });
     try {
-      const output = await provider.extractJson(source.request);
-      return store.complete(id, output, now());
-    } catch (error) {
-      store.fail(id, error, now());
+      return await store.replay({ sourceId: snapshotId, id, model: provider, now });
+    } catch {
       return reply.code(502).send(store.get(id));
     }
   });

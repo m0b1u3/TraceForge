@@ -11,7 +11,7 @@ import {
   type WorkerDescriptor,
   type WorkerStatus,
 } from "@traceforge/orchestration-core";
-import type { BlackboardChangeBus } from "./blackboard-change-bus.js";
+import type { BlackboardChangeBus } from "@traceforge/cognitive-runtime";
 
 interface StreamRow { revision: number }
 export interface ScenarioRunSummaryRow {
@@ -19,6 +19,7 @@ export interface ScenarioRunSummaryRow {
   caseId: string;
   definitionKind: string;
   definitionVersion: number;
+  scenarioPackage: { id: string; version: string; schemaRevision: number } | null;
   status: string;
   activePhaseId: string;
   revision: number;
@@ -118,13 +119,17 @@ export class SqliteScenarioEventStore implements ScenarioEventStore {
         if (started.type !== "run_started") throw new Error(`New scenario stream ${request.runId} must begin with run_started`);
         this.sqlite.prepare(
           `INSERT INTO scenario_event_streams
-            (run_id, case_id, definition_kind, definition_version, status, active_phase_id, revision, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+            (run_id, case_id, definition_kind, definition_version, scenario_package_id, scenario_package_version,
+             scenario_schema_revision, status, active_phase_id, revision, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         ).run(
           request.runId,
           started.state.caseId,
           started.state.definitionKind,
           started.state.definitionVersion,
+          started.state.scenarioPackage?.id ?? null,
+          started.state.scenarioPackage?.version ?? null,
+          started.state.scenarioPackage?.schemaRevision ?? null,
           started.state.status,
           started.state.activePhaseId,
           firstTimestamp,
@@ -149,6 +154,7 @@ export class SqliteScenarioEventStore implements ScenarioEventStore {
         this.updateLeaseProjection(request.runId, event, timestamp);
         this.updateRunProjection(request.runId, event);
         this.updateApprovalProjection(request.runId, event, timestamp);
+        this.updateToolInvocationBindingLifecycle(request.runId, event, timestamp);
       });
       const resultingRevision = request.expectedRevision + request.events.length;
       const lastEvent = request.events.at(-1)!;
@@ -180,17 +186,22 @@ export class SqliteScenarioEventStore implements ScenarioEventStore {
   listRuns(caseId?: string): ScenarioRunSummaryRow[] {
     const rows = (caseId
       ? this.sqlite.prepare(`
-          SELECT run_id, case_id, definition_kind, definition_version, status, active_phase_id, revision, created_at, updated_at
+          SELECT run_id, case_id, definition_kind, definition_version, scenario_package_id, scenario_package_version,
+                 scenario_schema_revision, status, active_phase_id, revision, created_at, updated_at
           FROM scenario_event_streams WHERE case_id = ? ORDER BY created_at DESC
         `).all(caseId)
       : this.sqlite.prepare(`
-          SELECT run_id, case_id, definition_kind, definition_version, status, active_phase_id, revision, created_at, updated_at
+          SELECT run_id, case_id, definition_kind, definition_version, scenario_package_id, scenario_package_version,
+                 scenario_schema_revision, status, active_phase_id, revision, created_at, updated_at
           FROM scenario_event_streams ORDER BY created_at DESC
         `).all()) as Array<{
           run_id: string;
           case_id: string;
           definition_kind: string;
           definition_version: number;
+          scenario_package_id: string | null;
+          scenario_package_version: string | null;
+          scenario_schema_revision: number | null;
           status: string;
           active_phase_id: string;
           revision: number;
@@ -202,6 +213,9 @@ export class SqliteScenarioEventStore implements ScenarioEventStore {
       caseId: row.case_id,
       definitionKind: row.definition_kind,
       definitionVersion: row.definition_version,
+      scenarioPackage: row.scenario_package_id && row.scenario_package_version && row.scenario_schema_revision !== null
+        ? { id: row.scenario_package_id, version: row.scenario_package_version, schemaRevision: row.scenario_schema_revision }
+        : null,
       status: row.status,
       activePhaseId: row.active_phase_id,
       revision: row.revision,
@@ -338,6 +352,44 @@ export class SqliteScenarioEventStore implements ScenarioEventStore {
       case "run_paused":
         this.sqlite.prepare("DELETE FROM scenario_work_leases WHERE run_id = ?").run(runId);
     }
+  }
+
+  private updateToolInvocationBindingLifecycle(runId: string, event: ScenarioEvent, at: string): void {
+    let workId: string | undefined;
+    let reason: string | undefined;
+    switch (event.type) {
+      case "work_completed":
+        workId = event.workId;
+        reason = "Work completed before the Tool Invocation produced a terminal receipt";
+        break;
+      case "work_failed":
+        workId = event.workId;
+        reason = "Work failed before the Tool Invocation produced a terminal receipt";
+        break;
+      case "work_blocked":
+        workId = event.workId;
+        reason = "Work became blocked before the Tool Invocation produced a terminal receipt";
+        break;
+      case "work_cancelled":
+        workId = event.workId;
+        reason = "Work was cancelled before the Tool Invocation produced a terminal receipt";
+        break;
+      case "run_completed":
+        reason = "Run completed before the Tool Invocation produced a terminal receipt";
+        break;
+      case "run_cancelled":
+        reason = "Run was cancelled before the Tool Invocation produced a terminal receipt";
+        break;
+      default:
+        return;
+    }
+    const scope = workId ? "run_id = ? AND work_id = ?" : "run_id = ?";
+    const parameters = workId ? [reason, at, runId, workId] : [reason, at, runId];
+    this.sqlite.prepare(`
+      UPDATE tool_invocation_bindings
+      SET status = 'released', release_reason = ?, updated_at = ?
+      WHERE ${scope} AND status = 'prepared'
+    `).run(...parameters);
   }
 }
 

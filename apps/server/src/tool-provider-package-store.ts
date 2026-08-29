@@ -84,6 +84,20 @@ export class ManagedToolProviderPackageStore {
       throw error;
     }
   }
+
+  collect(packageRoot: string): { reclaimedBytes: number } {
+    const target = resolve(packageRoot);
+    if (target === this.root || !inside(this.root, target)) throw new Error("Tool Provider package collection target escapes the managed root");
+    if (!existsSync(target)) return { reclaimedBytes: 0 };
+    const rootStats = lstatSync(target);
+    if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) throw new Error("Tool Provider package collection target must be a managed directory without symbolic links");
+    let reclaimedBytes = 0;
+    walk(target, "", (_absolute, _relativePath, stats) => {
+      if (stats.isFile()) reclaimedBytes += stats.size;
+    });
+    removeTree(target);
+    return { reclaimedBytes };
+  }
 }
 
 export function inspectToolProviderPackage(

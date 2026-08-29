@@ -35,13 +35,14 @@ function defaultExpiry(): string {
 
 export function ScenarioOperationsPanel() {
   const {
-    caseId, cases, definitions, authorizations, run, collaboration, recovery, approvals, status,
+    caseId, cases, definitions, authorizations, runs, run, collaboration, recovery, approvals, status,
     refresh, refreshCollaboration, createAuthorization, revokeAuthorization, startRun, pauseRun, resumeRun, cancelRun, resolveApproval, showToast,
   } = useStore(useShallow((state) => ({
     caseId: state.caseId,
     cases: state.cases,
     definitions: state.scenarioDefinitions,
     authorizations: state.scenarioAuthorizations,
+    runs: state.scenarioRuns,
     run: state.activeScenarioRun,
     collaboration: state.scenarioCollaboration,
     recovery: state.scenarioRecovery,
@@ -76,6 +77,7 @@ export function ScenarioOperationsPanel() {
     [authorizations],
   );
   const progress = run ? scenarioRunProgress(run) : null;
+  const unavailableRun = runs.find((candidate) => candidate.packageAvailability === "recovery_required");
   const phase = definition?.phases.find((candidate) => candidate.id === run?.activePhaseId);
 
   useEffect(() => {
@@ -158,6 +160,11 @@ export function ScenarioOperationsPanel() {
 
       <section className="scenario-section">
         <header><Play size={13} /><strong>Scenario Run</strong>{run && <span className={`scenario-status is-${run.status}`}>{run.status}</span>}</header>
+        {unavailableRun && (
+          <div className="scenario-operation-alert">
+            <Warning size={13} /><span>Run {unavailableRun.runId} 需要恢复：{unavailableRun.packageDiagnostic}</span>
+          </div>
+        )}
         {run && (
           <div className="scenario-run-summary">
             <div className="scenario-run-title"><strong>{phase?.title ?? run.activePhaseId}</strong><small>revision {run.revision}</small></div>
