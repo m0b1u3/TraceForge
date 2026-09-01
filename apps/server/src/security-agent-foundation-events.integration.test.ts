@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { LlmProvider } from "@traceforge/llm";
-import { WEB_BLACKBOX_CAPABILITIES } from "@traceforge/scenario-web-blackbox";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_HOST_CAPABILITIES } from "@traceforge/scenario-web-blackbox";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { registerSecurityAgentFoundation } from "./security-agent-foundation.js";
 import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
@@ -26,6 +26,10 @@ describe("security agent foundation protocol events", () => {
       .run("case_1", "Authorized assessment", "active", "{}", "2026-08-25T08:00:00.000Z");
     registerSecurityAgentFoundation(app, sqlite, unavailableProvider, root, () => false, {
       scenarioPackageRegistry: new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]),
+      scenarioHostCapabilities: {
+        [WEB_BLACKBOX_HOST_CAPABILITIES.sessions]: {},
+        [WEB_BLACKBOX_HOST_CAPABILITIES.traffic]: {},
+      },
       scenarioPackageTrust:{allowUnreviewedDevelopmentPackages:true},
       autoScheduleIntervalMs: 60_000,
     });

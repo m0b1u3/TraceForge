@@ -1,4 +1,3 @@
-import type { BrokeredNetworkReceipt, ExecutionNode } from "@traceforge/execution-node";
 import type { KnowledgeNodeKind, KnowledgeNodeStatus } from "@traceforge/evidence-graph";
 import type {
   ScenarioDefinition,
@@ -34,97 +33,6 @@ export interface ScenarioAuthorizationPort {
   ): ScenarioResourceAuthorization;
 }
 
-export interface ExecutionCookie {
-  name: string;
-  value: string;
-  domain?: string;
-  path?: string;
-  expires?: number;
-  httpOnly?: boolean;
-  secure?: boolean;
-  sameSite?: "Strict" | "Lax" | "None";
-}
-
-export interface ExecutionSessionDescriptor {
-  id: string;
-  caseId: string;
-  runId: string;
-  scopeRef: string;
-  identityId: string | null;
-  identityVersion: number | null;
-  status: "active" | "frozen" | "closed" | "expired";
-  lastWorkerId: string | null;
-  lastWorkId: string | null;
-  lastLeaseId: string | null;
-  lastLeaseExpiresAt: string | null;
-  expiresAt: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface SessionUseContext {
-  workerId: string;
-  workId: string;
-  caseId: string;
-  runId: string;
-  scopeRef: string;
-  leaseId: string;
-  leaseExpiresAt: string;
-}
-
-export interface SessionMaterial {
-  session: ExecutionSessionDescriptor;
-  headers: Record<string, string>;
-  cookies: ExecutionCookie[];
-}
-
-export interface ScenarioSessionPort {
-  openSession(input: { caseId: string; runId: string; scopeRef: string; identityId?: string; ttlMs?: number }): ExecutionSessionDescriptor;
-  use(sessionId: string, context: SessionUseContext): SessionMaterial;
-  updateCookies(sessionId: string, cookies: ExecutionCookie[]): void;
-}
-
-export interface ScenarioTrafficEntrySummary {
-  id: string;
-  runId: string;
-  url: string;
-  method: string;
-  responseStatus: number | null;
-  responseSize: number | null;
-  contentType: string | null;
-  createdAt: string;
-}
-
-export interface ScenarioTrafficPort {
-  recordHttpExchange(input: {
-    trafficId: string;
-    caseId: string;
-    runId: string;
-    url: string;
-    method: string;
-    requestHeaders: Record<string, string>;
-    requestBody: string | null;
-    responseStatus: number;
-    responseHeaders: Record<string, string>;
-    responseSize: number;
-    contentType: string | null;
-    responseBody: string | null;
-    receipt: BrokeredNetworkReceipt;
-    createdAt: string;
-  }): void;
-  recordBrowserObservation(input: {
-    trafficId: string;
-    caseId: string;
-    runId: string;
-    url: string;
-    responseStatus: number | null;
-    responseSize: number;
-    responseBody: string;
-    createdAt: string;
-  }): void;
-  list(caseId: string, limit: number): ScenarioTrafficEntrySummary[];
-}
-
 export interface ScenarioEvidenceNodeRecord {
   id: string;
   kind: KnowledgeNodeKind;
@@ -143,6 +51,44 @@ export interface ScenarioEvidencePort {
     node: ScenarioEvidenceNodeRecord;
     at: string;
   }): string[];
+}
+
+export interface ScenarioArtifactRecord {
+  id: string;
+  packageId: string;
+  packageVersion: string;
+  caseId: string;
+  runId: string;
+  kind: string;
+  summary: string;
+  contentRef: string;
+  digest: `sha256:${string}`;
+  byteSize: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ScenarioArtifactPort {
+  record(input: Omit<ScenarioArtifactRecord, "id" | "createdAt"> & { commandId: string }): ScenarioArtifactRecord;
+  get(input: { packageId: string; packageVersion: string; caseId: string; artifactId: string }): ScenarioArtifactRecord | undefined;
+  list(input: { packageId: string; packageVersion: string; caseId: string; runId?: string; limit: number }): ScenarioArtifactRecord[];
+}
+
+export interface ScenarioStateRecord {
+  packageId: string;
+  packageVersion: string;
+  caseId: string;
+  runId: string;
+  key: string;
+  revision: number;
+  value: unknown;
+  updatedAt: string;
+}
+
+export interface ScenarioStatePort {
+  read(input: { packageId: string; packageVersion: string; caseId: string; runId: string; key: string }): ScenarioStateRecord | undefined;
+  compareAndSet(input: { commandId: string; packageId: string; packageVersion: string; caseId: string; runId: string;
+    key: string; expectedRevision: number; value: unknown }): ScenarioStateRecord;
 }
 
 export interface ScenarioOutputSchema {
@@ -202,13 +148,28 @@ export interface ScenarioPackageMigrationManifest {
   steps: readonly ScenarioPackageMigrationStep[];
 }
 
+export interface ScenarioHostCapabilities {
+  optional<T>(id: string): T | undefined;
+  require<T>(id: string): T;
+}
+
+export function createScenarioHostCapabilities(entries: Readonly<Record<string, unknown>>): ScenarioHostCapabilities {
+  const values = new Map(Object.entries(entries));
+  return Object.freeze({
+    optional<T>(id: string): T | undefined { return values.get(id) as T | undefined; },
+    require<T>(id: string): T {
+      if (!values.has(id)) throw new Error(`Scenario host capability ${id} is unavailable`);
+      return values.get(id) as T;
+    },
+  });
+}
+
 export interface ScenarioToolHostContext {
-  sessions: ScenarioSessionPort;
   authorization: ScenarioAuthorizationPort;
-  traffic: ScenarioTrafficPort;
   evidence: ScenarioEvidencePort;
-  /** Compatibility port: production only permits scoped brokered HTTP, never raw process/filesystem access. */
-  executionNode?: ExecutionNode;
+  artifacts: ScenarioArtifactPort;
+  state: ScenarioStatePort;
+  capabilities: ScenarioHostCapabilities;
   execution?: import("@traceforge/worker-runtime").GovernedExecutionPort;
 }
 
@@ -373,13 +334,42 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
   }
 
   toolSources(context: ScenarioToolHostContext): ExecutionToolDiscoverySource[] {
-    const sources = [...this.packages.values()].flatMap((scenarioPackage) => {this.assertAvailable(scenarioPackage);return [...scenarioPackage.createToolSources(context)];});
+    const sources = [...this.packages.values()].flatMap((scenarioPackage) => {
+      this.assertAvailable(scenarioPackage);
+      return [...scenarioPackage.createToolSources(this.scopeHostContext(context, scenarioPackage))];
+    });
     const sourceIds = new Set<string>();
     for (const source of sources) {
       if (!source.source.trim() || sourceIds.has(source.source)) throw new Error(`Duplicate or empty Scenario tool source ${source.source}`);
       sourceIds.add(source.source);
     }
     return sources;
+  }
+
+  private scopeHostContext(
+    context: ScenarioToolHostContext,
+    scenarioPackage: Pick<ScenarioPackageInstallation, "id" | "version">,
+  ): ScenarioToolHostContext {
+    const requireOwner = (input: { packageId: string; packageVersion: string }) => {
+      if (input.packageId !== scenarioPackage.id || input.packageVersion !== scenarioPackage.version) {
+        throw new Error(`Scenario Package ${scenarioPackage.id}@${scenarioPackage.version} cannot access another package owner`);
+      }
+    };
+    return Object.freeze({
+      ...context,
+      artifacts: Object.freeze({
+        record: (input: Parameters<ScenarioArtifactPort["record"]>[0]) => { requireOwner(input); return context.artifacts.record(input); },
+        get: (input: Parameters<ScenarioArtifactPort["get"]>[0]) => { requireOwner(input); return context.artifacts.get(input); },
+        list: (input: Parameters<ScenarioArtifactPort["list"]>[0]) => { requireOwner(input); return context.artifacts.list(input); },
+      }),
+      state: Object.freeze({
+        read: (input: Parameters<ScenarioStatePort["read"]>[0]) => { requireOwner(input); return context.state.read(input); },
+        compareAndSet: (input: Parameters<ScenarioStatePort["compareAndSet"]>[0]) => {
+          requireOwner(input);
+          return context.state.compareAndSet(input);
+        },
+      }),
+    });
   }
 
   list(): ScenarioPackageInstallation[] {

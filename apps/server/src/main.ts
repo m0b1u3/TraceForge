@@ -13,14 +13,18 @@ import { LlmConfigService } from "./llm-config-service.js";
 import { registerSecurityAgentFoundation, type SecurityAgentFoundationOptions } from "./security-agent-foundation.js";
 import { startLocalExecutionNodeService } from "./execution-node-service.js";
 import { loadToolProviderTrustRoots } from "./tool-provider-control-plane.js";
-import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
+import { WEB_BLACKBOX_HOST_CAPABILITIES, WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
 import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
 import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
 import { ScenarioPackageTrustControl } from "./scenario-package-trust.js";
+import { ExecutionSessionGateway, loadOrCreateVaultKey, SqliteEncryptedSecretVault } from "./execution-session-gateway.js";
+import { registerExecutionSessionRoutes } from "./execution-session-routes.js";
+import { SqliteScenarioTrafficStore } from "./scenario-traffic-store.js";
 import { readFoundationRestoreFence } from "./db/foundation-restore-fence.js";
 import { registerFoundationInspectionRoutes } from "./foundation-backup.js";
 import { registerFoundationHostControl } from "./foundation-host-control.js";
 import { resolveFoundationActiveDatabase } from "./foundation-recovery-activation.js";
+import { resolveFoundationDeployment } from "./foundation-deployment.js";
 
 // 运行时数据固定放在项目根目录 data/ 下，避免受 process.cwd() 影响（tsx watch 从 apps/server 启动）
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -57,7 +61,7 @@ export async function buildServer(
   llmConfigPath = DEFAULT_LLM_CONFIG_PATH,
   projectRoot = PROJECT_ROOT,
   webRoot?: string,
-  hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"> = {},
+  hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"|"deployment"> = {},
 ) {
   const app = Fastify({ logger: true });
   await app.register(cors, {
@@ -77,13 +81,18 @@ export async function buildServer(
   }
 
   const selected=resolveFoundationActiveDatabase(dbPath,hostOptions.recoveryActivation);
+  const deploymentContext={databasePath:selected.path,activeCandidate:selected.candidate};
+  const effectiveHostOptions={...hostOptions,deployment:hostOptions.deployment?{...hostOptions.deployment,startupContext:deploymentContext}:undefined};
+  // Fail closed before opening/migrating the active database or connecting MCP/model/execution dependencies.
+  const deployment=resolveFoundationDeployment(effectiveHostOptions.deployment,deploymentContext);
   const db = createDb(selected.path,{activeCandidate:selected.candidate});
   const sqlite = getSqliteClient(db);
   if (readFoundationRestoreFence(sqlite)) {
     // Stop here, before MCP connections, model initialization, package assembly or native node startup.
     registerFoundationHostControl(app, sqlite);
-    registerFoundationInspectionRoutes(app, sqlite, hostOptions.recoveryReadiness, hostOptions.recoveryActivation);
-    app.get("/api/health", async () => ({ status: "inspection_only", llmConfigured: false, mcpTools: 0, executionNodeReady: false, executionProcessReady: false }));
+    registerFoundationInspectionRoutes(app, sqlite, effectiveHostOptions.recoveryReadiness, effectiveHostOptions.recoveryActivation);
+    app.get("/api/health", async () => ({ status: "inspection_only", llmConfigured: false, mcpTools: 0, executionNodeReady: false, executionProcessReady: false,
+      deployment:deployment?{managed:true,releaseId:deployment.manifest.releaseId,deploymentGeneration:deployment.manifest.deploymentGeneration,switchGeneration:deployment.pointer.switchGeneration}:{managed:false} }));
     app.addHook("onClose", async () => { if (sqlite.open) sqlite.close(); });
     return app;
   }
@@ -108,11 +117,19 @@ export async function buildServer(
   // The application package remains quarantined until trusted host review is configured.
   const scenarioPackages = new ScenarioPackageTrustControl(sqlite,new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE])).registry;
   const scenarioAuthorization = new SqliteScenarioAuthorizationService(sqlite, scenarioPackages);
+  const sessions = new ExecutionSessionGateway(sqlite,
+    new SqliteEncryptedSecretVault(sqlite, loadOrCreateVaultKey(projectRoot)));
+  const traffic = new SqliteScenarioTrafficStore(sqlite);
+  registerExecutionSessionRoutes(app, sessions);
   const executionNodeService = await startLocalExecutionNodeService(projectRoot, scenarioAuthorization, sqlite);
 
   registerSecurityAgentFoundation(app, sqlite, provider, projectRoot, () => llmService.hasProvider(), {
-    ...hostOptions,
+    ...effectiveHostOptions,
     scenarioPackageRegistry: scenarioPackages,
+    scenarioHostCapabilities: {
+      [WEB_BLACKBOX_HOST_CAPABILITIES.sessions]: sessions,
+      [WEB_BLACKBOX_HOST_CAPABILITIES.traffic]: traffic,
+    },
     modelRoutes: llmService.getModelRoutes(),
     modelPolicies: llmService.getRolePolicies(),
     modelResourcePolicy: llmService.getResourcePolicy(),
@@ -129,6 +146,7 @@ export async function buildServer(
     mcpTools: mcp.listTools().length,
     executionNodeReady: true,
     executionProcessReady: executionNodeService.processReady,
+    deployment:deployment?{managed:true,releaseId:deployment.manifest.releaseId,deploymentGeneration:deployment.manifest.deploymentGeneration,switchGeneration:deployment.pointer.switchGeneration}:{managed:false},
   }));
 
   app.get("/ws", { websocket: true }, (socket) => {

@@ -250,10 +250,9 @@ describe("Scenario host port boundary",()=>{
     const sources=f.manager.scenarioSources(registry,{} as any);
     return {...f,source:sources[0]!,ctx,registry};
   }
-  it.each(["startProcess","adoptProcess","readFileChunk","handshake"] as const)("never forwards raw Scenario %s",async method=>{
-    const f=await scenario(async ctx=>{await (ctx.executionNode![method] as any)({});return success;});
-    expect(f.ctx.executionNode).not.toBe(f.node);await expect(f.invoke(f.source)).rejects.toThrow("Raw Execution Node access denied");
-    expect(f.starts).toHaveLength(0);
+  it("never exposes a raw Execution Node to a Scenario package",async()=>{
+    const f=await scenario(async ctx=>{expect("executionNode" in ctx).toBe(false);return success;});
+    await f.invoke(f.source);expect(f.starts).toHaveLength(0);
   });
   it("defaults legacy Scenario factories to process-denied without changing their implementation",async()=>{
     const f=await scenario(async ctx=>{await ctx.execution!.executeProcess(input);return success;});
@@ -269,18 +268,12 @@ describe("Scenario host port boundary",()=>{
     const f=await scenario(async()=>success);
     expect(()=>f.manager.scenarioSources(f.registry,{} as any,{typo:{version:"1",process:"denied"}})).toThrow("Unknown Scenario");
   });
-  it("keeps brokered HTTP scoped and substitutes host-owned attribution",async()=>{
+  it("keeps brokered HTTP scoped and supplies host-owned attribution",async()=>{
     let request:any;
-    const f=await scenario(async ctx=>{await ctx.executionNode!.requestHttp({...http,requestId:"call",
-      attribution:{...context,actionId:"call"},permissions:context.effectivePermissions});return success;});
+    const f=await scenario(async ctx=>{await ctx.execution!.requestHttp(http);return success;});
     f.node.requestHttp=async r=>{request=r;return {} as any;};
     await f.invoke(f.source);expect(request.attribution.idempotencyKey).toMatch(/^source-http:/);
     expect(request.attribution.runId).toBe("run");expect(request.permissions).toEqual(context.effectivePermissions);
     expect(f.scheduler.snapshot().occupied).toBe(0);
-  });
-  it("rejects forged legacy HTTP attribution",async()=>{
-    const f=await scenario(async ctx=>{await ctx.executionNode!.requestHttp({...http,requestId:"call",
-      attribution:{...context,caseId:"other",actionId:"call"},permissions:context.effectivePermissions});return success;});
-    await expect(f.invoke(f.source)).rejects.toThrow("attribution mismatch");
   });
 });

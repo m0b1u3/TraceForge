@@ -32,8 +32,8 @@ TraceForge 的目标不是通用编程 Agent，也不是某个漏洞扫描器，
 这些百分比是按目标能力和生产验收项估算，不是按代码行数或测试覆盖率计算。
 
 当前最准确的产品定位是：TraceForge 已经是一套可运行、可持久化、可恢复、具备安全执行主链的
-Security Agent Runtime，并进入底座生产化阶段；但它仍是以 Web 黑盒作为首个纵向场景演进出来的
-Web-aware Runtime，尚未达到“Core 完全不知道任何 Application/Scenario 语义”的目标状态。
+Security Agent Runtime，并进入底座生产化阶段；Core、Agent Runtime、Scenario SDK 和通用 Foundation
+已不再持有 Web Session/Traffic/Cookie/HTTP/Browser Contract，当前产品入口仍显式选择 Web 黑盒作为首个纵向场景。
 
 关键能力的实际状态如下：
 
@@ -93,9 +93,9 @@ Security Execution Runtime
 - `ScenarioKind`、Work/Role/Output 身份已经改为开放字符串，Work 默认角色、同类并发上限、Hypothesis
   引用下限和完成输出要求由 Definition 声明，Core 不再解释 `validation` 等具体工作语义。
 - `web_blackbox` Definition、能力、阶段、Worker 拓扑、授权策略和执行工具已经移入
-  `scenarios/web-blackbox`。独立 `scenario-sdk` 只暴露 Package、Authorization、Session、Traffic 和宿主装配端口；
-  Core 与通用 Foundation、Routes、Embedded Worker、Authorization/Traffic SQLite Adapter 和 Execution Node Service
-  不再 import Web，只有产品入口显式选择安装 Web 包。
+  `scenarios/web-blackbox`。独立 `scenario-sdk` 只暴露 Package、Authorization、Evidence、不透明 Capability Registry
+  和 Governed Execution 装配端口；Session、Traffic、Cookie 及其能力 ID 均由 Web 包声明。通用 Foundation
+  不创建 Web 端口，也不知道能力 ID；只有产品入口显式安装 Web 包并绑定现有 Adapter。
 
 ### 3.2 统一证据图谱
 
@@ -1202,7 +1202,10 @@ volatile 语义去重，Observer 删除自身的游标分支。第五片新增 `
 重启中断恢复语义。Cognitive Runtime 的无 Server harness 验证上下文裁剪、遗漏统计、语义指纹稳定性、预算拒绝、
 快照幂等冲突、终态保护、重启中断、replay 成败审计、模型/解析错误的统一失败落档、Blackboard listener
 故障隔离、consumer/run 级语义游标去重，以及 wake 风暴合并、无重叠 tick、停止排空和失败退避。
-底座边界扫描自动覆盖新 package，并会构建 workspace 依赖图拒绝任何 package 循环。
+底座边界扫描自动覆盖新 package，并会构建 workspace 依赖图拒绝任何 package 循环。新增独立
+`@traceforge/agent-runtime`，`AgentSession` 已接管回合预算、取消检查及 Model Intent → 可审计记录 → Observer
+的固定顺序；`WorkerHost` 保留租约、所有权、恢复、工具效果/checkpoint 和控制面协调。框架级 integration host
+不依赖 Fastify、SQLite 或任何 Scenario 包即可完成带证据引用的 Work。
 
 验收条件：Server 仅承担 Adapter 与 Composition 职责；核心 Runtime 可在测试宿主或未来 CLI/Coordinator 中
 复用；删除 Fastify 路由不影响 Runtime 包构建；包拆分不改变 Run/Event/Evidence 的持久化语义和重放摘要。
@@ -1672,18 +1675,21 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
 ## 6. 当前质量基线
 
 - 全工作区构建通过。
-- `test:fast`：222 个测试文件、1,925 项测试通过，包含一致备份/隔离恢复、加密签名离线介质、默认法证保留/精确销毁、恢复依赖核对、候选工作库/活动指针/回退、新宿主启动、恢复/介质/候选切换强杀窗口，以及运行快照/冷热事件回读/归档强杀/历史租约索引、无包依赖取证/停止退役/在途取消/处置强杀恢复、场景包签名材料/当前信任/撤销/登记强杀恢复、固定授权/显式策略升级/派发复检/升级强杀恢复、Run 版本迁移/旧状态保留/升级强杀恢复、宿主通道/旧应用 API 门禁/生命周期、自定义来源宿主治理/装配迁移/生命周期、治理历史冷热归档/透明回读/强杀恢复、多来源逐进程占用/独立清理/重启恢复、签名资源包迁移/当前信任、Skill 契约/准备评估、单资源生命周期、外部 MCP 文本、授权检索/历史资源投影、模型验收器离线回归、真实 HTTP 完整底座宿主、本地 Socket/RPC 与真实宿主强杀恢复回归。
-- `verify:foundation`：检查 269 个通用生产源码文件；14 个通用 packages 与通用 Server 独立编译通过；
-  门禁内共 90 个测试文件、1,427 项 Backup/Offline-Media/Retention/Recovery-Readiness/Recovery-Candidate/Active-Pointer/Rollback/Isolated-Restore/Inspection-Fence/Run-History/Run-Disposal/Package-Trust/Runtime/Pinned-Authorization/Policy-Upgrade/Run-Migration/Scenario Contract/Core/Broker/Discovery/Recovery/Diagnostic/Scheduling/Compatibility/Binding/Fence/GC/Archive/Import/Refresh/Invocation/Reconciliation/Retry/Continuation/Immutable-Checkpoint/Execution-Journal/Native-Protocol/Watchdog/Signed-Evidence/Recovery-Control/Storage-Capacity/Execution-Archive/Governance-History/Governed-Sources/Host-Channels/Physical-Storage/Maintenance/Reliability/Full-Host/HTTP-Transport/Model-Acceptance-Harness/Context-Resources/Skill/MCP/Fault-Injection 边界测试通过，且不构建 `apps/web` 或 Web Scenario Package。备份/恢复、离线介质、保留/销毁、恢复核对、候选重新装配/切换/回退、Run 快照/事件归档、无包依赖 Run 处置、场景包材料/当前信任/撤销、固定授权/策略升级、Run 迁移与恢复、宿主通道隔离、自定义来源治理、治理清理历史归档、逐进程占用、签名资源包迁移、Managed Provider 外部占用集成回归、共享审计协议、游标/补记/强杀恢复、HTTP 取消/恢复、Execution Node RPC、模型投影及外部 MCP 上下文集成测试已纳入显式底座门禁。共享测试夹具与生产底座入口分离。
+- `test:fast`：227 个测试文件、1,946 项测试通过，包含 Agent Session/Harness、Scenario Host Capability、通用 Artifact/State、受信宿主部署，以及既有备份恢复、强杀窗口、Run 历史、授权、Provider、Skill/知识/MCP、执行节点与完整宿主回归。
+- `verify:foundation`：检查 272 个通用生产源码文件；15 个通用 packages 与通用 Server 独立编译通过；
+  门禁内共 94 个测试文件、1,446 项测试通过（主门禁 90/1,423，Agent/Deployment/Artifact/State 终验 4/23），包含 Agent Runtime 工具策略、framework-only WorkerHost integration host、通用 Artifact/State 的归属/幂等/CAS/容量/重启恢复，且不构建 `apps/web` 或 Web Scenario Package。边界门禁新增旧 Lease 类名禁回退和 Artifact/State Contract 保留检查，并继续验证 Scenario SDK Web/transport Contract、Agent Runtime 反向依赖、WorkerHost → AgentHarness 委派和 workspace 无循环依赖。
 - 前批 44 项多来源占用/清理证明/服务归属/强杀恢复回归通过；前批 37 项签名资源包迁移/撤销/请求快照/HTTP/强杀恢复回归通过；前批 31 项外部占用/派发屏障/授权释放/GC/重启回归通过；前批 32 项审计 codec/游标/原子补记/源引用/取消故障隔离/崩溃恢复回归通过；前批 22 项取消/身份/截止/清理回归保留；前批 29 项跨角色来源/有界压缩回归保留；前批 48 项 Skill/外部上下文/资源退役回归保留；前批资源搜索/投影 31 项、资源/MCP 47 项仍包含在回归中。此前模型验收器 14 项离线测试不能代替真实模型验收；前轮完整宿主/HTTP/模型截止/续跑调度 33 项与物理存储/受控维护/连续可靠性 44 项测试通过；此前独立 120.826 秒组合运行通过，74 次强杀及两次新宿主回读、常驻进程 234 轮。此前归档 30 项、精确恢复/授权续跑 47 项、统一容量 32 项与执行历史/取消 26 项也通过完整回归。完整快速回归与全工作区构建使用
-  `env pnpm_config_verify_deps_before_run=false pnpm ...`，跳过当前 pnpm 11 对现有依赖布局触发的自动重装；未修改依赖锁文件或 `.npmrc`。
-- 本机本轮最终快速回归用时 231.39 秒；独立底座门禁测试阶段 200.06 秒。底座独立构建及全工作区 18 个项目构建通过。
-  本轮新增恢复候选/重新装配/人工切换与回退 13 项底座回归全部通过；与备份、离线介质和生产入口联合定向共 4 个文件、98 项通过。快速回归增加 1 个文件、13 项，底座门禁增加 1 个文件、13 项，生产边界增加 1 个源码至 269 个。
+  `env pnpm_config_verify_deps_before_run=false pnpm ...`。本轮新增 workspace package 后执行一次受供应链校验的 `pnpm install`，锁文件只增加 `@traceforge/agent-runtime` workspace link，未修改 `.npmrc` 或外部依赖版本。
+- 本机本轮最终快速回归用时 238.70 秒；Agent/Deployment/Artifact/State 最终验收用时 2.55 秒。底座独立构建及全工作区 19 个项目构建通过。
+  本轮完整快速回归 227/1,946、底座门禁 94/1,446 均通过。生产边界源码增至 272 个。全工作区构建首次被 pnpm 的运行前依赖检查误触发联网/重装阻断，该次不计通过；关闭环境级检查后 19 个项目全部构建通过，未安装或更新依赖。
+  本轮新增受信宿主部署/启动预检/整代切换与相邻回退 12 项底座回归全部通过；与生产 `main` 联合定向共 2 个文件、24 项通过。快速回归增加 1 个文件、12 项，底座门禁增加 1 个文件、12 项，生产边界增加 1 个源码至 270 个。
+  新增回归覆盖严格无秘密清单、完整组件类别、secret reference、缺件/未知件/版本摘要漂移、默认拒绝/命令冲突/固定计划、连续 generation 和 migration chain、不可回退 Schema、管理通道、生产启动前短路、健康状态、审计不可变，以及发布两个窗口和切换三个窗口的真实 SIGKILL 恢复。
+  前批新增恢复候选/重新装配/人工切换与回退 13 项底座回归全部通过；与备份、离线介质和生产入口联合定向共 4 个文件、98 项通过。快速回归增加 1 个文件、13 项，底座门禁增加 1 个文件、13 项，生产边界当时增加 1 个源码至 269 个。
   新增回归覆盖法证原件不变、候选 guard/provenance、正式暂停事件、附件复制、装配阻断和材料漂移、默认拒绝/重授权/冲突、plan/revision/generation 固定、未知文件/伪造 pointer、直接候选启动拒绝、生产 main 活动候选启动、双候选相邻回退、审计事务失败，以及候选已发布和切换各阶段四类真实 SIGKILL。
   新增回归包含脱离原控制库导入、无解密密钥公开验签、密钥/明文不落盘、分卷/签名/manifest/READY 篡改、签发者撤销过期、错误密钥隔离、默认法证保留、两步授权精确销毁、邻接文件保护、销毁审计中断重放、六类依赖证明、旧外部占用自动阻断、证明过期/失效/撤销、事务回滚、生产管理/Worker 通道和三个介质 SIGKILL 窗口。
   相邻授权升级/版本迁移/旧任务处置定向 123 项通过；归档/资料授权/原场景路由/审计定向 121 项通过（当时新增归档为 40 项），随后加入提交前状态容量回归。
   全工作区最终构建、独立底座构建和当前 diff 检查通过。本轮没有放宽失败断言、跳过新增用例或运行真实模型/超长测试。
-  本轮完整日志：`/private/tmp/traceforge-history-fast.log`、`/private/tmp/traceforge-history-foundation.log`、`/private/tmp/traceforge-history-workspace.log`。
+  前批完整日志：`/private/tmp/traceforge-history-fast.log`、`/private/tmp/traceforge-history-foundation.log`、`/private/tmp/traceforge-history-workspace.log`；本轮结果由当前命令回执记录，未伪造不存在的日志文件。
   以下为前批开发过程记录，不覆盖本轮上述最终基线：
   前批新增无包依赖 Run 处置 39 项全部通过；快速回归与底座门禁各增加 1 个文件、39 项，生产边界增加 1 个源码。
   定向阶段还验证处置及相邻迁移/授权/包信任/取消共 156 项（当时处置为 28 项），随后补齐至 39 项并纳入完整门禁。
@@ -1819,14 +1825,30 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
 
 当前边界：活动 pointer 与装配 callback 依赖可信宿主和 OS 目录权限，不是对同账号攻击者的防篡改签名；装配引用不复制 Vault/模型/MCP 秘密，也不证明远端服务长期在线。真实断电、跨卷切换、Windows rename/ACL、密钥轮换恢复和实际异地介质仍待部署验收。详见[底座备份与灾难恢复](architecture/foundation-backup-and-disaster-recovery.md)。
 
-下一明确开发优先级：**受信宿主部署清单、启动预检与升级回退**，继续按一个完整底座批次推进，不开发具体场景或 UI：
+本批已完成 **受信宿主部署清单、启动预检与整代升级/回退**，未开发具体场景或 UI：
 
-1. 定义不含秘密的宿主部署 manifest，固定底座版本/Schema、原生 helper、受信签发根、Scenario/Skill/知识资源版本、MCP/Provider/模型配置指纹、容量策略和恢复目录身份；实际凭据只以宿主 secret reference 表示。
-2. 在正常启动、候选启动和升级前统一执行预检，比较当前材料与部署 manifest，输出有界缺口/漂移报告；安全关键漂移默认阻断，不能靠警告继续启动执行链。
-3. 建立 staged host upgrade：预览兼容性、独立授权、生成新部署 generation、原子切换和相邻 generation 回退；数据库迁移、Provider/资源装配与二进制版本必须一起固定，失败不留下“代码新、信任材料旧”的半升级宿主。
-4. 补齐缺文件、签名根轮换、配置漂移、候选/正常启动一致性、升级各中断窗口、重启对账和回退回归；真实 Windows/长稳/真实模型仍按现有排期单独验收。
+1. 新增严格、无秘密的 `traceforge-foundation-deployment-v1` manifest，固定底座、数据库 Schema、原生 Helper、信任根、Scenario、Skill、知识资源、MCP/Provider、模型配置、容量策略和恢复身份；凭据只允许 `host-secret://` 引用，类别遗漏、重复身份和 migration 目标不一致均拒绝。
+2. 新增受信 inventory adapter 和有界 preflight，区分 required 缺件、未知额外组件、版本/摘要漂移与 secret reference 缺失。生产 `buildServer` 在打开/迁移数据库、连接 MCP、初始化模型和启动 Execution Node 之前强制执行；健康状态只暴露非秘密 generation 身份。
+3. 新增不可变 staged release、连续 deployment generation/migration chain、独立授权、固定 preview/plan fingerprint、原子活动指针、紧邻 release 回退和 rollback-compatible Schema 校验。发布目录和审计有容量上限，命令冲突与默认拒绝已覆盖。
+4. 新增生产启动、管理通道、清单篡改/漂移/缺件、完整 generation 切换、回退，以及发布两个窗口和切换三个窗口的真实 SIGKILL 回归；指针已切换但终态审计未落时只补审计，不二次增加 generation。详见[受信宿主部署说明](architecture/trusted-host-deployment.md)。
 
-通俗作用：现在已经能从事故证据复制出一份安全的工作副本，重新核对当前钥匙、插件和外部动作，人工切换后旧任务仍停着，出问题还能退回上一份工作副本。下一批要解决“这台机器究竟应该装什么版本、信任哪些材料”：启动前像按装箱单逐项验货，少一个关键零件或版本对不上就不让执行；升级也整套切换，失败能整套退回，不会留下半新半旧的危险状态。
+通俗作用：宿主现在有了一张经过审核的“整机装箱单”。启动前会核对代码、数据库、沙箱、插件、Skills、知识资料、MCP 和模型配置是不是同一套；少件、多出未知件或版本对不上都会在真正运行前停下。升级按整代切换，失败只能退回紧邻上一代，不会悄悄拼出半新半旧的运行环境。
+
+本批已完成 **CyberSecurity Harness 两段边界重构 + 通用 Artifact/State**，未开发具体 Scenario 功能或 UI：
+
+1. 新增无 Server/SQLite/Execution Node/Scenario 依赖的 `@traceforge/agent-runtime`；`AgentSession` 实际接管回合预算、取消检查、Model Intent → 可审计 Intent → Observer 顺序，以及工具 Intent 去重/可用性判定和工具 Observation 的审批、成功、失败、连续失败终止策略。`WorkerHost` 继续只落真实副作用、恢复 checkpoint 和控制面结果。
+2. `ScenarioToolHostContext` 已移除 Session、Traffic、Cookie 和原始 `ExecutionNode`。Web 包自行声明两个版本化 Host Capability；通用 Foundation 不创建 Web 端口、不知道 Web 能力 ID，产品入口安装 Web 包时才显式绑定现有 Adapter。
+3. Web HTTP 工具不再提交或伪造 request attribution/permission，只能调用 invocation-scoped `GovernedExecutionPort`；宿主统一生成请求身份、注入权限并执行所有权/截止检查。
+4. 新增 framework-only Agent Harness integration host 和自动边界门禁，证明无 Fastify、SQLite、Web Scenario 也能完成带证据引用的 Work，并禁止 Agent Runtime 反向依赖 Worker/Server/Execution Node/具体场景以及 Scenario SDK 重新暴露 Web transport Contract。详见[Agent Harness 与 Worker Host 边界](architecture/agent-harness-boundary.md)。
+5. Scenario SDK 新增无场景词汇的 Artifact/State Contract；生产 Foundation 装配独立 SQLite Store。Artifact 保存内容引用、摘要、SHA-256、大小和有界元数据，State 使用有界 JSON、revision compare-and-set 与命令结果重放；两者都有每 Package 精确版本的记录总量上限，完整关闭并重开数据库后仍可恢复。
+6. Registry 将 Artifact/State 端口固定到接收端的 Package id/version，跨包或跨版本访问在进入 Store 前拒绝；Store 查询继续按 Package/版本/Case/Run 隔离。命令重放返回原结果，复用相同命令修改输入会冲突，不会静默覆盖。
+7. 已删除 `LeaseWorkerRuntime/LeaseWorkerOptions` 兼容导出和全部调用，边界脚本会阻止旧名称或通用 Artifact/State Contract 被后续修改恢复/删掉。
+
+当前明确边界：真实工具效果、pending receipt/checkpoint 的精确持久化和控制面终态提交必须留在可信 `WorkerHost`，因为这些动作依赖租约、执行权和宿主存储；Agent Runtime 已拥有通用认知/Observation 策略，但当前 checkpoint 文档类型仍定义在 Worker Runtime，framework-only Harness 还不能仅凭通用 Agent Journal 跨宿主恢复。Artifact/State 已是通用资料能力，但不把任意同进程 Scenario JS 说成已被 OS 沙箱隔离。
+
+下一明确开发优先级：**版本化 Agent Execution Journal + Host Adapter 整体批次**。把 checkpoint 中与“智能体思考过程”有关的回合、Intent、Observation、连续失败、已提交调用和终止原因整理成 Agent Runtime 定义的版本化 Journal；WorkerHost 只负责把 Journal 与租约/pending receipt 对齐、持久化并向控制面提交。整批同时交付旧 checkpoint 迁移、命令幂等、容量上限、损坏拒绝、framework-only 存储更换与重启恢复、生产强杀窗口回归，再同步边界门禁和文档。仍不开发应用层、Web Browser、代码审计、内网横向或其他具体场景。
+
+通俗作用：这批已经让智能体知道“这个工具请求是不是重复、工具结果算成功/失败/待审批、连续失败到哪一步必须停”，并给所有未来安全场景准备了按包隔离、重启不丢的通用资料柜。下一批要做的是统一“工作日记格式”：无论以后 Worker 跑在本机进程、受控沙箱还是别的宿主，只要读到同一份 Journal，就知道上次想到哪、哪个调用已经做过、哪个结果还没确认，避免换宿主或重启后重复执行有副作用的安全操作。
 跨角色结构化 lineage、有界压缩生命周期及压缩事实协议已实现，但任意文本污染追踪、真实语义质量与全部事件历史冷热归档/扩容未完成。
 用户取消信号与 Discovery/RPC 截止已接线，任意远端进程强制停止和可信清理仍不可一概保证；
 永久键/上下文规模扩展、任意同进程插件的隔离、桌面受信宿主桥接/远程管理、多活/多节点配额、混合资产包迁移及签名轮换仍为显式缺口。

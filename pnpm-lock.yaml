@@ -189,6 +189,8 @@ importers:
         specifier: ^6.0.0
         version: 6.4.3(@types/node@22.20.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)
 
+  packages/agent-runtime: {}
+
   packages/cognitive-runtime:
     dependencies:
       '@traceforge/evidence-graph':
@@ -272,9 +274,6 @@ importers:
       '@traceforge/evidence-graph':
         specifier: workspace:*
         version: link:../evidence-graph
-      '@traceforge/execution-node':
-        specifier: workspace:*
-        version: link:../execution-node
       '@traceforge/orchestration-core':
         specifier: workspace:*
         version: link:../orchestration-core
@@ -308,6 +307,9 @@ importers:
 
   packages/worker-runtime:
     dependencies:
+      '@traceforge/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@traceforge/execution-node':
         specifier: workspace:*
         version: link:../execution-node

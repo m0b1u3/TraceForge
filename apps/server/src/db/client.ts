@@ -108,6 +108,30 @@ export function createDb(path: string, options: { activeCandidate?: { candidateI
       status TEXT NOT NULL, analyzer_id TEXT, analysis_json TEXT, error TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS scenario_artifacts (
+      id TEXT PRIMARY KEY, package_id TEXT NOT NULL, package_version TEXT NOT NULL,
+      case_id TEXT NOT NULL, run_id TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL,
+      content_ref TEXT NOT NULL, digest TEXT NOT NULL, byte_size INTEGER NOT NULL,
+      metadata_json TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_scenario_artifacts_owner
+      ON scenario_artifacts(package_id, package_version, case_id, run_id, created_at);
+    CREATE TABLE IF NOT EXISTS scenario_artifact_commands (
+      package_id TEXT NOT NULL, package_version TEXT NOT NULL, command_id TEXT NOT NULL,
+      fingerprint TEXT NOT NULL, artifact_id TEXT NOT NULL, created_at TEXT NOT NULL,
+      PRIMARY KEY(package_id, package_version, command_id)
+    );
+    CREATE TABLE IF NOT EXISTS scenario_states (
+      package_id TEXT NOT NULL, package_version TEXT NOT NULL, case_id TEXT NOT NULL,
+      run_id TEXT NOT NULL, state_key TEXT NOT NULL, revision INTEGER NOT NULL,
+      value_json TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY(package_id, package_version, case_id, run_id, state_key)
+    );
+    CREATE TABLE IF NOT EXISTS scenario_state_commands (
+      package_id TEXT NOT NULL, package_version TEXT NOT NULL, command_id TEXT NOT NULL,
+      fingerprint TEXT NOT NULL, result_json TEXT NOT NULL, created_at TEXT NOT NULL,
+      PRIMARY KEY(package_id, package_version, command_id)
+    );
     CREATE TABLE IF NOT EXISTS scenario_event_streams (
       run_id TEXT PRIMARY KEY,
       case_id TEXT NOT NULL,

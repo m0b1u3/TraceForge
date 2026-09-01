@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { ScenarioDefinitionRegistry } from "@traceforge/orchestration-core";
 import { CapabilityProviderRegistry } from "@traceforge/tool-resolver";
-import { JsonFileCheckpointStore, LeaseWorkerRuntime, PolicyExecutionToolGateway, BoundedOutputDistiller } from "@traceforge/worker-runtime";
+import { JsonFileCheckpointStore, WorkerHost, PolicyExecutionToolGateway, BoundedOutputDistiller } from "@traceforge/worker-runtime";
 import { database, initialize, controls, definition, at } from "../src/test-fixtures/execution-recovery.ts";
 import { SqliteToolReceiptStore } from "../src/worker-execution-adapters.ts";
 import { ScenarioWorkContinuationControl } from "../src/scenario-work-continuation.ts";
@@ -64,7 +64,7 @@ if (mode === "recover") {
   }
 }
 let modelCalls = 0;
-const runtime = new LeaseWorkerRuntime(worker, control, { async decide(request) {
+const runtime = new WorkerHost(worker, control, { async decide(request) {
   modelCalls++;
   if (mode === "crash") return { type: "invoke_tool", invocation: { id: "first", tool: "observe", input: {}, rationale: "Observe" } };
   if (!request.transcript.some((entry) => entry.refs.includes("evidence:first"))) throw new Error("Confirmed result not restored before model");

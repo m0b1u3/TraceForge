@@ -6,7 +6,7 @@ import Fastify from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { ScenarioDefinitionRegistry, type ScenarioCommand, type WorkerDescriptor } from "@traceforge/orchestration-core";
 import { CapabilityProviderRegistry } from "@traceforge/tool-resolver";
-import { BoundedOutputDistiller, JsonFileCheckpointStore, LeaseWorkerRuntime, PolicyExecutionToolGateway,
+import { BoundedOutputDistiller, JsonFileCheckpointStore, WorkerHost, PolicyExecutionToolGateway,
   executionToolContractFingerprint, toolInvocationInputFingerprint,
   type ExecutionToolAdapter, type WorkerAssignment, type WorkerCheckpointDocument, type WorkerCheckpointStore, type WorkerControlPlaneClient,
   type WorkerModel, type WorkerRunResult } from "@traceforge/worker-runtime";
@@ -83,7 +83,7 @@ function executor(sqlite: Database.Database, store: WorkerCheckpointStore, model
       version: 1, platform: "darwin", filesystem: { read: [], write: [], deny: [] }, network: "deny",
       process: { access: "deny", interactive: false, background: false }, secrets: "handles_only",
     } }] }, undefined, c.bindings);
-  const runtime = new LeaseWorkerRuntime(worker, control, model, gateway, { async review() { return { action: "continue" }; } }, store,
+  const runtime = new WorkerHost(worker, control, model, gateway, { async review() { return { action: "continue" }; } }, store,
     new BoundedOutputDistiller(), {}, () => at);
   return { run: (): Promise<WorkerRunResult> => runtime.execute(assignment()), c };
 }

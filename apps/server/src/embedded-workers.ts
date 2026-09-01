@@ -21,7 +21,7 @@ import {
   ExecutionToolDiscoveryRuntime,
   HttpWorkerControlPlaneClient,
   JsonFileCheckpointStore,
-  LeaseWorkerRuntime,
+  WorkerHost,
   LoopGuardObserver,
   PolicyExecutionToolGateway,
   ToolProviderFairScheduler,
@@ -255,7 +255,7 @@ class EmbeddedScenarioWorkerPool {
       this.toolRuntime,
       this.invocationBindings,
     );
-    const runtime = new LeaseWorkerRuntime(
+    const runtime = new WorkerHost(
       worker,
       control,
       model,

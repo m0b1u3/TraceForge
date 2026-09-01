@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
-import type { BrokeredHttpRequest, BrokeredHttpResponse, ExecutionNode } from "@traceforge/execution-node";
+import type { BrokeredHttpRequest, BrokeredHttpResponse } from "@traceforge/execution-node";
 import { satisfiesPermissionRequirements } from "@traceforge/orchestration-core";
 import { createDb, getSqliteClient } from "./db/client.js";
 import {
@@ -15,6 +15,7 @@ import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js"
 import { SqliteScenarioTrafficStore } from "./scenario-traffic-store.js";
 import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
 import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
+import type { GovernedExecutionPort } from "@traceforge/worker-runtime";
 
 const databases: Database.Database[] = [];
 const context = {
@@ -99,7 +100,7 @@ afterEach(() => {
 describe("scenario Web execution tools", () => {
   it("exposes brokered HTTP but keeps the direct Browser transport outside the brokered-only profile", () => {
     const { authorization, sessions, traffic } = setup();
-    const executionNode = { requestHttp: vi.fn() } as unknown as ExecutionNode;
+    const executionNode = { requestHttp: vi.fn() } as unknown as GovernedExecutionPort;
     const http = new ScenarioHttpRequestTool(authorization, sessions, traffic, executionNode);
     const browser = new ScenarioBrowserObserveTool(authorization, sessions, traffic);
     expect(satisfiesPermissionRequirements(context.effectivePermissions, http.permissionRequirements)).toBe(true);
@@ -119,7 +120,10 @@ describe("scenario Web execution tools", () => {
       expect(request.headers.Authorization).toBe("Bearer secret");
       return brokerResponse(request);
     });
-    const executionNode = { requestHttp } as unknown as ExecutionNode;
+    const executionNode = { requestHttp: (input: Parameters<GovernedExecutionPort["requestHttp"]>[0]) => requestHttp({
+      ...input, requestId: context.idempotencyKey,
+      attribution: { ...context, actionId: context.idempotencyKey }, permissions: context.effectivePermissions,
+    }) } as GovernedExecutionPort;
     const result = await new ScenarioHttpRequestTool(authorization, sessions, traffic, executionNode, () => "2026-08-24T09:01:00.000Z")
       .execute({ sessionId: session.id, url: "https://authorized.example/api", headers: { Accept: "text/plain" } }, context);
 
@@ -154,7 +158,7 @@ describe("scenario Web execution tools", () => {
     const { sqlite, authorization, sessions, traffic } = setup();
     const session = sessions.openSession({ caseId: "case_1", runId: "run_1", scopeRef: "scope_1" });
     const requestHttp = vi.fn();
-    const tool = new ScenarioHttpRequestTool(authorization, sessions, traffic, { requestHttp } as unknown as ExecutionNode);
+    const tool = new ScenarioHttpRequestTool(authorization, sessions, traffic, { requestHttp } as unknown as GovernedExecutionPort);
     await expect(tool.execute({ sessionId: session.id, url: "https://outside.example/" }, context)).rejects.toThrow(/outside authorization/);
     sqlite.prepare("UPDATE scenario_authorizations SET status = 'revoked' WHERE id = 'scope_1'").run();
     await expect(tool.execute({ sessionId: session.id, url: "https://authorized.example/" }, context)).rejects.toThrow(/expired or revoked/);

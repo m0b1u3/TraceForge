@@ -3,6 +3,7 @@ import type { ScopeRule } from "@traceforge/shared";
 import type { ExecutionToolAdapter } from "@traceforge/worker-runtime";
 import type { ScenarioOutputSchema, ScenarioPackageInstallation } from "@traceforge/scenario-sdk";
 import { WEB_BLACKBOX_AUTHORIZATION_SCOPE, WEB_BLACKBOX_SCENARIO } from "./definition.js";
+import { WEB_BLACKBOX_HOST_CAPABILITIES, type ScenarioSessionPort, type ScenarioTrafficPort } from "./ports.js";
 import {
   ScenarioBrowserObserveTool,
   ScenarioHttpRequestTool,
@@ -94,12 +95,14 @@ export const WEB_BLACKBOX_PACKAGE: ScenarioPackageInstallation = {
     },
   },
   createToolSources(context) {
+    const sessions = context.capabilities.require<ScenarioSessionPort>(WEB_BLACKBOX_HOST_CAPABILITIES.sessions);
+    const traffic = context.capabilities.require<ScenarioTrafficPort>(WEB_BLACKBOX_HOST_CAPABILITIES.traffic);
     const tools: ExecutionToolAdapter[] = [
       new ScenarioScopeSnapshotTool(context.authorization),
-      new ScenarioTrafficSnapshotTool(context.authorization, context.traffic),
-      new ScenarioSessionOpenTool(context.authorization, context.sessions),
-      ...(context.executionNode ? [new ScenarioHttpRequestTool(context.authorization, context.sessions, context.traffic, context.executionNode)] : []),
-      new ScenarioBrowserObserveTool(context.authorization, context.sessions, context.traffic),
+      new ScenarioTrafficSnapshotTool(context.authorization, traffic),
+      new ScenarioSessionOpenTool(context.authorization, sessions),
+      ...(context.execution ? [new ScenarioHttpRequestTool(context.authorization, sessions, traffic, context.execution)] : []),
+      new ScenarioBrowserObserveTool(context.authorization, sessions, traffic),
     ];
     return [{
       source: `scenario:${WEB_BLACKBOX_SCENARIO.kind}@${WEB_BLACKBOX_SCENARIO.version}`,

@@ -17,8 +17,6 @@ import {
 } from "@traceforge/worker-runtime";
 import { registerEmbeddedWorkers } from "./embedded-workers.js";
 import { registerScenarioRoutes } from "./scenario-routes.js";
-import { ExecutionSessionGateway, loadOrCreateVaultKey, SqliteEncryptedSecretVault } from "./execution-session-gateway.js";
-import { registerExecutionSessionRoutes } from "./execution-session-routes.js";
 import { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
 import { ScenarioEvidenceGraphAdapter } from "./scenario-evidence-store.js";
 import { registerEvidenceGraphRoutes } from "./evidence-graph-routes.js";
@@ -50,13 +48,12 @@ import { AgentAuditProjection } from "./agent-audit-projection.js";
 import { registerScenarioCollaborationRoutes, ScenarioCollaborationSnapshotService } from "./scenario-collaboration-snapshot.js";
 import { registerScenarioRunRecoveryRoutes, ScenarioRunRecoveryService } from "./scenario-run-recovery.js";
 import type { ToolProviderInstallation } from "./tool-provider-control-plane.js";
-import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import { createScenarioHostCapabilities, ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
 import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
 import { ScenarioPackageTrustControl, registerScenarioPackageTrustRoutes, type ScenarioPackageTrustOptions } from "./scenario-package-trust.js";
 import { ScenarioHistoryControl, registerScenarioHistoryRoutes, type ScenarioHistoryAuthorizer } from "./scenario-history-control.js";
 import { readRunForensics, ScenarioRunDisposalControl, registerScenarioRunDisposalRoutes, type ScenarioRunDisposalAuthorizer } from "./scenario-run-disposal.js";
 import { ScenarioAuthorizationUpgradeControl, registerAuthorizationUpgradeRoutes, type AuthorizationUpgradeOptions } from "./scenario-authorization-upgrade.js";
-import { SqliteScenarioTrafficStore } from "./scenario-traffic-store.js";
 import {
   ScenarioProviderCapabilityScopeAuthorizer,
   SqliteProviderCapabilityApprovalReader,
@@ -91,6 +88,8 @@ import { FoundationOfflineMediaControl, registerFoundationOfflineMediaRoutes, ty
 import { FoundationBackupRetentionControl, registerFoundationRetentionRoutes, type FoundationRetentionAuthorizer } from "./foundation-backup-retention.js";
 import type { FoundationRecoveryReadinessOptions } from "./foundation-recovery-readiness.js";
 import { FoundationRecoveryActivationControl, registerFoundationRecoveryActivationRoutes, type FoundationRecoveryActivationOptions } from "./foundation-recovery-activation.js";
+import { FoundationDeploymentControl, registerFoundationDeploymentRoutes, type FoundationDeploymentOptions } from "./foundation-deployment.js";
+import { SqliteScenarioArtifactStore, SqliteScenarioStateStore } from "./scenario-runtime-state.js";
 import { assertFoundationRestorePublished, assertNotBackupSource, assertNoIncompleteRestore, readFoundationRestoreFence } from "./db/foundation-restore-fence.js";
 import { ScenarioRunMigrationControl, registerScenarioRunMigrationRoutes, type ScenarioRunMigrationOptions } from "./scenario-run-migration.js";
 import type { ExecutionSourcePolicy, GovernedExecutionSourceRegistration } from "@traceforge/worker-runtime";
@@ -101,6 +100,7 @@ export interface SecurityAgentFoundationOptions {
   retentionAuthorizer?: FoundationRetentionAuthorizer;
   recoveryReadiness?: FoundationRecoveryReadinessOptions;
   recoveryActivation?: FoundationRecoveryActivationOptions;
+  deployment?: FoundationDeploymentOptions;
   historyArchiveAuthorizer?: ScenarioHistoryAuthorizer;
   runDisposalAuthorizer?: ScenarioRunDisposalAuthorizer;
   scenarioPackageTrust?:ScenarioPackageTrustOptions;
@@ -122,6 +122,8 @@ export interface SecurityAgentFoundationOptions {
   workRetryAuthorizer?: ScenarioWorkRetryAuthorizer;
   workContinuationAuthorizer?: ScenarioWorkContinuationAuthorizer;
   scenarioPackageRegistry?: ScenarioPackageRegistry;
+  /** Opaque package-owned host ports, keyed by versioned capability id. */
+  scenarioHostCapabilities?: Readonly<Record<string, unknown>>;
   autoScheduleIntervalMs?: number;
   modelRoutes?: ReadonlyMap<string, LlmProvider>;
   modelPolicies?: Partial<Record<CognitiveModelRole, Partial<ModelRolePolicy>>>;
@@ -180,6 +182,8 @@ export function registerSecurityAgentFoundation(
   app.get("/api/security-tools/host-channels",async()=>hostControl.snapshot());
   if(options.recoveryActivation){if(options.recoveryActivation.auditDb===sqlite)throw new Error("Recovery activation audit must remain outside the active database");
     registerFoundationRecoveryActivationRoutes(app,new FoundationRecoveryActivationControl(options.recoveryActivation));}
+  if(options.deployment){if(options.deployment.auditDb===sqlite || (sqlite.name!==":memory:" && options.deployment.auditDb.name===sqlite.name))throw new Error("Deployment audit must remain outside the active database");
+    registerFoundationDeploymentRoutes(app,new FoundationDeploymentControl(options.deployment));}
   if (options.backup) {
     const backupControl=new FoundationBackupControl(sqlite,options.backup);registerFoundationBackupRoutes(app,backupControl);
     const mediaControl=options.offlineMedia?new FoundationOfflineMediaControl(sqlite,backupControl,options.offlineMedia):undefined;
@@ -191,13 +195,11 @@ export function registerSecurityAgentFoundation(
     app.get("/api/foundation/media",async()=>({enabled:false,reason:"Backup control is unavailable"}));
     app.get("/api/foundation/retention/inventory",async()=>({enabled:false,reason:"Backup control is unavailable"}));
   }
-  const sessions = new ExecutionSessionGateway(
-    sqlite,
-    new SqliteEncryptedSecretVault(sqlite, loadOrCreateVaultKey(projectRoot)),
-  );
   const changes = new BlackboardChangeBus();
   const evidenceGraph = new SqliteEvidenceGraphStore(sqlite, changes);
   const scenarioEvidence = new ScenarioEvidenceGraphAdapter(evidenceGraph);
+  const scenarioArtifacts = new SqliteScenarioArtifactStore(sqlite);
+  const scenarioState = new SqliteScenarioStateStore(sqlite);
   const packageTrust=new ScenarioPackageTrustControl(sqlite,options.scenarioPackageRegistry??new ScenarioPackageRegistry(),options.scenarioPackageTrust);
   const scenarioPackages=packageTrust.registry;
   registerScenarioPackageTrustRoutes(app,packageTrust);
@@ -210,7 +212,6 @@ export function registerSecurityAgentFoundation(
     scopes: new ScenarioProviderCapabilityScopeAuthorizer(authorization),
     approvals: new SqliteProviderCapabilityApprovalReader(sqlite),
   });
-  const traffic = new SqliteScenarioTrafficStore(sqlite);
   const definitions = new ScenarioDefinitionRegistry(scenarioPackages.definitions());
   const scenarioEvents = new SqliteScenarioEventStore(sqlite, changes);
   const workers = new SqliteWorkerRegistry(sqlite);
@@ -220,7 +221,9 @@ export function registerSecurityAgentFoundation(
   const governedSources=new GovernedExecutionSources(options.executionNode,processCapacity);
   const customSources=(options.governedToolSources??[]).map(source=>governedSources.register(source));
   const scenarioSources=governedSources.scenarioSources(scenarioPackages,
-    {sessions,authorization,traffic,evidence:scenarioEvidence},options.scenarioSourceExecutionPolicies);
+    {authorization,evidence:scenarioEvidence,artifacts:scenarioArtifacts,state:scenarioState,
+      capabilities:createScenarioHostCapabilities(options.scenarioHostCapabilities ?? {})},
+    options.scenarioSourceExecutionPolicies);
   const customProviderFactory=options.governedToolProviderFactory ? (installation:ToolProviderInstallation)=>
     governedSources.registerProvider(installation,options.governedToolProviderFactory!) : options.toolProviderSourceFactory;
   registerProcessCapacityRoutes(app,processCapacity,options.processCleanupAuthorizer,options.toolRecoveryEvidenceAuthority??(()=>undefined));
@@ -318,7 +321,6 @@ export function registerSecurityAgentFoundation(
     autoScheduleIntervalMs: options.autoScheduleIntervalMs ?? 1_000,
     changeBus: changes,
   });
-  registerExecutionSessionRoutes(app, sessions);
   registerEvidenceGraphRoutes(app, sqlite, evidenceGraph);
   registerRunObserverRoutes(app, observerStore);
   registerRunPlannerRoutes(app, plannerStore);

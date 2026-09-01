@@ -59,6 +59,7 @@ describe("server listen configuration", () => {
       mcpTools: 0,
       executionNodeReady: expect.any(Boolean),
       executionProcessReady: expect.any(Boolean),
+      deployment: { managed: false },
     });
     expect(response.body).not.toMatch(/api.?key|secret/i);
     await app.close();

@@ -3,13 +3,17 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ExecutionToolDiscoveryRuntime } from "@traceforge/worker-runtime";
-import type { ScenarioSessionPort, ScenarioTrafficPort } from "@traceforge/scenario-sdk";
-import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
-import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
+import { createScenarioHostCapabilities, ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import { WEB_BLACKBOX_HOST_CAPABILITIES, WEB_BLACKBOX_PACKAGE,
+  type ScenarioSessionPort, type ScenarioTrafficPort } from "@traceforge/scenario-web-blackbox";
 
 const hostContext = {
-  sessions: {} as ScenarioSessionPort,
-  traffic: {} as ScenarioTrafficPort,
+  artifacts: {} as any,
+  state: {} as any,
+  capabilities: createScenarioHostCapabilities({
+    [WEB_BLACKBOX_HOST_CAPABILITIES.sessions]: {} as ScenarioSessionPort,
+    [WEB_BLACKBOX_HOST_CAPABILITIES.traffic]: {} as ScenarioTrafficPort,
+  }),
   evidence: { recordNode() { return []; } },
   authorization: {
     requireAction() { throw new Error("not used by package discovery test"); },
@@ -49,6 +53,21 @@ describe("ScenarioPackageRegistry", () => {
     };
     expect(() => new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE, duplicateSourcePackage]))
       .toThrow("Duplicate Scenario Definition web_blackbox@1");
+  });
+
+  it("binds Artifact and State capabilities to the package version receiving them", () => {
+    let received: typeof hostContext | undefined;
+    const fixturePackage = {
+      ...WEB_BLACKBOX_PACKAGE,
+      id: "traceforge.owner-fixture",
+      definition: { ...WEB_BLACKBOX_PACKAGE.definition, kind: "owner_fixture" },
+      createToolSources(context: typeof hostContext) { received = context; return []; },
+    };
+    new ScenarioPackageRegistry([fixturePackage]).toolSources(hostContext);
+    expect(() => received!.artifacts.get({ packageId: "traceforge.other", packageVersion: "0.1.0", caseId: "case", artifactId: "artifact" }))
+      .toThrow("cannot access another package owner");
+    expect(() => received!.state.read({ packageId: fixturePackage.id, packageVersion: "0.2.0", caseId: "case", runId: "run", key: "state" }))
+      .toThrow("cannot access another package owner");
   });
 
   it("resolves only the exact Package version and Schema revision bound to a Run", () => {

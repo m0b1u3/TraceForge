@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import type { ExecutionNode, BrokeredHttpRequest } from "@traceforge/execution-node";
-import { canonicalJson } from "@traceforge/orchestration-core";
 import type { ScenarioPackageRegistry, ScenarioToolHostContext } from "@traceforge/scenario-sdk";
 import { waitForCancellation, type ExecutionSourcePolicy, type ExecutionToolDiscoverySource,
   type GovernedExecutionPort, type GovernedExecutionSourceRegistration, type ToolExecutionContext } from "@traceforge/worker-runtime";
@@ -47,7 +46,7 @@ export class GovernedExecutionSources {
     return this.register(registration);
   }
 
-  scenarioSources(registry: ScenarioPackageRegistry, context: Omit<ScenarioToolHostContext,"executionNode"|"execution">,
+  scenarioSources(registry: ScenarioPackageRegistry, context: Omit<ScenarioToolHostContext,"execution">,
     policies: Readonly<Record<string, ExecutionSourcePolicy>> = {}): ExecutionToolDiscoverySource[] {
     const sources: ExecutionToolDiscoverySource[] = [], seen = new Set<string>(), consumed = new Set<string>();let quarantined=false;
     for (const installation of registry.list()) {
@@ -55,8 +54,7 @@ export class GovernedExecutionSources {
       const token = Object.freeze({});
       // Policy is selected by the active source scope, never by the package calling the port.
       const port = this.port(token);
-      const adapters = installation.createToolSources({ ...context, execution: port,
-        executionNode: this.node ? this.legacyHttpPort(token, port) : undefined });
+      const adapters = installation.createToolSources({ ...context, execution: port });
       for (const adapter of adapters) {
         if (seen.has(adapter.source)) throw new Error("Duplicate Scenario execution source");
         seen.add(adapter.source);
@@ -208,21 +206,6 @@ export class GovernedExecutionSources {
     });
   }
 
-  private legacyHttpPort(token: object, port: GovernedExecutionPort): ExecutionNode {
-    const denied=async()=>{throw new Error("Raw Execution Node access denied; use governed execution port");};
-    return Object.freeze({handshake:denied,startProcess:denied,describeProcess:denied,readProcessEvents:denied,waitProcessEvents:denied,
-      writeProcessInput:denied,resizeProcessTerminal:denied,signalProcess:denied,terminateProcess:denied,adoptProcess:denied,
-      canonicalizePath:denied,readFileChunk:denied,writeFileChunk:denied,listDirectory:denied,statPath:denied,
-      requestHttp:async(request:BrokeredHttpRequest)=>{
-        const scope=this.scope(token),context=this.dispatch(scope);
-        for(const key of ["caseId","runId","workId","workerId","scopeRef","leaseId","leaseExpiresAt","idempotencyKey"] as const){
-          if(request.attribution[key]!==context[key])throw new Error("Legacy HTTP attribution mismatch");
-        }
-        if(canonicalJson(request.permissions)!==canonicalJson(context.effectivePermissions))throw new Error("Legacy HTTP permission mismatch");
-        return port.requestHttp(request);
-      },
-    });
-  }
 }
 
 function validText(value: string): string {

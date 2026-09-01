@@ -2,15 +2,22 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type Database from "better-sqlite3";
-import type {
-  ExecutionCookie,
-  ExecutionSessionDescriptor,
-  ScenarioSessionPort,
-  SessionMaterial,
-  SessionUseContext,
-} from "@traceforge/scenario-sdk";
 
-export type { ExecutionCookie, ExecutionSessionDescriptor, SessionMaterial, SessionUseContext } from "@traceforge/scenario-sdk";
+export interface ExecutionCookie { name: string; value: string; domain?: string; path?: string; expires?: number;
+  httpOnly?: boolean; secure?: boolean; sameSite?: "Strict" | "Lax" | "None"; }
+export interface ExecutionSessionDescriptor {
+  id: string; caseId: string; runId: string; scopeRef: string; identityId: string | null; identityVersion: number | null;
+  status: "active" | "frozen" | "closed" | "expired"; lastWorkerId: string | null; lastWorkId: string | null;
+  lastLeaseId: string | null; lastLeaseExpiresAt: string | null; expiresAt: string; createdAt: string; updatedAt: string;
+}
+export interface SessionUseContext { workerId: string; workId: string; caseId: string; runId: string; scopeRef: string;
+  leaseId: string; leaseExpiresAt: string; }
+export interface SessionMaterial { session: ExecutionSessionDescriptor; headers: Record<string, string>; cookies: ExecutionCookie[]; }
+interface ScenarioSessionPort {
+  openSession(input: { caseId: string; runId: string; scopeRef: string; identityId?: string; ttlMs?: number }): ExecutionSessionDescriptor;
+  use(sessionId: string, context: SessionUseContext): SessionMaterial;
+  updateCookies(sessionId: string, cookies: ExecutionCookie[]): void;
+}
 
 export interface ExecutionIdentitySecret {
   headers: Record<string, string>;

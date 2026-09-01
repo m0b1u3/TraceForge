@@ -139,7 +139,8 @@ describe("Reviewed Scenario material and current host assembly",()=>{
     f.source.createToolSources=()=>{factories++;return [{source:"fixture.reviewed",async discover(){return [{name:"observe",source:"fixture.reviewed",version:f.source.version,priority:1,description:"Observe",inputSchema:{},providedCapabilities:["observe"],dependencyCapabilities:[],permissionRequirements:{},risk:"read_only" as const,timeoutMs:1000,
       async execute(){effects++;return {status:"succeeded" as const,summary:"Observed",raw:"",refs:[],retryable:false};}}];}}];};
     const material=reviewedMaterial(join(root(),"material"),f.source),trust=new ScenarioPackageTrustControl(sqlite,new ScenarioPackageRegistry([f.source]),material.options),governed=new GovernedExecutionSources(undefined,f.capacity);
-    const hostContext={sessions:{} as any,authorization:{} as any,traffic:{} as any,evidence:{} as any};
+    const hostContext={artifacts:{} as any,state:{} as any,capabilities:{optional(){return undefined;},require(){return {};}} as any,
+      authorization:{} as any,evidence:{} as any};
     const sources=governed.scenarioSources(trust.registry,hostContext),tools=await sources[0]!.discover();expect(factories).toBe(1);
     await trust.revoke({commandId:"withdraw",package:f.from,actor:"operator",reason:"Stop using material"});
     await expect(sources[0]!.discover()).rejects.toThrow("revoked");

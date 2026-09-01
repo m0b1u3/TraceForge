@@ -1,15 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { chromium } from "playwright";
 import { z } from "zod";
-import type { ExecutionNode } from "@traceforge/execution-node";
-import type {
-  ExecutionCookie,
-  ScenarioAuthorizationPort,
-  ScenarioSessionPort,
-  ScenarioTrafficPort,
-  SessionUseContext,
-} from "@traceforge/scenario-sdk";
-import type { ExecutionToolAdapter, ToolExecutionContext, ToolExecutionResult } from "@traceforge/worker-runtime";
+import type { ScenarioAuthorizationPort } from "@traceforge/scenario-sdk";
+import type { ExecutionToolAdapter, GovernedExecutionPort, ToolExecutionContext, ToolExecutionResult } from "@traceforge/worker-runtime";
+import type { ExecutionCookie, ScenarioSessionPort, ScenarioTrafficPort, SessionUseContext } from "./ports.js";
 import { WEB_BLACKBOX_ACTIONS, WEB_BLACKBOX_AUTHORIZATION_SCOPE } from "./definition.js";
 
 type ToolContext = ToolExecutionContext;
@@ -50,7 +44,7 @@ export class ScenarioHttpRequestTool implements ExecutionToolAdapter {
     private readonly authorization: ScenarioAuthorizationPort,
     private readonly sessions: ScenarioSessionPort,
     private readonly traffic: ScenarioTrafficPort,
-    private readonly executionNode: ExecutionNode,
+    private readonly execution: GovernedExecutionPort,
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
@@ -64,20 +58,7 @@ export class ScenarioHttpRequestTool implements ExecutionToolAdapter {
     const headers = { ...request.headers, ...material.headers };
     const cookie = cookieHeader(material.cookies, url);
     if (cookie) headers.cookie = cookie;
-    const response = await this.executionNode.requestHttp({
-      requestId: context.idempotencyKey,
-      attribution: {
-        caseId: context.caseId,
-        runId: context.runId,
-        workId: context.workId,
-        workerId: context.workerId,
-        scopeRef: context.scopeRef,
-        leaseId: context.leaseId,
-        leaseExpiresAt: context.leaseExpiresAt,
-        actionId: context.idempotencyKey,
-        idempotencyKey: context.idempotencyKey,
-      },
-      permissions: context.effectivePermissions,
+    const response = await this.execution.requestHttp({
       authorizationAction: WEB_BLACKBOX_ACTIONS.requestReplay,
       url: url.href,
       method: request.method,

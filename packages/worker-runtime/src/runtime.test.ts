@@ -14,7 +14,7 @@ import type {
 } from "./model.js";
 import { LoopGuardObserver } from "./observer.js";
 import { ToolInvocationRecoveryRequiredError } from "./tool-gateway.js";
-import { LeaseLostError, LeaseWorkerRuntime, type WorkerLifecycleEvent } from "./runtime.js";
+import { LeaseLostError, WorkerHost, type WorkerLifecycleEvent } from "./runtime.js";
 import { executionToolContractFingerprint } from "./tool-provider-contract.js";
 
 const worker: WorkerDescriptor = {
@@ -91,11 +91,11 @@ const resolvedCatalog = (tools: Awaited<ReturnType<ExecutionToolGateway["catalog
   tools, requestedCapabilities: [], unresolvedCapabilities: [], registryRevision: 1,
 });
 
-describe("LeaseWorkerRuntime", () => {
+describe("WorkerHost", () => {
   it("cancels uncooperative inference and ignores its late action", async () => {
     const control = new FakeControl(); let release!: (value: WorkerDecision) => void; let started!: () => void;
     const ready = new Promise<void>((r) => { started = r; }); let observed: AbortSignal | undefined;
-    const runtime = new LeaseWorkerRuntime(worker, control, { decide(_request, signal) { observed = signal; started(); return new Promise((resolve) => { release = resolve; }); } },
+    const runtime = new WorkerHost(worker, control, { decide(_request, signal) { observed = signal; started(); return new Promise((resolve) => { release = resolve; }); } },
       { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("must not dispatch"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller());
     const execution = runtime.execute(assignment()); await ready; runtime.cancelAll("operator stopped");
     expect((await execution).outcome).toBe("lease_lost"); expect(observed?.aborted).toBe(true);
@@ -105,7 +105,7 @@ describe("LeaseWorkerRuntime", () => {
   it("only revokes the matching Run and lease when applying control-plane ownership changes", async () => {
     const control = new FakeControl(); let signal: AbortSignal | undefined, started!: () => void;
     const ready = new Promise<void>((r) => { started = r; });
-    const runtime = new LeaseWorkerRuntime(worker, control, { async decide(_request, value) { signal = value; started(); return new Promise(() => {}); } },
+    const runtime = new WorkerHost(worker, control, { async decide(_request, value) { signal = value; started(); return new Promise(() => {}); } },
       { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("must not dispatch"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller());
     const execution = runtime.execute(assignment()); await ready;
     runtime.reconcileRun({ id: "other_run", status: "cancelled", workItems: [] } as unknown as ScenarioRunState); expect(signal!.aborted).toBe(false);
@@ -121,13 +121,13 @@ describe("LeaseWorkerRuntime", () => {
       if (mode === "unresponsive") return new Promise(() => {});
       return { ...control.current, leaseExpiresAt: "2020-01-01" };
     };
-    const runtime = new LeaseWorkerRuntime(worker, control, { async decide() { return new Promise(() => {}); } },
+    const runtime = new WorkerHost(worker, control, { async decide() { return new Promise(() => {}); } },
       { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("must not dispatch"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(), { ownershipPollMs: 10 });
     expect((await runtime.execute(assignment())).outcome).toBe("lease_lost"); expect(control.completed).toBeUndefined();
   });
   it("does not dispatch after cancellation during pending checkpoint persistence", async () => {
     const control = new FakeControl(), checkpoints = new MemoryCheckpoints(); let dispatches = 0;
-    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([{ type: "invoke_tool", invocation: { id: "first", tool: "read", input: {}, rationale: "Observe" } }]),
+    const runtime = new WorkerHost(worker, control, new SequenceModel([{ type: "invoke_tool", invocation: { id: "first", tool: "read", input: {}, rationale: "Observe" } }]),
       { async catalog() { return resolvedCatalog([pendingTool]); }, async execute() { dispatches++; throw new Error("must not dispatch"); } }, continueObserver, checkpoints, new BoundedOutputDistiller());
     checkpoints.save = async () => { runtime.cancelAll(); return "checkpoint://pending.json"; };
     expect((await runtime.execute(assignment())).outcome).toBe("lease_lost"); expect(dispatches).toBe(0); expect(control.checkpoints).toBe(0);
@@ -150,7 +150,7 @@ describe("LeaseWorkerRuntime", () => {
 
   it("recovers the confirmed result before any catalog or model call, even without the provider", async () => {
     const { current, checkpoints, control } = suspended(); const order: string[] = [];
-    const runtime = new LeaseWorkerRuntime(worker, control, { async decide(request) {
+    const runtime = new WorkerHost(worker, control, { async decide(request) {
       order.push("model"); expect(request.transcript.some((entry) => entry.refs.includes("evidence"))).toBe(true);
       return { type: "complete", summary: "Done", outputs: [] };
     } }, { async recover(request) {
@@ -166,7 +166,7 @@ describe("LeaseWorkerRuntime", () => {
 
   it("executes only the saved input when durable ownership proves it never started", async () => {
     const { current, checkpoints, control } = suspended(); let executions = 0;
-    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([{ type: "complete", summary: "Done", outputs: [] }]), {
+    const runtime = new WorkerHost(worker, control, new SequenceModel([{ type: "complete", summary: "Done", outputs: [] }]), {
       async recover() { return { status: "not_started" }; }, async catalog() { return resolvedCatalog([pendingTool]); },
       async execute(request) { executions++; expect(request.invocation.input).toEqual({ value: "original" });
         return { status: "succeeded", summary: "Done", raw: "", refs: [], retryable: false }; },
@@ -177,7 +177,7 @@ describe("LeaseWorkerRuntime", () => {
   it.each(["missing-recovery", "uncertain", "changed-contract", "exhausted-budget"])("fails closed on %s without asking the model", async (failure) => {
     const { current, checkpoints, control } = suspended(); let modelCalls = 0; let executions = 0;
     if (failure === "exhausted-budget") checkpoints.document!.consecutiveFailures = 3;
-    const runtime = new LeaseWorkerRuntime(worker, control, { async decide() { modelCalls++; throw new Error("unexpected model"); } }, {
+    const runtime = new WorkerHost(worker, control, { async decide() { modelCalls++; throw new Error("unexpected model"); } }, {
       recover: failure === "missing-recovery" ? undefined : async () => {
         if (failure === "uncertain") throw new ToolInvocationRecoveryRequiredError("Uncertain effect");
         return { status: "not_started" };
@@ -190,7 +190,7 @@ describe("LeaseWorkerRuntime", () => {
   it("does not dispatch if the pre-action checkpoint cannot be committed", async () => {
     const control = new FakeControl(); let executions = 0;
     control.checkpoint = async () => { throw new Error("storage unavailable"); };
-    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
+    const runtime = new WorkerHost(worker, control, new SequenceModel([
       { type: "invoke_tool", invocation: { id: "exact", tool: "read", input: {}, rationale: "Observe" } },
     ]), { async catalog() { return resolvedCatalog([pendingTool]); }, async execute() { executions++; throw new Error("unexpected"); } },
     continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller());
@@ -198,7 +198,7 @@ describe("LeaseWorkerRuntime", () => {
   });
   it.each(["catalog", "execute"])("blocks Work when uncertainty is reported during %s", async (phase) => {
     const control = new FakeControl();
-    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
+    const runtime = new WorkerHost(worker, control, new SequenceModel([
       { type: "invoke_tool", invocation: { id: "call", tool: "read", input: {}, rationale: "Observe" } },
     ]), {
       async catalog() {
@@ -220,7 +220,7 @@ describe("LeaseWorkerRuntime", () => {
       async execute() { return { status: "succeeded", summary: "Observation captured", raw: "raw observation", refs: ["evidence_1"], retryable: false }; },
     };
     const lifecycle: WorkerLifecycleEvent[] = [];
-    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
+    const runtime = new WorkerHost(worker, control, new SequenceModel([
       { type: "invoke_tool", invocation: { id: "call_1", tool: "read", input: {}, rationale: "Collect evidence" } },
       { type: "complete", summary: "Work complete", outputs: [{ id: "output_1", kind: "evidence", summary: "Evidence", refs: ["evidence_1"] }] },
     ]), gateway, continueObserver, checkpoints, new BoundedOutputDistiller(), { onLifecycleEvent: (event) => lifecycle.push(event) }, () => "2026-08-24T08:00:10.000Z");
@@ -255,7 +255,7 @@ describe("LeaseWorkerRuntime", () => {
         return { type: "complete", summary: "Corrected", outputs: [{ id: "output_1", kind: "coverage_assessment", summary: "Reviewed", refs: ["scope_1"] }] };
       },
     };
-    const runtime = new LeaseWorkerRuntime(
+    const runtime = new WorkerHost(
       worker, control, model,
       { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("not used"); } },
       continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(), {}, () => "2026-08-24T08:00:10.000Z",
@@ -272,7 +272,7 @@ describe("LeaseWorkerRuntime", () => {
       async execute() { executions += 1; return { status: "succeeded", summary: "done", raw: "done", refs: [], retryable: false }; },
     };
     const duplicate = { type: "invoke_tool" as const, invocation: { id: "call_2", tool: "read", input: { key: "same" }, rationale: "repeat" } };
-    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
+    const runtime = new WorkerHost(worker, control, new SequenceModel([
       { ...duplicate, invocation: { ...duplicate.invocation, id: "call_1" } }, duplicate,
       { type: "complete", summary: "Stopped repeating", outputs: [{ id: "output_1", kind: "coverage_assessment", summary: "No additional evidence", refs: ["scope_1"] }] },
     ]), gateway, new LoopGuardObserver({ steerAfterRepeats: 2, stopAfterRepeats: 4 }), new MemoryCheckpoints(), new BoundedOutputDistiller());
@@ -285,7 +285,7 @@ describe("LeaseWorkerRuntime", () => {
   it("stops locally without writing failure after losing a lease", async () => {
     const control = new FakeControl();
     control.checkpoint = async () => { throw new LeaseLostError("revision changed"); };
-    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
+    const runtime = new WorkerHost(worker, control, new SequenceModel([
       { type: "invoke_tool", invocation: { id: "call_1", tool: "read", input: {}, rationale: "read" } },
     ]), {
       async catalog() { return resolvedCatalog([{ name: "read", source: "test", version: "1.0.0", priority: 100, description: "Read", inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000 }]); },
@@ -299,7 +299,7 @@ describe("LeaseWorkerRuntime", () => {
   it("terminates the active Turn when tool execution fails unexpectedly", async () => {
     const lifecycle: WorkerLifecycleEvent[] = [];
     const control = new FakeControl();
-    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
+    const runtime = new WorkerHost(worker, control, new SequenceModel([
       { type: "invoke_tool", invocation: { id: "call_1", tool: "read", input: {}, rationale: "read" } },
     ]), {
       async catalog() { return resolvedCatalog([{ name: "read", source: "test", version: "1.0.0", priority: 100, description: "Read", inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000 }]); },
@@ -313,7 +313,7 @@ describe("LeaseWorkerRuntime", () => {
 
   it("rejects model outputs that cite references absent from the evidence context", async () => {
     const control = new FakeControl();
-    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
+    const runtime = new WorkerHost(worker, control, new SequenceModel([
       { type: "complete", summary: "Unsupported", outputs: [{ id: "output_1", kind: "evidence", summary: "Claim", refs: ["invented_ref"] }] },
       { type: "complete", summary: "Grounded", outputs: [{ id: "output_2", kind: "scope_snapshot", summary: "Authorized scope", refs: ["scope_1"] }] },
     ]), { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("not used"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller());
@@ -326,7 +326,7 @@ describe("LeaseWorkerRuntime", () => {
   it("checkpoints and releases execution when a tool requires approval", async () => {
     const control = new FakeControl();
     const checkpoints = new MemoryCheckpoints();
-    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
+    const runtime = new WorkerHost(worker, control, new SequenceModel([
       { type: "invoke_tool", invocation: { id: "call_1", tool: "privileged", input: { operation: "bounded" }, rationale: "Validate the hypothesis" } },
     ]), {
       async catalog() { return resolvedCatalog([{ name: "privileged", source: "test", version: "1.0.0", priority: 100, description: "Privileged", inputSchema: {}, providedCapabilities: ["host.privileged"], dependencyCapabilities: [], permissionRequirements: {}, risk: "privileged", timeoutMs: 1_000 }]); },
@@ -347,7 +347,7 @@ describe("LeaseWorkerRuntime", () => {
       createdAt: "2026-08-24T08:00:00.000Z",
     };
     const control = new FakeControl(current);
-    const runtime = new LeaseWorkerRuntime(
+    const runtime = new WorkerHost(
       worker, control, new SequenceModel([]),
       { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("not used"); } },
       continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(), {},

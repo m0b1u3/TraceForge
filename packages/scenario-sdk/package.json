@@ -7,7 +7,6 @@
   "scripts": { "build": "tsc -p tsconfig.json" },
   "dependencies": {
     "@traceforge/evidence-graph": "workspace:*",
-    "@traceforge/execution-node": "workspace:*",
     "@traceforge/orchestration-core": "workspace:*",
     "@traceforge/worker-runtime": "workspace:*"
   }

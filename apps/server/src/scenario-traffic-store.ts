@@ -1,5 +1,17 @@
 import type Database from "better-sqlite3";
-import type { ScenarioTrafficEntrySummary, ScenarioTrafficPort } from "@traceforge/scenario-sdk";
+import type { BrokeredNetworkReceipt } from "@traceforge/execution-node";
+
+export interface ScenarioTrafficEntrySummary { id: string; runId: string; url: string; method: string;
+  responseStatus: number | null; responseSize: number | null; contentType: string | null; createdAt: string; }
+interface ScenarioTrafficPort {
+  recordHttpExchange(input: { trafficId: string; caseId: string; runId: string; url: string; method: string;
+    requestHeaders: Record<string, string>; requestBody: string | null; responseStatus: number;
+    responseHeaders: Record<string, string>; responseSize: number; contentType: string | null; responseBody: string | null;
+    receipt: BrokeredNetworkReceipt; createdAt: string }): void;
+  recordBrowserObservation(input: { trafficId: string; caseId: string; runId: string; url: string;
+    responseStatus: number | null; responseSize: number; responseBody: string; createdAt: string }): void;
+  list(caseId: string, limit: number): ScenarioTrafficEntrySummary[];
+}
 
 export class SqliteScenarioTrafficStore implements ScenarioTrafficPort {
   constructor(private readonly sqlite: Database.Database) {}
