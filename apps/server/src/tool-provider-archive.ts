@@ -182,6 +182,7 @@ export function extractAndVerifyToolProviderArchive(input: {
   stagingRoot: string;
   trustRoots: ReadonlyMap<string, KeyLike | string | Buffer>;
   policy?: ToolProviderArchivePolicy;
+  onStagingCreated?: (packageRoot: string) => void;
 }): ExtractedToolProviderArchive {
   const policy = validatePolicy(input.policy ?? DEFAULT_TOOL_PROVIDER_ARCHIVE_POLICY);
   const archivePath = realFile(input.archivePath, "Tool Provider archive");
@@ -203,6 +204,7 @@ export function extractAndVerifyToolProviderArchive(input: {
   const stagingParent = realDirectory(input.stagingRoot, "Tool Provider archive staging root");
   const packageRoot = mkdtempSync(join(stagingParent, "provider-"));
   try {
+    input.onStagingCreated?.(packageRoot);
     for (const entry of envelope.entries) {
       const target = join(packageRoot, ...entry.path.split("/"));
       assertInside(packageRoot, target, entry.path);
@@ -224,7 +226,10 @@ export function extractAndVerifyToolProviderArchive(input: {
     }
     return { packageRoot, manifest: envelope.manifest, signature: envelope.signature, package: inventory };
   } catch (error) {
-    removeStagingPackage(stagingParent, packageRoot);
+    try { removeStagingPackage(stagingParent, packageRoot); }
+    catch (cleanupError) {
+      throw new Error(`Archive extraction failed: ${errorMessage(error)}; staging cleanup failed: ${errorMessage(cleanupError)}`);
+    }
     throw error;
   }
 }

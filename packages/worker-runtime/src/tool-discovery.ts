@@ -1,4 +1,5 @@
 import { CapabilityProviderRegistry, type CapabilityProviderState } from "@traceforge/tool-resolver";
+import { waitForCancellation } from "./cancellation.js";
 import type { ExecutionToolSpec } from "./model.js";
 import type { ExecutionToolAdapter } from "./tool-gateway.js";
 import {
@@ -10,7 +11,7 @@ import {
 
 export interface ExecutionToolDiscoverySource {
   readonly source: string;
-  discover(): Promise<ExecutionToolAdapter[]>;
+  discover(signal?: AbortSignal): Promise<ExecutionToolAdapter[]>;
   close?(): Promise<void>;
   diagnostics?(): Record<string, unknown>;
 }
@@ -50,6 +51,17 @@ export interface ExecutionToolSourceActivation {
   drained: Promise<void>;
 }
 
+export interface ExecutionToolRefreshResult {
+  source: string;
+  outcome: "ready" | "degraded";
+  beforeRevision: number;
+  afterRevision: number;
+  beforeCatalogFingerprint: string | null;
+  afterCatalogFingerprint: string | null;
+  catalogChanged: boolean;
+  failure: string | null;
+}
+
 interface MutableSourceStatus extends ExecutionToolSourceStatus {
   lastAttemptMs: number | null;
 }
@@ -61,6 +73,7 @@ interface SourceGeneration {
   drained: Promise<void>;
   resolveDrained: () => void;
   closePromise: Promise<void> | null;
+  discoveryController?: AbortController;
 }
 
 export class ExecutionToolDiscoveryRuntime {
@@ -68,7 +81,7 @@ export class ExecutionToolDiscoveryRuntime {
   private readonly sources = new Map<string, ExecutionToolDiscoverySource>();
   private readonly generations = new Map<string, SourceGeneration>();
   private readonly sourceStatuses = new Map<string, MutableSourceStatus>();
-  private readonly refreshes = new Map<string, Promise<void>>();
+  private readonly refreshes = new Map<string, Promise<ExecutionToolRefreshResult>>();
   private readonly retirements = new Set<Promise<void>>();
   private restorePromise: Promise<void> | undefined;
   private readonly sourceRestorations = new Map<string, Promise<ExecutionToolDiscoverySnapshot | undefined>>();
@@ -79,8 +92,10 @@ export class ExecutionToolDiscoveryRuntime {
     unavailableAfterFailures = 3,
     private readonly now: () => Date = () => new Date(),
     private readonly statePort?: ExecutionToolDiscoveryStatePort,
+    private readonly deadlineMs = 15000,
   ) {
     if (!Number.isFinite(refreshIntervalMs) || refreshIntervalMs < 0) throw new Error("Tool discovery refresh interval must be non-negative");
+    if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 300000) throw new Error("Invalid tool discovery deadline");
     this.registry = new CapabilityProviderRegistry<ExecutionToolAdapter>(unavailableAfterFailures);
     for (const source of sources) this.registerSource(source);
   }
@@ -116,12 +131,15 @@ export class ExecutionToolDiscoveryRuntime {
     const restored = await this.restoreSource(id);
     const current = this.sources.get(id);
     if (current === source) {
+      if (this.generations.get(id)?.accepting === false) throw new Error("Draining discovery generation requires a new explicit activation");
       await this.refresh(id);
       return { drained: Promise.resolve() };
     }
     const generation = createGeneration(source);
     const attemptedAt = this.now();
-    const providers = await this.discover(source, generation);
+    let providers: ExecutionToolAdapter[];
+    try { providers = await this.discover(source, generation); }
+    catch (error) { this.trackRetirement(this.closeGeneration(generation)); throw error; }
     const previousGeneration = this.generations.get(id);
     const previousProviders = this.registry.list()
       .filter((state) => state.provider.source === id && state.lifecycle !== "retired")
@@ -166,12 +184,20 @@ export class ExecutionToolDiscoveryRuntime {
     const generation = this.generations.get(source);
     this.registry.drainSource(source);
     if (!current) return;
-    if (generation) await this.closeGeneration(generation);
+    if (generation) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new Error("Tool source drain deadline exceeded; execution still unconfirmed")), this.deadlineMs);
+      try { await waitForCancellation(() => this.closeGeneration(generation), controller.signal); }
+      finally { clearTimeout(timer); }
+    }
     else await current.close?.();
     if (this.sources.get(source) === current) {
       this.sources.delete(source);
       this.generations.delete(source);
       this.sourceStatuses.delete(source);
+      // The initial restore may predate several successful catalog commits. A later
+      // reactivation (including compensation) must reload the current durable revision.
+      this.sourceRestorations.delete(source);
     }
   }
 
@@ -191,16 +217,34 @@ export class ExecutionToolDiscoveryRuntime {
   }
 
   async refresh(source?: string): Promise<void> {
-    if (source) return this.refreshOne(source);
-    await Promise.all([...this.sources.keys()].map((id) => this.refreshOne(id)));
+    if (source) {
+      if (this.generations.get(source)?.accepting === false) return;
+      await this.refreshOne(source);
+      return;
+    }
+    await Promise.all([...this.sources.keys()].map(async (id) => {
+      if (this.generations.get(id)?.accepting === false) return;
+      await this.refreshOne(id);
+    }));
+  }
+
+  refreshWithResult(source: string): Promise<ExecutionToolRefreshResult> {
+    const id = source.trim();
+    if (!id) return Promise.reject(new Error("Tool discovery source is required"));
+    return this.refreshOne(id);
   }
 
   async close(): Promise<void> {
-    await Promise.allSettled([...this.refreshes.values()]);
-    await Promise.all([
+    for (const generation of this.generations.values()) this.beginDrain(generation);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error("Tool discovery cleanup deadline exceeded; termination remains unconfirmed")), this.deadlineMs);
+    try { await waitForCancellation(async () => {
+      await Promise.allSettled([...this.refreshes.values()]);
+      await Promise.all([
       ...[...this.generations.values()].map((generation) => this.closeGeneration(generation)),
       ...this.retirements,
-    ]);
+      ]);
+    }, controller.signal); } finally { clearTimeout(timer); }
   }
 
   snapshot(): ExecutionToolRuntimeSnapshot {
@@ -229,11 +273,11 @@ export class ExecutionToolDiscoveryRuntime {
     };
   }
 
-  private async refreshOne(source: string): Promise<void> {
+  private async refreshOne(source: string): Promise<ExecutionToolRefreshResult> {
     await this.restoreSource(source);
     const existing = this.refreshes.get(source);
     if (existing) return existing;
-    if (this.generations.get(source)?.accepting === false) return;
+    if (this.generations.get(source)?.accepting === false) throw new Error(`Tool discovery source ${source} is not accepting refreshes`);
     const discovered = this.sources.get(source);
     if (!discovered) throw new Error(`Unknown tool discovery source: ${source}`);
     const refresh = this.performRefresh(discovered).finally(() => { this.refreshes.delete(source); });
@@ -241,8 +285,10 @@ export class ExecutionToolDiscoveryRuntime {
     return refresh;
   }
 
-  private async performRefresh(source: ExecutionToolDiscoverySource): Promise<void> {
+  private async performRefresh(source: ExecutionToolDiscoverySource): Promise<ExecutionToolRefreshResult> {
     const state = this.sourceStatuses.get(source.source)!;
+    const beforeRevision = state.discoveryRevision;
+    const beforeCatalogFingerprint = state.lastSuccessfulCatalogFingerprint;
     const restored = await this.restoreSource(source.source);
     const attemptedAt = this.now();
     state.lastAttemptMs = attemptedAt.getTime();
@@ -252,8 +298,11 @@ export class ExecutionToolDiscoveryRuntime {
     let catalogCommitted = false;
     try {
       const generation = this.generations.get(source.source);
-      if (!generation || generation.source !== source) throw new Error(`Tool discovery source ${source.source} is no longer active`);
+      if (!generation || generation.source !== source || !generation.accepting) {
+        throw new Error(`Tool discovery source ${source.source} is no longer active or accepting refreshes`);
+      }
       const providers = await this.discover(source, generation);
+      if (!generation.accepting) throw new Error(`Tool discovery source ${source.source} stopped accepting refreshes during discovery`);
       this.registry.synchronize(source.source, providers);
       catalogCommitted = true;
       const succeededAt = this.now().toISOString();
@@ -272,6 +321,16 @@ export class ExecutionToolDiscoveryRuntime {
       state.lastSuccessfulCatalogFingerprint = fingerprint;
       state.restoredFromPersistence = false;
       state.diagnostics = source.diagnostics?.() ?? null;
+      return {
+        source: source.source,
+        outcome: "ready",
+        beforeRevision,
+        afterRevision: revision,
+        beforeCatalogFingerprint,
+        afterCatalogFingerprint: fingerprint,
+        catalogChanged: fingerprint !== beforeCatalogFingerprint,
+        failure: null,
+      };
     } catch (error) {
       if (catalogCommitted) this.registry.synchronize(source.source, previousProviders);
       const failedAt = this.now().toISOString();
@@ -293,6 +352,16 @@ export class ExecutionToolDiscoveryRuntime {
       } catch (persistenceError) {
         state.lastError = boundedMessage(new Error(`${failure}; discovery state persistence failed: ${boundedMessage(persistenceError)}`));
       }
+      return {
+        source: source.source,
+        outcome: "degraded",
+        beforeRevision,
+        afterRevision: revision,
+        beforeCatalogFingerprint,
+        afterCatalogFingerprint: state.lastSuccessfulCatalogFingerprint,
+        catalogChanged: false,
+        failure: state.lastError,
+      };
     }
   }
 
@@ -326,7 +395,23 @@ export class ExecutionToolDiscoveryRuntime {
   }
 
   private async discover(source: ExecutionToolDiscoverySource, generation: SourceGeneration): Promise<ExecutionToolAdapter[]> {
-    const providers = await source.discover();
+    const controller = new AbortController();
+    generation.discoveryController = controller;
+    generation.inFlight += 1;
+    const operation = Promise.resolve().then(() => { controller.signal.throwIfAborted(); return source.discover(controller.signal); }).finally(() => {
+      generation.inFlight -= 1;
+      if (!generation.accepting && generation.inFlight === 0) generation.resolveDrained();
+    });
+    const timer = setTimeout(() => controller.abort(new Error("Tool discovery deadline exceeded; source requires explicit recovery")), this.deadlineMs);
+    let providers: ExecutionToolAdapter[];
+    try { providers = await waitForCancellation(() => operation, controller.signal); }
+    catch (error) {
+      if (controller.signal.aborted) {
+        this.beginDrain(generation);
+        if (this.generations.get(source.source) === generation) this.registry.drainSource(source.source);
+      }
+      throw error;
+    } finally { clearTimeout(timer); if (generation.discoveryController === controller) generation.discoveryController = undefined; }
     return providers.map((provider) => {
       if (provider.source !== source.source) throw new Error(`Discovered tool ${provider.name} does not belong to source ${source.source}`);
       if (provider.timeoutMs < 1) throw new Error(`Execution tool ${provider.name} requires a positive timeout`);
@@ -347,6 +432,7 @@ export class ExecutionToolDiscoveryRuntime {
 
   private beginDrain(generation: SourceGeneration): Promise<void> {
     generation.accepting = false;
+    generation.discoveryController?.abort(new Error("Tool discovery source draining"));
     if (generation.inFlight === 0) generation.resolveDrained();
     return generation.drained;
   }

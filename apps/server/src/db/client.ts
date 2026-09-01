@@ -1,9 +1,33 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { applyDataMigrations } from "./data-migrations.js";
+import { initializeExecutionStorage } from "./execution-storage.js";
+import { registerExecutionArchiveFunctions } from "./execution-archive.js";
+import { initializePhysicalStorage, registerPhysicalStorageFunctions } from "./physical-storage.js";
+import { initializeScenarioHistory } from "./scenario-history.js";
+import { assertFoundationRestorePublished, assertNotBackupSource, assertNoIncompleteRestore, assertSafeDatabaseOpen, readFoundationRestoreFence } from "./foundation-restore-fence.js";
+import { assertRecoveryCandidateBoot, assertRecoveryCandidateDatabase } from "../foundation-recovery-activation.js";
 
-export function createDb(path: string) {
+export function createDb(path: string, options: { activeCandidate?: { candidateId: string; provenanceDigest: string; generation: number } } = {}) {
+  assertNotBackupSource(path);
+  assertRecoveryCandidateBoot(path, options.activeCandidate);
+  assertSafeDatabaseOpen(path);
   const sqlite = new Database(path);
+  try {
+    assertRecoveryCandidateDatabase(sqlite, options.activeCandidate);
+    const fence = readFoundationRestoreFence(sqlite);
+    assertNoIncompleteRestore(sqlite, fence);
+    if (fence) {
+      assertFoundationRestorePublished(sqlite, fence);
+      sqlite.close();
+      const inspection = new Database(path, { readonly: true, fileMustExist: true });
+      registerExecutionArchiveFunctions(inspection);
+      inspection.pragma("query_only = ON");
+      return drizzle(inspection);
+    }
+  } catch (error) { if (sqlite.open) sqlite.close(); throw error; }
+  registerExecutionArchiveFunctions(sqlite);
+  registerPhysicalStorageFunctions(sqlite);
   sqlite.pragma("journal_mode = WAL");
   const scenarioStreamColumns = sqlite.prepare("PRAGMA table_info(scenario_event_streams)").all() as Array<{ name: string }>;
   if (scenarioStreamColumns.length > 0 && !scenarioStreamColumns.some((column) => column.name === "case_id")) {
@@ -149,11 +173,64 @@ export function createDb(path: string) {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_scenario_authorizations_case ON scenario_authorizations(case_id, status, expires_at);
+    CREATE TABLE IF NOT EXISTS scenario_authorization_bindings (
+      scope_ref TEXT PRIMARY KEY, revision INTEGER NOT NULL, package_json TEXT NOT NULL,
+      contract_hash TEXT NOT NULL, scope_hash TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS scenario_authorization_upgrades (
+      command_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, audit_hash TEXT NOT NULL, audit_json TEXT NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS authorization_upgrade_no_update BEFORE UPDATE ON scenario_authorization_upgrades
+      BEGIN SELECT RAISE(ABORT,'Authorization upgrade history is immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS authorization_upgrade_no_delete BEFORE DELETE ON scenario_authorization_upgrades
+      BEGIN SELECT RAISE(ABORT,'Authorization upgrade history is immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS authorization_binding_no_delete BEFORE DELETE ON scenario_authorization_bindings
+      BEGIN SELECT RAISE(ABORT,'Authorization binding cannot be deleted'); END;
+    CREATE TRIGGER IF NOT EXISTS authorization_binding_capacity BEFORE INSERT ON scenario_authorization_bindings BEGIN
+      SELECT CASE WHEN (SELECT count(*) FROM scenario_authorization_bindings)>=50000 OR length(CAST(NEW.package_json AS BLOB))>4096
+        THEN RAISE(ABORT,'Authorization binding capacity exceeded') END;
+      SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,16384,'execution') FROM execution_physical_policy WHERE id=1;
+    END;
+    CREATE TRIGGER IF NOT EXISTS authorization_upgrade_capacity BEFORE INSERT ON scenario_authorization_upgrades BEGIN
+      SELECT CASE WHEN (SELECT count(*) FROM scenario_authorization_upgrades)>=50000 OR length(CAST(NEW.audit_json AS BLOB))>65536
+        THEN RAISE(ABORT,'Authorization upgrade capacity exceeded') END;
+      SELECT execution_physical_admit(recovery_floor,maximum_database_bytes,maximum_wal_bytes,81920,'recovery') FROM execution_physical_policy WHERE id=1;
+    END;
     CREATE TABLE IF NOT EXISTS worker_tool_receipts (
       idempotency_key TEXT PRIMARY KEY,
       result_json TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS execution_process_journal (
+      idempotency_key TEXT PRIMARY KEY,
+      observation_json TEXT NOT NULL,
+      digest TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS tool_recovery_evidence (
+      evidence_ref TEXT PRIMARY KEY, envelope_json TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS immutable_tool_recovery_evidence_update BEFORE UPDATE ON tool_recovery_evidence
+      BEGIN SELECT RAISE(ABORT, 'Recovery evidence is immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_tool_recovery_evidence_delete BEFORE DELETE ON tool_recovery_evidence
+      BEGIN SELECT RAISE(ABORT, 'Recovery evidence is immutable'); END;
+    CREATE TABLE IF NOT EXISTS tool_recovery_commands (
+      command_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+      request_json TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS tool_recovery_commands_invocation ON tool_recovery_commands(idempotency_key, created_at);
+    CREATE TRIGGER IF NOT EXISTS immutable_tool_recovery_commands_update BEFORE UPDATE ON tool_recovery_commands
+      BEGIN SELECT RAISE(ABORT, 'Recovery commands are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_tool_recovery_commands_delete BEFORE DELETE ON tool_recovery_commands
+      BEGIN SELECT RAISE(ABORT, 'Recovery commands are immutable'); END;
+    CREATE TABLE IF NOT EXISTS scenario_work_retry_audits (
+      command_id TEXT PRIMARY KEY,
+      fingerprint TEXT NOT NULL,
+      audit_json TEXT NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS immutable_work_retry_update BEFORE UPDATE ON scenario_work_retry_audits
+      BEGIN SELECT RAISE(ABORT, 'Work retry audits are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_work_retry_delete BEFORE DELETE ON scenario_work_retry_audits
+      BEGIN SELECT RAISE(ABORT, 'Work retry audits are immutable'); END;
     CREATE TABLE IF NOT EXISTS tool_invocation_bindings (
       idempotency_key TEXT PRIMARY KEY,
       invocation_id TEXT NOT NULL,
@@ -174,6 +251,14 @@ export function createDb(path: string) {
       ON tool_invocation_bindings(tool_source, tool_version, status, updated_at);
     CREATE INDEX IF NOT EXISTS idx_tool_invocation_bindings_run
       ON tool_invocation_bindings(case_id, run_id, work_id, updated_at);
+    CREATE TABLE IF NOT EXISTS tool_invocation_executions (
+      idempotency_key TEXT PRIMARY KEY REFERENCES tool_invocation_bindings(idempotency_key),
+      owner_id TEXT NOT NULL,
+      lease_id TEXT,
+      status TEXT NOT NULL CHECK (status IN ('prepared', 'executing', 'uncertain', 'completed')),
+      reason TEXT,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS tool_invocation_admission_fences (
       tool_source TEXT NOT NULL,
       tool_version TEXT NOT NULL,
@@ -183,6 +268,29 @@ export function createDb(path: string) {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (tool_source, tool_version)
     );
+    CREATE TABLE IF NOT EXISTS tool_invocation_reconciliation_audits (
+      command_id TEXT PRIMARY KEY,
+      request_fingerprint TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      requested_resolution TEXT NOT NULL CHECK (requested_resolution IN ('confirmed_result', 'confirmed_no_effect')),
+      requested_reason TEXT NOT NULL,
+      evidence_fingerprint TEXT NOT NULL,
+      verified_assertion_json TEXT,
+      authorization_decision TEXT NOT NULL CHECK (authorization_decision IN ('allowed', 'denied', 'not_evaluated')),
+      authorization_reason TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK (outcome IN ('resolved', 'denied', 'rejected')),
+      failure_reason TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_invocation_reconciliation_invocation
+      ON tool_invocation_reconciliation_audits(idempotency_key, created_at);
+    CREATE TRIGGER IF NOT EXISTS immutable_tool_invocation_reconciliation_update
+      BEFORE UPDATE ON tool_invocation_reconciliation_audits
+      BEGIN SELECT RAISE(ABORT, 'Tool Invocation reconciliation audits are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_tool_invocation_reconciliation_delete
+      BEFORE DELETE ON tool_invocation_reconciliation_audits
+      BEGIN SELECT RAISE(ABORT, 'Tool Invocation reconciliation audits are immutable'); END;
     CREATE TABLE IF NOT EXISTS provider_capability_receipts (
       id TEXT PRIMARY KEY,
       provider_id TEXT NOT NULL,
@@ -244,6 +352,14 @@ export function createDb(path: string) {
     );
     CREATE INDEX IF NOT EXISTS idx_tool_provider_events_provider
       ON tool_provider_events(provider_id, sequence);
+    CREATE TABLE IF NOT EXISTS tool_provider_activation_deliveries (
+      command_id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'superseded')),
+      last_error TEXT,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS tool_provider_compatibility_audits (
       id TEXT PRIMARY KEY,
       provider_id TEXT NOT NULL,
@@ -288,6 +404,39 @@ export function createDb(path: string) {
       cleanup_failures INTEGER NOT NULL,
       completed_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS tool_provider_archive_receive_failures (
+      id TEXT PRIMARY KEY,
+      command_id TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      received_bytes INTEGER NOT NULL CHECK (received_bytes >= 0),
+      failure_reason TEXT NOT NULL,
+      upload_path TEXT NOT NULL,
+      upload_cleanup TEXT NOT NULL CHECK (upload_cleanup IN ('completed', 'failed')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS tool_provider_refresh_audits (
+      command_id TEXT PRIMARY KEY,
+      request_fingerprint TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      provider_version TEXT NOT NULL,
+      source TEXT,
+      requested_reason TEXT NOT NULL,
+      authorization_decision TEXT NOT NULL CHECK (authorization_decision IN ('allowed', 'denied')),
+      authorization_reason TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK (outcome IN ('running', 'succeeded', 'failed', 'denied')),
+      before_revision INTEGER,
+      after_revision INTEGER,
+      before_catalog_fingerprint TEXT,
+      after_catalog_fingerprint TEXT,
+      catalog_changed INTEGER CHECK (catalog_changed IS NULL OR catalog_changed IN (0, 1)),
+      failure_reason TEXT,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_provider_refresh_audits_provider
+      ON tool_provider_refresh_audits(provider_id, created_at);
     CREATE TABLE IF NOT EXISTS tool_provider_recovery_states (
       provider_id TEXT NOT NULL,
       version TEXT NOT NULL,
@@ -885,6 +1034,17 @@ export function createDb(path: string) {
       if (!existing.some((item) => item.name === column.name)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column.name} ${column.definition}`);
     }
   };
+  const processJournalColumns = sqlite.prepare("PRAGMA table_info(execution_process_journal)").all() as Array<{ name: string }>;
+  if (!processJournalColumns.some((column) => column.name === "budget_bytes")) {
+    sqlite.transaction(() => {
+      sqlite.exec("ALTER TABLE execution_process_journal ADD COLUMN budget_bytes INTEGER NOT NULL DEFAULT 0");
+      sqlite.exec(`UPDATE execution_process_journal SET budget_bytes = CASE
+        WHEN json_valid(observation_json) AND json_extract(observation_json, '$.status') IN ('exit_observed', 'failure_observed')
+        THEN length(CAST(observation_json AS BLOB)) ELSE max(length(CAST(observation_json AS BLOB)), 8388608) END`);
+    })();
+  }
+  ensureColumns("execution_process_journal", [{ name: "history_purged", definition: "INTEGER NOT NULL DEFAULT 0" }]);
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_execution_journal_retention ON execution_process_journal(history_purged, idempotency_key)");
   ensureColumns("knowledge_usage", [
     { name: "positive_outcome_score", definition: "REAL NOT NULL DEFAULT 0" },
     { name: "negative_outcome_score", definition: "REAL NOT NULL DEFAULT 0" },
@@ -930,6 +1090,11 @@ export function createDb(path: string) {
     DROP TABLE IF EXISTS agent_events;
   `);
   applyDataMigrations(sqlite);
+  const modelCallColumns = sqlite.prepare("PRAGMA table_info(scenario_model_calls)").all() as Array<{name:string}>;
+  if (!modelCallColumns.some((column) => column.name==="termination_kind")) sqlite.exec("ALTER TABLE scenario_model_calls ADD COLUMN termination_kind TEXT CHECK(termination_kind IN ('cancelled','interrupted'))");
+  initializeExecutionStorage(sqlite);
+  initializePhysicalStorage(sqlite);
+  initializeScenarioHistory(sqlite);
   return drizzle(sqlite);
 }
 

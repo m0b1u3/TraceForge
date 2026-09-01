@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { waitForCancellation } from "./cancellation.js";
 import {
   EXECUTION_PROTOCOL_VERSION,
   permissionProfileFingerprint,
@@ -31,6 +32,7 @@ import {
   validateProviderHostCapabilityCall,
 } from "./tool-provider-rpc.js";
 import type { ProviderCapabilityHost, ProviderCapabilityInvocation } from "./provider-capability-broker.js";
+import { McpProtocol, type McpProtocolOptions } from "./mcp-protocol.js";
 import {
   createToolProviderDiagnostic,
   diagnosticPublicMessage,
@@ -40,6 +42,9 @@ import {
 } from "./tool-provider-diagnostics.js";
 
 export interface ExecutionNodeToolProviderOptions {
+  /** Host must durably reserve external occupancy before this synchronous dispatch barrier returns. */
+  beforeProcessStart?: (requestId: string) => void;
+  mcp?: McpProtocolOptions;
   node: ExecutionNode;
   executable: string;
   arguments?: string[];
@@ -73,7 +78,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
   private descriptor: ProcessDescriptor | null = null;
   private provider: ToolProviderHandshake | null = null;
   private readonly pending = new Map<string, PendingRequest>();
-  private decoder: LengthPrefixedJsonDecoder;
+  private decoder: LengthPrefixedJsonDecoder | McpProtocol;
   private startPromise: Promise<void> | null = null;
   private generation = 0;
   private epoch = 0;
@@ -83,6 +88,9 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
   private lastExit: ToolProviderProcessStatus["lastExit"] = null;
   private lastError: string | null = null;
   private lastDiagnosticRef: string | null = null;
+  private cleanupFailure: Error | null = null;
+  private startUnconfirmed = false;
+  private stopping: Promise<void> | null = null;
   private stderr = Buffer.alloc(0);
   private omittedStderrBytes = 0;
   private attestation: ToolProviderProcessAttestation;
@@ -105,12 +113,12 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     if (this.maximumFrameBytes < 256) throw new Error("Execution Node Tool Provider frame limit must be at least 256 bytes");
     this.maximumInFlight = positiveInteger(options.maximumInFlightRequests ?? 16, "in-flight request limit");
     this.maximumStderrBytes = positiveInteger(options.maximumStderrBytes ?? 16 * 1024, "stderr limit");
-    this.decoder = new LengthPrefixedJsonDecoder(this.maximumFrameBytes);
+    this.decoder = this.createDecoder();
     this.attestation = { sandboxed: false, backend: "execution-node:pending", network: options.permissions.network };
   }
 
-  async listTools(): Promise<ExecutionToolSpec[]> {
-    const result = await this.request("tools.list", {});
+  async listTools(signal?: AbortSignal): Promise<ExecutionToolSpec[]> {
+    const result = await this.request("tools.list", {}, undefined, signal);
     if (!Array.isArray(result)) throw new Error("Execution Node Tool Provider returned an invalid tool list");
     return result.map(validateToolProviderSpec);
   }
@@ -122,6 +130,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
 
   async restart(): Promise<void> {
     await this.stopProcess();
+    if (this.cleanupFailure) throw this.cleanupFailure;
     this.closing = false;
     await this.ensureReady();
   }
@@ -129,6 +138,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
   async close(): Promise<void> {
     this.closing = true;
     await this.stopProcess();
+    if (this.cleanupFailure) throw this.cleanupFailure;
   }
 
   status(): ToolProviderProcessStatus {
@@ -144,13 +154,25 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     };
   }
 
-  private async request(method: ToolProviderCommandMethod, params: unknown, context?: ToolExecutionContext): Promise<unknown> {
+  private async request(method: ToolProviderCommandMethod, params: unknown, context?: ToolExecutionContext, signal = context?.signal): Promise<unknown> {
+    signal?.throwIfAborted();
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason ?? new Error("Tool Provider request cancelled"));
+    signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => controller.abort(new ToolProviderRpcTransportError("Tool Provider total request deadline exceeded")), this.requestTimeoutMs);
+    try { return await waitForCancellation(async () => {
     if (Date.parse(this.options.attribution.leaseExpiresAt) <= Date.now()) {
       await this.stopProcess();
       throw new Error(`Tool Provider service lease ${this.options.attribution.leaseId} has expired`);
     }
     await this.ensureReady();
+    controller.signal.throwIfAborted();
     return this.send(method, params, context);
+    }, controller.signal); }
+    catch (error) {
+      if (controller.signal.aborted) { this.closing = true; void this.close().catch(() => undefined); }
+      throw error;
+    } finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); }
   }
 
   private ensureReady(): Promise<void> {
@@ -166,7 +188,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     this.provider = null;
     this.stderr = Buffer.alloc(0);
     this.omittedStderrBytes = 0;
-    this.decoder = new LengthPrefixedJsonDecoder(this.maximumFrameBytes);
+    this.decoder = this.createDecoder();
     this.cursor = 0;
     try {
       const leaseRemainingMs = Date.parse(this.options.attribution.leaseExpiresAt) - Date.now();
@@ -176,8 +198,12 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
         protocol: EXECUTION_PROTOCOL_VERSION,
         requiredCapabilities: ["process.spawn", "process.stdio", "process.resource_limits"],
       });
+      if (this.closing) throw new Error("Tool Provider closed before process dispatch");
+      const requestId = `tool-provider:${this.options.attribution.idempotencyKey}:generation:${this.generation + 1}`;
+      this.options.beforeProcessStart?.(requestId);
+      this.startUnconfirmed = true;
       const started = await this.options.node.startProcess({
-        requestId: `tool-provider:${this.options.attribution.idempotencyKey}:generation:${this.generation + 1}`,
+        requestId,
         attribution: this.options.attribution,
         executable: this.options.executable,
         arguments: this.options.arguments ?? [],
@@ -189,8 +215,10 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
         resources: this.options.resources,
         permissions: this.options.permissions,
       });
+      this.startUnconfirmed = false;
       this.access = { processId: started.process.id, adoptionToken: started.adoptionToken };
       this.descriptor = started.process;
+      if (this.closing) throw new Error("Tool Provider closed while starting");
       this.verifyEnforcement(started.process);
       this.generation += 1;
       const epoch = ++this.epoch;
@@ -204,6 +232,9 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
       }
       if (this.options.expectedProviderVersion && this.provider.providerVersion !== this.options.expectedProviderVersion) {
         throw new Error(`Execution Node Tool Provider version mismatch: expected ${this.options.expectedProviderVersion}`);
+      }
+      if (this.decoder instanceof McpProtocol) {
+        await this.options.node.writeProcessInput({ ...this.access, dataBase64: this.decoder.initialized().toString("base64") });
       }
       this.state = "ready";
       this.lastError = null;
@@ -241,7 +272,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     if (this.pending.size >= this.maximumInFlight) return Promise.reject(new Error("Execution Node Tool Provider in-flight request limit exceeded"));
     const id = randomUUID();
     const request: ToolProviderRpcRequest = { version: TOOL_PROVIDER_RPC_VERSION, id, method, params };
-    const frame = encodeLengthPrefixedJson(request, this.maximumFrameBytes);
+    const frame = this.decoder instanceof McpProtocol ? this.decoder.encode(request) : encodeLengthPrefixedJson(request, this.maximumFrameBytes);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -307,6 +338,14 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
       return;
     }
     for (const value of values) this.onFrame(value);
+    if (this.decoder instanceof McpProtocol && this.access) {
+      const access = this.access;
+      for (const frame of this.decoder.takeResponses()) {
+        void this.options.node.writeProcessInput({ ...access, dataBase64: frame.toString("base64") }).catch(() => {
+          this.transportFailed(new Error("MCP protocol response failed"));
+        });
+      }
+    }
   }
 
   private onFrame(value: unknown): void {
@@ -475,15 +514,42 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     return diagnosticPublicMessage(record);
   }
 
-  private async stopProcess(): Promise<void> {
+  private stopProcess(): Promise<void> {
+    if (this.stopping) return this.stopping;
+    this.stopping = this.stopOwnedProcess().finally(() => { this.stopping = null; });
+    return this.stopping;
+  }
+
+  private async stopOwnedProcess(): Promise<void> {
+    if (this.startUnconfirmed) this.cleanupFailure = new Error("Tool Provider start outcome is unconfirmed; independent recovery is required");
     const access = this.access;
     this.access = null;
     this.descriptor = null;
     this.provider = null;
     this.epoch += 1;
-    if (access) await this.options.node.terminateProcess({ ...access, force: true }).catch(() => undefined);
+    this.rejectPending(new ToolProviderRpcTransportError("Execution Node Tool Provider process stopping; cleanup not yet confirmed"));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error("Tool Provider cleanup deadline exceeded")), Math.min(5000, this.requestTimeoutMs));
+    if (access) await waitForCancellation(async () => {
+      let descriptor = await this.options.node.terminateProcess({ ...access, force: true });
+      while (descriptor.state !== "exited" && descriptor.state !== "failed") {
+        controller.signal.throwIfAborted();
+        const batch = await this.options.node.waitProcessEvents({ ...access, afterSequence: descriptor.lastEventSequence, maximumEvents: 256 }, 250);
+        descriptor = batch.process;
+        // A custom node may return empty batches immediately; let the hard deadline run.
+        if (!batch.events.length) await new Promise<void>((resolve) => setTimeout(resolve, 1));
+      }
+    }, controller.signal).catch(() => {
+      this.cleanupFailure = new Error("Execution Node could not confirm Tool Provider process cleanup");
+    });
+    clearTimeout(timer);
     this.rejectPending(new ToolProviderRpcTransportError("Execution Node Tool Provider process stopped"));
-    this.state = "stopped";
+    this.state = this.cleanupFailure ? "failed" : "stopped";
+    if (this.cleanupFailure) this.lastError = this.cleanupFailure.message;
+  }
+
+  private createDecoder(): LengthPrefixedJsonDecoder | McpProtocol {
+    return this.options.mcp ? new McpProtocol(this.options.mcp, this.maximumFrameBytes) : new LengthPrefixedJsonDecoder(this.maximumFrameBytes);
   }
 }
 

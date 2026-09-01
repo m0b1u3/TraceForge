@@ -51,7 +51,7 @@ export class SqliteModelExecutionStore implements ModelExecutionStore {
   recoverInterrupted(at: string): number {
     return this.sqlite.prepare(`
       UPDATE scenario_model_calls
-      SET status = 'failed', error = 'runtime restarted before model call completed', completed_at = ?
+      SET status = 'failed', termination_kind = 'interrupted', error = 'runtime restarted before model call completed', completed_at = ?
       WHERE status = 'running'
     `).run(at).changes;
   }
@@ -78,11 +78,12 @@ export class SqliteModelExecutionStore implements ModelExecutionStore {
     })();
   }
 
-  finish(id: string, status: "completed" | "failed" | "timed_out", usage: ModelUsageSnapshot, error: string | null, at: string): void {
+  finish(id: string, status: "completed" | "failed" | "timed_out", usage: ModelUsageSnapshot, error: string | null, at: string, terminationKind?: "cancelled"): void {
+    if (terminationKind && status!=="failed") throw new Error("Incompatible model termination status");
     const updated = this.sqlite.prepare(`
       UPDATE scenario_model_calls SET status = ?, prompt_tokens = ?, completion_tokens = ?, total_tokens = ?,
-        error = ?, completed_at = ? WHERE id = ? AND status = 'running'
-    `).run(status, usage.promptTokens, usage.completionTokens, usage.totalTokens, error, at, id);
+        error = ?, completed_at = ?, termination_kind = ? WHERE id = ? AND status = 'running'
+    `).run(status, usage.promptTokens, usage.completionTokens, usage.totalTokens, error, at, terminationKind ?? null, id);
     if (updated.changes !== 1) throw new Error(`Unknown or completed model call ${id}`);
   }
 

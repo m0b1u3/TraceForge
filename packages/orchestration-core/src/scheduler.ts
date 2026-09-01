@@ -43,7 +43,8 @@ export class CapabilityScheduler {
       .filter((worker) => isHealthy(worker, options))
       .sort((left, right) => left.id.localeCompare(right.id));
     const queued = state.workItems
-      .filter((work) => work.status === "queued" && work.phaseId === state.activePhaseId && work.attempt < work.maxAttempts)
+      .filter((work) => work.status === "queued" && work.phaseId === state.activePhaseId
+        && (work.resumeFromCheckpoint || work.attempt < work.maxAttempts))
       .sort((left, right) => right.priority - left.priority || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
     const assignments: WorkAssignment[] = [];
     const activeInPhase = state.workItems.filter((work) => work.phaseId === state.activePhaseId && work.status === "running").length;

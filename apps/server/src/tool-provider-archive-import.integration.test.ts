@@ -1,9 +1,9 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Fastify from "fastify";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDb, getSqliteClient } from "./db/client.js";
 import {
   canonicalJson,
@@ -21,8 +21,25 @@ import {
 } from "./tool-provider-archive-import.js";
 import { inspectToolProviderPackage, ManagedToolProviderPackageStore } from "./tool-provider-package-store.js";
 
+const filesystemFaults = vi.hoisted(() => ({
+  intercept: null as null | ((operation: string, args: unknown[]) => { value: unknown } | void),
+}));
+vi.mock("node:fs", async () => {
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  const wrapped = Object.fromEntries(["writeSync", "writeFileSync", "mkdtempSync", "mkdirSync", "renameSync", "rmSync"].map((name) => [
+    name,
+    (...args: unknown[]) => {
+      const override = filesystemFaults.intercept?.(name, args);
+      if (override) return override.value;
+      return (actual[name as keyof typeof actual] as (...values: unknown[]) => unknown)(...args);
+    },
+  ]));
+  return { ...actual, ...wrapped };
+});
+
 const temporaryDirectories: string[] = [];
 afterEach(() => {
+  filesystemFaults.intercept = null;
   for (const directory of temporaryDirectories.splice(0)) {
     makeWritable(directory);
     rmSync(directory, { recursive: true, force: true });
@@ -30,13 +47,15 @@ afterEach(() => {
 });
 
 function fixture(authorizer?: ToolProviderArchiveImportAuthorizer) {
-  const root = mkdtempSync(join(tmpdir(), "traceforge-provider-import-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "traceforge-provider-import-")));
   temporaryDirectories.push(root);
   const sourceRoot = join(root, "source");
   mkdirSync(sourceRoot);
   const executable = join(sourceRoot, "provider.bin");
   writeFileSync(executable, "neutral provider executable");
   chmodSync(executable, 0o700);
+  mkdirSync(join(sourceRoot, "assets"));
+  writeFileSync(join(sourceRoot, "assets", "metadata.json"), "{}");
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const manifest = makeManifest(sourceRoot);
   const sqlite = getSqliteClient(createDb(":memory:"));
@@ -190,6 +209,185 @@ describe("Tool Provider archive import control plane", () => {
     expect(response.statusCode).toBe(413);
     expect(limited.listAudits()).toEqual([]);
     await app.close();
+    context.sqlite.close();
+  });
+});
+
+describe("Provider archive filesystem fault injection", () => {
+  it.each(["disk-full", "no-progress"])("audits %s upload writes without authorizing or installing", async (fault) => {
+    let authorizations = 0;
+    const context = fixture({ async authorize() {
+      authorizations += 1;
+      return { decision: "allowed", reason: "test" };
+    } });
+    filesystemFaults.intercept = (operation) => {
+      if (operation !== "writeSync") return;
+      if (fault === "no-progress") return { value: 0 };
+      throw new Error("ENOSPC: injected upload write failure");
+    };
+    await expect(context.service.import({ archive: context.archive, actor: "operator", commandId: "write-failed" }))
+      .rejects.toMatchObject({ statusCode: 500 });
+    expect(authorizations).toBe(0);
+    expect(context.control.list()).toEqual([]);
+    expect(context.service.listAudits()).toEqual([]);
+    expect(context.service.listReceiveFailures()).toMatchObject([{
+      commandId: "write-failed", receivedBytes: context.archive.length, uploadCleanup: "completed",
+    }]);
+    expect(readdirSync(context.service.uploadRoot)).toEqual([]);
+    filesystemFaults.intercept = null;
+    await expect(context.service.import({ archive: context.archive, actor: "operator", commandId: "write-failed" }))
+      .resolves.toMatchObject({ installation: { state: "installed" } });
+    expect(authorizations).toBe(1);
+    context.sqlite.close();
+  });
+
+  it("recovers a partial upload whose initial cleanup failed without inventing a complete digest or authorization", async () => {
+    const context = fixture();
+    filesystemFaults.intercept = (operation, args) => {
+      if (operation === "rmSync" && String(args[0]).startsWith(context.service.uploadRoot)) {
+        throw new Error("EACCES: injected upload cleanup failure");
+      }
+    };
+    const archive = (async function* () {
+      yield context.archive.subarray(0, 12);
+      throw new Error("injected receive interruption");
+    })();
+    await expect(context.service.importStream({ archive, actor: "operator", commandId: "interrupted-receive" }))
+      .rejects.toThrow("injected receive interruption");
+    expect(context.service.listReceiveFailures()).toMatchObject([{
+      receivedBytes: 12, uploadCleanup: "failed", failureReason: "injected receive interruption",
+    }]);
+    expect(context.service.listAudits()).toEqual([]);
+    expect(context.control.list()).toEqual([]);
+    expect(readdirSync(context.service.uploadRoot)).toHaveLength(1);
+    filesystemFaults.intercept = null;
+    const restarted = new ToolProviderArchiveImportService(
+      context.sqlite, context.control, context.controlStore, context.trustRoots, join(context.root, "imports"),
+      { async authorize() { throw new Error("recovery must not authorize or install"); } },
+    );
+    expect(restarted.recoverInterrupted()).toEqual({ installed: 0, rejected: 0, orphaned: 0, cleanupFailures: 0 });
+    expect(restarted.listReceiveFailures()).toMatchObject([{ uploadCleanup: "completed" }]);
+    expect(readdirSync(restarted.uploadRoot)).toEqual([]);
+    expect(context.control.list()).toEqual([]);
+    context.sqlite.close();
+  });
+
+  it.each(["allocate", "extract-directory", "extract-write", "publish-rename"])("rejects %s failures without publishing an installation", async (fault) => {
+    const context = fixture();
+    filesystemFaults.intercept = (operation, args) => {
+      const path = String(args[0]);
+      const matches = (fault === "allocate" && operation === "mkdtempSync" && path.startsWith(context.service.stagingRoot))
+        || (fault === "extract-directory" && operation === "mkdirSync" && path.startsWith(join(context.service.stagingRoot, "provider-")))
+        || (fault === "extract-write" && operation === "writeFileSync" && path.startsWith(context.service.stagingRoot))
+        || (fault === "publish-rename" && operation === "renameSync" && path.startsWith(join(context.root, "packages")));
+      if (matches) throw new Error(`${fault === "allocate" || fault === "extract-directory" ? "EACCES" : "ENOSPC"}: injected ${fault} failure`);
+    };
+    await expect(context.service.import({ archive: context.archive, actor: "operator", commandId: fault }))
+      .rejects.toMatchObject({ statusCode: 500 });
+    expect(context.control.list()).toEqual([]);
+    expect(context.service.listAudits()).toMatchObject([{
+      outcome: "rejected", failureReason: expect.stringContaining(fault), uploadCleanup: "completed",
+      packageCleanup: fault === "allocate" ? "not_required" : "completed",
+    }]);
+    expect(readdirSync(context.service.uploadRoot)).toEqual([]);
+    expect(readdirSync(context.service.stagingRoot)).toEqual([]);
+    const providerRoot = join(context.root, "packages", context.manifest.providerId);
+    if (existsSync(providerRoot)) expect(readdirSync(providerRoot)).toEqual([]);
+    context.sqlite.close();
+  });
+
+  it("records extraction ownership before writes and retries failed staging cleanup", async () => {
+    const context = fixture();
+    filesystemFaults.intercept = (operation, args) => {
+      if (!String(args[0]).startsWith(context.service.stagingRoot)) return;
+      if (operation === "writeFileSync") throw new Error("ENOSPC: injected extraction failure");
+      if (operation === "rmSync") throw new Error("EACCES: injected staging cleanup failure");
+    };
+    await expect(context.service.import({ archive: context.archive, actor: "operator", commandId: "extract-cleanup-failed" }))
+      .rejects.toMatchObject({ statusCode: 500 });
+    expect(context.service.listAudits()).toMatchObject([{
+      outcome: "rejected", packageCleanup: "failed", uploadCleanup: "completed",
+      failureReason: expect.stringContaining("extraction failure"),
+    }]);
+    expect(context.service.listAudits()[0].failureReason).toContain("staging cleanup failure");
+    expect(readdirSync(context.service.stagingRoot)).toHaveLength(1);
+    expect(context.control.list()).toEqual([]);
+    filesystemFaults.intercept = null;
+    expect(context.service.recoverInterrupted().cleanupFailures).toBe(0);
+    expect(context.service.listAudits()).toMatchObject([{ outcome: "rejected", packageCleanup: "completed" }]);
+    expect(readdirSync(context.service.stagingRoot)).toEqual([]);
+    context.sqlite.close();
+  });
+
+  it.each(["upload", "staging"])("preserves a committed installation while retrying %s cleanup", async (kind) => {
+    const context = fixture();
+    const cleanupRoot = kind === "upload" ? context.service.uploadRoot : context.service.stagingRoot;
+    filesystemFaults.intercept = (operation, args) => {
+      if (operation === "rmSync" && String(args[0]).startsWith(cleanupRoot)) throw new Error("EACCES: cleanup denied");
+    };
+    const result = await context.service.import({ archive: context.archive, actor: "operator", commandId: "cleanup-failed" });
+    expect(result.installation.state).toBe("installed");
+    expect(result.audit[kind === "upload" ? "uploadCleanup" : "packageCleanup"]).toBe("failed");
+    expect(readdirSync(cleanupRoot)).toHaveLength(1);
+    filesystemFaults.intercept = null;
+    expect(context.service.recoverInterrupted().cleanupFailures).toBe(0);
+    expect(context.service.listAudits()).toMatchObject([{
+      outcome: "installed", uploadCleanup: "completed", packageCleanup: "completed",
+    }]);
+    const replay = await context.service.import({ archive: context.archive, actor: "operator", commandId: "cleanup-failed" });
+    expect(replay.replayed).toBe(true);
+    expect(context.control.listEvents(context.manifest.providerId)).toHaveLength(1);
+    expect(existsSync(result.installation.packageRoot)).toBe(true);
+    context.sqlite.close();
+  });
+
+  it("refuses cleanup records pointing outside the managed upload root", async () => {
+    const context = fixture();
+    const outside = join(context.root, "upload-keep.tfpa");
+    writeFileSync(outside, "user content");
+    context.sqlite.prepare(`
+      INSERT INTO tool_provider_archive_receive_failures
+        (id, command_id, actor, received_bytes, failure_reason, upload_path, upload_cleanup, created_at, updated_at)
+      VALUES ('outside', 'outside', 'operator', 0, 'interrupted', ?, 'failed', ?, ?)
+    `).run(outside, new Date().toISOString(), new Date().toISOString());
+    expect(context.service.recoverInterrupted().cleanupFailures).toBe(1);
+    expect(readFileSync(outside, "utf8")).toBe("user content");
+    expect(context.service.listReceiveFailures()).toMatchObject([{ uploadCleanup: "failed" }]);
+    context.sqlite.close();
+  });
+
+  it("completes short writes without truncating the signed archive", async () => {
+    const context = fixture();
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    let writes = 0;
+    filesystemFaults.intercept = (operation, args) => {
+      if (operation !== "writeSync") return;
+      writes += 1;
+      return { value: actual.writeSync(args[0] as number, args[1] as Buffer, args[2] as number, Math.min(7, args[3] as number)) };
+    };
+    const result = await context.service.import({ archive: context.archive, actor: "operator", commandId: "short-writes" });
+    expect(result.installation.state).toBe("installed");
+    expect(result.audit.archiveSha256).toBe(createHash("sha256").update(context.archive).digest("hex"));
+    expect(writes).toBe(Math.ceil(context.archive.length / 7));
+    context.sqlite.close();
+  });
+
+  it.runIf(process.platform !== "win32")("refuses cleanup after the upload root is replaced by a symbolic link", () => {
+    const context = fixture();
+    const outside = join(context.root, "user-files");
+    mkdirSync(outside);
+    const sentinel = join(outside, "upload-keep.tfpa");
+    writeFileSync(sentinel, "user content");
+    renameSync(context.service.uploadRoot, join(context.root, "original-uploads"));
+    symlinkSync(outside, context.service.uploadRoot, "dir");
+    const at = new Date().toISOString();
+    context.sqlite.prepare(`
+      INSERT INTO tool_provider_archive_receive_failures
+        (id, command_id, actor, received_bytes, failure_reason, upload_path, upload_cleanup, created_at, updated_at)
+      VALUES ('swapped-root', 'swapped-root', 'operator', 0, 'interrupted', ?, 'failed', ?, ?)
+    `).run(join(context.service.uploadRoot, "upload-keep.tfpa"), at, at);
+    expect(context.service.recoverInterrupted().cleanupFailures).toBe(1);
+    expect(readFileSync(sentinel, "utf8")).toBe("user content");
     context.sqlite.close();
   });
 });

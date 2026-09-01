@@ -87,6 +87,8 @@ export type ScenarioOutputDraft = Omit<ScenarioOutput, "phaseId" | "producedByWo
 };
 
 export interface ScenarioWorkItem {
+  /** Previous blocked Work; retries preserve its immutable event history. */
+  retryOf?: string;
   id: string;
   runId: string;
   phaseId: string;
@@ -221,6 +223,7 @@ export interface WorkProposal {
 }
 
 export type ScenarioCommand =
+  | { type: "migrate_run_package"; target: ScenarioPackageBinding; definitionVersion: number; migrationRef: string; authorizationRef: string; reason: string; at: string }
   | {
       type: "start_run";
       runId: string;
@@ -264,6 +267,8 @@ export type ScenarioCommand =
   | { type: "complete_work"; workId: string; leaseId: string; summary: string; outputs: ScenarioOutputDraft[]; at: string }
   | { type: "fail_work"; workId: string; leaseId: string; error: string; at: string }
   | { type: "block_work"; workId: string; leaseId: string; reason: string; at: string }
+  | { type: "retry_blocked_work"; workId: string; replacementWorkId: string; idempotencyKey: string; authorizationRef: string; reason: string; at: string }
+  | { type: "continue_work"; workId: string; checkpointRef: string; authorizationRef: string; reason: string; at: string }
   | { type: "cancel_work"; workId: string; leaseId?: string; reason: string; at: string }
   | { type: "reprioritize_work"; workId: string; priority: number; reason: string; at: string }
   | { type: "issue_directive"; directive: Omit<RunDirective, "createdAt">; at: string }
@@ -273,6 +278,7 @@ export type ScenarioCommand =
   | { type: "cancel_run"; reason: string; at: string };
 
 export type ScenarioEvent =
+  | { type: "run_package_migrated"; from: ScenarioPackageBinding; to: ScenarioPackageBinding; fromDefinitionVersion: number; toDefinitionVersion: number; migrationRef: string; authorizationRef: string; reason: string; at: string }
   | { type: "run_started"; state: ScenarioRunState }
   | { type: "work_proposed"; work: ScenarioWorkItem; at: string }
   | { type: "work_claimed"; workId: string; workerId: string; leaseId: string; leaseExpiresAt: string; resumedFromCheckpoint: boolean; at: string }
@@ -284,6 +290,8 @@ export type ScenarioEvent =
   | { type: "work_completed"; workId: string; leaseId: string; summary: string; outputs: ScenarioOutput[]; at: string }
   | { type: "work_failed"; workId: string; leaseId: string; error: string; at: string }
   | { type: "work_blocked"; workId: string; leaseId: string; reason: string; at: string }
+  | { type: "work_retry_authorized"; sourceWorkId: string; work: ScenarioWorkItem; authorizationRef: string; reason: string; at: string }
+  | { type: "work_continuation_authorized"; workId: string; checkpointRef: string; authorizationRef: string; reason: string; at: string }
   | { type: "work_cancelled"; workId: string; reason: string; at: string }
   | { type: "work_reprioritized"; workId: string; priority: number; reason: string; at: string }
   | { type: "directive_issued"; directive: RunDirective; at: string }

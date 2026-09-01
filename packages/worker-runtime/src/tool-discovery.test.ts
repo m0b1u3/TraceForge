@@ -32,6 +32,32 @@ function tool(name: string, source: string, version = "1.0.0"): ExecutionToolAda
 }
 
 describe("ExecutionToolDiscoveryRuntime", () => {
+  it("times out uncooperative discovery, fences its generation and discards a late catalog", async () => {
+    let release!: (tools: ExecutionToolAdapter[]) => void; let signal: AbortSignal | undefined;
+    const state = new MemoryDiscoveryState();
+    const runtime = new ExecutionToolDiscoveryRuntime([{ source: "external", discover(value) { signal = value; return new Promise((resolve) => { release = resolve; }); } }], 0, 3, () => new Date(), state, 20);
+    await runtime.refresh();
+    expect(signal?.aborted).toBe(true);
+    expect(runtime.snapshot().sources[0]).toMatchObject({ status: "degraded", acceptingInvocations: false, inFlightInvocations: 1 });
+    expect(state.snapshots.get("external")?.outcome).toBe("degraded");
+    await expect(runtime.close()).rejects.toThrow("unconfirmed");
+    release([tool("late", "external")]); await new Promise((r) => setTimeout(r, 0));
+    expect(runtime.registry.get("late")).toBeUndefined();
+    await runtime.close();
+  });
+  it("does not drain the previous active catalog when a candidate activation times out", async () => {
+    const runtime = new ExecutionToolDiscoveryRuntime([{ source: "external", async discover() { return [tool("first", "external")]; } }], 0, 3, () => new Date(), undefined, 20);
+    await runtime.refresh(); let release!: (value: ExecutionToolAdapter[]) => void;
+    await expect(runtime.activateSource({ source: "external", discover() { return new Promise((resolve) => { release = resolve; }); } })).rejects.toThrow("deadline");
+    expect(runtime.registry.get("first")?.lifecycle).toBe("active");
+    release([]); await runtime.close();
+  });
+  it("aborts a cooperative source when draining during discovery", async () => {
+    let started!: () => void; const ready = new Promise<void>((r) => { started = r; });
+    const runtime = new ExecutionToolDiscoveryRuntime([{ source: "external", discover(signal) { started(); return new Promise((_, reject) => signal!.addEventListener("abort", () => reject(signal!.reason), { once: true })); } }], 0, 3, () => new Date(), undefined, 100);
+    const refresh = runtime.refresh(); await ready; await runtime.close(); await refresh;
+    expect(runtime.snapshot().sources[0]).toMatchObject({ acceptingInvocations: false, inFlightInvocations: 0 });
+  });
   it("reports initialization before the first source refresh", () => {
     const runtime = new ExecutionToolDiscoveryRuntime([{ source: "external", async discover() { return []; } }]);
     expect(runtime.snapshot()).toMatchObject({ status: "initializing", sources: [{ status: "pending" }] });
@@ -83,6 +109,24 @@ describe("ExecutionToolDiscoveryRuntime", () => {
       revision: 5, outcome: "degraded", lastSuccessfulCatalog: [{ name: "first" }],
       lastFailure: { message: "source unavailable after restart" },
     });
+  });
+
+  it.each([false, true])("reloads the latest durable revision after deactivation before restoring an older generation (history=%s)", async (withHistory) => {
+    const state = new MemoryDiscoveryState();
+    if (withHistory) state.snapshots.set("external", historicalSnapshot());
+    const runtime = new ExecutionToolDiscoveryRuntime([], 30_000, 3, () => new Date(), state);
+    const source = (version: string) => ({ source: "external", async discover() { return [tool("candidate", "external", version)]; } });
+    await runtime.activateSource(source("1.0.0"));
+    await runtime.activateSource(source("2.0.0"));
+    const revision = state.snapshots.get("external")!.revision;
+    await runtime.deactivateSource("external");
+    expect(runtime.snapshot().sources).toEqual([]);
+    await runtime.activateSource(source("1.0.0"));
+    expect(state.snapshots.get("external")).toMatchObject({ revision: revision + 1, lastSuccessfulCatalog: [{ version: "1.0.0" }] });
+    expect(runtime.registry.get("candidate")).toMatchObject({ lifecycle: "active", provider: { version: "1.0.0" } });
+    await runtime.refresh();
+    expect(state.snapshots.get("external")!.revision).toBe(revision + 2);
+    await runtime.close();
   });
 
   it("persists a bounded failure while retaining the last successful catalog", async () => {
@@ -153,6 +197,28 @@ describe("ExecutionToolDiscoveryRuntime", () => {
       status: "degraded",
       sources: [{ status: "degraded", lastError: "provider endpoint unavailable", discoveredProviders: 1 }],
     });
+  });
+
+  it("returns an auditable refresh result without replacing the last good catalog on failure", async () => {
+    let fail = false;
+    const runtime = new ExecutionToolDiscoveryRuntime([{
+      source: "external",
+      async discover() { if (fail) throw new Error("catalog probe failed"); return [tool("first", "external")]; },
+    }], 0);
+    const ready = await runtime.refreshWithResult("external");
+    expect(ready).toMatchObject({
+      source: "external", outcome: "ready", beforeRevision: 0, afterRevision: 1,
+      catalogChanged: true, failure: null,
+    });
+    fail = true;
+    const degraded = await runtime.refreshWithResult("external");
+    expect(degraded).toMatchObject({
+      source: "external", outcome: "degraded", beforeRevision: 1, afterRevision: 2,
+      beforeCatalogFingerprint: ready.afterCatalogFingerprint,
+      afterCatalogFingerprint: ready.afterCatalogFingerprint,
+      catalogChanged: false, failure: "catalog probe failed",
+    });
+    expect(runtime.registry.get("first")).toMatchObject({ lifecycle: "active" });
   });
 
   it("drains disappeared tools and activates a new version", async () => {

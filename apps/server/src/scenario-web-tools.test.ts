@@ -87,6 +87,7 @@ function setup(actions = ["scope.read", "web.traffic.read", "web.request.replay"
     () => Date.parse("2026-08-24T09:00:00.000Z"),
   );
   const traffic = new SqliteScenarioTrafficStore(sqlite);
+  authorization.pin("scope_1","case_1",{id:WEB_BLACKBOX_PACKAGE.id,version:WEB_BLACKBOX_PACKAGE.version,schemaRevision:WEB_BLACKBOX_PACKAGE.schemaRevision},0);
   return { sqlite, sessions, authorization, traffic };
 }
 

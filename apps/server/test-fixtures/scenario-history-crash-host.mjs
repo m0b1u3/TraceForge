@@ -1,0 +1,13 @@
+import { join } from "node:path";
+import { database } from "../src/test-fixtures/execution-recovery.ts";
+import { migrationFixture } from "../src/test-fixtures/run-migration.ts";
+import { ScenarioHistoryControl } from "../src/scenario-history-control.ts";
+const [root, phase] = process.argv.slice(2), sqlite = database(join(root, "state.db"));
+migrationFixture(sqlite);
+const control = new ScenarioHistoryControl(sqlite, { async authorize() { return { decision: "allowed", authorizationRef: "fixture", expiresAt: "2099-01-01T00:00:00.000Z" }; } });
+const range = { caseId: "case", runId: "run", expectedRevision: 4, throughRevision: 4 }, preview = control.preview(range);
+sqlite.function("crash_history", () => process.kill(process.pid, "SIGKILL"));
+const table = phase === "segment" ? "scenario_history_segments" : phase === "source" ? "scenario_events" : "scenario_history_audits";
+if (phase !== "committed") sqlite.exec(`CREATE TEMP TRIGGER crash AFTER ${phase === "source" ? "UPDATE" : "INSERT"} ON ${table} BEGIN SELECT crash_history(); END`);
+await control.archive({ ...range, commandId: "archive", actor: "operator", reason: "Preserve", planFingerprint: preview.planFingerprint });
+process.kill(process.pid, "SIGKILL");

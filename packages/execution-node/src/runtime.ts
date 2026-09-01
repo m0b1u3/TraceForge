@@ -25,6 +25,10 @@ import {
   type ListDirectoryRequest,
   type ListDirectoryResponse,
   type ProcessAccess,
+  type ProcessExecutionJournal,
+  type ProcessExecutionObservation,
+  type ProcessExecutionQuery,
+  type ProcessLaunchIdentity,
   type ProcessDescriptor,
   type ProcessEnforcementAttestation,
   type ProcessEvent,
@@ -47,6 +51,7 @@ import {
   type WriteProcessInputRequest,
 } from "./protocol.js";
 import type { ExecutionHttpBroker } from "./network-broker.js";
+import { ProcessWatchdog, prepareProcessLaunch, processWatchdogOptions, validateDeadline, writeProcessPipe, type ProcessWatchdogOptions } from "./process-watchdog.js";
 
 export interface ManagedProcess {
   readonly pid: number;
@@ -67,7 +72,7 @@ export interface LaunchedProcess {
 }
 
 export interface ProcessLauncher {
-  launch(request: StartProcessRequest): Promise<LaunchedProcess>;
+  launch(request: StartProcessRequest, identity?: ProcessLaunchIdentity): Promise<LaunchedProcess>;
 }
 
 export interface SpawnLaunchSpec {
@@ -83,12 +88,20 @@ export interface SpawnLaunchSpec {
 }
 
 export class NodeSpawnProcessLauncher implements ProcessLauncher {
-  constructor(private readonly resolveLaunch: (request: StartProcessRequest) => Promise<SpawnLaunchSpec> | SpawnLaunchSpec) {}
+  private readonly watchdogOptions: ProcessWatchdogOptions;
+  constructor(private readonly resolveLaunch: (request: StartProcessRequest) => Promise<SpawnLaunchSpec> | SpawnLaunchSpec,
+    watchdogOptions: Partial<ProcessWatchdogOptions> = {}) {
+    this.watchdogOptions = processWatchdogOptions(watchdogOptions);
+  }
 
   async launch(request: StartProcessRequest): Promise<LaunchedProcess> {
     if (request.terminal) throw new Error("Node stdio launcher does not provide a PTY");
-    const spec = await this.resolveLaunch(request);
-    if (spec.resourceLimitStatusFile) await unlink(spec.resourceLimitStatusFile).catch(() => undefined);
+    validateDeadline(request.timeoutMs, "Execution timeout");
+    const spec = await prepareProcessLaunch(async () => {
+      const spec = await this.resolveLaunch(request);
+      if (spec.resourceLimitStatusFile) await unlink(spec.resourceLimitStatusFile).catch(() => undefined);
+      return spec;
+    }, this.watchdogOptions.startupTimeoutMs);
     const child = spawn(spec.executable, spec.arguments, {
       cwd: spec.workingDirectory,
       env: spec.environment,
@@ -96,8 +109,10 @@ export class NodeSpawnProcessLauncher implements ProcessLauncher {
       windowsHide: spec.windowsHide,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    const managed = new ChildManagedProcess(child, this.watchdogOptions, request.timeoutMs, spec.terminate, spec.resourceLimitStatusFile);
+    await managed.waitStarted();
     return {
-      process: new ChildManagedProcess(child, spec.terminate, spec.resourceLimitStatusFile),
+      process: managed,
       enforcement: spec.enforcement,
     };
   }
@@ -109,16 +124,50 @@ class ChildManagedProcess implements ManagedProcess {
   private readonly errorListeners: Array<(error: Error) => void> = [];
   private pendingResourceLimit: ResourceLimitKind | null = null;
   private pendingError: Error | null = null;
+  private readonly exitListeners: Array<(exitCode: number | null, signal: string | null) => void> = [];
+  private pendingExit: { exitCode: number | null; signal: string | null } | null = null;
+  private readonly watchdog: ProcessWatchdog;
+  private readonly started: Promise<void>;
 
   constructor(
     private readonly child: ChildProcessWithoutNullStreams,
+    options: ProcessWatchdogOptions,
+    timeoutMs: number,
     private readonly customTerminate?: SpawnLaunchSpec["terminate"],
     private readonly resourceLimitStatusFile?: string,
   ) {
-    if (!child.pid) throw new Error("Spawned process has no operating-system process id");
-    this.pid = child.pid;
-    this.child.once("error", (error) => this.emitError(error));
+    this.pid = child.pid ?? 0;
+    this.child.stdin.setMaxListeners(66); // 64 bounded operations plus transport listeners.
+    let rejectStarted: (error: Error) => void = () => undefined;
+    this.watchdog = new ProcessWatchdog(options, timeoutMs, (error) => {
+      rejectStarted(error);
+      this.emitError(error);
+      try { this.child.kill("SIGKILL"); } catch { /* transport failure is not cleanup proof */ }
+      this.child.stdin.destroy(); this.child.stdout.destroy(); this.child.stderr.destroy();
+      this.finish(null, null);
+    });
+    this.started = new Promise<void>((resolvePromise, reject) => {
+      rejectStarted = reject;
+      this.child.once("spawn", () => {
+        this.watchdog.started();
+        if (!this.pid) { this.watchdog.fail(new Error("Spawned process has no operating-system process id")); return; }
+        resolvePromise();
+      });
+    });
+    this.child.once("error", (error) => this.watchdog.fail(error));
+    for (const pipe of [this.child.stdin, this.child.stdout, this.child.stderr]) {
+      pipe.on("error", (error) => this.watchdog.fail(error));
+    }
+    this.child.once("exit", () => this.watchdog.beginShutdown());
+    this.child.once("close", (exitCode, signal) => {
+      if (this.pendingExit) return;
+      this.watchdog.beginShutdown();
+      void this.watchdog.operation("resource status read", () => this.readTrustedResourceLimit())
+        .then(() => this.finish(exitCode, signal), () => undefined);
+    });
   }
+
+  waitStarted(): Promise<void> { return this.started; }
 
   onOutput(listener: (stream: ProcessOutputStream, data: Buffer) => void): void {
     this.child.stdout.on("data", (data: Buffer) => listener("stdout", data));
@@ -126,14 +175,8 @@ class ChildManagedProcess implements ManagedProcess {
   }
 
   onExit(listener: (exitCode: number | null, signal: string | null) => void): void {
-    this.child.once("close", async (exitCode, signal) => {
-      try {
-        await this.readTrustedResourceLimit();
-      } catch (error) {
-        this.emitError(error instanceof Error ? error : new Error(String(error)));
-      }
-      listener(exitCode, signal);
-    });
+    this.exitListeners.push(listener);
+    if (this.pendingExit) listener(this.pendingExit.exitCode, this.pendingExit.signal);
   }
 
   onError(listener: (error: Error) => void): void {
@@ -147,16 +190,12 @@ class ChildManagedProcess implements ManagedProcess {
   }
 
   async writeInput(data: Buffer): Promise<void> {
-    if (this.child.stdin.destroyed || !this.child.stdin.writable) throw new Error("Process standard input is closed");
-    if (this.child.stdin.write(data)) return;
-    await new Promise<void>((resolvePromise, reject) => {
-      this.child.stdin.once("drain", resolvePromise);
-      this.child.stdin.once("error", reject);
-    });
+    await this.watchdog.operation("input write", (signal) => writeProcessPipe(this.child.stdin, data, signal));
   }
 
   async closeInput(): Promise<void> {
-    if (!this.child.stdin.destroyed) this.child.stdin.end();
+    if (this.child.stdin.writableEnded) return;
+    await this.watchdog.operation("input close", (signal) => writeProcessPipe(this.child.stdin, null, signal));
   }
 
   async resizeTerminal(_columns: number, _rows: number): Promise<void> {
@@ -164,6 +203,7 @@ class ChildManagedProcess implements ManagedProcess {
   }
 
   async sendSignal(signal: ProcessSignal): Promise<void> {
+    if (signal === "terminate" || signal === "kill") return this.terminate(signal === "kill");
     const mapped: Record<ProcessSignal, NodeJS.Signals> = {
       interrupt: "SIGINT",
       terminate: "SIGTERM",
@@ -176,17 +216,18 @@ class ChildManagedProcess implements ManagedProcess {
   }
 
   async terminate(force: boolean): Promise<void> {
-    if (this.customTerminate) {
-      await this.customTerminate(this.child, force);
-      return;
-    }
-    if (!this.child.kill(force ? "SIGKILL" : "SIGTERM")) throw new Error("Operating system rejected process termination");
+    this.watchdog.beginShutdown();
+    await this.watchdog.operation("termination request", async () => {
+      if (this.customTerminate) { await this.customTerminate(this.child, force); return; }
+      if (!this.child.kill(force ? "SIGKILL" : "SIGTERM")) throw new Error("Operating system rejected process termination");
+    });
   }
 
   private async readTrustedResourceLimit(): Promise<void> {
     if (!this.resourceLimitStatusFile) return;
     try {
       const resource = (await readFile(this.resourceLimitStatusFile, "utf8")).trim() as ResourceLimitKind;
+      if (this.pendingError || this.pendingExit) return;
       if (!["cpu_time", "memory", "process_count", "write_bytes"].includes(resource)) return;
       this.pendingResourceLimit = resource;
       for (const listener of this.resourceLimitListeners) listener(resource);
@@ -201,9 +242,17 @@ class ChildManagedProcess implements ManagedProcess {
     this.pendingError = error;
     for (const listener of this.errorListeners) listener(error);
   }
+
+  private finish(exitCode: number | null, signal: string | null): void {
+    if (this.pendingExit) return;
+    this.watchdog.dispose();
+    this.pendingExit = { exitCode, signal };
+    for (const listener of this.exitListeners) listener(exitCode, signal);
+  }
 }
 
 interface ProcessRecord {
+  observation: ProcessExecutionObservation;
   descriptor: ProcessDescriptor;
   requestFingerprint: string;
   token: string;
@@ -215,6 +264,7 @@ interface ProcessRecord {
   outputLimitBytes: number;
   truncationEmitted: boolean;
   timeout: ReturnType<typeof setTimeout> | null;
+  observationPersisted: boolean;
 }
 
 interface WriteReceipt {
@@ -223,6 +273,7 @@ interface WriteReceipt {
 }
 
 export interface LocalExecutionNodeOptions {
+  processJournal?: ProcessExecutionJournal;
   id?: string;
   platform?: EffectivePermissionProfile["platform"];
   architecture?: string;
@@ -230,6 +281,8 @@ export interface LocalExecutionNodeOptions {
   capabilities?: Partial<ExecutionNodeCapabilities>;
   sandboxBackends: string[];
   maximumProcesses?: number;
+  maximumResidentProcesses?: number;
+  terminalRetentionMs?: number;
   maximumOutputBytesPerProcess?: number;
   maximumRetainedEventsPerProcess?: number;
   maximumCpuTimeMsPerProcess?: number;
@@ -285,16 +338,28 @@ function kindOf(entry: { isFile(): boolean; isDirectory(): boolean; isSymbolicLi
 }
 
 export class LocalExecutionNode implements ExecutionNode {
+  private readonly generationId = randomUUID();
   readonly descriptor: ExecutionNodeDescriptor;
   private readonly records = new Map<string, ProcessRecord>();
   private readonly processByIdempotencyKey = new Map<string, string>();
   private readonly writeReceipts = new Map<string, WriteReceipt>();
+  private readonly startingKeys = new Set<string>();
+  private readonly processJournal?: ProcessExecutionJournal;
   private readonly now: () => string;
   private readonly httpBroker: ExecutionHttpBroker | undefined;
+  private readonly maximumResidentProcesses: number;
+  private readonly terminalRetentionMs: number;
 
   constructor(private readonly launcher: ProcessLauncher, options: LocalExecutionNodeOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
     this.httpBroker = options.httpBroker;
+    this.processJournal = options.processJournal;
+    this.maximumResidentProcesses = options.maximumResidentProcesses ?? 128;
+    this.terminalRetentionMs = options.terminalRetentionMs ?? 60_000;
+    if (!Number.isSafeInteger(this.maximumResidentProcesses) || this.maximumResidentProcesses < 1
+      || !Number.isSafeInteger(this.terminalRetentionMs) || this.terminalRetentionMs < 0) {
+      throw new Error("Invalid process history retention limits");
+    }
     const capabilities: ExecutionNodeCapabilities = {
       process: {
         spawn: true,
@@ -304,6 +369,7 @@ export class LocalExecutionNode implements ExecutionNode {
         resourceLimits: false,
         signals: ["interrupt", "terminate", "kill"],
         ...options.capabilities?.process,
+        executionObservation: Boolean(options.processJournal),
       },
       filesystem: {
         canonicalize: true,
@@ -378,9 +444,28 @@ export class LocalExecutionNode implements ExecutionNode {
   }
 
   async startProcess(request: StartProcessRequest): Promise<StartProcessResponse> {
+    if (Buffer.byteLength(JSON.stringify(request)) > 128 * 1024) throw new Error("Process request exceeds its size limit");
+    const snapshot = structuredClone(request);
+    const key = snapshot.attribution.idempotencyKey;
+    if (this.startingKeys.has(key)) throw new Error("Process execution is already being started");
+    if (this.startingKeys.size >= this.descriptor.limits.maximumProcesses) throw new Error("Execution Node startup capacity is exhausted");
+    this.startingKeys.add(key);
+    try { return await this.startProcessOnce(snapshot); }
+    finally { this.startingKeys.delete(key); }
+  }
+
+  async lookupProcessExecution(query: ProcessExecutionQuery): Promise<ProcessExecutionObservation | undefined> {
+    if (!this.processJournal) throw new Error("Durable execution observation is unavailable");
+    const observation = this.processJournal.get(query.idempotencyKey);
+    if (!observation) return undefined;
+    if (canonicalJson(observation.identity) !== canonicalJson(query)) throw new Error("Execution observation identity mismatch");
+    return structuredClone(observation);
+  }
+
+  private async startProcessOnce(request: StartProcessRequest): Promise<StartProcessResponse> {
     const effectiveRequest = await this.materializeStartRequest(request);
     await this.assertStartRequest(effectiveRequest);
-    const fingerprint = canonicalJson(effectiveRequest);
+    const fingerprint = createHash("sha256").update(canonicalJson(effectiveRequest)).digest("hex");
     const priorId = this.processByIdempotencyKey.get(effectiveRequest.attribution.idempotencyKey);
     if (priorId) {
       const prior = this.records.get(priorId)!;
@@ -388,9 +473,27 @@ export class LocalExecutionNode implements ExecutionNode {
       return { process: cloneDescriptor(prior.descriptor), adoptionToken: prior.token, replayed: true };
     }
     const active = [...this.records.values()].filter((record) => !["exited", "failed"].includes(record.descriptor.state)).length;
-    if (active >= this.descriptor.limits.maximumProcesses) throw new Error("Execution Node process capacity is exhausted");
+    if (active + this.startingKeys.size > this.descriptor.limits.maximumProcesses) throw new Error("Execution Node process capacity is exhausted");
+    this.pruneProcessHistory();
+    if (this.records.size + this.startingKeys.size > this.maximumResidentProcesses) {
+      throw new Error("Execution Node process history capacity is exhausted");
+    }
 
-    const launched = await this.launcher.launch(structuredClone(effectiveRequest));
+    const observation: ProcessExecutionObservation = {
+      schemaVersion: 2,
+      launch: { nodeId: this.descriptor.id, generationId: this.generationId,
+        launchId: randomBytes(32).toString("hex"), requestId: effectiveRequest.requestId,
+        requestFingerprint: fingerprint },
+      identity: { idempotencyKey: effectiveRequest.attribution.idempotencyKey, requestId: effectiveRequest.requestId,
+        caseId: effectiveRequest.attribution.caseId, runId: effectiveRequest.attribution.runId,
+        workId: effectiveRequest.attribution.workId, leaseId: effectiveRequest.attribution.leaseId },
+      nodeId: this.descriptor.id, requestFingerprint: fingerprint,
+      status: "claimed", cleanup: "unverified", process: null, events: [], lostEvents: false, updatedAt: this.now(),
+    };
+    // Atomic durable claim precedes dispatch, including launcher errors with an unknown external outcome.
+    this.processJournal?.claim(observation);
+
+    const launched = await this.launcher.launch(structuredClone(effectiveRequest), structuredClone(observation.launch));
     try {
       this.assertEnforcement(effectiveRequest.permissions, effectiveRequest.resources, launched.enforcement);
     } catch (error) {
@@ -422,6 +525,7 @@ export class LocalExecutionNode implements ExecutionNode {
       lastEventSequence: 0,
     };
     const record: ProcessRecord = {
+      observation,
       descriptor,
       requestFingerprint: fingerprint,
       token,
@@ -433,24 +537,33 @@ export class LocalExecutionNode implements ExecutionNode {
       outputLimitBytes: effectiveRequest.outputLimitBytes,
       truncationEmitted: false,
       timeout: null,
+      observationPersisted: false,
     };
     this.records.set(id, record);
     this.processByIdempotencyKey.set(effectiveRequest.attribution.idempotencyKey, id);
     this.append(record, { type: "process.started", pid: launched.process.pid });
     launched.process.onOutput((stream, data) => this.captureOutput(record, stream, data));
-    launched.process.onExit((exitCode, signal) => this.finish(record, exitCode, signal));
     launched.process.onError((error) => this.fail(record, error));
     launched.process.onResourceLimit((resource) => this.resourceLimitExceeded(record, resource));
-    if (effectiveRequest.stdin === "closed") {
-      await launched.process.closeInput();
-      this.append(record, { type: "process.stdin_closed" });
+    // Buffered helper failures/resource limits must be replayed before a buffered terminal callback.
+    launched.process.onExit((exitCode, signal) => this.finish(record, exitCode, signal));
+    if (!["exited", "failed"].includes(record.descriptor.state)) {
+      record.timeout = setTimeout(() => {
+        if (["exited", "failed"].includes(record.descriptor.state)) return;
+        record.descriptor.state = "terminating";
+        record.descriptor.updatedAt = this.now();
+        void record.process.terminate(true).catch((error) => this.fail(record, error));
+      }, effectiveRequest.timeoutMs);
+      if (effectiveRequest.stdin === "closed") {
+        try {
+          await launched.process.closeInput();
+          this.append(record, { type: "process.stdin_closed" });
+        } catch (error) {
+          this.fail(record, error instanceof Error ? error : new Error(String(error)));
+          throw error;
+        }
+      }
     }
-    record.timeout = setTimeout(() => {
-      if (["exited", "failed"].includes(record.descriptor.state)) return;
-      record.descriptor.state = "terminating";
-      record.descriptor.updatedAt = this.now();
-      void record.process.terminate(true).catch((error) => this.fail(record, error));
-    }, effectiveRequest.timeoutMs);
     return { process: cloneDescriptor(descriptor), adoptionToken: token, replayed: false };
   }
 
@@ -481,6 +594,7 @@ export class LocalExecutionNode implements ExecutionNode {
     const record = this.requireAccess(request);
     const immediate = this.readProcessEventsNow(record, request);
     if (immediate.events.length || ["exited", "failed"].includes(immediate.process.state) || timeoutMs <= 0) return immediate;
+    if (record.waiters.size >= 64) throw new Error("Process observation waiter capacity is exhausted");
     await new Promise<void>((resolvePromise) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const wake = () => {
@@ -852,6 +966,7 @@ export class LocalExecutionNode implements ExecutionNode {
     record.descriptor.exitedAt = at;
     record.descriptor.updatedAt = at;
     this.append(record, { type: "process.exited", exitCode, signal });
+    this.persistObservation(record, "exit_observed");
   }
 
   private resourceLimitExceeded(record: ProcessRecord, resource: ResourceLimitKind): void {
@@ -869,6 +984,29 @@ export class LocalExecutionNode implements ExecutionNode {
     record.descriptor.state = "failed";
     record.descriptor.exitedAt = at;
     record.descriptor.updatedAt = at;
-    this.append(record, { type: "process.failed", error: error.message });
+    this.append(record, { type: "process.failed", error: error.message.slice(0, 4096) });
+    this.persistObservation(record, "failure_observed");
+  }
+
+  private persistObservation(record: ProcessRecord, status: "exit_observed" | "failure_observed"): void {
+    if (!this.processJournal) return;
+    try {
+      this.processJournal.settle({ ...record.observation, status, process: cloneDescriptor(record.descriptor),
+        events: structuredClone(record.events), lostEvents: record.events[0]?.sequence !== 1, updatedAt: this.now() });
+      record.observationPersisted = true;
+    } catch {
+      // Storage failure must leave the durable claim unresolved, never crash an event callback or invent a receipt.
+    }
+  }
+
+  private pruneProcessHistory(): void {
+    for (const [id, record] of this.records) {
+      if (this.records.size + this.startingKeys.size <= this.maximumResidentProcesses) break;
+      if (!record.observationPersisted || record.waiters.size || !["exited", "failed"].includes(record.descriptor.state)
+        || Date.parse(this.now()) - Date.parse(record.descriptor.exitedAt!) < this.terminalRetentionMs) continue;
+      // Durable claims are never deleted. A replay after eviction fails closed at journal.claim.
+      this.records.delete(id);
+      this.processByIdempotencyKey.delete(record.descriptor.attribution.idempotencyKey);
+    }
   }
 }

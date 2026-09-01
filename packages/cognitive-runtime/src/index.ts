@@ -6,6 +6,7 @@ export * from "./snapshot.js";
 export * from "./evaluation.js";
 export * from "./wakeup.js";
 export * from "./loop.js";
+export * from "./compaction.js";
 
 export interface CognitiveContextBudget {
   maximumGraphNodes: number;

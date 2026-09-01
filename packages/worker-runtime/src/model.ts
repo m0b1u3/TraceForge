@@ -88,6 +88,13 @@ export interface WorkerTranscriptEntry {
   kind: "model" | "tool" | "observer" | "system";
   summary: string;
   refs: string[];
+  /** Host-created durable receipt identity, never copied from a tool's payload. */
+  receiptKey?: string;
+}
+
+export interface WorkerModelContextPolicy {
+  recordDecision?(request: WorkerModelRequest, snapshotId: string): Promise<void>;
+  prepare(request: WorkerModelRequest): Promise<{ request: WorkerModelRequest; manifest: Record<string, unknown> }>;
 }
 
 export interface WorkerModelRequest {
@@ -112,16 +119,21 @@ export interface ExecutionToolCatalog {
 }
 
 export interface WorkerModel {
-  decide(request: WorkerModelRequest): Promise<WorkerDecision>;
+  decide(request: WorkerModelRequest, signal?: AbortSignal): Promise<WorkerDecision>;
 }
 
 export interface ExecutionToolGateway {
-  catalog(worker: WorkerDescriptor, assignment: WorkerAssignment): Promise<ExecutionToolCatalog>;
+  /** Recovery must not dispatch an external action. */
+  recover?(request: Parameters<ExecutionToolGateway["execute"]>[0]): Promise<ToolInvocationRecovery>;
+  validateCheckpoint?(assignment: WorkerAssignment, checkpoint: WorkerCheckpointDocument): Promise<void>;
+  catalog(worker: WorkerDescriptor, assignment: WorkerAssignment, signal?: AbortSignal): Promise<ExecutionToolCatalog>;
   execute(request: {
     worker: WorkerDescriptor;
     assignment: WorkerAssignment;
     invocation: ToolInvocation;
     idempotencyKey: string;
+    expectedContractFingerprint?: string;
+    signal?: AbortSignal;
   }): Promise<ToolExecutionResult>;
 }
 
@@ -144,7 +156,17 @@ export interface WorkerObserver {
 }
 
 export interface WorkerCheckpointDocument {
-  version: 1;
+  version: 1 | 2;
+  /** Required for v2; legacy documents cannot authorize partial Work continuation. */
+  caseId?: string;
+  workKey?: string;
+  consecutiveFailures?: number;
+  pendingInvocation?: {
+    turn: number;
+    invocation: ToolInvocation;
+    risk: ExecutionRisk;
+    contractFingerprint: string;
+  } | null;
   workerId: string;
   runId: string;
   workId: string;
@@ -160,6 +182,11 @@ export interface WorkerCheckpointStore {
   save(document: WorkerCheckpointDocument): Promise<string>;
   load(ref: string): Promise<WorkerCheckpointDocument>;
 }
+
+export type ToolInvocationRecovery =
+  | { status: "recorded"; result: ToolExecutionResult }
+  | { status: "not_started" }
+  | { status: "no_effect"; auditRef: string };
 
 export interface WorkerControlPlaneClient {
   register(worker: WorkerDescriptor): Promise<void>;

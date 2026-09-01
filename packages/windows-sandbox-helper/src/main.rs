@@ -1,5 +1,7 @@
 #![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 
+mod cleanup;
+
 #[cfg(target_os = "windows")]
 mod conpty;
 
@@ -14,7 +16,9 @@ fn main() {
 
 #[cfg(target_os = "windows")]
 mod windows_main {
-    use crate::job_limits::{configure as configure_job_limits, ResourceLimits, ResourceMonitor};
+    use crate::job_limits::{
+        configure as configure_job_limits, terminate_and_wait, ResourceLimits, ResourceMonitor,
+    };
     use std::ffi::{c_void, OsStr};
     use std::fs::{self, OpenOptions};
     use std::io::Write;
@@ -22,7 +26,9 @@ mod windows_main {
     use std::path::{Path, PathBuf};
     use std::ptr::{null, null_mut};
     use std::time::{SystemTime, UNIX_EPOCH};
-    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, LocalFree, HANDLE, HLOCAL};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, LocalFree, HANDLE, HLOCAL, WAIT_OBJECT_0,
+    };
     use windows_sys::Win32::Security::Authorization::{
         GetNamedSecurityInfoW, GetSecurityInfo, SetEntriesInAclW, SetNamedSecurityInfoW,
         SetSecurityInfo, DENY_ACCESS, EXPLICIT_ACCESS_W, GRANT_ACCESS, REVOKE_ACCESS, SET_ACCESS,
@@ -47,7 +53,7 @@ mod windows_main {
     use windows_sys::Win32::System::Console::{
         GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
     };
-    use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+    use windows_sys::Win32::System::JobObjects::CreateJobObjectW;
     use windows_sys::Win32::System::StationsAndDesktops::{
         CloseDesktop, CreateDesktopW, GetProcessWindowStation, DESKTOP_CREATEWINDOW,
         DESKTOP_ENUMERATE, DESKTOP_READOBJECTS, DESKTOP_SWITCHDESKTOP, DESKTOP_WRITEOBJECTS, HDESK,
@@ -59,7 +65,6 @@ mod windows_main {
         CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, INFINITE,
         PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
         PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTF_USESTDHANDLES, STARTUPINFOEXW,
-        STARTUPINFOW,
     };
     use windows_sys::Win32::System::WindowsProgramming::PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
 
@@ -161,14 +166,19 @@ mod windows_main {
 
     struct SecurityAttributeList {
         storage: Vec<u8>,
+        job: Box<[HANDLE; 1]>,
         all_application_packages_policy: Box<u32>,
         initialized: bool,
     }
 
     impl SecurityAttributeList {
-        unsafe fn new(capabilities: &mut SECURITY_CAPABILITIES) -> Result<Self> {
+        unsafe fn new(
+            job: HANDLE,
+            capabilities: Option<&mut SECURITY_CAPABILITIES>,
+        ) -> Result<Self> {
+            let attribute_count = if capabilities.is_some() { 3 } else { 1 };
             let mut bytes = 0usize;
-            InitializeProcThreadAttributeList(null_mut(), 2, 0, &mut bytes);
+            InitializeProcThreadAttributeList(null_mut(), attribute_count, 0, &mut bytes);
             if bytes == 0 {
                 bail!(
                     "InitializeProcThreadAttributeList sizing failed: {}",
@@ -177,18 +187,37 @@ mod windows_main {
             }
             let mut value = Self {
                 storage: vec![0u8; bytes],
+                job: Box::new([job]),
                 all_application_packages_policy: Box::new(
                     PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT,
                 ),
                 initialized: false,
             };
-            if InitializeProcThreadAttributeList(value.as_mut_ptr(), 2, 0, &mut bytes) == 0 {
+            if InitializeProcThreadAttributeList(value.as_mut_ptr(), attribute_count, 0, &mut bytes)
+                == 0
+            {
                 bail!(
                     "InitializeProcThreadAttributeList failed: {}",
                     GetLastError()
                 );
             }
             value.initialized = true;
+            const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x0002_000D;
+            if UpdateProcThreadAttribute(
+                value.as_mut_ptr(),
+                0,
+                PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                value.job.as_ptr() as *const c_void,
+                std::mem::size_of::<[HANDLE; 1]>(),
+                null_mut(),
+                null(),
+            ) == 0
+            {
+                bail!("UpdateProcThreadAttribute(Job) failed: {}", GetLastError());
+            }
+            let Some(capabilities) = capabilities else {
+                return Ok(value);
+            };
             if UpdateProcThreadAttribute(
                 value.as_mut_ptr(),
                 0,
@@ -1006,6 +1035,11 @@ mod windows_main {
         if command.is_empty() {
             bail!("missing command");
         }
+        let job = Handle(CreateJobObjectW(null(), null()));
+        if job.0.is_null() {
+            bail!("CreateJobObjectW failed: {}", GetLastError());
+        }
+        configure_job_limits(job.0, resource_limits)?;
         let mut profile = prepare_profiled_token(cwd, policy, network_isolated)?;
         let execution = (|| -> Result<i32> {
             let (_desktop, mut desktop_name) = create_private_desktop(
@@ -1027,31 +1061,18 @@ mod windows_main {
                     Reserved: 0,
                 })
             });
-            let mut attributes = match security_capabilities.as_deref_mut() {
-                Some(capabilities) => Some(SecurityAttributeList::new(capabilities)?),
-                None => None,
-            };
+            let mut attributes =
+                SecurityAttributeList::new(job.0, security_capabilities.as_deref_mut())?;
             let mut startup: STARTUPINFOEXW = std::mem::zeroed();
-            startup.StartupInfo.cb = if attributes.is_some() {
-                std::mem::size_of::<STARTUPINFOEXW>() as u32
-            } else {
-                std::mem::size_of::<STARTUPINFOW>() as u32
-            };
+            startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
             startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
             startup.StartupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
             startup.StartupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
             startup.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
             startup.StartupInfo.lpDesktop = desktop_name.as_mut_ptr();
-            if let Some(attributes) = attributes.as_mut() {
-                startup.lpAttributeList = attributes.as_mut_ptr();
-            }
-            let creation_flags = CREATE_SUSPENDED
-                | CREATE_UNICODE_ENVIRONMENT
-                | if attributes.is_some() {
-                    EXTENDED_STARTUPINFO_PRESENT
-                } else {
-                    0
-                };
+            startup.lpAttributeList = attributes.as_mut_ptr();
+            let creation_flags =
+                CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
             let mut process: PROCESS_INFORMATION = std::mem::zeroed();
             let ok = CreateProcessAsUserW(
                 profile.token.0,
@@ -1071,14 +1092,7 @@ mod windows_main {
             }
             let process_handle = Handle(process.hProcess);
             let thread_handle = Handle(process.hThread);
-            let job = Handle(CreateJobObjectW(null(), null()));
-            if job.0.is_null() {
-                bail!("CreateJobObjectW failed: {}", GetLastError());
-            }
-            configure_job_limits(job.0, resource_limits)?;
-            if AssignProcessToJobObject(job.0, process_handle.0) == 0 {
-                bail!("AssignProcessToJobObject failed: {}", GetLastError());
-            }
+            // Job membership is atomic with creation: a killed helper cannot leave an unassigned child.
             if network_isolated {
                 assert_app_container_process(process_handle.0)?;
             }
@@ -1086,7 +1100,9 @@ mod windows_main {
                 bail!("ResumeThread failed: {}", GetLastError());
             }
             let monitor = ResourceMonitor::start(job.0, resource_limits);
-            WaitForSingleObject(process_handle.0, INFINITE);
+            if WaitForSingleObject(process_handle.0, INFINITE) != WAIT_OBJECT_0 {
+                bail!("WaitForSingleObject(child) failed: {}", GetLastError());
+            }
             if let Some(resource) = monitor.finish()? {
                 let mut status = OpenOptions::new()
                     .write(true)
@@ -1104,6 +1120,8 @@ mod windows_main {
             }
             Ok(exit_code as i32)
         })();
+        // This also covers errors after assignment; never report success from handle-close alone.
+        let execution = finish_with_cleanup(execution, terminate_and_wait(job.0));
         let cleanup = cleanup_profile(&mut profile);
         finish_with_cleanup(execution, cleanup)
     }
@@ -1116,10 +1134,16 @@ mod windows_main {
         resource_limits: ResourceLimits,
         columns: i16,
         rows: i16,
+        execution_nonce: &str,
     ) -> Result<i32> {
         if command.is_empty() {
             bail!("missing command");
         }
+        let job = Handle(CreateJobObjectW(null(), null()));
+        if job.0.is_null() {
+            bail!("CreateJobObjectW failed: {}", GetLastError());
+        }
+        configure_job_limits(job.0, resource_limits)?;
         let mut profile = prepare_profiled_token(cwd, policy, network_isolated)?;
         let execution = (|| -> Result<i32> {
             let (_desktop, mut desktop_name) = create_private_desktop(
@@ -1135,17 +1159,75 @@ mod windows_main {
                 resource_limits,
                 columns,
                 rows,
+                job.0,
             )
         })();
+        let execution = finish_with_cleanup(execution, terminate_and_wait(job.0));
         let cleanup = cleanup_profile(&mut profile);
-        finish_with_cleanup(execution, cleanup)
+        let code = finish_with_cleanup(execution, cleanup)?;
+        // Completion is emitted only after job emptiness, output drain, and profile cleanup succeed.
+        crate::conpty::send_completion(code, execution_nonce)?;
+        Ok(code)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+        use windows_sys::Win32::System::Threading::CreateProcessW;
+
+        #[test]
+        fn stdio_child_is_owned_before_any_thread_can_resume() {
+            unsafe {
+                let job = Handle(CreateJobObjectW(null(), null()));
+                assert!(!job.0.is_null());
+                configure_job_limits(
+                    job.0,
+                    ResourceLimits {
+                        cpu_time_ms: 30_000,
+                        memory_bytes: 256 * 1024 * 1024,
+                        maximum_processes: 8,
+                        write_bytes: 1024 * 1024,
+                    },
+                )
+                .unwrap();
+                let mut attributes = SecurityAttributeList::new(job.0, None).unwrap();
+                let mut startup: STARTUPINFOEXW = std::mem::zeroed();
+                startup.StartupInfo.cb = std::mem::size_of_val(&startup) as u32;
+                startup.lpAttributeList = attributes.as_mut_ptr();
+                let executable = wide(std::env::current_exe().unwrap().as_os_str());
+                let mut child: PROCESS_INFORMATION = std::mem::zeroed();
+                assert_ne!(
+                    CreateProcessW(
+                        executable.as_ptr(),
+                        null_mut(),
+                        null(),
+                        null(),
+                        0,
+                        CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,
+                        null(),
+                        null(),
+                        &startup.StartupInfo,
+                        &mut child
+                    ),
+                    0
+                );
+                let process = Handle(child.hProcess);
+                let _thread = Handle(child.hThread);
+                let mut owned = 0;
+                assert_ne!(IsProcessInJob(process.0, job.0, &mut owned), 0);
+                assert_ne!(owned, 0);
+                terminate_and_wait(job.0).unwrap();
+                assert_eq!(WaitForSingleObject(process.0, 5_000), WAIT_OBJECT_0);
+            }
+        }
     }
 
     pub fn run() -> Result<i32> {
         let args = std::env::args().skip(1).collect::<Vec<_>>();
         if args.first().map(String::as_str) == Some("probe") {
             println!(
-                "{{\"protocol\":2,\"platform\":\"windows\",\"modes\":[\"unelevated-direct\",\"appcontainer-deny\"],\"pty\":true,\"resourceLimits\":[\"cpu_time\",\"memory\",\"process_count\",\"write_bytes\"]}}"
+                "{{\"protocol\":4,\"platform\":\"windows\",\"modes\":[\"unelevated-direct\",\"appcontainer-deny\"],\"pty\":true,\"jobEmptyBarrier\":true,\"atomicJobAssignment\":true,\"resourceLimits\":[\"cpu_time\",\"memory\",\"process_count\",\"write_bytes\"]}}"
             );
             return Ok(0);
         }
@@ -1162,6 +1244,7 @@ mod windows_main {
         let mut columns = None;
         let mut rows = None;
         let mut status_file = None;
+        let mut execution_nonce = None;
         let mut cpu_time_ms = None;
         let mut memory_bytes = None;
         let mut maximum_processes = None;
@@ -1185,6 +1268,10 @@ mod windows_main {
                 "--status-file" => {
                     index += 1;
                     status_file = args.get(index).map(PathBuf::from);
+                }
+                "--execution-nonce" => {
+                    index += 1;
+                    execution_nonce = args.get(index).cloned();
                 }
                 "--columns" => {
                     index += 1;
@@ -1263,6 +1350,13 @@ mod windows_main {
             _ => bail!("sandbox mode {mode} cannot prove network policy {network}"),
         };
         if operation == "pty-run" {
+            let execution_nonce =
+                execution_nonce.ok_or_else(|| "missing --execution-nonce".to_string())?;
+            if execution_nonce.len() != 64
+                || !execution_nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                bail!("invalid --execution-nonce");
+            }
             let columns = columns.ok_or_else(|| "missing or invalid --columns".to_string())?;
             let rows = rows.ok_or_else(|| "missing or invalid --rows".to_string())?;
             if columns < 1 || rows < 1 {
@@ -1277,6 +1371,7 @@ mod windows_main {
                     resource_limits,
                     columns,
                     rows,
+                    &execution_nonce,
                 )
             }
         } else {

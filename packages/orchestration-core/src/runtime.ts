@@ -36,6 +36,10 @@ export interface AppendEventsResult {
 }
 
 export interface ScenarioEventStore {
+  /** Optional durable snapshot reader; it must validate the snapshot and contiguous tail. */
+  loadState?(runId: string): ScenarioRunState | undefined;
+  hasUsedLease?(runId: string, leaseId: string): boolean;
+  validateState?(state: ScenarioRunState): void;
   load(runId: string): ScenarioEventStream;
   findCommand(runId: string, commandId: string): RecordedCommand | undefined;
   append(request: AppendEventsRequest): AppendEventsResult;
@@ -123,7 +127,7 @@ export class DurableScenarioRuntime {
   ) {}
 
   load(runId: string): ScenarioRunState | undefined {
-    const state = replayScenario(this.store.load(runId).events);
+    const state = this.store.loadState ? this.store.loadState(runId) : replayScenario(this.store.load(runId).events);
     if (state) this.bindingValidator?.requireAvailable(state);
     return state;
   }
@@ -138,15 +142,27 @@ export class DurableScenarioRuntime {
     const recorded = this.store.findCommand(envelope.runId, envelope.commandId);
     if (recorded) return this.replayRecorded(envelope.runId, recorded, fingerprint);
 
-    const stream = this.store.load(envelope.runId);
-    if (stream.revision !== envelope.expectedRevision) {
-      throw new RevisionConflictError(envelope.runId, envelope.expectedRevision, stream.revision);
+    const current = this.store.loadState ? this.store.loadState(envelope.runId) : replayScenario(this.store.load(envelope.runId).events);
+    const revision = current?.revision ?? 0;
+    if (revision !== envelope.expectedRevision) {
+      throw new RevisionConflictError(envelope.runId, envelope.expectedRevision, revision);
     }
-    const current = replayScenario(stream.events);
+    if (current) this.bindingValidator?.requireAvailable(current);
+    const command = envelope.command;
+    if (command.type === "claim_work" && (this.store.hasUsedLease ? this.store.hasUsedLease(envelope.runId, command.leaseId)
+      : this.store.load(envelope.runId).events.some((event) => event.type === "work_claimed" && event.leaseId === command.leaseId))) {
+      throw new Error("Work claim requires a new lease identity; this lease was previously used");
+    }
     const definition = current
       ? this.definitions.require(current.definitionKind, current.definitionVersion)
       : this.requireDefinitionForStart(envelope);
     const decision = new ScenarioKernel(definition).execute(current, envelope.command);
+    this.bindingValidator?.requireAvailable(decision.state);
+    this.store.validateState?.(decision.state);
+    if(command.type==="migrate_run_package"){
+      const target=this.definitions.require(definition.kind,command.definitionVersion);
+      if(canonicalJson({...definition,version:0})!==canonicalJson({...target,version:0}))throw new Error("Package migration requires an unchanged structural definition");
+    }
     const appended = this.store.append({
       runId: envelope.runId,
       expectedRevision: envelope.expectedRevision,

@@ -1,8 +1,11 @@
 import type { WorkerRunResult } from "./runtime.js";
+import type { ScenarioRunState } from "@traceforge/orchestration-core";
 
 export interface PollableLeaseWorker {
   register(): Promise<void>;
   pollOnce(): Promise<WorkerRunResult | undefined>;
+  cancelAll?(reason?: string): void;
+  reconcileRun?(run: ScenarioRunState): void;
 }
 
 export type WorkerSupervisorEvent =
@@ -45,6 +48,7 @@ export class WorkerSupervisor {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
+    this.runtime.cancelAll?.("Worker supervisor stopping");
     await this.activePoll;
     this.options.onEvent?.({ type: "stopped" });
   }
@@ -52,6 +56,8 @@ export class WorkerSupervisor {
   isRunning(): boolean {
     return this.running;
   }
+
+  reconcileRun(run: ScenarioRunState): void { this.runtime.reconcileRun?.(run); }
 
   private schedule(delayMs: number): void {
     if (!this.running) return;

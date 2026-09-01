@@ -18,6 +18,8 @@ export interface ModelJsonRequest {
   schema: Record<string, unknown>;
   signal?: AbortSignal;
   onUsage?: (usage: ModelUsageSnapshot) => void;
+  /** Host-local authorization recheck after admission and before each actual dispatch. */
+  beforeDispatch?: () => void | Promise<void>;
 }
 
 export interface ModelJsonProviderPort {
@@ -86,7 +88,7 @@ export interface ModelExecutionStore {
     maximumRunTokens: number;
     at: string;
   }): void;
-  finish(id: string, status: "completed" | "failed" | "timed_out", usage: ModelUsageSnapshot, error: string | null, at: string): void;
+  finish(id: string, status: "completed" | "failed" | "timed_out", usage: ModelUsageSnapshot, error: string | null, at: string, terminationKind?: "cancelled"): void;
   circuit(role: CognitiveModelRole, routeId: string): { consecutiveFailures: number; openUntil: string | null };
   recordRouteSuccess(role: CognitiveModelRole, routeId: string, at: string): void;
   recordRouteFailure(role: CognitiveModelRole, routeId: string, threshold: number, resetMs: number, at: string): void;
@@ -207,17 +209,37 @@ export class ModelExecutionRuntime {
         request.signal?.addEventListener("abort", externalAbort, { once: true });
         if (request.signal?.aborted) externalAbort();
         this.activeControllers.set(callId, { context, controller });
+        let settled = false;
+        let dispatched = false;
+        let abortCall: (() => void) | undefined;
         try {
-          const output = await provider.extractJson({
-            ...request,
-            signal: controller.signal,
-            onUsage: (value) => {
-              usage.promptTokens += value.promptTokens;
-              usage.completionTokens += value.completionTokens;
-              usage.totalTokens += value.totalTokens;
-              request.onUsage?.(value);
-            },
+          const aborted = new Promise<never>((_resolve, reject) => {
+            abortCall = () => reject(controller.signal.reason);
+            controller.signal.addEventListener("abort", abortCall, { once: true });
+            if (controller.signal.aborted) abortCall();
           });
+          // The host deadline must hold even if a Provider ignores AbortSignal.
+          const invocation = Promise.resolve().then(async () => {
+            controller.signal.throwIfAborted();
+            await request.beforeDispatch?.();
+            controller.signal.throwIfAborted();
+            const { beforeDispatch: _hostCheck, ...providerRequest } = request;
+            dispatched = true;
+            return provider.extractJson({
+              ...providerRequest,
+              signal: controller.signal,
+              onUsage: (value) => {
+                if (settled || controller.signal.aborted) return;
+                usage.promptTokens += value.promptTokens;
+                usage.completionTokens += value.completionTokens;
+                usage.totalTokens += value.totalTokens;
+                request.onUsage?.(value);
+              },
+            });
+          });
+          const output = await Promise.race([invocation, aborted]);
+          controller.signal.throwIfAborted();
+          settled = true;
           clearTimeout(timer);
           this.store.finish(callId, "completed", usage, null, this.now());
           this.store.recordRouteSuccess(context.role, routeId, this.now());
@@ -228,18 +250,20 @@ export class ModelExecutionRuntime {
           const timedOut = controller.signal.aborted && controller.signal.reason instanceof DOMException
             && controller.signal.reason.name === "TimeoutError";
           const cancelled = controller.signal.aborted && !timedOut;
-          this.store.finish(callId, timedOut ? "timed_out" : "failed", usage, errorMessage(error), this.now());
-          if (!cancelled) this.store.recordRouteFailure(context.role, routeId, policy.circuitFailureThreshold, policy.circuitResetMs, this.now());
+          this.store.finish(callId, timedOut ? "timed_out" : "failed", usage, errorMessage(error), this.now(), cancelled ? "cancelled" : undefined);
+          if (!cancelled && dispatched) this.store.recordRouteFailure(context.role, routeId, policy.circuitFailureThreshold, policy.circuitResetMs, this.now());
           permitOutcome = timedOut ? "timed_out" : cancelled ? "cancelled" : "failed";
           permitReason = errorMessage(error);
           this.emitModelItem(context, "item/completed", callId, routeId, attempt,
             timedOut ? "timedOut" : cancelled ? "cancelled" : "failed", estimate, usage, permitReason);
           lastError = error;
-          if (cancelled) throw error;
+          if (cancelled || !dispatched) throw error;
           if (!retryable(error)) break;
           const updatedCircuit = this.store.circuit(context.role, routeId);
           if (updatedCircuit.openUntil && Date.parse(updatedCircuit.openUntil) > Date.parse(this.now())) break;
         } finally {
+          settled = true;
+          if (abortCall) controller.signal.removeEventListener("abort", abortCall);
           clearTimeout(timer);
           request.signal?.removeEventListener("abort", externalAbort);
           this.activeControllers.delete(callId);

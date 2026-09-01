@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDb, getSqliteClient } from "./db/client.js";
-import { SqliteToolInvocationBindingStore } from "./worker-execution-adapters.js";
+import { SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 import { ToolProviderGarbageCollector } from "./tool-provider-garbage-collector.js";
 import { inspectToolProviderPackage, ManagedToolProviderPackageStore } from "./tool-provider-package-store.js";
 import { SqliteToolProviderControlStore, type ToolProviderManifest } from "./tool-provider-control-plane.js";
+import { ToolProviderFairScheduler } from "@traceforge/worker-runtime";
+import { ManagedExecutionCapacity } from "./managed-execution-capacity.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -19,7 +21,8 @@ afterEach(() => {
 });
 
 describe("ToolProviderGarbageCollector", () => {
-  it("persists dry-run ownership decisions and deletes only old unowned package and scratch payloads", async () => {
+  it.each(["prepared", "uncertain", "completed-retained"])("preserves invocation ownership until safe release (%s)", async (mode) => {
+    const uncertain=mode==="uncertain";
     const root = mkdtempSync(join(tmpdir(), "traceforge-provider-gc-"));
     roots.push(root);
     const source = join(root, "source");
@@ -51,6 +54,17 @@ describe("ToolProviderGarbageCollector", () => {
       inputFingerprint: "b".repeat(64), attribution: { caseId: "case-1", runId: "run-1", workId: "work-1" },
     };
     await new SqliteToolInvocationBindingStore(sqlite, () => "2026-08-27T00:00:00.000Z").prepare(protectedBinding);
+    if (uncertain) {
+      sqlite.exec("UPDATE tool_invocation_executions SET status = 'uncertain'");
+      await new SqliteToolInvocationBindingStore(sqlite).release("effect-protected", "Work blocked; execution still uncertain");
+    }
+    if(mode==="completed-retained") {
+      const bindings=new SqliteToolInvocationBindingStore(sqlite);
+      await new SqliteToolReceiptStore(sqlite).put("effect-protected",{status:"succeeded",summary:"observed result",raw:"",refs:[],retryable:false});
+      await bindings.complete("effect-protected");
+      const capacity=new ManagedExecutionCapacity(sqlite,new ToolProviderFairScheduler(),bindings);
+      expect(capacity.inspect("effect-protected").externallyOccupied).toBe(true);
+    }
     const protectedIdentity = createHash("sha256").update("run-1\0work-1\0effect-protected").digest("hex");
     const protectedScratch = scratch(workRoot, protectedIdentity, "protected payload");
     const old = new Date("2026-08-27T00:00:00.000Z");
@@ -73,7 +87,19 @@ describe("ToolProviderGarbageCollector", () => {
     ]));
     expect(existsSync(oldScratch)).toBe(true);
 
+    if(mode==="completed-retained") {
+      const applied=collector.collect({dryRun:false});
+      expect(applied.deleted).toBe(2); // only the unrelated scratch and orphaned package
+      expect(existsSync(protectedScratch)).toBe(true);
+      expect(existsSync(control.get(oldManifest.providerId,oldManifest.version)!.packageRoot)).toBe(true);
+      sqlite.close();return;
+    }
+
     await new SqliteToolInvocationBindingStore(sqlite).release("effect-protected", "terminal Work");
+    if (uncertain) {
+      await new SqliteToolReceiptStore(sqlite).put("effect-protected", { status: "succeeded", summary: "confirmed", raw: "", refs: [], retryable: false });
+      await new SqliteToolInvocationBindingStore(sqlite).complete("effect-protected");
+    }
     const applied = collector.collect({ dryRun: false });
     expect(applied.deleted).toBe(4);
     expect(existsSync(oldScratch)).toBe(false);
@@ -106,6 +132,59 @@ describe("ToolProviderGarbageCollector", () => {
     );
     expect(collector.collect({ dryRun: false }).candidates).toContainEqual(expect.objectContaining({ decision: "skipped", reason: "invalid_layout" }));
     expect(existsSync(join(outside, "keep"))).toBe(true);
+    sqlite.close();
+  });
+
+  it("reclaims a published package left orphaned by a durable installation failure", () => {
+    const root = mkdtempSync(join(tmpdir(), "traceforge-provider-gc-install-fault-"));
+    roots.push(root);
+    const source = join(root, "source");
+    const workRoot = join(root, "work");
+    mkdirSync(source);
+    writeFileSync(join(source, "provider.bin"), "neutral provider");
+    chmodSync(join(source, "provider.bin"), 0o700);
+    const packages = new ManagedToolProviderPackageStore(join(root, "packages"));
+    const inventory = inspectToolProviderPackage(source);
+    const value = manifest("1.0.0", inventory.digest);
+    const published = packages.publish(source, value.providerId, value.version, inventory.digest);
+    const sqlite = getSqliteClient(createDb(":memory:"));
+    const control = new SqliteToolProviderControlStore(sqlite);
+    sqlite.exec(`
+      CREATE TEMP TRIGGER fail_provider_install_commit
+      BEFORE INSERT ON tool_provider_manifests
+      BEGIN SELECT RAISE(ABORT, 'injected installation commit failure'); END
+    `);
+
+    expect(() => control.install({
+      manifest: value, packageRoot: published, fingerprint: "a".repeat(64),
+      signature: { algorithm: "ed25519", keyId: "key", value: "signature" },
+      commandFingerprint: "b".repeat(64), actor: "test", commandId: "install-fault",
+      at: "2026-08-27T00:00:00.000Z",
+    })).toThrow("injected installation commit failure");
+    expect(control.list()).toEqual([]);
+    expect(existsSync(published)).toBe(true);
+    const old = new Date("2026-08-27T00:00:00.000Z");
+    utimesSync(join(published, "provider.bin"), old, old);
+    utimesSync(published, old, old);
+
+    const collector = new ToolProviderGarbageCollector(
+      sqlite, control, packages, workRoot,
+      () => ({ registryRevision: 0, status: "ready", sources: [], providers: [] }),
+      { gracePeriodMs: 1_000, maximumDeletesPerRun: 10 },
+      () => "2026-08-29T00:00:00.000Z",
+    );
+    expect(collector.collect({ dryRun: false })).toMatchObject({
+      deleted: 1,
+      failures: 0,
+      candidates: [expect.objectContaining({
+        path: published,
+        decision: "deleted",
+        reason: "collected",
+        providerId: null,
+        providerVersion: null,
+      })],
+    });
+    expect(existsSync(published)).toBe(false);
     sqlite.close();
   });
 });

@@ -15,6 +15,8 @@ import type {
   ListDirectoryRequest,
   ListDirectoryResponse,
   ProcessAccess,
+  ProcessExecutionQuery,
+  ProcessExecutionObservation,
   ProcessDescriptor,
   ReadFileChunkRequest,
   ReadFileChunkResponse,
@@ -38,6 +40,7 @@ export type ExecutionRpcMethod =
   | "node.handshake"
   | "process.start"
   | "process.describe"
+  | "process.lookupExecution"
   | "process.readEvents"
   | "process.waitEvents"
   | "process.writeInput"
@@ -149,6 +152,10 @@ export class ExecutionRpcDispatcher {
       case "node.handshake": return this.node.handshake(params as ExecutionHandshakeRequest);
       case "process.start": return this.node.startProcess(params as StartProcessRequest);
       case "process.describe": return this.node.describeProcess(params as ProcessAccess);
+      case "process.lookupExecution": {
+        if (!this.node.lookupProcessExecution) throw new Error("Execution observation unavailable");
+        return (await this.node.lookupProcessExecution(params as ProcessExecutionQuery)) ?? null;
+      }
       case "process.readEvents": return this.node.readProcessEvents(params as ReadProcessEventsRequest);
       case "process.waitEvents": {
         const value = params as { request: ReadProcessEventsRequest; timeoutMs: number };
@@ -306,19 +313,32 @@ export interface ExecutionNodeRpcClientOptions {
   authToken: string;
   maximumFrameBytes?: number;
   connectTimeoutMs?: number;
+  requestTimeoutMs?: number;
+  maximumPendingRequests?: number;
 }
 
 export class ExecutionNodeRpcClient implements ExecutionNode {
+  async lookupProcessExecution(query: ProcessExecutionQuery): Promise<ProcessExecutionObservation | undefined> {
+    return (await this.call("process.lookupExecution", query) as ProcessExecutionObservation | null) ?? undefined;
+  }
   private socket: Socket | null = null;
   private connecting: Promise<Socket> | null = null;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly maximumFrameBytes: number;
   private readonly connectTimeoutMs: number;
+  private readonly requestTimeoutMs: number;
+  private readonly maximumPendingRequests: number;
+  private activeCalls = 0;
+  private connectionGeneration = 0;
 
   constructor(private readonly address: ExecutionRpcAddress, private readonly options: ExecutionNodeRpcClientOptions) {
     if (options.authToken.length < 32) throw new Error("Execution RPC authentication token must contain at least 32 characters");
     this.maximumFrameBytes = options.maximumFrameBytes ?? 8 * 1024 * 1024;
     this.connectTimeoutMs = options.connectTimeoutMs ?? 5_000;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 120_000;
+    this.maximumPendingRequests = options.maximumPendingRequests ?? 256;
+    if (![this.connectTimeoutMs, this.requestTimeoutMs, this.maximumPendingRequests].every((n) => Number.isSafeInteger(n) && n > 0)
+      || this.connectTimeoutMs > 300000 || this.requestTimeoutMs > 300000 || this.maximumPendingRequests > 4096) throw new Error("Invalid Execution RPC limits");
   }
 
   handshake(request: ExecutionHandshakeRequest): Promise<ExecutionHandshakeResponse> { return this.call("node.handshake", request); }
@@ -341,6 +361,7 @@ export class ExecutionNodeRpcClient implements ExecutionNode {
   requestHttp(request: BrokeredHttpRequest): Promise<BrokeredHttpResponse> { return this.call("network.httpRequest", request); }
 
   disconnect(): void {
+    this.connectionGeneration++;
     const socket = this.socket;
     this.socket = null;
     this.connecting = null;
@@ -349,34 +370,41 @@ export class ExecutionNodeRpcClient implements ExecutionNode {
   }
 
   private async call<T>(method: ExecutionRpcMethod, params: unknown): Promise<T> {
-    const socket = await this.connection();
+    if (this.activeCalls >= this.maximumPendingRequests) throw new ExecutionRpcTransportError("Execution RPC pending request capacity exceeded");
+    this.activeCalls++;
     const id = randomUUID();
-    const request: ExecutionRpcRequest = {
-      version: EXECUTION_RPC_WIRE_VERSION,
-      id,
-      authToken: this.options.authToken,
-      method,
-      params,
-    };
-    const result = new Promise<T>((resolvePromise, reject) => {
-      this.pending.set(id, { resolve: (value) => resolvePromise(value as T), reject });
+    let expired = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        expired = true;
+        this.pending.delete(id);
+        reject(new ExecutionRpcTransportError(`Execution RPC ${method} deadline exceeded; remote outcome is unconfirmed`));
+      }, this.requestTimeoutMs);
     });
     try {
-      const frame = encodeExecutionFrame(request, this.maximumFrameBytes);
-      if (!socket.write(frame)) await new Promise<void>((resolvePromise, reject) => {
-        socket.once("drain", resolvePromise);
-        socket.once("error", reject);
-      });
-    } catch (error) {
+      return await Promise.race([deadline, (async () => {
+        const socket = await this.connection();
+        if (expired) throw new ExecutionRpcTransportError("Execution RPC deadline expired before dispatch");
+        const frame = encodeExecutionFrame({ version: EXECUTION_RPC_WIRE_VERSION, id, authToken: this.options.authToken, method, params }, this.maximumFrameBytes);
+        if (socket.writableLength + frame.length > this.maximumFrameBytes * 2) throw new ExecutionRpcTransportError("Execution RPC write buffer capacity exceeded");
+        return new Promise<T>((resolve, reject) => {
+          this.pending.set(id, { resolve: (value) => resolve(value as T), reject });
+          // Node queues the frame under backpressure. Do not leave an unbounded drain waiter.
+          try { socket.write(frame); } catch (error) { this.pending.delete(id); reject(error); }
+        });
+      })()]);
+    } finally {
+      if (timer) clearTimeout(timer);
       this.pending.delete(id);
-      throw error;
+      this.activeCalls--;
     }
-    return result;
   }
 
   private async connection(): Promise<Socket> {
     if (this.socket && !this.socket.destroyed) return this.socket;
     if (this.connecting) return this.connecting;
+    const generation = ++this.connectionGeneration;
     this.connecting = new Promise<Socket>((resolvePromise, reject) => {
       const socket = this.address.kind === "pipe"
         ? createConnection(this.address.path)
@@ -385,6 +413,7 @@ export class ExecutionNodeRpcClient implements ExecutionNode {
       const timer = setTimeout(() => socket.destroy(new ExecutionRpcTransportError("Execution RPC connection timed out")), this.connectTimeoutMs);
       const fail = (error: Error) => {
         clearTimeout(timer);
+        if (generation !== this.connectionGeneration) { reject(error); return; }
         if (this.socket === socket) this.socket = null;
         this.connecting = null;
         this.rejectPending(error instanceof ExecutionRpcTransportError ? error : new ExecutionRpcTransportError(error.message));
@@ -392,11 +421,13 @@ export class ExecutionNodeRpcClient implements ExecutionNode {
       };
       socket.once("connect", () => {
         clearTimeout(timer);
+        if (generation !== this.connectionGeneration) { socket.destroy(); reject(new ExecutionRpcTransportError("Execution RPC connection superseded")); return; }
         this.socket = socket;
         this.connecting = null;
         resolvePromise(socket);
       });
       socket.on("data", (chunk) => {
+        if (generation !== this.connectionGeneration) return;
         try {
           for (const frame of decoder.push(chunk)) this.receive(frame);
         } catch (error) {
@@ -405,6 +436,8 @@ export class ExecutionNodeRpcClient implements ExecutionNode {
       });
       socket.once("error", fail);
       socket.once("close", () => {
+        clearTimeout(timer);
+        if (generation !== this.connectionGeneration) return;
         if (this.socket === socket) this.socket = null;
         this.connecting = null;
         this.rejectPending(new ExecutionRpcTransportError("Execution RPC connection closed"));

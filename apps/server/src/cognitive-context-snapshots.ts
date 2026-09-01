@@ -234,6 +234,7 @@ export function registerCognitiveSnapshotRoutes(
   providerReady: () => boolean,
   createId: () => string = randomUUID,
   now: () => string = () => new Date().toISOString(),
+  authorizeReplay?: (snapshot: CognitiveSnapshotRecord) => void,
 ): void {
   app.get("/api/scenarios/runs/:runId/cognitive-snapshots", async (request) => {
     const { runId } = z.object({ runId: z.string().min(1) }).parse(request.params);
@@ -247,9 +248,27 @@ export function registerCognitiveSnapshotRoutes(
     return snapshot ?? reply.code(404).send({ error: `Unknown cognitive snapshot ${snapshotId}` });
   });
 
+  // Worker evaluation IDs may exceed router path-parameter limits. Keep old paths
+  // compatible and provide bounded query/body identities without changing global routing.
+  app.get("/api/scenarios/cognitive-snapshot", async (request, reply) => {
+    const { snapshotId } = z.object({ snapshotId: z.string().min(1).max(2048) }).parse(request.query);
+    return store.get(snapshotId) ?? reply.code(404).send({ error: "Unknown cognitive snapshot" });
+  });
+
   app.post("/api/scenarios/cognitive-snapshots/:snapshotId/replay", async (request, reply) => {
     const { snapshotId } = z.object({ snapshotId: z.string().min(1) }).parse(request.params);
-    if (!store.get(snapshotId)) return reply.code(404).send({ error: `Unknown cognitive snapshot ${snapshotId}` });
+    return replay(snapshotId, reply);
+  });
+  app.post("/api/scenarios/cognitive-snapshot-replays", async (request, reply) => {
+    const { snapshotId } = z.object({ snapshotId: z.string().min(1).max(2048) }).strict().parse(request.body);
+    return replay(snapshotId, reply);
+  });
+
+  async function replay(snapshotId: string, reply: import("fastify").FastifyReply) {
+    const source = store.get(snapshotId);
+    if (!source) return reply.code(404).send({ error: `Unknown cognitive snapshot ${snapshotId}` });
+    try { authorizeReplay?.(source); }
+    catch { return reply.code(409).send({ error: "Historical model input requires current resource authorization; resume through the Worker context policy" }); }
     if (!providerReady()) return reply.code(409).send({ error: "LLM provider is not ready" });
     const id = createId();
     try {
@@ -257,5 +276,5 @@ export function registerCognitiveSnapshotRoutes(
     } catch {
       return reply.code(502).send(store.get(id));
     }
-  });
+  }
 }

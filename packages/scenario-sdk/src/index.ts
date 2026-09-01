@@ -158,6 +158,31 @@ export interface ScenarioPackageResource {
   version: number;
   locator: string;
   digest: `sha256:${string}`;
+  /** Explicit opt-in to model discovery; migration/assets are never implicitly exposed. */
+  context?: ScenarioContextResource;
+}
+
+export { validateSkillContract, validateSkillRecord } from "./skill-contract.js";
+import { validateSkillContract, type ScenarioSkillContract } from "./skill-contract.js";
+export type { ScenarioSkillContract, SkillRecordContract } from "./skill-contract.js";
+
+export interface ScenarioContextResource {
+  type: "skill" | "knowledge";
+  summary: string;
+  authorizationAction: string;
+  requiredCapabilities: string[];
+  phaseIds: string[];
+  /** References are package-local; each still requires an independent authorized read. */
+  references: string[];
+  validFrom?: string;
+  expiresAt?: string;
+  /** Explicit unresolved contradictions; these are not inferred from sample content. */
+  conflictsWith?: string[];
+  /** Other roles must be explicitly allowed to consume derived context from this resource. */
+  readerRoles?: Array<"worker" | "planner" | "observer">;
+  skill?: ScenarioSkillContract;
+  /** Host-reviewed source and exact content identity; never an arbitrary model-supplied URL. */
+  external?: { source: string; profileDigest: `sha256:${string}`; kind: "resource" | "prompt"; target: string; arguments?: Record<string, string> };
 }
 
 export interface ScenarioPackageResourceManifest {
@@ -182,7 +207,9 @@ export interface ScenarioToolHostContext {
   authorization: ScenarioAuthorizationPort;
   traffic: ScenarioTrafficPort;
   evidence: ScenarioEvidencePort;
+  /** Compatibility port: production only permits scoped brokered HTTP, never raw process/filesystem access. */
   executionNode?: ExecutionNode;
+  execution?: import("@traceforge/worker-runtime").GovernedExecutionPort;
 }
 
 export interface ScenarioPackageInstallation {
@@ -214,7 +241,7 @@ export type ScenarioPackageBindingStatus =
 export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
   private readonly packages = new Map<string, ScenarioPackageInstallation>();
 
-  constructor(packages: readonly ScenarioPackageInstallation[] = []) {
+  constructor(packages: readonly ScenarioPackageInstallation[] = [],private readonly usagePolicy?:(installation:ScenarioPackageInstallation)=>void) {
     const definitions = new Set<string>();
     for (const scenarioPackage of packages) {
       const id = scenarioPackage.id.trim();
@@ -240,6 +267,14 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
     return [...this.packages.values()].map((scenarioPackage) => scenarioPackage.definition);
   }
 
+  /** Host policy is synchronous and evaluated at use time; metadata enumeration does not grant use. */
+  assertAvailable(installation:ScenarioPackageInstallation):void {
+    try {
+      const result:unknown=this.usagePolicy?.(installation);
+      if(result!==undefined){void Promise.resolve(result).catch(()=>{});throw new Error("Package usage policy must be synchronous");}
+    }catch(error){throw new ScenarioPackageBindingError(error instanceof Error?error.message:"Scenario Package is not currently trusted");}
+  }
+
   requireForScenario(kind: string, version?: number): ScenarioPackageInstallation {
     const matches = [...this.packages.values()]
       .filter((scenarioPackage) => scenarioPackage.definition.kind === kind)
@@ -247,6 +282,7 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
       .sort((left, right) => right.definition.version - left.definition.version);
     const scenarioPackage = matches[0];
     if (!scenarioPackage) throw new Error(`Scenario Package for ${kind}${version === undefined ? "" : `@${version}`} is not installed`);
+    this.assertAvailable(scenarioPackage);
     return scenarioPackage;
   }
 
@@ -315,6 +351,7 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
         `Scenario Package ${binding.id}@${binding.version} does not provide required Definition ${definitionKind}@${definitionVersion}`,
       );
     }
+    this.assertAvailable(scenarioPackage);
     return scenarioPackage;
   }
 
@@ -336,7 +373,7 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
   }
 
   toolSources(context: ScenarioToolHostContext): ExecutionToolDiscoverySource[] {
-    const sources = [...this.packages.values()].flatMap((scenarioPackage) => [...scenarioPackage.createToolSources(context)]);
+    const sources = [...this.packages.values()].flatMap((scenarioPackage) => {this.assertAvailable(scenarioPackage);return [...scenarioPackage.createToolSources(context)];});
     const sourceIds = new Set<string>();
     for (const source of sources) {
       if (!source.source.trim() || sourceIds.has(source.source)) throw new Error(`Duplicate or empty Scenario tool source ${source.source}`);
@@ -425,6 +462,7 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
       throw new Error(`Scenario Package ${scenarioPackage.id} Resource Manifest revision must be a positive integer`);
     }
     const resources = new Map<string, ScenarioPackageResource>();
+    if (resourceManifest.resources.length > 1024) throw new Error("Scenario Package resource count exceeds limit");
     for (const resource of resourceManifest.resources) {
       if (!/^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/.test(resource.id)
         || !/^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/.test(resource.kind)
@@ -435,6 +473,42 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
       }
       if (resources.has(resource.id)) throw new Error(`Duplicate Scenario Package resource ${resource.id}`);
       resources.set(resource.id, resource);
+      const context = resource.context;
+      if (context?.readerRoles && (!Array.isArray(context.readerRoles) || !context.readerRoles.length || context.readerRoles.length > 3
+        || context.readerRoles.some((role) => !["worker", "planner", "observer"].includes(role))
+        || new Set(context.readerRoles).size !== context.readerRoles.length)) throw new Error("Invalid context reader roles");
+      if (context?.skill) {
+        if (context.type !== "skill") throw new Error("Only Skill resources may declare Skill contracts");
+        validateSkillContract(context.skill);
+      }
+      if (context?.external) {
+        const remote = context.external;
+        if (!remote.source.trim() || remote.source.length > 128 || !/^sha256:[a-f0-9]{64}$/.test(remote.profileDigest)
+          || !["resource", "prompt"].includes(remote.kind) || !remote.target.trim() || remote.target.length > 1024
+          || (remote.arguments !== undefined && (remote.kind !== "prompt" || !remote.arguments || typeof remote.arguments !== "object" || Array.isArray(remote.arguments)
+            || Object.keys(remote.arguments).length > 16 || Object.entries(remote.arguments).some(([k, v]) =>
+              !/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(k) || typeof v !== "string" || v.length > 256)))) throw new Error("Invalid external context binding");
+      }
+      if (context && ((!["skill", "knowledge"].includes(context.type))
+        || resource.id.length > 128 || resource.locator.length > 1024
+        || !context.summary.trim() || context.summary.length > 512
+        || !context.authorizationAction.trim() || context.authorizationAction.length > 128
+        || ![context.requiredCapabilities, context.phaseIds, context.references, context.conflictsWith ?? []].every((values) =>
+          Array.isArray(values) && values.length <= 32 && values.every((value) => typeof value === "string" && value.trim() && value.length <= 128))
+        || [context.validFrom, context.expiresAt].some((value) => value !== undefined &&
+          (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T.*Z$/.test(value) || !Number.isFinite(Date.parse(value))))
+        || (context.validFrom !== undefined && context.expiresAt !== undefined && Date.parse(context.validFrom) >= Date.parse(context.expiresAt))
+        || context.phaseIds.some((id) => !scenarioPackage.definition.phases.some((phase) => phase.id === id)))) {
+        throw new Error(`Scenario Package resource ${resource.id} has invalid context metadata`);
+      }
+    }
+    for (const resource of resources.values()) {
+      if (resource.context?.references.some((id) => !resources.get(id)?.context)) {
+        throw new Error(`Scenario Package resource ${resource.id} references a missing context resource`);
+      }
+      if (resource.context?.conflictsWith?.some((id) => id === resource.id || !resources.get(id)?.context)) {
+        throw new Error(`Scenario Package resource ${resource.id} has an invalid conflict reference`);
+      }
     }
     if (!migrationManifest) return;
     if (!Number.isInteger(migrationManifest.revision) || migrationManifest.revision < 1) {
@@ -460,3 +534,4 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
     }
   }
 }
+export * from "./run-migration.js";

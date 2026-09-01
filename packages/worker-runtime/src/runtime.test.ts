@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ScenarioWorkItem, WorkerDescriptor } from "@traceforge/orchestration-core";
+import type { ScenarioWorkItem, WorkerDescriptor, ScenarioRunState } from "@traceforge/orchestration-core";
 import { BoundedOutputDistiller } from "./distiller.js";
 import type {
   ExecutionToolGateway,
@@ -13,7 +13,9 @@ import type {
   WorkerOutputDraft,
 } from "./model.js";
 import { LoopGuardObserver } from "./observer.js";
+import { ToolInvocationRecoveryRequiredError } from "./tool-gateway.js";
 import { LeaseLostError, LeaseWorkerRuntime, type WorkerLifecycleEvent } from "./runtime.js";
+import { executionToolContractFingerprint } from "./tool-provider-contract.js";
 
 const worker: WorkerDescriptor = {
   id: "worker_1",
@@ -90,6 +92,126 @@ const resolvedCatalog = (tools: Awaited<ReturnType<ExecutionToolGateway["catalog
 });
 
 describe("LeaseWorkerRuntime", () => {
+  it("cancels uncooperative inference and ignores its late action", async () => {
+    const control = new FakeControl(); let release!: (value: WorkerDecision) => void; let started!: () => void;
+    const ready = new Promise<void>((r) => { started = r; }); let observed: AbortSignal | undefined;
+    const runtime = new LeaseWorkerRuntime(worker, control, { decide(_request, signal) { observed = signal; started(); return new Promise((resolve) => { release = resolve; }); } },
+      { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("must not dispatch"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller());
+    const execution = runtime.execute(assignment()); await ready; runtime.cancelAll("operator stopped");
+    expect((await execution).outcome).toBe("lease_lost"); expect(observed?.aborted).toBe(true);
+    release({ type: "complete", summary: "late", outputs: [] }); await new Promise((r) => setTimeout(r, 0));
+    expect(control.completed).toBeUndefined(); expect(control.failed).toBeUndefined(); expect(control.checkpoints).toBe(0);
+  });
+  it("only revokes the matching Run and lease when applying control-plane ownership changes", async () => {
+    const control = new FakeControl(); let signal: AbortSignal | undefined, started!: () => void;
+    const ready = new Promise<void>((r) => { started = r; });
+    const runtime = new LeaseWorkerRuntime(worker, control, { async decide(_request, value) { signal = value; started(); return new Promise(() => {}); } },
+      { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("must not dispatch"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller());
+    const execution = runtime.execute(assignment()); await ready;
+    runtime.reconcileRun({ id: "other_run", status: "cancelled", workItems: [] } as unknown as ScenarioRunState); expect(signal!.aborted).toBe(false);
+    runtime.reconcileRun({ id: "run_1", status: "running", workItems: [work()] } as unknown as ScenarioRunState); expect(signal!.aborted).toBe(false);
+    runtime.reconcileRun({ id: "run_1", status: "running", workItems: [{ ...work(), leaseId: "replacement" }] } as unknown as ScenarioRunState);
+    expect((await execution).outcome).toBe("lease_lost"); expect(signal!.aborted).toBe(true);
+  });
+  it.each(["lost", "expired", "unresponsive"])("interrupts inference when ownership is %s", async (mode) => {
+    const control = new FakeControl(); let reads = 0;
+    control.refresh = async () => {
+      if (++reads === 1) return control.current;
+      if (mode === "lost") throw new LeaseLostError("ownership changed");
+      if (mode === "unresponsive") return new Promise(() => {});
+      return { ...control.current, leaseExpiresAt: "2020-01-01" };
+    };
+    const runtime = new LeaseWorkerRuntime(worker, control, { async decide() { return new Promise(() => {}); } },
+      { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("must not dispatch"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(), { ownershipPollMs: 10 });
+    expect((await runtime.execute(assignment())).outcome).toBe("lease_lost"); expect(control.completed).toBeUndefined();
+  });
+  it("does not dispatch after cancellation during pending checkpoint persistence", async () => {
+    const control = new FakeControl(), checkpoints = new MemoryCheckpoints(); let dispatches = 0;
+    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([{ type: "invoke_tool", invocation: { id: "first", tool: "read", input: {}, rationale: "Observe" } }]),
+      { async catalog() { return resolvedCatalog([pendingTool]); }, async execute() { dispatches++; throw new Error("must not dispatch"); } }, continueObserver, checkpoints, new BoundedOutputDistiller());
+    checkpoints.save = async () => { runtime.cancelAll(); return "checkpoint://pending.json"; };
+    expect((await runtime.execute(assignment())).outcome).toBe("lease_lost"); expect(dispatches).toBe(0); expect(control.checkpoints).toBe(0);
+  });
+  const pendingTool = { name: "read", source: "neutral", version: "1", priority: 1, description: "Observe",
+    inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {},
+    risk: "read_only" as const, timeoutMs: 1000 };
+  function suspended() {
+    const current = assignment();
+    current.work.latestCheckpoint = { id: "pending", workId: current.work.id, leaseId: "old-lease",
+      progressSummary: "pending", payloadRef: "checkpoint://pending.json", createdAt: worker.heartbeatAt };
+    const checkpoints = new MemoryCheckpoints();
+    checkpoints.document = { version: 2, workerId: worker.id, runId: current.runId, workId: current.work.id,
+      caseId: current.runContext.caseId, workKey: current.work.idempotencyKey, leaseId: "old-lease",
+      turn: 0, transcript: [], steering: [], completedInvocationIds: [], consecutiveFailures: 0, savedAt: worker.heartbeatAt,
+      pendingInvocation: { turn: 1, invocation: { id: "exact", tool: "read", input: { value: "original" }, rationale: "Observe" },
+        risk: pendingTool.risk, contractFingerprint: executionToolContractFingerprint(pendingTool) } };
+    return { current, checkpoints, control: new FakeControl(current) };
+  }
+
+  it("recovers the confirmed result before any catalog or model call, even without the provider", async () => {
+    const { current, checkpoints, control } = suspended(); const order: string[] = [];
+    const runtime = new LeaseWorkerRuntime(worker, control, { async decide(request) {
+      order.push("model"); expect(request.transcript.some((entry) => entry.refs.includes("evidence"))).toBe(true);
+      return { type: "complete", summary: "Done", outputs: [] };
+    } }, { async recover(request) {
+      order.push("recover"); expect(request.idempotencyKey).toBe("effect_1:exact");
+      expect(request.invocation.input).toEqual({ value: "original" });
+      return { status: "recorded", result: { status: "succeeded", summary: "Saved", raw: "saved", refs: ["evidence"], retryable: false } };
+    }, async catalog() { order.push("catalog"); return resolvedCatalog([]); }, async execute() { throw new Error("must not dispatch"); } },
+    continueObserver, checkpoints, new BoundedOutputDistiller());
+    expect((await runtime.execute(current)).outcome).toBe("completed");
+    expect(order).toEqual(["recover", "catalog", "model"]);
+    expect(checkpoints.document).toMatchObject({ turn: 1, pendingInvocation: null, completedInvocationIds: ["exact"] });
+  });
+
+  it("executes only the saved input when durable ownership proves it never started", async () => {
+    const { current, checkpoints, control } = suspended(); let executions = 0;
+    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([{ type: "complete", summary: "Done", outputs: [] }]), {
+      async recover() { return { status: "not_started" }; }, async catalog() { return resolvedCatalog([pendingTool]); },
+      async execute(request) { executions++; expect(request.invocation.input).toEqual({ value: "original" });
+        return { status: "succeeded", summary: "Done", raw: "", refs: [], retryable: false }; },
+    }, continueObserver, checkpoints, new BoundedOutputDistiller());
+    expect((await runtime.execute(current)).outcome).toBe("completed"); expect(executions).toBe(1);
+  });
+
+  it.each(["missing-recovery", "uncertain", "changed-contract", "exhausted-budget"])("fails closed on %s without asking the model", async (failure) => {
+    const { current, checkpoints, control } = suspended(); let modelCalls = 0; let executions = 0;
+    if (failure === "exhausted-budget") checkpoints.document!.consecutiveFailures = 3;
+    const runtime = new LeaseWorkerRuntime(worker, control, { async decide() { modelCalls++; throw new Error("unexpected model"); } }, {
+      recover: failure === "missing-recovery" ? undefined : async () => {
+        if (failure === "uncertain") throw new ToolInvocationRecoveryRequiredError("Uncertain effect");
+        return { status: "not_started" };
+      }, async catalog() { return resolvedCatalog([{ ...pendingTool, version: "2" }]); },
+      async execute() { executions++; throw new Error("unexpected execution"); },
+    }, continueObserver, checkpoints, new BoundedOutputDistiller());
+    expect((await runtime.execute(current)).outcome).toBe("blocked"); expect(modelCalls).toBe(0); expect(executions).toBe(0);
+  });
+
+  it("does not dispatch if the pre-action checkpoint cannot be committed", async () => {
+    const control = new FakeControl(); let executions = 0;
+    control.checkpoint = async () => { throw new Error("storage unavailable"); };
+    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
+      { type: "invoke_tool", invocation: { id: "exact", tool: "read", input: {}, rationale: "Observe" } },
+    ]), { async catalog() { return resolvedCatalog([pendingTool]); }, async execute() { executions++; throw new Error("unexpected"); } },
+    continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller());
+    expect((await runtime.execute(assignment())).outcome).toBe("failed"); expect(executions).toBe(0);
+  });
+  it.each(["catalog", "execute"])("blocks Work when uncertainty is reported during %s", async (phase) => {
+    const control = new FakeControl();
+    const runtime = new LeaseWorkerRuntime(worker, control, new SequenceModel([
+      { type: "invoke_tool", invocation: { id: "call", tool: "read", input: {}, rationale: "Observe" } },
+    ]), {
+      async catalog() {
+        if (phase === "catalog") throw new ToolInvocationRecoveryRequiredError("Execution outcome must be reconciled");
+        return resolvedCatalog([{ name: "read", source: "neutral", version: "1.0.0", priority: 1,
+        description: "Observe", inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1000 }]); },
+      async execute() { throw new ToolInvocationRecoveryRequiredError("Execution outcome must be reconciled"); },
+    }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(), {}, () => "2026-08-24T08:00:10.000Z");
+    expect(await runtime.execute(assignment())).toMatchObject({ outcome: "blocked", reason: "Execution outcome must be reconciled" });
+    expect(control.blocked).toBe("Execution outcome must be reconciled");
+    expect(control.failed).toBeUndefined();
+    expect(control.completed).toBeUndefined();
+  });
   it("executes a tool, checkpoints the distilled result, and completes work", async () => {
     const control = new FakeControl();
     const checkpoints = new MemoryCheckpoints();
@@ -105,15 +227,15 @@ describe("LeaseWorkerRuntime", () => {
 
     const result = await runtime.execute(assignment());
     expect(result.outcome).toBe("completed");
-    expect(control.checkpoints).toBe(1);
+    expect(control.checkpoints).toBe(2);
     expect(control.completed?.outputs[0].refs).toEqual(["evidence_1"]);
     expect(checkpoints.document?.completedInvocationIds).toEqual(["call_1"]);
     expect(checkpoints.document?.transcript.some((entry) => entry.summary.includes("raw-sha256="))).toBe(true);
-    const turnId = "worker:worker_1:work:work_1:attempt:1:turn:1";
+    const turnId = "worker:worker_1:run:run_1:work:work_1:lease:lease_1:attempt:1:turn:1";
     expect(lifecycle.filter((event) => event.type === "tool_started" || event.type === "tool_completed")
       .map((event) => [event.type, event.turnId])).toEqual([["tool_started", turnId], ["tool_completed", turnId]]);
     expect(lifecycle.filter((event) => event.type === "turn_progress").map((event) => event.phase)).toEqual([
-      "actionRequested", "toolExecuted", "observationApplied", "checkpointed",
+      "actionRequested", "checkpointed", "toolExecuted", "observationApplied", "checkpointed",
     ]);
     expect(lifecycle.find((event) => event.type === "turn_completed")).toMatchObject({ outcome: "continue" });
   });
@@ -157,7 +279,7 @@ describe("LeaseWorkerRuntime", () => {
     const result = await runtime.execute(assignment());
     expect(result.outcome).toBe("completed");
     expect(executions).toBe(1);
-    expect(control.checkpoints).toBe(2);
+    expect(control.checkpoints).toBe(3);
   });
 
   it("stops locally without writing failure after losing a lease", async () => {

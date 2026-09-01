@@ -66,11 +66,19 @@ export class ToolProviderGarbageCollector {
       .filter((provider) => provider.lifecycle !== "retired")
       .map((provider) => `${provider.tool.source}\0${provider.tool.version}`));
     const prepared = this.sqlite.prepare(`
-      SELECT tool_source, tool_version, run_id, work_id, idempotency_key
-      FROM tool_invocation_bindings WHERE status = 'prepared'
+      SELECT b.tool_source, b.tool_version, b.run_id, b.work_id, b.idempotency_key
+      FROM tool_invocation_bindings b LEFT JOIN tool_invocation_executions e ON e.idempotency_key = b.idempotency_key
+      WHERE b.status = 'prepared' OR e.status IN ('executing', 'uncertain')
     `).all() as Array<{ tool_source: string; tool_version: string; run_id: string; work_id: string; idempotency_key: string }>;
     const preparedVersions = new Set(prepared.map((row) => `${row.tool_source}\0${row.tool_version}`));
     const protectedScratch = new Set(prepared.map((row) => invocationIdentity(row.run_id, row.work_id, row.idempotency_key)));
+    if(this.sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='managed_execution_occupancy'").get()) {
+      const held=this.sqlite.prepare("SELECT idempotency_key,identity_json FROM managed_execution_occupancy WHERE state!='released'").all() as Array<{idempotency_key:string;identity_json:string}>;
+      for(const row of held){const identity=JSON.parse(row.identity_json);
+        preparedVersions.add(`${identity.invocation.tool.source}\0${identity.scheduling.providerVersion}`);
+        protectedScratch.add(invocationIdentity(identity.scheduling.runId,identity.scheduling.workId,row.idempotency_key));
+      }
+    }
     const recoveryOwned = new Set((this.sqlite.prepare(`
       SELECT provider_id, version FROM tool_provider_recovery_states WHERE status != 'healthy'
     `).all() as Array<{ provider_id: string; version: string }>).map((row) => `${row.provider_id}\0${row.version}`));

@@ -21,6 +21,7 @@ import {
   resolveToolProviderEntrypoint,
   type ToolProviderInstallation,
 } from "./tool-provider-control-plane.js";
+import type { ManagedExecutionCapacity } from "./managed-execution-capacity.js";
 
 export interface ManagedToolProviderRecoveryOptions {
   state: ToolProviderRecoveryStatePort;
@@ -35,6 +36,7 @@ export interface ManagedToolProviderRecoveryOptions {
   onQuarantined?: (snapshot: ToolProviderRecoverySnapshot) => void;
   diagnostics?: ToolProviderDiagnosticWriter;
   scheduler?: ToolProviderFairScheduler;
+  capacity?: ManagedExecutionCapacity;
 }
 
 export function createManagedToolProviderSourceFactory(
@@ -43,6 +45,7 @@ export function createManagedToolProviderSourceFactory(
   capabilityHost?: ProviderCapabilityHost,
   recoveryOptions?: ManagedToolProviderRecoveryOptions,
 ): (installation: ToolProviderInstallation) => ExecutionToolDiscoverySource {
+  if(recoveryOptions?.capacity && recoveryOptions.scheduler!==recoveryOptions.capacity.scheduler)throw new Error("Managed capacity requires its owning scheduler");
   if (!isAbsolute(workRootValue)) throw new Error("Managed Tool Provider work root must be absolute");
   mkdirSync(workRootValue, { recursive: true, mode: 0o700 });
   const workRoot = realpathSync(workRootValue);
@@ -93,7 +96,7 @@ function managedSource(
           recovery,
           publishRecovery,
           () => executeScheduledManagedTool(
-            recoveryOptions?.scheduler, node, workRoot, installation, capabilityHost,
+            recoveryOptions?.scheduler, recoveryOptions?.capacity, node, workRoot, installation, capabilityHost,
             recoveryOptions?.diagnostics, tool.name, tool.timeoutMs, input, context,
           ),
         ),
@@ -109,7 +112,7 @@ function managedSource(
         executionOwnership: "per-invocation",
         providerCapabilityHost: capabilityHost ? "enabled" : "disabled",
         scheduling: scheduling && schedulingSnapshot
-          ? { status: "enabled", active: schedulingSnapshot.active, queued: schedulingSnapshot.queued, limits: { ...scheduling.limits } }
+          ? { status: "enabled", active: schedulingSnapshot.active, retained: schedulingSnapshot.retained, occupied: schedulingSnapshot.occupied, queued: schedulingSnapshot.queued, limits: { ...scheduling.limits } }
           : { status: "disabled" },
         recovery: recoveryOptions ? recoverySnapshot ?? { status: "initializing" } : { status: "disabled" },
       };
@@ -119,6 +122,7 @@ function managedSource(
 
 async function executeScheduledManagedTool(
   scheduler: ToolProviderFairScheduler | undefined,
+  capacity: ManagedExecutionCapacity | undefined,
   node: ExecutionNode,
   workRoot: string,
   installation: ToolProviderInstallation,
@@ -129,23 +133,37 @@ async function executeScheduledManagedTool(
   input: unknown,
   context: ToolExecutionContext,
 ): Promise<ToolExecutionResult> {
-  const lease = await scheduler?.acquire({
+  const identity = {
     providerId: installation.manifest.providerId,
     providerVersion: installation.manifest.version,
     toolName,
     caseId: context.caseId,
     runId: context.runId,
     workId: context.workId,
-  }, context.signal);
+  };
+  const lease = await scheduler?.acquire(identity, context.signal);
+  let reserved=false, terminalObserved=false;
   try {
+    context.signal?.throwIfAborted();
+    if(capacity){capacityOperation(()=>capacity.reserve(identity,installation.manifest.source,context));reserved=true;}
     return await executeManagedTool(
       node, workRoot, installation, capabilityHost, diagnostics, toolName, timeoutMs, input, context,
+      capacity ? (requestId)=>capacityOperation(()=>capacity.beforeStart(context.idempotencyKey,requestId)) : undefined,
+      ()=>{terminalObserved=true;},
     );
   } catch (error) {
     if (context.signal?.aborted) throw new ToolProviderSchedulingError("cancelled");
     throw error;
   } finally {
-    lease?.release();
+    try {if(reserved)capacityOperation(()=>capacity!.finish(context.idempotencyKey,terminalObserved));}
+    finally {lease?.release();}
+  }
+}
+
+function capacityOperation(operation:()=>void):void {
+  try {operation();} catch(cause) {
+    // Host storage/admission failures are not evidence that a Provider is unhealthy.
+    throw Object.assign(new Error("Managed execution capacity is fenced",{cause}),{countsTowardProviderRecovery:false});
   }
 }
 
@@ -204,6 +222,8 @@ async function executeManagedTool(
   timeoutMs: number,
   input: unknown,
   context: ToolExecutionContext,
+  beforeProcessStart?: (requestId:string)=>void,
+  terminalObserved?: ()=>void,
 ): Promise<ToolExecutionResult> {
   const { manifest } = installation;
   const scratch = invocationScratch(workRoot, context.runId, context.workId, context.idempotencyKey);
@@ -211,6 +231,7 @@ async function executeManagedTool(
   const entrypoint = resolveToolProviderEntrypoint(manifest, installation.packageRoot);
   const permissions = providerPermissions(installation, scratch);
   const client = new ExecutionNodeToolProviderClient({
+    beforeProcessStart,
     node,
     executable: entrypoint.executable,
     arguments: manifest.entrypoint.arguments,
@@ -241,7 +262,7 @@ async function executeManagedTool(
     capabilityHost,
     diagnosticWriter: diagnostics,
   });
-  const cancel = () => { void client.close(); };
+  const cancel = () => { void client.close().catch(() => undefined); }; // finally reports unconfirmed cleanup to Gateway
   if (context.signal?.aborted) {
     await client.close();
     throw new ToolProviderSchedulingError("cancelled");
@@ -252,6 +273,7 @@ async function executeManagedTool(
   } finally {
     context.signal?.removeEventListener("abort", cancel);
     await client.close();
+    terminalObserved?.();
   }
 }
 

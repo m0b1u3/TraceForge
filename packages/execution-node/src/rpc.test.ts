@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { EffectivePermissionProfile } from "@traceforge/orchestration-core";
 import type { ManagedProcess, ProcessLauncher } from "./runtime.js";
 import { LocalExecutionNode } from "./runtime.js";
@@ -152,6 +152,30 @@ describe("Execution RPC framing", () => {
 });
 
 describe("Execution Node RPC transport", () => {
+  it("bounds a silent peer, ignores late responses and keeps subsequent request identities separate", async () => {
+    const { node } = fixture(); const original = node.handshake.bind(node);
+    let release!: () => void; let calls = 0;
+    vi.spyOn(node, "handshake").mockImplementation(async (input) => { calls++; if (calls === 1) await new Promise<void>((r) => { release = r; }); return original(input); });
+    const token = createExecutionRpcAuthToken(), server = new ExecutionNodeRpcServer(new ExecutionRpcDispatcher(node), { authToken: token });
+    const address = await server.listen({ kind: "tcp", host: "127.0.0.1", port: 0 });
+    const client = new ExecutionNodeRpcClient(address, { authToken: token, requestTimeoutMs: 30 });
+    const input = { clientId: "first", protocol: EXECUTION_PROTOCOL_VERSION, requiredCapabilities: [] };
+    try {
+      await expect(client.handshake(input)).rejects.toThrow("outcome is unconfirmed");
+      release(); expect((await client.handshake({ ...input, clientId: "second" })).node.id).toBe("rpc_node"); expect(calls).toBe(2);
+    } finally { client.disconnect(); await server.close(); }
+  });
+  it("rejects excess pending RPC calls without sending them", async () => {
+    const { node } = fixture(); let release!: () => void; let started!: () => void;
+    const ready = new Promise<void>((r) => { started = r; }), original = node.handshake.bind(node);
+    const spy = vi.spyOn(node, "handshake").mockImplementation(async (input) => { started(); await new Promise<void>((r) => { release = r; }); return original(input); });
+    const token = createExecutionRpcAuthToken(), server = new ExecutionNodeRpcServer(new ExecutionRpcDispatcher(node), { authToken: token });
+    const address = await server.listen({ kind: "tcp", host: "127.0.0.1", port: 0 });
+    const client = new ExecutionNodeRpcClient(address, { authToken: token, maximumPendingRequests: 1, requestTimeoutMs: 1000 });
+    const input = { clientId: "first", protocol: EXECUTION_PROTOCOL_VERSION, requiredCapabilities: [] };
+    try { const first = client.handshake(input); await ready; await expect(client.handshake(input)).rejects.toThrow("capacity"); release(); await first; expect(spy).toHaveBeenCalledTimes(1); }
+    finally { client.disconnect(); await server.close(); }
+  });
   it("supports authenticated concurrent calls, reconnect, and process adoption over loopback", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "traceforge-rpc-"));
     const { launcher, node } = fixture();

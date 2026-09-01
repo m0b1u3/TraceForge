@@ -5,6 +5,8 @@ import type Database from "better-sqlite3";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   assessToolProviderCompatibility,
+  executionToolCatalogFingerprint,
+  snapshotToolSpec,
   validateToolProviderSpec,
   type ExecutionToolDiscoverySource,
   type ExecutionToolSpec,
@@ -151,6 +153,32 @@ export class ToolProviderControlError extends Error {
 
 export class SqliteToolProviderControlStore {
   constructor(private readonly sqlite: Database.Database) {}
+
+  activationDelivery(commandId: string) {
+    return this.sqlite.prepare("SELECT * FROM tool_provider_activation_deliveries WHERE command_id = ?").get(commandId) as
+      { command_id: string; provider_id: string; version: string; status: "pending" | "completed" | "superseded"; last_error: string | null } | undefined;
+  }
+
+  pendingActivationCommands(): string[] {
+    return (this.sqlite.prepare("SELECT command_id FROM tool_provider_activation_deliveries WHERE status = 'pending'").all() as
+      Array<{ command_id: string }>).map((row) => row.command_id);
+  }
+
+  isCurrentActivation(commandId: string, installation: ToolProviderInstallation): boolean {
+    if (installation.state !== "enabled") return false;
+    const latest = this.sqlite.prepare(`
+      SELECT command_id FROM tool_provider_events WHERE provider_id = ?
+      AND event_type IN ('enabled', 'rolled_back') ORDER BY sequence DESC LIMIT 1
+    `).get(installation.manifest.providerId) as { command_id: string } | undefined;
+    return latest?.command_id === commandId;
+  }
+
+  settleActivation(commandId: string, status: "pending" | "completed" | "superseded", error: string | null, at: string): void {
+    this.sqlite.prepare(`
+      UPDATE tool_provider_activation_deliveries SET status = ?, last_error = ?, updated_at = ?
+      WHERE command_id = ? AND status = 'pending'
+    `).run(status, error?.slice(0, 1024) ?? null, at, commandId);
+  }
 
   list(): ToolProviderInstallation[] {
     return (this.sqlite.prepare(`
@@ -318,6 +346,10 @@ export class SqliteToolProviderControlStore {
         input.providerId, input.version, input.eventType, target.state, "enabled",
         input.reason, input.actor, input.commandId, input.at,
       );
+      this.sqlite.prepare(`
+        INSERT INTO tool_provider_activation_deliveries (command_id, provider_id, version, status, updated_at)
+        VALUES (?, ?, ?, 'pending', ?)
+      `).run(input.commandId, input.providerId, input.version, input.at);
     })();
     return this.get(input.providerId, input.version)!;
   }
@@ -393,6 +425,7 @@ export class SqliteToolProviderControlStore {
 
 export class ToolProviderControlPlane {
   private readonly operationTails = new Map<string, Promise<void>>();
+  private readonly activationCompletions = new Map<string, () => Promise<void>>();
 
   constructor(
     private readonly store: SqliteToolProviderControlStore,
@@ -435,13 +468,18 @@ export class ToolProviderControlPlane {
     for (const installation of recoverable) {
       try {
         this.verifyInstallation(installation.manifest, installation.signature, installation.packageRoot);
-        await this.openAdmission(installation);
+        await this.closeAdmission(installation, "startup activation pending");
         const activation = await this.runtime.activate(installation);
         await activation?.drained;
+        await this.openAdmission(installation);
         enabled.push(`${installation.manifest.providerId}@${installation.manifest.version}`);
       } catch (error) {
-        await this.closeAdmission(installation, "startup activation failed");
-        const reason = message(error);
+        const failures = [message(error)];
+        try { await this.closeAdmission(installation, "startup activation failed"); }
+        catch (fenceError) { failures.push(`admission fence: ${message(fenceError)}`); }
+        try { await this.runtime.drain(installation.manifest.source); }
+        catch (drainError) { failures.push(`runtime drain: ${message(drainError)}`); }
+        const reason = failures.join("; ").slice(0, 1024);
         this.store.transition({
           providerId: installation.manifest.providerId, version: installation.manifest.version,
           toState: "failed", eventType: "failed", reason, actor: "startup-recovery",
@@ -458,6 +496,15 @@ export class ToolProviderControlPlane {
         toState: "disabled", eventType: "disabled", reason, actor: "startup-recovery",
         commandId: randomUUID(), fingerprint: fingerprint({ action: "recovery-drain", reason }), at: this.now(),
       });
+    }
+    for (const commandId of this.store.pendingActivationCommands()) {
+      const delivery = this.store.activationDelivery(commandId)!;
+      const current = this.store.get(delivery.provider_id, delivery.version);
+      const completed = current && this.store.isCurrentActivation(commandId, current)
+        && enabled.includes(`${delivery.provider_id}@${delivery.version}`);
+      this.store.settleActivation(commandId, completed ? "completed" : "superseded",
+        completed ? null : "Activation no longer owns the recovered enabled lifecycle", this.now());
+      this.activationCompletions.delete(commandId);
     }
     return { enabled, failed };
   }
@@ -485,9 +532,11 @@ export class ToolProviderControlPlane {
   }
 
   private async enableLocked(providerId: string, version: string, actor: string, commandId: string): Promise<ToolProviderInstallation> {
+    actor = required(actor, "actor");
+    commandId = required(commandId, "commandId");
     const command = { action: "enable", providerId, version };
     const replay = this.replay(commandId, command);
-    if (replay) return replay;
+    if (replay) return this.replayActivation(commandId, replay);
     const installation = this.require(providerId, version);
     if (installation.state === "quarantined") throw new ToolProviderControlError("A quarantined Provider must be explicitly reinstalled or rolled back", 409);
     if (!["installed", "disabled", "failed", "draining", "enabled"].includes(installation.state)) {
@@ -521,19 +570,26 @@ export class ToolProviderControlPlane {
     }
     let activation: { drained: Promise<void> } | void;
     try {
-      await this.openAdmission(installation);
+      await this.closeAdmission(installation, "activation pending durable commit");
       activation = await this.runtime.activate(installation);
+      void activation?.drained.catch(() => undefined);
     } catch (error) {
       await this.closeAdmission(installation, "activation failed");
       await this.reopenAdmissions(fenced);
       return this.failActivation(installation, actor, commandId, command, message(error));
     }
     const at = this.now();
-    const enabled = this.store.activateVersion({
-      providerId, version, previous, eventType: "enabled", reason: null,
-      actor: required(actor, "actor"), commandId: required(commandId, "commandId"), fingerprint: fingerprint(command), at,
-    });
-    await this.finishDrain(previous, activation?.drained ?? Promise.resolve(), actor, commandId, command, `superseded by ${version}`);
+    let enabled: ToolProviderInstallation;
+    try {
+      enabled = this.store.activateVersion({
+        providerId, version, previous, eventType: "enabled", reason: null,
+        actor: required(actor, "actor"), commandId: required(commandId, "commandId"), fingerprint: fingerprint(command), at,
+      });
+    } catch (error) {
+      enabled = await this.compensateUncommittedActivation(installation, fenced, error);
+    }
+    await this.completeCommittedActivation(installation, commandId,
+      () => this.finishDrain(previous, activation?.drained ?? Promise.resolve(), actor, commandId, command, `superseded by ${version}`));
     return enabled;
   }
 
@@ -578,9 +634,12 @@ export class ToolProviderControlPlane {
   }
 
   private async rollbackLocked(providerId: string, fromVersion: string, toVersion: string, reason: string, actor: string, commandId: string): Promise<ToolProviderInstallation> {
+    reason = required(reason, "reason");
+    actor = required(actor, "actor");
+    commandId = required(commandId, "commandId");
     const command = { action: "rollback", providerId, fromVersion, toVersion, reason };
     const replay = this.replay(commandId, command);
-    if (replay) return replay;
+    if (replay) return this.replayActivation(commandId, replay);
     const current = this.require(providerId, fromVersion);
     const target = this.require(providerId, toVersion);
     if (compareVersions(fromVersion, toVersion) <= 0) throw new ToolProviderControlError("Rollback target must be an older Provider version", 409);
@@ -598,20 +657,118 @@ export class ToolProviderControlPlane {
     );
     let activation: { drained: Promise<void> } | void;
     try {
-      await this.openAdmission(target);
+      await this.closeAdmission(target, "rollback pending durable commit");
       activation = await this.runtime.activate(target);
+      void activation?.drained.catch(() => undefined);
     } catch (error) {
       await this.closeAdmission(target, "rollback activation failed");
       if (current.state === "enabled") await this.openAdmission(current);
       throw error;
     }
     const at = this.now();
-    const rolledBack = this.store.activateVersion({
-      providerId, version: toVersion, previous: [current], eventType: "rolled_back", reason: required(reason, "reason"),
-      actor: required(actor, "actor"), commandId: required(commandId, "commandId"), fingerprint: fingerprint(command), at,
-    });
-    await this.finishDrain(current.state === "enabled" ? [current] : [], activation?.drained ?? Promise.resolve(), actor, commandId, command, reason);
+    let rolledBack: ToolProviderInstallation;
+    try {
+      rolledBack = this.store.activateVersion({
+        providerId, version: toVersion, previous: [current], eventType: "rolled_back", reason: required(reason, "reason"),
+        actor: required(actor, "actor"), commandId: required(commandId, "commandId"), fingerprint: fingerprint(command), at,
+      });
+    } catch (error) {
+      rolledBack = await this.compensateUncommittedActivation(target, current.state === "enabled" ? [current] : [], error);
+    }
+    await this.completeCommittedActivation(target, commandId,
+      () => this.finishDrain(current.state === "enabled" ? [current] : [], activation?.drained ?? Promise.resolve(), actor, commandId, command, reason));
     return rolledBack;
+  }
+
+  private async completeCommittedActivation(target: ToolProviderInstallation, commandId: string, drain: () => Promise<void>): Promise<void> {
+    const drained = drain();
+    void drained.catch(() => undefined);
+    let attempted = false;
+    const complete = async () => {
+      try {
+        // A retry must not briefly reopen admission after drain cleanup has failed.
+        if (attempted) await drained;
+        attempted = true;
+        await this.openAdmission(target);
+        await drained;
+        this.store.settleActivation(commandId, "completed", null, this.now());
+        this.activationCompletions.delete(commandId);
+      } catch (error) {
+        await drained.catch(() => undefined);
+        const failures = [message(error)];
+        try { await this.closeAdmission(target, "committed activation completion pending"); }
+        catch (fenceError) {
+          failures.push(`admission fence: ${message(fenceError)}`);
+          try { await this.runtime.drain(target.manifest.source); }
+          catch (drainError) { failures.push(`runtime drain: ${message(drainError)}`); }
+          // Runtime ownership is uncertain now; only startup recovery may reopen it.
+          this.activationCompletions.delete(commandId);
+        }
+        this.store.settleActivation(commandId, "pending", failures.join("; "), this.now());
+        if (failures.length > 1) throw new Error(failures.join("; "));
+        throw error;
+      }
+    };
+    this.activationCompletions.set(commandId, complete);
+    await complete();
+  }
+
+  private async replayActivation(commandId: string, historical: ToolProviderInstallation): Promise<ToolProviderInstallation> {
+    const current = this.require(historical.manifest.providerId, historical.manifest.version);
+    const delivery = this.store.activationDelivery(commandId);
+    if (delivery?.status !== "pending") return current;
+    if (!this.store.isCurrentActivation(commandId, current)) {
+      this.store.settleActivation(commandId, "superseded", "A later lifecycle transition superseded this activation", this.now());
+      this.activationCompletions.delete(commandId);
+      return current;
+    }
+    const complete = this.activationCompletions.get(commandId);
+    if (!complete) throw new ToolProviderControlError("Committed activation requires startup recovery before retry", 409);
+    await complete();
+    return this.require(current.manifest.providerId, current.manifest.version);
+  }
+
+  private async compensateUncommittedActivation(
+    target: ToolProviderInstallation,
+    previous: ToolProviderInstallation[],
+    commitError: unknown,
+  ): Promise<never> {
+    const failures: string[] = [];
+    try { await this.closeAdmission(target, "activation commit failed"); }
+    catch (error) { failures.push(`target admission fence: ${message(error)}`); }
+    try { await this.runtime.deactivate(target.manifest.source); }
+    catch (error) { failures.push(`target deactivation: ${message(error)}`); }
+    for (const installation of previous) {
+      try {
+        const activation = await this.runtime.activate(installation);
+        await activation?.drained;
+      }
+      catch (error) { failures.push(`restore ${installation.manifest.version}: ${message(error)}`); }
+    }
+    if (!failures.length) {
+      try { await this.reopenAdmissions(previous); }
+      catch (error) { failures.push(`previous admission restore: ${message(error)}`); }
+    }
+    if (failures.length) {
+      for (const installation of [target, ...previous]) {
+        try { await this.closeAdmission(installation, "activation compensation incomplete"); }
+        catch (error) { failures.push(`compensation fence: ${message(error)}`); }
+      }
+      try { await this.runtime.drain(target.manifest.source); }
+      catch (error) { failures.push(`compensation runtime drain: ${message(error)}`); }
+      for (const installation of [target, ...previous]) {
+        const reason = `Activation compensation failed after commit error (${message(commitError)}): ${failures.join("; ")}`.slice(0, 1024);
+        try {
+          this.store.transition({
+            providerId: installation.manifest.providerId, version: installation.manifest.version,
+            toState: "failed", eventType: "failed", reason, actor: "activation-compensation",
+            commandId: randomUUID(), fingerprint: fingerprint({ action: "activation-compensation-failed", reason }), at: this.now(),
+          });
+        } catch (error) { failures.push(`compensation audit: ${message(error)}`); }
+      }
+      throw new Error(`Tool Provider activation commit failed (${message(commitError)}); compensation was incomplete: ${failures.join("; ")}`);
+    }
+    throw commitError;
   }
 
   private async finishDrain(
@@ -622,7 +779,6 @@ export class ToolProviderControlPlane {
     command: Record<string, unknown>,
     reason: string,
   ): Promise<void> {
-    if (!previous.length) return;
     try {
       await drained;
       for (const installation of previous) {
@@ -670,6 +826,9 @@ export class ToolProviderControlPlane {
     commandId: string,
     effect: (installation: ToolProviderInstallation) => Promise<void>,
   ): Promise<ToolProviderInstallation> {
+    reason = required(reason, "reason");
+    actor = required(actor, "actor");
+    commandId = required(commandId, "commandId");
     const command = { action, providerId, version, reason };
     const replay = this.replay(commandId, command);
     if (replay) return replay;
@@ -842,6 +1001,9 @@ export function createToolProviderRuntimeBinding(
             const undeclared = tool.providedCapabilities.filter((capability) => !manifest.capabilities.includes(capability));
             if (undeclared.length) throw new Error(`Tool ${tool.name} exposes undeclared capabilities: ${undeclared.join(", ")}`);
             assertToolPermissions(tool.name, tool.permissionRequirements, manifest);
+          }
+          if (executionToolCatalogFingerprint(tools.map(snapshotToolSpec)) !== executionToolCatalogFingerprint(manifest.tools)) {
+            throw new Error(`Managed Tool Provider ${manifest.providerId}@${manifest.version} returned a catalog that differs from its signed manifest`);
           }
           return tools;
         },

@@ -37,6 +37,14 @@ function client(
 }
 
 describe("Tool Provider RPC", () => {
+  it("cancels a real Provider process during a delayed call and requires explicit restart", async () => {
+    const rpc = client(); await rpc.listTools(); const controller = new AbortController();
+    const call = rpc.callTool("fixture.read", { delayMs: 3000 }, { ...context, signal: controller.signal });
+    const outcome = call.catch((error: unknown) => error);
+    await new Promise((r) => setTimeout(r, 20)); controller.abort(new Error("operator stopped"));
+    expect(await outcome).toBeInstanceOf(Error); await rpc.close(); expect(rpc.status().state).toBe("stopped");
+    await expect(rpc.listTools()).rejects.toThrow("closed");
+  });
   it("requires a sandbox attestation outside explicit development mode", () => {
     expect(() => new ToolProviderProcessClient({
       executable: process.execPath, workingDirectory: resolve("."),

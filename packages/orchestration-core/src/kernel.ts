@@ -76,7 +76,17 @@ export function evolve(state: ScenarioRunState | undefined, event: ScenarioEvent
   if (!state) throw new Error(`Cannot apply ${event.type} before run_started`);
   const revision = state.revision + 1;
   switch (event.type) {
+    case "run_package_migrated":
+      if(state.status!=="paused" || state.scenarioPackage?.id!==event.from.id || state.scenarioPackage.version!==event.from.version
+        || state.scenarioPackage.schemaRevision!==event.from.schemaRevision || state.definitionVersion!==event.fromDefinitionVersion)throw new Error("Migration event does not match the previous Run binding");
+      if(event.to.id!==event.from.id || !event.to.version.trim() || event.to.version===event.from.version
+        || !Number.isSafeInteger(event.to.schemaRevision) || event.to.schemaRevision<=event.from.schemaRevision
+        || !Number.isSafeInteger(event.toDefinitionVersion) || event.toDefinitionVersion<=event.fromDefinitionVersion
+        || !event.migrationRef.trim() || !event.authorizationRef.trim() || !event.reason.trim()
+        || state.workItems.some(w=>(w.status==="queued" && w.leaseId) || w.pendingApproval || ["running","waiting_approval"].includes(w.status)))throw new Error("Invalid preserved-state migration event");
+      return {...state,scenarioPackage:{...event.to},definitionVersion:event.toDefinitionVersion,revision,updatedAt:event.at};
     case "work_proposed":
+    case "work_retry_authorized":
       return { ...state, workItems: [...state.workItems, event.work], revision, updatedAt: event.at };
     case "work_claimed":
       return updateWork(state, event.workId, (work) => ({
@@ -89,6 +99,9 @@ export function evolve(state: ScenarioRunState | undefined, event: ScenarioEvent
         resumeFromCheckpoint: false,
         startedAt: event.at,
       }), event.at);
+    case "work_continuation_authorized":
+      return updateWork(state, event.workId, (work) => ({ ...work, status: "queued", workerId: null,
+        leaseId: null, leaseExpiresAt: null, resumeFromCheckpoint: true, error: null, finishedAt: null }), event.at);
     case "work_lease_renewed":
       return updateWork(state, event.workId, (work) => ({ ...work, leaseExpiresAt: event.leaseExpiresAt }), event.at);
     case "work_checkpointed":
@@ -397,6 +410,17 @@ export class ScenarioKernel {
       }];
     }
 
+    if (command.type === "migrate_run_package") {
+      if(!current || current.status!=="paused" || !current.scenarioPackage)throw new Error("Package migration requires a paused, bound Run");
+      // Settled Work retains its historical lease identity; only live ownership blocks migration.
+      if(current.workItems.some(w=>(w.status==="queued" && w.leaseId) || w.pendingApproval || ["running","waiting_approval"].includes(w.status)))throw new Error("Package migration requires settled Work ownership and approvals");
+      if(command.target.id!==current.scenarioPackage.id || !command.target.version.trim() || command.target.version===current.scenarioPackage.version
+        || !Number.isSafeInteger(command.target.schemaRevision) || command.target.schemaRevision<=current.scenarioPackage.schemaRevision
+        || !Number.isSafeInteger(command.definitionVersion) || command.definitionVersion<=current.definitionVersion
+        || !command.migrationRef.trim() || !command.authorizationRef.trim() || !command.reason.trim())throw new Error("Invalid forward Package migration");
+      return [{type:"run_package_migrated",from:{...current.scenarioPackage},to:{...command.target},fromDefinitionVersion:current.definitionVersion,
+        toDefinitionVersion:command.definitionVersion,migrationRef:command.migrationRef,authorizationRef:command.authorizationRef,reason:command.reason,at:command.at}];
+    }
     if (command.type === "pause_run") {
       const state = requireActive(current);
       if (!command.reason.trim()) throw new Error("Pausing a Run requires a reason");
@@ -470,6 +494,7 @@ export class ScenarioKernel {
       case "claim_work": {
         const work = requireWork(state, command.workId);
         const workKind = requireWorkKind(this.definition, work.kind);
+        if (state.workItems.some((other) => other.leaseId === command.leaseId)) throw new Error("Work claim requires a new lease identity");
         if (work.status !== "queued") throw new Error(`Work ${work.id} is ${work.status}, not queued`);
         if (!work.resumeFromCheckpoint && work.attempt >= work.maxAttempts) throw new Error(`Work ${work.id} exhausted its attempt limit`);
         requireFuture(command.leaseExpiresAt, command.at, "Lease expiry");
@@ -631,6 +656,35 @@ export class ScenarioKernel {
         const work = requireWork(state, command.workId);
         requireLiveLease(work, command.leaseId, command.at);
         return [{ type: "work_blocked", workId: work.id, leaseId: command.leaseId, reason: command.reason, at: command.at }];
+      }
+      case "continue_work": {
+        const work = requireWork(state, command.workId);
+        if (work.status !== "blocked" && work.status !== "failed") throw new Error("Only blocked or failed Work can continue");
+        if (work.phaseId !== state.activePhaseId || !phase.allowedWorkKinds.includes(work.kind)) throw new Error("Continuation must remain in the active phase");
+        if (!work.latestCheckpoint || work.latestCheckpoint.payloadRef !== command.checkpointRef) throw new Error("Continuation checkpoint changed or is missing");
+        if (work.pendingApproval || state.workItems.some((candidate) => candidate.retryOf === work.id)) throw new Error("Pending approval or replacement Work prevents continuation");
+        if (!command.reason.trim() || !command.authorizationRef.trim()) throw new Error("Continuation requires authorization and a reason");
+        return [{ type: "work_continuation_authorized", workId: work.id, checkpointRef: command.checkpointRef,
+          authorizationRef: command.authorizationRef, reason: command.reason, at: command.at }];
+      }
+      case "retry_blocked_work": {
+        const source = requireWork(state, command.workId);
+        if (source.status !== "blocked") throw new Error("Only blocked Work can be retried");
+        if (source.phaseId !== state.activePhaseId || !phase.allowedWorkKinds.includes(source.kind)) throw new Error("Retry must remain in the active phase");
+        if (source.attempt >= source.maxAttempts) throw new Error("Work exhausted its attempt limit");
+        if (source.pendingApproval) throw new Error("Pending approval prevents retry");
+        if (!command.reason.trim() || !command.authorizationRef.trim()) throw new Error("Retry requires authorization and a reason");
+        if (!command.replacementWorkId.trim() || state.workItems.some((work) => work.id === command.replacementWorkId || work.retryOf === source.id)) {
+          throw new Error("Work already has a retry or replacement identity is not unique");
+        }
+        if (!command.idempotencyKey.trim() || state.workItems.some((work) => work.idempotencyKey === command.idempotencyKey)) throw new Error("Retry requires a new idempotency key");
+        const work: ScenarioWorkItem = {
+          ...source, id: command.replacementWorkId, retryOf: source.id, idempotencyKey: command.idempotencyKey,
+          status: "queued", workerId: null, leaseId: null, leaseExpiresAt: null,
+          latestCheckpoint: null, resumeFromCheckpoint: false, pendingApproval: null, grantedActionKeys: [],
+          resultSummary: null, error: null, createdAt: command.at, startedAt: null, finishedAt: null,
+        };
+        return [{ type: "work_retry_authorized", sourceWorkId: source.id, work, authorizationRef: command.authorizationRef, reason: command.reason, at: command.at }];
       }
       case "cancel_work": {
         const work = requireWork(state, command.workId);

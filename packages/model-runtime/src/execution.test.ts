@@ -79,7 +79,7 @@ function provider(extractJson: ModelJsonProviderPort["extractJson"]): ModelJsonP
   return { extractJson };
 }
 
-function setup(routes: Array<[string, ModelJsonProviderPort]>, workerPolicy: Partial<ModelRolePolicy> = {}) {
+function setup(routes: Array<[string, ModelJsonProviderPort]>, workerPolicy: Partial<ModelRolePolicy> = {}, admissions: ModelAdmissionPort = new ImmediateAdmission()) {
   const policies = Object.fromEntries(
     (Object.keys(DEFAULT_MODEL_ROLE_POLICIES) as CognitiveModelRole[]).map((role) => [
       role,
@@ -90,11 +90,39 @@ function setup(routes: Array<[string, ModelJsonProviderPort]>, workerPolicy: Par
   let id = 0;
   return {
     store,
-    runtime: new ModelExecutionRuntime(new Map(routes), policies, store, new ImmediateAdmission(), () => `call.${++id}`, () => at),
+    runtime: new ModelExecutionRuntime(new Map(routes), policies, store, admissions, () => `call.${++id}`, () => at),
   };
 }
 
 describe("model execution runtime integration harness", () => {
+  it("rechecks authorization changed during admission queueing before invoking any model", async () => {
+    let admit!: (value: { id: string; release(): void }) => void; let queued!: () => void;
+    const waiting = new Promise<void>((resolve) => { queued = resolve; }); let allowed = true; let checks = 0; let calls = 0;
+    const admissions: ModelAdmissionPort = { acquire: async () => { queued(); return new Promise((resolve) => { admit = resolve; }); }, cancelRun() {}, cancelWork() {}, shutdown() {} };
+    const { runtime } = setup([["primary", provider(async () => { calls++; })]], {}, admissions);
+    const pending = runtime.extractJson(context(), { ...request, beforeDispatch: () => { checks++; if (!allowed) throw new Error("Resource withdrawn"); } });
+    await waiting; expect(checks).toBe(0); allowed = false; admit({ id: "permit", release() {} });
+    await expect(pending).rejects.toThrow("withdrawn"); expect(checks).toBe(1); expect(calls).toBe(0);
+  });
+  it("checks host policy immediately before dispatch and does not expose the check to providers", async () => {
+    let checked = false;
+    const { runtime } = setup([["primary", provider(async (input) => {
+      expect(checked).toBe(true); expect(input).not.toHaveProperty("beforeDispatch"); return {};
+    })]]);
+    await runtime.extractJson(context(), { ...request, beforeDispatch: () => { checked = true; } });
+  });
+  it("does not dispatch, fail over, or trip provider circuits after host policy rejection", async () => {
+    let calls = 0;
+    const { runtime, store } = setup([["primary", provider(async () => { calls++; })], ["backup", provider(async () => { calls++; })]], { routeIds: ["primary", "backup"] });
+    await expect(runtime.extractJson(context(), { ...request, beforeDispatch: () => { throw new Error("Resource revoked"); } })).rejects.toThrow("revoked");
+    expect(calls).toBe(0); expect(store.calls).toHaveLength(1); expect(store.calls[0]!.status).toBe("failed"); expect(store.circuits.size).toBe(0);
+  });
+  it("bounds a non-cooperating policy check and never dispatches its late completion", async () => {
+    let calls = 0; let release!: () => void;
+    const { runtime } = setup([["primary", provider(async () => { calls++; })]], { timeoutMs: 10, maximumAttemptsPerRoute: 1 });
+    await expect(runtime.extractJson(context(), { ...request, beforeDispatch: () => new Promise<void>((resolve) => { release = resolve; }) })).rejects.toThrow("timed out");
+    release(); await Promise.resolve(); await Promise.resolve(); expect(calls).toBe(0);
+  });
   it("falls back across provider ports and records actual usage without Server dependencies", async () => {
     const primary = provider(async () => { throw Object.assign(new Error("first route unavailable"), { status: 503 }); });
     const backup = provider(async (input) => {
@@ -150,5 +178,36 @@ describe("model execution runtime integration harness", () => {
 
     await expect(runtime.extractJson(context(), request)).rejects.toBeTruthy();
     expect(store.calls[0]?.status).toBe("timed_out");
+  });
+
+  it("settles its deadline when the provider ignores cancellation and ignores late usage/results", async () => {
+    let resolve!: (value: unknown) => void;
+    let input!: Parameters<ModelJsonProviderPort["extractJson"]>[0];
+    const hanging = provider((value) => { input = value; return new Promise((done) => { resolve = done; }); });
+    const { runtime, store } = setup([["primary", hanging]], { timeoutMs: 10, maximumAttemptsPerRoute: 1 });
+    let usageCallbacks = 0;
+    await expect(runtime.extractJson(context(), { ...request, onUsage() { usageCallbacks++; } })).rejects.toThrow("timed out");
+    expect(store.calls[0]?.status).toBe("timed_out");
+    input.onUsage?.({ promptTokens: 10, completionTokens: 10, totalTokens: 20 });
+    resolve({ action: "late" });
+    await new Promise((done) => setTimeout(done, 0));
+    expect(store.calls[0]?.status).toBe("timed_out");
+    expect(store.calls[0]?.usage.totalTokens).toBe(0); expect(usageCallbacks).toBe(0);
+  });
+
+  it.each(["run", "work", "shutdown"])("settles %s cancellation even when the provider ignores it", async (kind) => {
+    let started!: () => void;
+    const ready = new Promise<void>((done) => { started = done; });
+    const hanging = provider(() => { started(); return new Promise(() => {}); });
+    const { runtime, store } = setup([["primary", hanging]], { maximumAttemptsPerRoute: 1 });
+    const pending = runtime.extractJson(context(), request);
+    const assertion = expect(pending).rejects.toThrow();
+    await ready;
+    if (kind === "run") runtime.cancelRun(context().runId);
+    else if (kind === "work") runtime.cancelWork(context().runId, context().workId!);
+    else runtime.shutdown();
+    await assertion;
+    expect(store.calls).toHaveLength(1); expect(store.calls[0]?.status).toBe("failed");
+    expect(store.circuits.size).toBe(0);
   });
 });

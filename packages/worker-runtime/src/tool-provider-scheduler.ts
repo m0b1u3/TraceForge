@@ -38,6 +38,12 @@ export interface ToolProviderSchedulingAuditWriter {
 
 export interface ToolProviderSchedulingSnapshot {
   active: number;
+  retained: number;
+  occupied: number;
+  occupiedByProvider: Record<string,number>;
+  occupiedByTool: Record<string,number>;
+  occupiedByRun: Record<string,number>;
+  occupiedByWork: Record<string,number>;
   queued: number;
   activeByProvider: Record<string, number>;
   activeByTool: Record<string, number>;
@@ -86,6 +92,7 @@ const defaultLimits: ToolProviderSchedulingLimits = {
 
 export class ToolProviderFairScheduler {
   private active = 0;
+  private readonly retained = new Map<string, ToolProviderSchedulingIdentity>();
   private queued = 0;
   private readonly activeByProvider = new Map<string, number>();
   private readonly activeByTool = new Map<string, number>();
@@ -138,20 +145,45 @@ export class ToolProviderFairScheduler {
   }
 
   snapshot(): ToolProviderSchedulingSnapshot {
+    const providers=new Map(this.activeByProvider),tools=new Map(this.activeByTool),runs=new Map(this.activeByRun),works=new Map(this.activeByWork);
+    for(const identity of this.retained.values()) {add(providers,providerKey(identity),-1);add(tools,toolKey(identity),-1);add(runs,identity.runId,-1);add(works,workKey(identity),-1);}
     return {
       active: this.active,
+      retained: this.retained.size,
+      occupied: this.active + this.retained.size,
       queued: this.queued,
-      activeByProvider: Object.fromEntries(this.activeByProvider),
-      activeByTool: Object.fromEntries(this.activeByTool),
-      activeByRun: Object.fromEntries(this.activeByRun),
-      activeByWork: Object.fromEntries(this.activeByWork),
+      activeByProvider: Object.fromEntries(providers),
+      activeByTool: Object.fromEntries(tools),
+      activeByRun: Object.fromEntries(runs),
+      activeByWork: Object.fromEntries(works),
+      occupiedByProvider:Object.fromEntries(this.activeByProvider),occupiedByTool:Object.fromEntries(this.activeByTool),
+      occupiedByRun:Object.fromEntries(this.activeByRun),occupiedByWork:Object.fromEntries(this.activeByWork),
     };
   }
 
+  /** Trusted host restores durable external occupancy before admitting new work. */
+  retain(key: string, value: ToolProviderSchedulingIdentity): void {
+    if (!key || key.length>1024) throw new Error("Invalid retained execution key");
+    const identity=normalizeIdentity(value), existing=this.retained.get(key);
+    if (existing) {
+      if (JSON.stringify(existing)!==JSON.stringify(identity)) throw new Error("Retained execution identity conflict");
+      return;
+    }
+    this.retained.set(key,identity);
+    this.increment(identity); this.active--;
+  }
+
+  /** Caller must first commit authorized cleanup evidence; this is not a public command. */
+  releaseRetained(key: string): void {
+    const identity=this.retained.get(key); if (!identity) return;
+    this.retained.delete(key); this.decrement(identity); this.active++;
+    this.dispatch();
+  }
+
   private dispatch(): void {
-    if (this.active >= this.limits.global || this.runOrder.length === 0) return;
+    if (this.active + this.retained.size >= this.limits.global || this.runOrder.length === 0) return;
     let misses = 0;
-    while (this.active < this.limits.global && this.runOrder.length > 0 && misses < this.runOrder.length) {
+    while (this.active + this.retained.size < this.limits.global && this.runOrder.length > 0 && misses < this.runOrder.length) {
       this.cursor %= this.runOrder.length;
       const runId = this.runOrder[this.cursor]!;
       const queue = this.queues.get(runId)!;
@@ -183,7 +215,7 @@ export class ToolProviderFairScheduler {
   }
 
   private canAcquire(identity: ToolProviderSchedulingIdentity): boolean {
-    return this.active < this.limits.global
+    return this.active + this.retained.size < this.limits.global
       && count(this.activeByProvider, providerKey(identity)) < this.limits.perProvider
       && count(this.activeByTool, toolKey(identity)) < this.limits.perTool
       && count(this.activeByRun, identity.runId) < this.limits.perRun
@@ -257,7 +289,9 @@ export class ToolProviderFairScheduler {
 }
 
 function normalizeIdentity(value: ToolProviderSchedulingIdentity): ToolProviderSchedulingIdentity {
-  const entries = Object.entries(value).map(([name, item]) => {
+  const entries = ["providerId","providerVersion","toolName","caseId","runId","workId"].map((name) => {
+    const item=value[name as keyof ToolProviderSchedulingIdentity];
+    if (typeof item!=="string" || item.includes("\0")) throw new Error(`Invalid Tool Provider scheduling ${name}`);
     const normalized = item.trim();
     if (!normalized) throw new Error(`Tool Provider scheduling ${name} is required`);
     if (normalized.length > 512) throw new Error(`Tool Provider scheduling ${name} is too long`);

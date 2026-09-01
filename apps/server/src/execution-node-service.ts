@@ -20,9 +20,12 @@ import {
   parseWindowsSandboxHelperProbe,
   type ExecutionNode,
   type ProcessLauncher,
+  type ProcessLaunchIdentity,
   type StartProcessRequest,
 } from "@traceforge/execution-node";
 import type { ScenarioAuthorizationPort } from "@traceforge/scenario-sdk";
+import type Database from "better-sqlite3";
+import { SqliteProcessExecutionJournal } from "./execution-process-journal.js";
 
 export interface LocalExecutionNodeService {
   client: ExecutionNode;
@@ -50,10 +53,10 @@ class PlatformSandboxLauncher implements ProcessLauncher {
     this.conpty = null;
   }
 
-  launch(request: StartProcessRequest) {
+  launch(request: StartProcessRequest, identity?: ProcessLaunchIdentity) {
     if (request.terminal) {
       if (!this.conpty) throw new Error("This Execution Node does not provide a native PTY backend");
-      return this.conpty.launch(request);
+      return this.conpty.launch(request, identity);
     }
     return this.stdio.launch(request);
   }
@@ -98,6 +101,7 @@ async function probeSandboxBackend(executable: string): Promise<boolean> {
 export async function startLocalExecutionNodeService(
   projectRoot: string,
   authorization: ScenarioAuthorizationPort,
+  sqlite: Database.Database,
 ): Promise<LocalExecutionNodeService> {
   const platform = process.platform === "win32" ? "windows" as const
     : process.platform === "darwin" ? "darwin" as const : "linux" as const;
@@ -127,6 +131,7 @@ export async function startLocalExecutionNodeService(
     ? new PlatformSandboxLauncher(backendExecutable)
     : new UnavailableProcessLauncher();
   const node = new LocalExecutionNode(launcher, {
+    processJournal: new SqliteProcessExecutionJournal(sqlite),
     platform,
     sandboxBackends: processReady ? [backend] : [],
     httpBroker,

@@ -87,9 +87,14 @@ describe("worker execution adapters", () => {
     });
   });
 
-  it("executes an attributed process exclusively through the Execution Node contract", async () => {
+  it.each(["normal", "already-terminal", "failed", "lost", "cursor-stalled", "nonzero", "unknown-exit",
+    "pre-abort", "start-abort", "write-abort", "wait-abort", "cleanup-error", "oversized-output", "invalid-base64", "wrong-process", "duplicate-event"])("consumes attributed process results safely (%s)", async (mode) => {
     const requests: StartProcessRequest[] = [];
     const writes: unknown[] = [];
+    const terminations: unknown[] = [];
+    const controller = new AbortController();
+    const abort = () => controller.abort(new Error("cancelled"));
+    if (mode === "pre-abort") abort();
     const descriptor: ProcessDescriptor = {
       id: "process_1", nodeId: "node_1", pid: 4242, state: "running",
       attribution: {
@@ -105,27 +110,44 @@ describe("worker execution adapters", () => {
       exitCode: null, exitSignal: null, resourceLimitExceeded: null, capturedOutputBytes: 0, omittedOutputBytes: 0, lastEventSequence: 0,
     };
     const node = {
-      async startProcess(request: StartProcessRequest) { requests.push(request); return { process: descriptor, adoptionToken: "token", replayed: false }; },
-      async writeProcessInput(request: unknown) { writes.push(request); return descriptor; },
-      async waitProcessEvents() {
-        const exited = { ...descriptor, state: "exited" as const, exitCode: 0, capturedOutputBytes: 2, lastEventSequence: 2 };
+      async startProcess(request: StartProcessRequest) { requests.push(request);
+        if (mode === "start-abort") { abort(); await new Promise((resolve) => setTimeout(resolve, 10)); }
         return {
+        process: mode === "already-terminal" ? { ...descriptor, state: "exited", exitCode: 0, lastEventSequence: 2 } : descriptor,
+        adoptionToken: "token", replayed: false,
+      }; },
+      async writeProcessInput(request: unknown) { writes.push(request); if (mode === "write-abort") abort(); return descriptor; },
+      async terminateProcess(request: unknown) { terminations.push(request); if (mode === "cleanup-error") throw new Error("transport unavailable"); return descriptor; },
+      async waitProcessEvents(request: { afterSequence: number }) {
+        if (["wait-abort", "cleanup-error"].includes(mode)) abort();
+        const exited = { ...descriptor, state: mode === "failed" ? "failed" as const : "exited" as const,
+          exitCode: mode === "nonzero" ? 7 : mode === "unknown-exit" ? null : 0, capturedOutputBytes: 2, lastEventSequence: 2 };
+        const batch = {
           process: exited,
           events: [
             { type: "process.output" as const, sequence: 1, processId: descriptor.id, at: descriptor.updatedAt, stream: "stdout" as const, dataBase64: Buffer.from("ok").toString("base64"), bytes: 2 },
             { type: "process.exited" as const, sequence: 2, processId: descriptor.id, at: descriptor.updatedAt, exitCode: 0, signal: null },
           ],
-          nextSequence: 2,
-          lostEvents: false,
+          nextSequence: mode === "cursor-stalled" ? 0 : 2,
+          lostEvents: mode === "lost",
         };
+        if (mode === "oversized-output" && batch.events[0].type === "process.output") {
+          batch.events[0].dataBase64 = Buffer.alloc(128 * 1024).toString("base64"); batch.events[0].bytes = 128 * 1024;
+        }
+        if (mode === "invalid-base64" && batch.events[0].type === "process.output") batch.events[0].dataBase64 = "!!!";
+        if (mode === "wrong-process") batch.events[0].processId = "other";
+        if (mode === "duplicate-event") batch.events[1].sequence = 1;
+        if (mode === "already-terminal") return { ...batch, events: batch.events.slice(request.afterSequence, request.afterSequence + 1), nextSequence: request.afterSequence + 1 };
+        return batch;
       },
     } as unknown as ExecutionNode;
-    const result = await new ExecutionNodeProcessTool(node).execute({
+    const execution = new ExecutionNodeProcessTool(node).execute({
       executable: process.execPath,
       arguments: ["--version"],
       workingDirectory: process.cwd(),
       stdin: "input",
     }, {
+      signal: controller.signal,
       workerId: "worker_1", runId: "run_1", workId: "work_1", caseId: "case_1", scopeRef: "scope_1",
       leaseId: "lease_1", leaseExpiresAt: "2099-01-01T00:00:00.000Z", idempotencyKey: "effect_1",
       effectivePermissions: {
@@ -135,8 +157,22 @@ describe("worker execution adapters", () => {
         network: "deny", process: { access: "sandboxed", interactive: false, background: false }, secrets: "deny", sources: ["test"],
       },
     });
+    if (["pre-abort", "start-abort", "write-abort", "wait-abort", "cleanup-error"].includes(mode)) {
+      await expect(execution).rejects.toThrow("cancelled");
+      if (mode === "start-abort") await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(terminations).toHaveLength(mode === "pre-abort" ? 0 : 1);
+      if (["pre-abort", "start-abort"].includes(mode)) expect(writes).toHaveLength(0);
+      expect(requests).toHaveLength(mode === "pre-abort" ? 0 : 1);
+      return;
+    }
+    if (["failed", "lost", "cursor-stalled", "unknown-exit", "oversized-output", "invalid-base64", "wrong-process", "duplicate-event"].includes(mode)) {
+      await expect(execution).rejects.toThrow("requires reconciliation");
+      expect(terminations).toHaveLength(1);
+      return;
+    }
+    const result = await execution;
     expect(requests[0]!.attribution).toMatchObject({ caseId: "case_1", runId: "run_1", workId: "work_1", leaseId: "lease_1" });
     expect(writes).toHaveLength(1);
-    expect(result).toMatchObject({ status: "succeeded", raw: "ok", refs: ["execution-process:process_1"] });
+    expect(result).toMatchObject({ status: mode === "nonzero" ? "failed" : "succeeded", raw: "ok", refs: ["execution-process:process_1"] });
   });
 });

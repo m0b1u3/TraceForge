@@ -5,6 +5,7 @@ import type { ExecutionToolSpec, ToolExecutionContext, ToolExecutionResult } fro
 import type { ExecutionToolAdapter } from "./tool-gateway.js";
 import type { ExecutionToolDiscoverySource } from "./tool-discovery.js";
 import type { ProviderCapabilityHost, ProviderCapabilityInvocation } from "./provider-capability-broker.js";
+import { waitForCancellation } from "./cancellation.js";
 import {
   createToolProviderDiagnostic,
   diagnosticPublicMessage,
@@ -91,7 +92,7 @@ export class ToolProviderRpcTransportError extends Error {
 }
 
 export interface ToolProviderRpcClient {
-  listTools(): Promise<ExecutionToolSpec[]>;
+  listTools(signal?: AbortSignal): Promise<ExecutionToolSpec[]>;
   callTool(tool: string, input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult>;
   restart(): Promise<void>;
   close(): Promise<void>;
@@ -139,8 +140,8 @@ export class ToolProviderProcessClient implements ToolProviderRpcClient {
     this.decoder = new LengthPrefixedJsonDecoder(this.maximumFrameBytes);
   }
 
-  async listTools(): Promise<ExecutionToolSpec[]> {
-    const result = await this.request("tools.list", {});
+  async listTools(signal?: AbortSignal): Promise<ExecutionToolSpec[]> {
+    const result = await this.request("tools.list", {}, undefined, signal);
     if (!Array.isArray(result)) throw new Error("Tool Provider returned an invalid tool list");
     return result.map(validateToolProviderSpec);
   }
@@ -174,9 +175,15 @@ export class ToolProviderProcessClient implements ToolProviderRpcClient {
     };
   }
 
-  private async request(method: ToolProviderCommandMethod, params: unknown, context?: ToolExecutionContext): Promise<unknown> {
+  private async request(method: ToolProviderCommandMethod, params: unknown, context?: ToolExecutionContext, signal = context?.signal): Promise<unknown> {
+    signal?.throwIfAborted();
+    const abort = () => { void this.close().catch(() => undefined); };
+    signal?.addEventListener("abort", abort, { once: true });
+    try { return await waitForCancellation(async () => {
     await this.ensureReady();
+    signal?.throwIfAborted();
     return this.send(method, params, context);
+    }, signal); } finally { signal?.removeEventListener("abort", abort); }
   }
 
   private ensureReady(): Promise<void> {
@@ -427,8 +434,8 @@ export class RpcExecutionToolDiscoverySource implements ExecutionToolDiscoverySo
     if (!source.trim()) throw new Error("RPC Tool Provider source is required");
   }
 
-  async discover(): Promise<ExecutionToolAdapter[]> {
-    const tools = await this.client.listTools();
+  async discover(signal?: AbortSignal): Promise<ExecutionToolAdapter[]> {
+    const tools = await this.client.listTools(signal);
     return tools.map((tool) => {
       if (tool.source !== this.source) throw new Error(`RPC Tool Provider returned tool ${tool.name} for unexpected source ${tool.source}`);
       return { ...tool, execute: (input, context) => this.client.callTool(tool.name, input, context) };

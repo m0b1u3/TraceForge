@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { EffectivePermissionProfile } from "@traceforge/orchestration-core";
 
-export const EXECUTION_PROTOCOL_VERSION = { major: 1, minor: 4 } as const;
+export const EXECUTION_PROTOCOL_VERSION = { major: 1, minor: 6 } as const;
 
 export interface ExecutionProtocolVersion {
   major: number;
@@ -14,6 +14,7 @@ export type ExecutionCapabilityName =
   | "process.tty"
   | "process.adopt"
   | "process.resource_limits"
+  | "process.execution_observation"
   | "filesystem.canonicalize"
   | "filesystem.read"
   | "filesystem.write"
@@ -30,6 +31,7 @@ export interface ExecutionNodeCapabilities {
     tty: boolean;
     adoption: boolean;
     resourceLimits: boolean;
+    executionObservation?: boolean;
     signals: ProcessSignal[];
   };
   filesystem: {
@@ -173,6 +175,48 @@ export interface StartProcessResponse {
 export interface ProcessAccess {
   processId: string;
   adoptionToken: string;
+}
+
+/** Authenticated host query. An absent/claimed record NEVER proves that execution did not happen. */
+export interface ProcessExecutionQuery {
+  idempotencyKey: string;
+  requestId: string;
+  caseId: string;
+  runId: string;
+  workId: string;
+  leaseId: string;
+}
+
+export interface ProcessExecutionObservation {
+  schemaVersion: 1 | 2;
+  /** V2 host-generated identity; absence in legacy observations cannot be repaired by guessing. */
+  launch?: ProcessLaunchIdentity;
+  identity: ProcessExecutionQuery;
+  nodeId: string;
+  requestFingerprint: string;
+  status: "claimed" | "exit_observed" | "failure_observed";
+  /** A main-process exit is not a process-tree cleanup attestation. */
+  cleanup: "unverified";
+  process: ProcessDescriptor | null;
+  events: ProcessEvent[];
+  lostEvents: boolean;
+  updatedAt: string;
+  /** History payload only; launch identity and the permanent execution claim remain intact. */
+  historyRetention?: { purgedAt: string; originalDigest: string };
+}
+
+export interface ProcessLaunchIdentity {
+  nodeId: string;
+  generationId: string;
+  launchId: string;
+  requestFingerprint: string;
+  requestId: string;
+}
+
+export interface ProcessExecutionJournal {
+  claim(observation: ProcessExecutionObservation): void;
+  settle(observation: ProcessExecutionObservation): void;
+  get(idempotencyKey: string): ProcessExecutionObservation | undefined;
 }
 
 export interface AdoptProcessRequest extends ProcessAccess {
@@ -372,6 +416,7 @@ export interface BrokeredHttpResponse {
 }
 
 export interface ExecutionNode {
+  lookupProcessExecution?(query: ProcessExecutionQuery): Promise<ProcessExecutionObservation | undefined>;
   handshake(request: ExecutionHandshakeRequest): Promise<ExecutionHandshakeResponse>;
   startProcess(request: StartProcessRequest): Promise<StartProcessResponse>;
   describeProcess(access: ProcessAccess): Promise<ProcessDescriptor>;
@@ -397,6 +442,7 @@ export function capabilityNames(capabilities: ExecutionNodeCapabilities): Execut
   if (capabilities.process.tty) names.push("process.tty");
   if (capabilities.process.adoption) names.push("process.adopt");
   if (capabilities.process.resourceLimits) names.push("process.resource_limits");
+  if (capabilities.process.executionObservation) names.push("process.execution_observation");
   if (capabilities.filesystem.canonicalize) names.push("filesystem.canonicalize");
   if (capabilities.filesystem.read) names.push("filesystem.read");
   if (capabilities.filesystem.write) names.push("filesystem.write");

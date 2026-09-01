@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, rmSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type Database from "better-sqlite3";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -69,6 +69,24 @@ interface ImportRow {
   completed_at: string | null;
 }
 
+interface ReceiveFailureRow {
+  id: string;
+  command_id: string;
+  actor: string;
+  received_bytes: number;
+  failure_reason: string;
+  upload_path: string;
+  upload_cleanup: "completed" | "failed";
+  created_at: string;
+  updated_at: string;
+}
+
+class ArchiveReceiveFailure extends Error {
+  constructor(readonly original: unknown, readonly receivedBytes: number, readonly cleanup: "completed" | "failed") {
+    super(boundedMessage(original));
+  }
+}
+
 export class ToolProviderArchiveImportError extends Error {
   constructor(message: string, readonly statusCode: 400 | 403 | 404 | 409 | 413 | 429 | 500 = 400) {
     super(message);
@@ -108,6 +126,14 @@ export class ToolProviderArchiveImportService {
     return (this.sqlite.prepare("SELECT * FROM tool_provider_archive_imports ORDER BY created_at, command_id").all() as ImportRow[]).map(parseAudit);
   }
 
+  listReceiveFailures() {
+    const rows = this.sqlite.prepare("SELECT * FROM tool_provider_archive_receive_failures ORDER BY created_at, id").all() as ReceiveFailureRow[];
+    return rows.map((row) => ({
+      id: row.id, commandId: row.command_id, actor: row.actor, receivedBytes: row.received_bytes,
+      failureReason: row.failure_reason, uploadCleanup: row.upload_cleanup, createdAt: row.created_at, updatedAt: row.updated_at,
+    }));
+  }
+
   async import(input: { archive: Buffer; actor: string; commandId: string }): Promise<{
     installation: ToolProviderInstallation;
     audit: ToolProviderArchiveImportAudit;
@@ -119,11 +145,7 @@ export class ToolProviderArchiveImportService {
     if (input.archive.byteLength > this.policy.maximumArchiveBytes) {
       throw new ToolProviderArchiveImportError(`Tool Provider archive exceeds ${this.policy.maximumArchiveBytes} compressed bytes`, 413);
     }
-    return this.withImportSlot(async () => {
-      const uploadPath = join(this.uploadRoot, `upload-${randomUUID()}.tfpa`);
-      writeFileSync(uploadPath, input.archive, { flag: "wx", mode: 0o600 });
-      return this.importUploaded({ uploadPath, archiveSha256: sha256(input.archive), archiveBytes: input.archive.byteLength, actor, commandId });
-    });
+    return this.importStream({ actor, commandId, archive: (async function* () { yield input.archive; })() });
   }
 
   async importStream(input: { archive: AsyncIterable<Buffer | Uint8Array | string>; actor: string; commandId: string }): Promise<{
@@ -135,7 +157,19 @@ export class ToolProviderArchiveImportService {
     const commandId = required(input.commandId, "commandId");
     return this.withImportSlot(async () => {
       const uploadPath = join(this.uploadRoot, `upload-${randomUUID()}.tfpa`);
-      const received = await receiveArchiveStream(input.archive, uploadPath, this.policy.maximumArchiveBytes);
+      let received: { bytes: number; sha256: string };
+      try {
+        received = await receiveArchiveStream(input.archive, uploadPath, this.policy.maximumArchiveBytes);
+      } catch (error) {
+        if (!(error instanceof ArchiveReceiveFailure)) throw error;
+        const at = this.now();
+        this.sqlite.prepare(`
+          INSERT INTO tool_provider_archive_receive_failures
+            (id, command_id, actor, received_bytes, failure_reason, upload_path, upload_cleanup, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(randomUUID(), commandId, actor, error.receivedBytes, error.message, uploadPath, error.cleanup, at, at);
+        throw mapImportError(error.original, error.message);
+      }
       return this.importUploaded({ uploadPath, archiveSha256: received.sha256, archiveBytes: received.bytes, actor, commandId });
     });
   }
@@ -196,6 +230,13 @@ export class ToolProviderArchiveImportService {
         stagingRoot: this.stagingRoot,
         trustRoots: this.trustRoots,
         policy: this.policy,
+        onStagingCreated: (path) => {
+          stagingPath = path;
+          this.sqlite.prepare(`
+            UPDATE tool_provider_archive_imports SET staging_path = ?, package_cleanup = 'pending'
+            WHERE command_id = ? AND outcome = 'receiving'
+          `).run(path, commandId);
+        },
       });
       stagingPath = extracted.packageRoot;
       this.sqlite.prepare(`
@@ -254,6 +295,17 @@ export class ToolProviderArchiveImportService {
     let cleanupFailures = 0;
     const referencedUploads = new Set(rows.flatMap((row) => row.upload_path ? [resolve(row.upload_path)] : []));
     const referencedPackages = new Set(rows.flatMap((row) => row.staging_path ? [resolve(row.staging_path)] : []));
+    const receiveFailures = this.sqlite.prepare(`
+      SELECT * FROM tool_provider_archive_receive_failures WHERE upload_cleanup = 'failed'
+    `).all() as ReceiveFailureRow[];
+    for (const row of receiveFailures) {
+      referencedUploads.add(resolve(row.upload_path));
+      const cleanup = cleanupUpload(this.uploadRoot, row.upload_path);
+      if (cleanup === "failed") cleanupFailures += 1;
+      this.sqlite.prepare(`
+        UPDATE tool_provider_archive_receive_failures SET upload_cleanup = ?, updated_at = ? WHERE id = ?
+      `).run(cleanup, this.now(), row.id);
+    }
     for (const row of rows) {
       const committed = row.outcome === "receiving" ? this.controlStore.findCommand(installCommandId(row.command_id)) : null;
       const uploadCleanup = row.upload_path ? cleanupUpload(this.uploadRoot, row.upload_path) : "not_required";
@@ -290,7 +342,7 @@ export class ToolProviderArchiveImportService {
       if (cleanupPackage(this.stagingRoot, path) === "failed") cleanupFailures += 1;
     }
     const report = { installed, rejected, orphaned, cleanupFailures };
-    if (rows.length || orphaned || cleanupFailures) {
+    if (rows.length || receiveFailures.length || orphaned || cleanupFailures) {
       this.sqlite.prepare(`
         INSERT INTO tool_provider_archive_cleanup_runs
           (id, recovered_installed, recovered_rejected, orphaned, cleanup_failures, completed_at)
@@ -383,6 +435,7 @@ function parseAudit(row: ImportRow): ToolProviderArchiveImportAudit {
 
 function cleanupUpload(root: string, path: string): "completed" | "failed" {
   try {
+    if (realpathSync(root) !== root || lstatSync(root).isSymbolicLink()) throw new Error("upload root is no longer canonical");
     const target = assertManagedDirectChild(root, path, "upload-", ".tfpa");
     if (existsSync(target)) {
       const stats = lstatSync(target);
@@ -409,16 +462,24 @@ async function receiveArchiveStream(
       if (bytes > maximumBytes) throw new ToolProviderArchiveImportError(`Tool Provider archive exceeds ${maximumBytes} compressed bytes`, 413);
       digest.update(chunk);
       let offset = 0;
-      while (offset < chunk.byteLength) offset += writeSync(descriptor, chunk, offset, chunk.byteLength - offset);
+      while (offset < chunk.byteLength) {
+        const written = writeSync(descriptor, chunk, offset, chunk.byteLength - offset);
+        if (written <= 0) throw new Error("Archive upload write made no progress");
+        offset += written;
+      }
     }
     if (!bytes) throw new ToolProviderArchiveImportError("Tool Provider archive body is required");
     closeSync(descriptor);
     descriptor = null;
     return { bytes, sha256: digest.digest("hex") };
   } catch (error) {
-    if (descriptor !== null) closeSync(descriptor);
-    cleanupUpload(dirname(uploadPath), uploadPath);
-    throw error;
+    let failure = error;
+    if (descriptor !== null) {
+      try { closeSync(descriptor); }
+      catch (closeError) { failure = new Error(`${boundedMessage(error)}; upload close failed: ${boundedMessage(closeError)}`); }
+    }
+    const cleanup = cleanupUpload(dirname(uploadPath), uploadPath);
+    throw new ArchiveReceiveFailure(failure, bytes, cleanup);
   }
 }
 

@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import type { EffectivePermissionProfile } from "@traceforge/orchestration-core";
 import {
   LocalExecutionNode,
+  NodeSpawnProcessLauncher,
+  type SpawnLaunchSpec,
   type LaunchedProcess,
   type ManagedProcess,
   type ProcessLauncher,
@@ -17,6 +19,16 @@ import type {
   StartProcessRequest,
 } from "./protocol.js";
 import { permissionProfileFingerprint, resourceLimitsFingerprint, type ResourceLimitKind } from "./protocol.js";
+
+function stdioLauncher(script: string, customTerminate?: SpawnLaunchSpec["terminate"]) {
+  return new NodeSpawnProcessLauncher((request) => ({
+    executable: process.execPath, arguments: ["-e", script], workingDirectory: request.workingDirectory,
+    environment: {}, detached: false, windowsHide: true, terminate: customTerminate,
+    enforcement: { sandboxBackend: "test-sandbox", sandboxed: true, filesystemPolicyApplied: true,
+      permissionProfileFingerprint: permissionProfileFingerprint(request.permissions), resourceLimitsApplied: true,
+      resourceLimitsFingerprint: resourceLimitsFingerprint(request.resources), network: "deny" },
+  }), { operationTimeoutMs: 100, shutdownTimeoutMs: 100, startupTimeoutMs: 1000 });
+}
 
 class FakeProcess implements ManagedProcess {
   readonly pid = 4242;
@@ -123,6 +135,110 @@ function startRequest(workspace: string): StartProcessRequest {
 }
 
 describe("LocalExecutionNode process lifecycle", () => {
+  it("reserves capacity across concurrent launches and does not evict history without a durable journal", async () => {
+    const launcher = new FakeLauncher();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const launch = launcher.launch.bind(launcher);
+    let entering = false;
+    launcher.launch = async (request) => { entering = true; await gate; return launch(request); };
+    const node = new LocalExecutionNode(launcher, { platform, now: () => at, sandboxBackends: ["test-sandbox"],
+      maximumProcesses: 1, maximumResidentProcesses: 1, terminalRetentionMs: 0,
+      capabilities: { process: { spawn: true, stdio: true, tty: false, adoption: true, resourceLimits: true, signals: ["kill"] } } });
+    const request = startRequest(dirname(process.execPath));
+    const pending = node.startProcess(request);
+    await expect.poll(() => entering).toBe(true);
+    const second = { ...request, attribution: { ...request.attribution, idempotencyKey: "second" } };
+    await expect(node.startProcess(second)).rejects.toThrow("startup capacity");
+    release();
+    const started = await pending;
+    launcher.processes[0].exit(0);
+    await expect(node.startProcess(second)).rejects.toThrow("history capacity");
+    expect(await node.startProcess(request)).toMatchObject({ replayed: true, process: { id: started.process.id } });
+    expect(launcher.requests).toHaveLength(1);
+  });
+
+  it("bounds process observation waiters and releases them on terminal notification", async () => {
+    const { node, launcher } = createNode();
+    const started = await node.startProcess(startRequest(dirname(process.execPath)));
+    const query = { processId: started.process.id, adoptionToken: started.adoptionToken, afterSequence: started.process.lastEventSequence, maximumEvents: 16 };
+    const waiters = Array.from({ length: 64 }, () => node.waitProcessEvents(query, 1000));
+    await expect(node.waitProcessEvents(query, 1000)).rejects.toThrow("waiter capacity");
+    launcher.processes[0].exit(0);
+    expect((await Promise.all(waiters)).every((result) => result.process.state === "exited")).toBe(true);
+  });
+
+  it("rejects oversized process metadata before dispatch", async () => {
+    const { node, launcher } = createNode();
+    await expect(node.startProcess({ ...startRequest(dirname(process.execPath)), arguments: ["x".repeat(128 * 1024)] })).rejects.toThrow("size limit");
+    expect(launcher.requests).toHaveLength(0);
+  });
+
+  it("bounds a real blocked stdio write without waiting forever for drain", async () => {
+    const { process: managed } = await stdioLauncher("setInterval(() => {}, 1000)").launch(startRequest(dirname(process.execPath)));
+    const errors: string[] = [];
+    managed.onError((error) => errors.push(error.message));
+    const exit = new Promise((resolve) => managed.onExit(resolve));
+    await expect(managed.writeInput(Buffer.alloc(4 * 1024 * 1024))).rejects.toThrow(/input write timed out/);
+    expect(await exit).toBeNull();
+    expect(errors).toHaveLength(1);
+  });
+
+  it("bounds a termination adapter that never resolves", async () => {
+    const { process: managed } = await stdioLauncher("setInterval(() => {}, 1000)", () => new Promise<void>(() => undefined))
+      .launch(startRequest(dirname(process.execPath)));
+    const exit = new Promise((resolve) => managed.onExit(resolve));
+    await expect(managed.terminate(true)).rejects.toThrow(/timed out/);
+    expect(await exit).toBeNull();
+  });
+
+  it("does not mistake termination acceptance for process exit", async () => {
+    const { process: managed } = await stdioLauncher("setInterval(() => {}, 1000)", () => undefined)
+      .launch(startRequest(dirname(process.execPath)));
+    const errors: string[] = [];
+    managed.onError((error) => errors.push(error.message));
+    const exit = new Promise((resolve) => managed.onExit(resolve));
+    await managed.terminate(true);
+    expect(await exit).toBeNull();
+    expect(errors[0]).toMatch(/shutdown/);
+  });
+
+  it("bounds pipe drain when the root exits but a descendant holds its output", async () => {
+    // Finite descendant exits itself; only local transport is closed by the watchdog, not an invented tree kill.
+    const script = `require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 400)'], { stdio: ['ignore', 1, 2] }); process.exit(0);`;
+    const { process: managed } = await stdioLauncher(script).launch(startRequest(dirname(process.execPath)));
+    const errors: string[] = [];
+    managed.onError((error) => errors.push(error.message));
+    expect(await new Promise((resolve) => managed.onExit(resolve))).toBeNull();
+    expect(errors[0]).toMatch(/shutdown or pipe drain/);
+    await new Promise((resolve) => setTimeout(resolve, 450));
+  });
+
+  it("reports spawn errors as launch rejection without an unhandled child error", async () => {
+    const native = new NodeSpawnProcessLauncher(() => ({
+      executable: join(tmpdir(), "traceforge-nonexistent-executable"), arguments: [], workingDirectory: tmpdir(),
+      environment: {}, detached: false, windowsHide: true, enforcement: new FakeLauncher().enforcement,
+    }));
+    await expect(native.launch(startRequest(tmpdir()))).rejects.toThrow(/ENOENT/);
+  });
+
+  it("replays buffered helper failure before exit instead of publishing success", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "traceforge-buffered-exit-"));
+    class BufferedFailureLauncher extends FakeLauncher {
+      override async launch(request: StartProcessRequest): Promise<LaunchedProcess> {
+        const launched = await super.launch(request);
+        launched.process.onError = (listener) => listener(new Error("helper cleanup failed"));
+        launched.process.onExit = (listener) => listener(0, null);
+        return launched;
+      }
+    }
+    const { node } = createNode(new BufferedFailureLauncher());
+    const started = await node.startProcess(startRequest(workspace));
+    const result = await node.readProcessEvents({ processId: started.process.id, adoptionToken: started.adoptionToken, afterSequence: 0, maximumEvents: 10 });
+    expect(result.process.state).toBe("failed");
+    expect(result.events.map((event) => event.type)).toEqual(["process.started", "process.failed"]);
+  });
+
   it("streams bounded output, replays idempotent start, and rotates ownership on adoption", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "traceforge-exec-"));
     const { node, launcher } = createNode();

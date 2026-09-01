@@ -16,6 +16,7 @@ import {
   type ToolProviderSignature,
 } from "./tool-provider-control-plane.js";
 import { inspectToolProviderPackage, ManagedToolProviderPackageStore } from "./tool-provider-package-store.js";
+import { SqliteToolInvocationBindingStore } from "./worker-execution-adapters.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(() => {
@@ -91,6 +92,205 @@ function fixture(invocationBindings?: Pick<ToolInvocationBindingStore, "hasOpenB
   });
   return { sqlite, store, control, manifest, signature, activations, deactivations, drains, runtime, publicKey, packages, directory, sourceRoot, managedRoot, executable };
 }
+
+function admissionFixture() {
+  let bindings!: SqliteToolInvocationBindingStore;
+  const blocked = new Set<string>();
+  const port = {
+    hasOpenBindings: (source: string, version: string) => bindings.hasOpenBindings(source, version),
+    closeAdmission: (source: string, version: string, reason: string) => bindings.closeAdmission(source, version, reason),
+    async openAdmission(source: string, version: string) {
+      if (blocked.has(version)) throw new Error("injected admission failure");
+      await bindings.openAdmission(source, version);
+    },
+  };
+  const context = fixture(port);
+  bindings = new SqliteToolInvocationBindingStore(context.sqlite);
+  const restart = () => new ToolProviderControlPlane(context.store,
+    new Map([["release-key", context.publicKey.export({ type: "spki", format: "pem" }).toString()]]),
+    context.runtime, context.packages, () => "2026-08-27T12:05:00.000Z", port);
+  return { ...context, bindings, blocked, restart };
+}
+
+describe("Tool Provider activation delivery recovery", () => {
+  it.each(["enable", "upgrade", "rollback"] as const)("resumes committed %s admission without repeating activation or drain events", async (action) => {
+    const context = admissionFixture();
+    const first = context.manifest("1.0.0");
+    const second = context.manifest("2.0.0");
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    if (action !== "enable") {
+      await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+      context.control.install(second, context.signature(second), context.sourceRoot, "operator", "install-2");
+    }
+    if (action === "rollback") await context.control.enable(second.providerId, second.version, "operator", "enable-2");
+    const target = action === "upgrade" ? second : first;
+    const run = () => action === "rollback"
+      ? context.control.rollback(first.providerId, second.version, first.version, "restore", "operator", "deliver")
+      : context.control.enable(target.providerId, target.version, "operator", "deliver");
+    context.blocked.add(target.version);
+    await expect(run()).rejects.toThrow("injected admission failure");
+    expect(context.store.get(target.providerId, target.version)?.state).toBe("enabled");
+    expect(context.bindings.admission(target.source, target.version)?.status).toBe("closed");
+    expect(context.store.activationDelivery("deliver")).toMatchObject({ status: "pending", last_error: "injected admission failure" });
+    if (action !== "enable") {
+      const previous = action === "upgrade" ? first : second;
+      expect(context.store.get(previous.providerId, previous.version)?.state).toBe("disabled");
+      expect(context.bindings.admission(previous.source, previous.version)?.status).toBe("closed");
+    }
+    const activations = [...context.activations];
+    const events = context.control.listEvents();
+    context.blocked.clear();
+    await expect(run()).resolves.toMatchObject({ state: "enabled" });
+    expect(context.store.activationDelivery("deliver")).toMatchObject({ status: "completed", last_error: null });
+    const admission = context.bindings.admission(target.source, target.version);
+    expect(admission?.status).toBe("open");
+    await run();
+    expect(context.bindings.admission(target.source, target.version)).toEqual(admission);
+    expect(context.activations).toEqual(activations);
+    expect(context.control.listEvents()).toEqual(events);
+    context.sqlite.close();
+  });
+
+  it.each(["disable", "quarantine", "upgrade", "reenable"] as const)("does not reopen a pending command superseded by %s", async (action) => {
+    const context = admissionFixture();
+    const first = context.manifest();
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    context.blocked.add(first.version);
+    await expect(context.control.enable(first.providerId, first.version, "operator", "enable-1"))
+      .rejects.toThrow("injected admission failure");
+    context.blocked.clear();
+    if (action === "upgrade") {
+      const second = context.manifest("2.0.0");
+      context.control.install(second, context.signature(second), context.sourceRoot, "operator", "install-2");
+      await context.control.enable(second.providerId, second.version, "operator", "enable-2");
+    } else if (action === "quarantine") {
+      await context.control.quarantine(first.providerId, first.version, "maintenance", "operator", "quarantine");
+    } else {
+      await context.control.disable(first.providerId, first.version, "maintenance", "operator", "disable");
+      if (action === "reenable") await context.control.enable(first.providerId, first.version, "operator", "enable-2");
+    }
+    const admission = context.bindings.admission(first.source, first.version);
+    const activations = [...context.activations];
+    const result = await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    expect(result.state).toBe(action === "reenable" ? "enabled" : action === "quarantine" ? "quarantined" : "disabled");
+    expect(context.store.activationDelivery("enable-1")?.status).toBe("superseded");
+    expect(context.bindings.admission(first.source, first.version)).toEqual(admission);
+    expect(context.activations).toEqual(activations);
+    context.sqlite.close();
+  });
+
+  it.each([false, true])("requires startup recovery before a new controller can resume delivery (failure=%s)", async (failRecovery) => {
+    const context = admissionFixture();
+    const first = context.manifest();
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    context.blocked.add(first.version);
+    await expect(context.control.enable(first.providerId, first.version, "operator", "enable-1"))
+      .rejects.toThrow("injected admission failure");
+    context.blocked.clear();
+    const restarted = context.restart();
+    await expect(restarted.enable(first.providerId, first.version, "operator", "enable-1"))
+      .rejects.toThrow("requires startup recovery");
+    let calls = 0;
+    context.runtime.activate = async () => {
+      calls++;
+      expect(context.bindings.admission(first.source, first.version)?.status).toBe("closed");
+      if (failRecovery) throw new Error("injected recovery failure");
+    };
+    await expect(restarted.recover()).resolves.toEqual({
+      enabled: failRecovery ? [] : ["neutral-provider@1.0.0"],
+      failed: failRecovery ? ["neutral-provider@1.0.0"] : [],
+    });
+    expect(context.store.activationDelivery("enable-1")?.status).toBe(failRecovery ? "superseded" : "completed");
+    await expect(restarted.enable(first.providerId, first.version, "operator", "enable-1"))
+      .resolves.toMatchObject({ state: failRecovery ? "failed" : "enabled" });
+    expect(context.bindings.admission(first.source, first.version)?.status).toBe(failRecovery ? "closed" : "open");
+    expect(calls).toBe(1);
+    context.sqlite.close();
+  });
+
+  it("does not transiently reopen admission when replaying a failed drain completion", async () => {
+    const context = admissionFixture();
+    const first = context.manifest();
+    const second = context.manifest("2.0.0");
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    context.control.install(second, context.signature(second), context.sourceRoot, "operator", "install-2");
+    context.runtime.activate = async () => ({ drained: Promise.reject(new Error("injected drain failure")) });
+    await expect(context.control.enable(second.providerId, second.version, "operator", "enable-2"))
+      .rejects.toThrow("injected drain failure");
+    const revision = context.bindings.admission(second.source, second.version)!.revision;
+    await expect(context.control.enable(second.providerId, second.version, "operator", "enable-2"))
+      .rejects.toThrow("injected drain failure");
+    expect(context.bindings.admission(second.source, second.version)).toMatchObject({ status: "closed", revision: revision + 1 });
+    expect(context.store.activationDelivery("enable-2")?.status).toBe("pending");
+    expect(context.store.get(first.providerId, first.version)?.state).toBe("failed");
+    context.runtime.activate = async () => {};
+    await expect(context.restart().recover()).resolves.toEqual({ enabled: ["neutral-provider@2.0.0"], failed: [] });
+    expect(context.store.activationDelivery("enable-2")?.status).toBe("completed");
+    context.sqlite.close();
+  });
+
+  it("awaits runtime cleanup even when activating the same version has no previous lifecycle to retire", async () => {
+    const context = admissionFixture();
+    const first = context.manifest();
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    context.runtime.activate = async () => ({ drained: Promise.reject(new Error("same version cleanup failed")) });
+    await expect(context.control.enable(first.providerId, first.version, "operator", "enable-2"))
+      .rejects.toThrow("same version cleanup failed");
+    expect(context.store.activationDelivery("enable-2")?.status).toBe("pending");
+    expect(context.bindings.admission(first.source, first.version)?.status).toBe("closed");
+    context.sqlite.close();
+  });
+
+  it("keeps delivery pending when recording completion fails and safely retries it", async () => {
+    const context = admissionFixture();
+    const first = context.manifest();
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    context.sqlite.exec(`CREATE TEMP TRIGGER fail_delivery_completion BEFORE UPDATE ON tool_provider_activation_deliveries
+      WHEN NEW.status = 'completed' BEGIN SELECT RAISE(ABORT, 'injected completion failure'); END`);
+    await expect(context.control.enable(first.providerId, first.version, "operator", "enable-1"))
+      .rejects.toThrow("injected completion failure");
+    expect(context.bindings.admission(first.source, first.version)?.status).toBe("closed");
+    expect(context.store.activationDelivery("enable-1")).toMatchObject({ status: "pending", last_error: "injected completion failure" });
+    context.sqlite.exec("DROP TRIGGER fail_delivery_completion");
+    await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    expect(context.store.activationDelivery("enable-1")?.status).toBe("completed");
+    expect(context.activations).toHaveLength(1);
+    context.sqlite.close();
+  });
+
+  it.each(["restore", "deactivate", "restore-drain"] as const)("fails closed when %s compensation fails after the upgrade transaction aborts", async (failure) => {
+    const context = admissionFixture();
+    const first = context.manifest();
+    const second = context.manifest("2.0.0");
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    context.control.install(second, context.signature(second), context.sourceRoot, "operator", "install-2");
+    context.sqlite.exec(`CREATE TEMP TRIGGER fail_activation_commit BEFORE INSERT ON tool_provider_events
+      WHEN NEW.command_id = 'enable-2' BEGIN SELECT RAISE(ABORT, 'injected commit failure'); END`);
+    if (failure !== "deactivate") context.runtime.activate = async (installation) => {
+      if (installation.manifest.version !== first.version) return;
+      if (failure === "restore") throw new Error("injected restore failure");
+      return { drained: Promise.reject(new Error("injected restore drain failure")) };
+    };
+    else context.runtime.deactivate = async () => { throw new Error("injected deactivate failure"); };
+    await expect(context.control.enable(second.providerId, second.version, "operator", "enable-2"))
+      .rejects.toThrow("compensation was incomplete");
+    for (const manifest of [first, second]) {
+      expect(context.bindings.admission(manifest.source, manifest.version)?.status).toBe("closed");
+      expect(context.store.get(manifest.providerId, manifest.version)).toMatchObject({ state: "failed", stateReason: expect.stringContaining("compensation failed") });
+    }
+    expect(context.drains).toEqual([first.source]);
+    expect(context.store.activationDelivery("enable-2")).toBeUndefined();
+    const admission = context.bindings.admission(first.source, first.version);
+    await expect(context.control.enable(first.providerId, first.version, "operator", "enable-1"))
+      .resolves.toMatchObject({ state: "failed" });
+    expect(context.bindings.admission(first.source, first.version)).toEqual(admission);
+    await expect(context.restart().recover()).resolves.toEqual({ enabled: [], failed: [] });
+    context.sqlite.close();
+  });
+});
 
 describe("Tool Provider supply-chain control plane", () => {
   it("installs a signed manifest and persists audited lifecycle commands", async () => {
@@ -279,6 +479,99 @@ describe("Tool Provider supply-chain control plane", () => {
       .resolves.toMatchObject({ state: "failed", manifest: { version: "1.1.0" } });
     expect(context.store.get(first.providerId, first.version)?.state).toBe("enabled");
     expect(closed).toEqual(new Set(["managed.neutral-provider@1.1.0"]));
+    context.sqlite.close();
+  });
+
+  it("restores the previous runtime generation when the durable upgrade commit fails", async () => {
+    const closed = new Set<string>();
+    const context = fixture({
+      async hasOpenBindings() { return false; },
+      async closeAdmission(source, version) { closed.add(`${source}@${version}`); },
+      async openAdmission(source, version) { closed.delete(`${source}@${version}`); },
+    });
+    const first = context.manifest("1.0.0");
+    const second = context.manifest("1.1.0");
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    context.control.install(second, context.signature(second), context.sourceRoot, "operator", "install-2");
+    context.sqlite.exec(`
+      CREATE TEMP TRIGGER fail_provider_upgrade_commit
+      BEFORE INSERT ON tool_provider_events
+      WHEN NEW.command_id = 'enable-2'
+      BEGIN SELECT RAISE(ABORT, 'injected durable commit failure'); END
+    `);
+
+    await expect(context.control.enable(second.providerId, second.version, "operator", "enable-2"))
+      .rejects.toThrow("injected durable commit failure");
+    expect(context.store.get(first.providerId, first.version)?.state).toBe("enabled");
+    expect(context.store.get(second.providerId, second.version)?.state).toBe("installed");
+    expect(context.activations).toEqual([
+      "neutral-provider@1.0.0",
+      "neutral-provider@1.1.0",
+      "neutral-provider@1.0.0",
+    ]);
+    expect(context.deactivations).toEqual([second.source]);
+    expect(closed).toEqual(new Set([`${second.source}@${second.version}`]));
+    expect(context.store.findCommand("enable-2")).toBeNull();
+
+    context.sqlite.exec("DROP TRIGGER fail_provider_upgrade_commit");
+    await expect(context.control.enable(second.providerId, second.version, "operator", "enable-2"))
+      .resolves.toMatchObject({ state: "enabled", manifest: { version: "1.1.0" } });
+    expect(closed).toEqual(new Set([`${first.source}@${first.version}`]));
+    context.sqlite.close();
+  });
+
+  it("rejects invalid lifecycle metadata before changing runtime or admission state", async () => {
+    const closed = new Set<string>();
+    const context = fixture({
+      async hasOpenBindings() { return false; },
+      async closeAdmission(source, version) { closed.add(`${source}@${version}`); },
+      async openAdmission(source, version) { closed.delete(`${source}@${version}`); },
+    });
+    const manifest = context.manifest("1.0.0");
+    context.control.install(manifest, context.signature(manifest), context.sourceRoot, "operator", "install-1");
+
+    await expect(context.control.enable(manifest.providerId, manifest.version, "", "enable-invalid"))
+      .rejects.toThrow("actor is required");
+    expect(context.activations).toEqual([]);
+    expect(context.deactivations).toEqual([]);
+    expect(closed.size).toBe(0);
+    expect(context.store.get(manifest.providerId, manifest.version)?.state).toBe("installed");
+    context.sqlite.close();
+  });
+
+  it("restores the current runtime generation when a rollback commit fails", async () => {
+    const closed = new Set<string>();
+    const context = fixture({
+      async hasOpenBindings() { return false; },
+      async closeAdmission(source, version) { closed.add(`${source}@${version}`); },
+      async openAdmission(source, version) { closed.delete(`${source}@${version}`); },
+    });
+    const first = context.manifest("1.0.0");
+    const second = context.manifest("2.0.0");
+    context.control.install(first, context.signature(first), context.sourceRoot, "operator", "install-1");
+    await context.control.enable(first.providerId, first.version, "operator", "enable-1");
+    context.control.install(second, context.signature(second), context.sourceRoot, "operator", "install-2");
+    await context.control.enable(second.providerId, second.version, "operator", "enable-2");
+    context.sqlite.exec(`
+      CREATE TEMP TRIGGER fail_provider_rollback_commit
+      BEFORE INSERT ON tool_provider_events
+      WHEN NEW.command_id = 'rollback-1'
+      BEGIN SELECT RAISE(ABORT, 'injected rollback commit failure'); END
+    `);
+
+    await expect(context.control.rollback(
+      second.providerId, second.version, first.version, "operator rollback", "operator", "rollback-1",
+    )).rejects.toThrow("injected rollback commit failure");
+    expect(context.store.get(second.providerId, second.version)?.state).toBe("enabled");
+    expect(context.store.get(first.providerId, first.version)?.state).toBe("disabled");
+    expect(context.activations.slice(-2)).toEqual([
+      "neutral-provider@1.0.0",
+      "neutral-provider@2.0.0",
+    ]);
+    expect(context.deactivations).toEqual([first.source]);
+    expect(closed).toEqual(new Set([`${first.source}@${first.version}`]));
+    expect(context.store.findCommand("rollback-1")).toBeNull();
     context.sqlite.close();
   });
 

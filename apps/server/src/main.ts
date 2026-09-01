@@ -10,12 +10,17 @@ import { EventBus } from "./event-bus.js";
 import { registerRoutes } from "./routes.js";
 import { McpManager, loadMcpConfig } from "@traceforge/extension";
 import { LlmConfigService } from "./llm-config-service.js";
-import { registerSecurityAgentFoundation } from "./security-agent-foundation.js";
+import { registerSecurityAgentFoundation, type SecurityAgentFoundationOptions } from "./security-agent-foundation.js";
 import { startLocalExecutionNodeService } from "./execution-node-service.js";
 import { loadToolProviderTrustRoots } from "./tool-provider-control-plane.js";
 import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
 import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
 import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
+import { ScenarioPackageTrustControl } from "./scenario-package-trust.js";
+import { readFoundationRestoreFence } from "./db/foundation-restore-fence.js";
+import { registerFoundationInspectionRoutes } from "./foundation-backup.js";
+import { registerFoundationHostControl } from "./foundation-host-control.js";
+import { resolveFoundationActiveDatabase } from "./foundation-recovery-activation.js";
 
 // 运行时数据固定放在项目根目录 data/ 下，避免受 process.cwd() 影响（tsx watch 从 apps/server 启动）
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -52,6 +57,7 @@ export async function buildServer(
   llmConfigPath = DEFAULT_LLM_CONFIG_PATH,
   projectRoot = PROJECT_ROOT,
   webRoot?: string,
+  hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"> = {},
 ) {
   const app = Fastify({ logger: true });
   await app.register(cors, {
@@ -70,7 +76,17 @@ export async function buildServer(
     });
   }
 
-  const db = createDb(dbPath);
+  const selected=resolveFoundationActiveDatabase(dbPath,hostOptions.recoveryActivation);
+  const db = createDb(selected.path,{activeCandidate:selected.candidate});
+  const sqlite = getSqliteClient(db);
+  if (readFoundationRestoreFence(sqlite)) {
+    // Stop here, before MCP connections, model initialization, package assembly or native node startup.
+    registerFoundationHostControl(app, sqlite);
+    registerFoundationInspectionRoutes(app, sqlite, hostOptions.recoveryReadiness, hostOptions.recoveryActivation);
+    app.get("/api/health", async () => ({ status: "inspection_only", llmConfigured: false, mcpTools: 0, executionNodeReady: false, executionProcessReady: false }));
+    app.addHook("onClose", async () => { if (sqlite.open) sqlite.close(); });
+    return app;
+  }
   const bus = new EventBus();
 
   const mcp = new McpManager();
@@ -89,13 +105,13 @@ export async function buildServer(
     app.log.warn({ err }, "LLM provider not initialized from config; save settings before running Agent");
   }
   const provider = llmService.getProvider();
-  const sqlite = getSqliteClient(db);
-  const scenarioPackages = new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]);
+  // The application package remains quarantined until trusted host review is configured.
+  const scenarioPackages = new ScenarioPackageTrustControl(sqlite,new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE])).registry;
   const scenarioAuthorization = new SqliteScenarioAuthorizationService(sqlite, scenarioPackages);
-  const executionNodeService = await startLocalExecutionNodeService(projectRoot, scenarioAuthorization);
+  const executionNodeService = await startLocalExecutionNodeService(projectRoot, scenarioAuthorization, sqlite);
 
-  registerRoutes(app, db, bus, provider, mcp, llmService, projectRoot);
   registerSecurityAgentFoundation(app, sqlite, provider, projectRoot, () => llmService.hasProvider(), {
+    ...hostOptions,
     scenarioPackageRegistry: scenarioPackages,
     modelRoutes: llmService.getModelRoutes(),
     modelPolicies: llmService.getRolePolicies(),
@@ -104,6 +120,8 @@ export async function buildServer(
     executionNode: executionNodeService.client,
     toolProviderTrustRoots: loadToolProviderTrustRoots(resolve(projectRoot, "config/tool-provider-trust-roots.json")),
   });
+  // Register application APIs after the host transport fence. No unguarded legacy API back door.
+  registerRoutes(app, db, bus, provider, mcp, llmService, projectRoot);
 
   app.get("/api/health", async () => ({
     status: "ok",

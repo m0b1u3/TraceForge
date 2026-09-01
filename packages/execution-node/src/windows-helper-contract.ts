@@ -1,4 +1,4 @@
-export const WINDOWS_SANDBOX_HELPER_PROTOCOL = 2 as const;
+export const WINDOWS_SANDBOX_HELPER_PROTOCOL = 4 as const;
 
 export const WINDOWS_SANDBOX_HELPER_MODES = [
   "unelevated-direct",
@@ -17,6 +17,8 @@ export interface WindowsSandboxHelperProbe {
   platform: "windows";
   modes: Array<(typeof WINDOWS_SANDBOX_HELPER_MODES)[number]>;
   pty: true;
+  jobEmptyBarrier: true;
+  atomicJobAssignment: true;
   resourceLimits: Array<(typeof WINDOWS_SANDBOX_RESOURCE_LIMITS)[number]>;
 }
 
@@ -32,6 +34,8 @@ export function parseWindowsSandboxHelperProbe(output: string): WindowsSandboxHe
   if (probe.protocol !== WINDOWS_SANDBOX_HELPER_PROTOCOL || probe.platform !== "windows" || probe.pty !== true) {
     throw new Error("Windows sandbox helper probe reported an incompatible protocol");
   }
+  if (probe.jobEmptyBarrier !== true) throw new Error("Windows sandbox helper is missing the owned-job cleanup barrier");
+  if (probe.atomicJobAssignment !== true) throw new Error("Windows sandbox helper is missing atomic job assignment");
   if (!Array.isArray(probe.modes)) {
     throw new Error("Windows sandbox helper probe is missing a required isolation mode");
   }
@@ -49,6 +53,8 @@ export function parseWindowsSandboxHelperProbe(output: string): WindowsSandboxHe
     platform: "windows",
     modes: [...WINDOWS_SANDBOX_HELPER_MODES],
     pty: true,
+    jobEmptyBarrier: true,
+    atomicJobAssignment: true,
     resourceLimits: [...WINDOWS_SANDBOX_RESOURCE_LIMITS],
   };
 }

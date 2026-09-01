@@ -1,5 +1,8 @@
 import { resolve } from "node:path";
+import { readRunForensics } from "./scenario-run-disposal.js";
 import type Database from "better-sqlite3";
+import type { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
+import type { ContextCompactionPolicy } from "@traceforge/cognitive-runtime";
 import type { FastifyInstance } from "fastify";
 import type { LlmProvider } from "@traceforge/llm";
 import type { ExecutionNode } from "@traceforge/execution-node";
@@ -27,6 +30,7 @@ import {
   type ExecutionToolDiscoverySource,
   type ProviderCapabilityHost,
   type ToolProviderRecoverySnapshot,
+  type WorkerModelContextPolicy,
 } from "@traceforge/worker-runtime";
 import { StructuredWorkerModel } from "./structured-worker-model.js";
 import { ExecutionNodeProcessTool, SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
@@ -53,12 +57,30 @@ import { ToolProviderRecoveryReconciler } from "./tool-provider-recovery-reconci
 import { recoverToolRuntimeStartup } from "./tool-runtime-startup-recovery.js";
 import { SqliteToolProviderDiagnosticStore } from "./tool-provider-diagnostic-adapter.js";
 import { SqliteToolProviderSchedulingAuditStore } from "./tool-provider-scheduling-adapter.js";
+import { ManagedExecutionCapacity, registerManagedExecutionCapacityRoutes } from "./managed-execution-capacity.js";
+import type { ProcessExecutionCapacity } from "./process-execution-capacity.js";
+import type { FoundationHostControl } from "./foundation-host-control.js";
 import { ToolProviderGarbageCollector } from "./tool-provider-garbage-collector.js";
 import {
   registerToolProviderArchiveImportRoutes,
   ToolProviderArchiveImportService,
   type ToolProviderArchiveImportAuthorizer,
 } from "./tool-provider-archive-import.js";
+import {
+  registerToolProviderRefreshRoutes,
+  ToolProviderRefreshControl,
+  type ToolProviderRefreshAuthorizer,
+} from "./tool-provider-refresh-control.js";
+import {
+  registerToolInvocationReconciliationRoutes,
+  ToolInvocationReconciliationControl,
+  type ToolInvocationReconciliationAuthorizer,
+  type ToolInvocationReconciliationEvidenceVerifier,
+} from "./tool-invocation-reconciliation.js";
+import { SignedToolRecoveryEvidenceVerifier, type RecoveryEvidenceAuthority } from "./tool-recovery-evidence.js";
+import { ToolExecutionRecoveryControl, registerToolExecutionRecoveryRoutes } from "./tool-execution-recovery.js";
+import type { ScenarioWorkRetryControl } from "./scenario-work-retry.js";
+import { SqliteWorkerCheckpointStore } from "./worker-checkpoint-store.js";
 
 function serverBaseUrl(app: FastifyInstance): string {
   const address = app.server.address();
@@ -81,7 +103,7 @@ export function desiredWorkerCount(pool: ScenarioWorkerPoolDefinition, runs: Sce
 }
 
 class EmbeddedScenarioWorkerPool {
-  private readonly supervisors = new Map<string, { workerId: string; supervisor: WorkerSupervisor; pool: ScenarioWorkerPoolDefinition }>();
+  private readonly supervisors = new Map<string, { workerId: string; supervisor: WorkerSupervisor; pool: ScenarioWorkerPoolDefinition; revoke:()=>void }>();
   private reconcilePromise: Promise<void> | undefined;
 
   constructor(
@@ -96,6 +118,10 @@ class EmbeddedScenarioWorkerPool {
     private readonly definitions: ScenarioDefinitionRegistry,
     private readonly bindingValidator: ScenarioRunBindingValidator,
     private readonly invocationBindings: SqliteToolInvocationBindingStore,
+    private readonly contextPolicy?: WorkerModelContextPolicy,
+    private readonly compaction?: ContextCompactionPolicy,
+    private readonly hostControl?: FoundationHostControl,
+    private readonly authorization?: SqliteScenarioAuthorizationService,
   ) {}
 
   reconcile(): Promise<void> {
@@ -104,10 +130,17 @@ class EmbeddedScenarioWorkerPool {
     return this.reconcilePromise;
   }
 
+  reconcileOwnership(runId: string): void {
+    // Cancellation consumes durable ownership facts, never package code or a grant to execute.
+    const run = readRunForensics(this.sqlite, runId);
+    if (run) for (const managed of this.supervisors.values()) managed.supervisor.reconcileRun(run);
+  }
+
   async stop(): Promise<void> {
     await this.reconcilePromise;
     const registry = new SqliteWorkerRegistry(this.sqlite);
     await Promise.all([...this.supervisors.values()].map(async (managed) => {
+      managed.revoke();
       await managed.supervisor.stop();
       registry.setStatus(managed.workerId, "offline", new Date().toISOString());
     }));
@@ -141,24 +174,25 @@ class EmbeddedScenarioWorkerPool {
       .sort(([left], [right]) => left.localeCompare(right));
     for (let index = current.length + 1; index <= desired; index += 1) {
       const workerId = `embedded-${definition.kind}-${pool.id}-${index}`.replace(/[^a-zA-Z0-9_-]/g, "-");
-      const supervisor = this.createSupervisor(workerId, definition, pool);
-      await supervisor.start();
-      this.supervisors.set(`${poolKey}:${workerId}`, { workerId, supervisor, pool });
+      const {supervisor,revoke} = this.createSupervisor(workerId, definition, pool);
+      try { await supervisor.start(); }
+      catch(error){revoke();await supervisor.stop();throw error;}
+      this.supervisors.set(`${poolKey}:${workerId}`, { workerId, supervisor, pool, revoke });
     }
     if (current.length <= desired) return;
     const registry = new SqliteWorkerRegistry(this.sqlite);
     for (const [key, managed] of current.slice(desired).reverse()) {
       const active = this.sqlite.prepare("SELECT 1 FROM scenario_work_leases WHERE worker_id = ? LIMIT 1").get(managed.workerId);
       if (active) continue;
+      managed.revoke();
       await managed.supervisor.stop();
       registry.setStatus(managed.workerId, "offline", new Date().toISOString());
       this.supervisors.delete(key);
     }
   }
 
-  private createSupervisor(workerId: string, definition: ScenarioDefinition, pool: ScenarioWorkerPoolDefinition): WorkerSupervisor {
-    const control = new HttpWorkerControlPlaneClient(serverBaseUrl(this.app));
-    const model = new StructuredWorkerModel(this.provider, undefined, this.cognitiveSnapshots, undefined, this.modelRuntime);
+  private createSupervisor(workerId: string, definition: ScenarioDefinition, pool: ScenarioWorkerPoolDefinition): {supervisor:WorkerSupervisor;revoke:()=>void} {
+    const model = new StructuredWorkerModel(this.provider, undefined, this.cognitiveSnapshots, undefined, this.modelRuntime, this.contextPolicy, this.compaction);
     const receipts = new SqliteToolReceiptStore(this.sqlite);
     const worker: WorkerDescriptor = {
       id: workerId,
@@ -168,12 +202,24 @@ class EmbeddedScenarioWorkerPool {
       status: "online",
       heartbeatAt: new Date().toISOString(),
     };
+    if(!this.hostControl)throw new Error("Embedded Workers require host-scoped control channels");
+    const channel=this.hostControl.worker(worker,definition.kind,definition.version);
+    const control=new HttpWorkerControlPlaneClient(serverBaseUrl(this.app),channel.fetch);
     const gateway = new PolicyExecutionToolGateway(
       this.toolRuntime.registry,
       { async authorize(input) { return { decision: "pending", approvalRef: `approval:${input.invocation.id}` }; } },
       receipts,
       {
         allowedRisks: ["read_only", "bounded_write", "privileged", "destructive"],
+        assertAuthorized: ({assignment,worker}) => {
+          if(!this.authorization)return;
+          const state=new DurableScenarioRuntime(new SqliteScenarioEventStore(this.sqlite),this.definitions,this.bindingValidator).load(assignment.runId);
+          const work=state?.workItems.find(w=>w.id===assignment.work.id);
+          if(!state || state.status!=="running" || state.caseId!==assignment.runContext.caseId || state.scopeRef!==assignment.runContext.scopeRef
+            || work?.status!=="running" || work.workerId!==worker.id || work.leaseId!==assignment.leaseId
+            || !work.leaseExpiresAt || !(Date.parse(work.leaseExpiresAt)>Date.now()))throw new Error("Tool dispatch requires current Work ownership");
+          this.authorization.requireRun(state);
+        },
         permissionLayers: () => {
           const platform = executorPlatform();
           return [
@@ -215,7 +261,8 @@ class EmbeddedScenarioWorkerPool {
       model,
       gateway,
       new LoopGuardObserver(),
-      new JsonFileCheckpointStore(resolve(this.projectRoot, "data", "worker-checkpoints", worker.id)),
+      new SqliteWorkerCheckpointStore(this.sqlite, new JsonFileCheckpointStore(resolve(this.projectRoot, "data", "worker-checkpoints"),
+        resolve(this.projectRoot, "data", "worker-checkpoints", worker.id))),
       new BoundedOutputDistiller(),
       {
         onLifecycleEvent: (event) => {
@@ -256,14 +303,14 @@ class EmbeddedScenarioWorkerPool {
         },
       },
     );
-    return new WorkerSupervisor(runtime, {
+    return {revoke:channel.revoke,supervisor:new WorkerSupervisor(runtime, {
       pollIntervalMs: 1_000,
       errorBackoffMs: 5_000,
       onEvent: (event) => {
         if (event.type === "poll_failed") this.app.log.error({ workerId: worker.id, error: event.error }, "Embedded worker poll failed");
         if (event.type === "work_finished") this.app.log.info({ workerId: worker.id, result: event.result }, "Embedded worker finished work");
       },
-    });
+    })};
   }
 }
 
@@ -287,22 +334,55 @@ export function registerEmbeddedWorkers(
   toolProviderSourceFactory?: (installation: ToolProviderInstallation) => Promise<ExecutionToolDiscoverySource> | ExecutionToolDiscoverySource,
   providerCapabilityHost?: ProviderCapabilityHost,
   toolProviderArchiveImportAuthorizer?: ToolProviderArchiveImportAuthorizer,
+  toolProviderRefreshAuthorizer?: ToolProviderRefreshAuthorizer,
+  toolInvocationReconciliationAuthorizer?: ToolInvocationReconciliationAuthorizer,
+  toolInvocationReconciliationEvidenceVerifier?: ToolInvocationReconciliationEvidenceVerifier,
+  workRetry?: ScenarioWorkRetryControl,
+  recoveryAuthority?: (keyId: string) => RecoveryEvidenceAuthority | undefined,
+  contextPolicy?: WorkerModelContextPolicy,
+  compaction?: ContextCompactionPolicy,
+  processCapacity?: ProcessExecutionCapacity,
+  hostControl?: FoundationHostControl,
+  authorization?: SqliteScenarioAuthorizationService,
 ): void {
   const builtinTools: ExecutionToolAdapter[] = [
     new EvidenceGraphSnapshotTool(evidenceGraph),
     new EvidenceGraphMutateTool(sqlite, evidenceGraph),
-    ...(executionNode ? [new ExecutionNodeProcessTool(executionNode)] : []),
+    ...(executionNode ? [new ExecutionNodeProcessTool(executionNode,processCapacity)] : []),
   ];
   const toolRuntime = new ExecutionToolDiscoveryRuntime([
     { source: "traceforge.builtin", async discover() { return builtinTools; } },
     ...scenarioToolSources,
     ...externalToolSources,
   ], 30_000, 3, () => new Date(), new SqliteExecutionToolDiscoveryStateStore(sqlite));
-  registerExecutionToolRuntimeRoutes(app, toolRuntime);
+  let startupState: "not_started" | "starting" | "ready" | "failed" | "stopping" | "stopped" = "not_started";
+  registerExecutionToolRuntimeRoutes(app, toolRuntime, () => startupState);
   const providerRecoveryState = new SqliteToolProviderRecoveryStateStore(sqlite);
   const providerDiagnostics = new SqliteToolProviderDiagnosticStore(sqlite);
-  const providerScheduler = new ToolProviderFairScheduler({}, new SqliteToolProviderSchedulingAuditStore(sqlite));
+  const providerScheduler = processCapacity?.scheduler ?? new ToolProviderFairScheduler({}, new SqliteToolProviderSchedulingAuditStore(sqlite));
   const invocationBindings = new SqliteToolInvocationBindingStore(sqlite);
+  const invocationRecovery = invocationBindings.recoverInterrupted();
+  const executionCapacity = new ManagedExecutionCapacity(sqlite,providerScheduler,invocationBindings);
+  processCapacity?.restoreLegacy();
+  if (invocationRecovery.completed || invocationRecovery.uncertain) {
+    app.log.info({ invocationRecovery }, "Tool Invocation startup reconciliation completed");
+  }
+  const reconciliationAuthorizer = toolInvocationReconciliationAuthorizer ?? {
+    async authorize() { return { decision: "denied" as const, reason: "No Tool Invocation reconciliation authorizer is configured" }; },
+  };
+  const reconciliationVerifier = toolInvocationReconciliationEvidenceVerifier ?? new SignedToolRecoveryEvidenceVerifier(sqlite, recoveryAuthority ?? (() => undefined));
+  registerManagedExecutionCapacityRoutes(app,executionCapacity,reconciliationAuthorizer,reconciliationVerifier);
+  const reconcileCapacity=()=>{try{executionCapacity.reconcile();}catch(error){app.log.warn({error},"External execution occupancy remains fenced");}};
+  reconcileCapacity();
+  const capacityTimer=setInterval(reconcileCapacity,1000);capacityTimer.unref();
+  const invocationReconciliation = new ToolInvocationReconciliationControl(
+    sqlite,
+    invocationBindings,
+    reconciliationAuthorizer,
+    reconciliationVerifier,
+  );
+  registerToolInvocationReconciliationRoutes(app, invocationReconciliation);
+  if (workRetry) registerToolExecutionRecoveryRoutes(app, new ToolExecutionRecoveryControl(sqlite, invocationBindings, invocationReconciliation, workRetry));
   let projectRecoveryQuarantine = (_snapshot: ToolProviderRecoverySnapshot) => undefined;
   const managedSourceFactory = toolProviderSourceFactory
     ?? (executionNode ? createManagedToolProviderSourceFactory(
@@ -313,6 +393,7 @@ export function registerEmbeddedWorkers(
         state: providerRecoveryState,
         diagnostics: providerDiagnostics,
         scheduler: providerScheduler,
+        capacity: executionCapacity,
         onQuarantined: (snapshot) => { projectRecoveryQuarantine(snapshot); },
       },
     ) : undefined);
@@ -363,15 +444,27 @@ export function registerEmbeddedWorkers(
     app.log.info({ report: archiveRecovery }, "Tool Provider archive import recovery completed");
   }
   registerToolProviderArchiveImportRoutes(app, providerArchiveImports);
+  const providerRefresh = new ToolProviderRefreshControl(
+    sqlite,
+    providerControl,
+    toolRuntime,
+    toolProviderRefreshAuthorizer ?? {
+      async authorize() { return { decision: "denied", reason: "No Tool Provider refresh authorizer is configured" }; },
+    },
+  );
+  const interruptedRefreshes = providerRefresh.recoverInterrupted();
+  if (interruptedRefreshes) app.log.info({ interruptedRefreshes }, "Tool Provider refresh recovery completed");
+  registerToolProviderRefreshRoutes(app, providerRefresh);
   const pool = new EmbeddedScenarioWorkerPool(
     app, sqlite, provider, projectRoot, cognitiveSnapshots, modelRuntime, agentEvents, toolRuntime, definitions, bindingValidator,
-    invocationBindings,
+    invocationBindings, contextPolicy, compaction,hostControl,authorization,
   );
   let listening = false;
+  let startup: Promise<void> | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   let lastGarbageCollectionAt = 0;
   const reconcile = () => {
-    if (!listening || !providerReady()) return;
+    if (!listening || startupState !== "ready" || !providerReady()) return;
     pool.reconcile().catch((error) => app.log.error({ err: error }, "Embedded Worker pool reconciliation failed"));
   };
   const maintainProviderDiagnostics = () => {
@@ -397,11 +490,16 @@ export function registerEmbeddedWorkers(
       app.log.error({ err: error }, "Tool Provider garbage collection failed");
     }
   };
-  const unsubscribeChanges = changes.subscribe(() => { reconcile(); });
+  const unsubscribeChanges = changes.subscribe((change) => {
+    if (change.kind === "run") pool.reconcileOwnership(change.runId);
+    reconcile();
+  });
   app.addHook("onListen", () => {
     listening = true;
-    void recoverToolRuntimeStartup(toolRuntime, providerRecoveryReconciler, providerControl)
+    startupState = "starting";
+    startup = recoverToolRuntimeStartup(toolRuntime, providerRecoveryReconciler, providerControl)
       .then((report) => {
+        if (!listening) return;
         if (report.reconciliation.projectedToControl.length || report.reconciliation.projectedToRecovery.length) {
           app.log.info({ report: report.reconciliation }, "Tool Provider recovery quarantine reconciliation completed");
         }
@@ -409,9 +507,13 @@ export function registerEmbeddedWorkers(
           app.log.info({ report: report.providers }, "Tool Provider startup recovery completed");
         }
         collectProviderGarbage(true);
+        startupState = "ready";
+        reconcile();
       })
-      .catch((error) => app.log.error({ err: error }, "Tool runtime startup recovery failed"));
-    reconcile();
+      .catch((error) => {
+        if (listening) startupState = "failed";
+        app.log.error({ err: error }, "Tool runtime startup recovery failed");
+      });
     timer = setInterval(() => {
       reconcile();
       maintainProviderDiagnostics();
@@ -421,9 +523,14 @@ export function registerEmbeddedWorkers(
   });
   app.addHook("onClose", async () => {
     listening = false;
+    startupState = "stopping";
     unsubscribeChanges();
     if (timer) clearInterval(timer);
+    clearInterval(capacityTimer);
+    // Do not let a late startup activation recreate a Provider after the runtime was closed.
+    await startup;
     await pool.stop();
     await toolRuntime.close();
+    startupState = "stopped";
   });
 }

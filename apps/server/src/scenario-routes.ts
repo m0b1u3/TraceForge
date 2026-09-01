@@ -13,6 +13,7 @@ import {
 } from "@traceforge/orchestration-core";
 import { ScenarioControlPlane, type ControlPlaneOptions } from "./scenario-control-plane.js";
 import { SqliteScenarioEventStore, SqliteWorkerRegistry } from "./scenario-event-store.js";
+import { SqliteScenarioAuthorizationService, AuthorizationRecoveryRequired } from "./scenario-authorization.js";
 import type { BlackboardChangeBus } from "@traceforge/cognitive-runtime";
 import {
   ScenarioPackageBindingError,
@@ -50,6 +51,7 @@ const scenarioAuthorization = z.object({
   id: z.string().min(1),
   caseId: z.string().min(1),
   scenarioKind: z.string().min(1),
+  definitionVersion: z.number().int().positive().optional(),
   scope: z.unknown(),
   approvedBy: z.string().min(1),
   expiresAt: z.string().datetime(),
@@ -90,6 +92,7 @@ export interface ScenarioRouteOptions {
 }
 
 function sendError(reply: FastifyReply, error: unknown) {
+  if(error instanceof AuthorizationRecoveryRequired)return reply.code(409).send({error:error.message,recoveryRequired:true});
   if (error instanceof z.ZodError) return reply.code(400).send({ error: "invalid request", issues: error.issues });
   if (error instanceof RevisionConflictError) {
     return reply.code(409).send({ error: error.message, expectedRevision: error.expectedRevision, actualRevision: error.actualRevision });
@@ -118,6 +121,7 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
   const workers = new SqliteWorkerRegistry(sqlite);
   const definitions = options.definitions ?? new ScenarioDefinitionRegistry();
   const packages = options.packages ?? new ScenarioPackageRegistry();
+  const authorizationService = new SqliteScenarioAuthorizationService(sqlite,packages,()=>Date.parse(now()));
   const runtime = new DurableScenarioRuntime(store, definitions, packages);
   const controlPlaneOptions: ControlPlaneOptions = {
     leaseDurationMs: options.controlPlane?.leaseDurationMs ?? 60_000,
@@ -140,7 +144,7 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
   };
   const enforceAuthorization = (runId: string, at: string) => {
     const state = requireRun(runId);
-    if (authorizationIsActive(state.scopeRef, state.caseId, state.definitionKind, at)) return state;
+    if (authorizationIsActive(state.scopeRef, state.caseId, state.definitionKind, at)) {authorizationService.requireRun(state);return state;}
     if (state.status !== "running" && state.status !== "paused") return state;
     return runtime.execute({
       commandId: `authorization-closed:${state.scopeRef}`,
@@ -192,6 +196,7 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       expiresAt: row.expires_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      policyBinding: authorizationService.diagnostic(row.id,row.case_id),
     }));
   });
 
@@ -201,19 +206,21 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       if (!sqlite.prepare("SELECT 1 FROM cases WHERE id = ?").get(body.caseId)) {
         return reply.code(404).send({ error: `Unknown case ${body.caseId}` });
       }
-      const scenarioPackage = packages.requireForScenario(body.scenarioKind);
+      const scenarioPackage = packages.requireForScenario(body.scenarioKind,body.definitionVersion);
       const parsedScope = scenarioPackage.authorizationPolicy.parseScope(body.scope);
       const declaredActions = new Set(scenarioPackage.definition.authorizationActions);
       const unknownActions = [...parsedScope.allowedActions, ...parsedScope.deniedActions].filter((action) => !declaredActions.has(action));
       if (unknownActions.length) return reply.code(400).send({ error: `Authorization contains undeclared actions: ${[...new Set(unknownActions)].join(", ")}` });
       const at = now();
       if (Date.parse(body.expiresAt) <= Date.parse(at)) return reply.code(400).send({ error: "Authorization expiry must be in the future" });
-      sqlite.prepare(`
+      sqlite.transaction(()=>{sqlite.prepare(`
         INSERT INTO scenario_authorizations
           (id, case_id, scenario_kind, scope_json, approved_by, status, expires_at, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
       `).run(body.id, body.caseId, body.scenarioKind, JSON.stringify(parsedScope.payload), body.approvedBy, body.expiresAt, at, at);
-      return reply.code(201).send({ ...body, scope: parsedScope.payload, status: "active", createdAt: at, updatedAt: at });
+        authorizationService.pin(body.id,body.caseId,packages.bindingFor(scenarioPackage),0);
+      })();
+      return reply.code(201).send({ ...body, scope: parsedScope.payload, status: "active", createdAt: at, updatedAt: at,policyBinding:authorizationService.diagnostic(body.id,body.caseId) });
     } catch (error) { return sendError(reply, error); }
   });
 
@@ -289,7 +296,7 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       }
       const scenarioPackage = packages.requireForScenario(body.scenarioKind, body.definitionVersion);
       const scenarioPackageBinding = packages.bindingFor(scenarioPackage);
-      const scope = scenarioPackage.authorizationPolicy.parseScope(JSON.parse(authorization.scope_json));
+      const {scope} = authorizationService.requireScope(body.scopeRef,body.caseId,scenarioPackage);
       const deniedActions = new Set(scope.deniedActions);
       const availableCapabilities = [...new Set([
         ...scope.allowedActions.filter((action) => !deniedActions.has(action)),
@@ -339,6 +346,7 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       const { runId, workId } = z.object({ runId: z.string().min(1), workId: z.string().min(1) }).parse(request.params);
       const body = workerActionBase.parse(request.body);
       requireWorkerLease(runId, workId, body.workerId, body.leaseId);
+      authorizationService.requireRun(requireRun(runId));
       return execute(runId, body.commandId, body.expectedRevision, {
         type: "renew_lease", workId, leaseId: body.leaseId,
         leaseExpiresAt: new Date(Date.parse(now()) + controlPlaneOptions.leaseDurationMs).toISOString(), at: now(),
@@ -453,6 +461,7 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       if (!authorizationIsActive(state.scopeRef, state.caseId, state.definitionKind, at)) {
         return reply.code(403).send({ error: `Scope authorization ${state.scopeRef} is not active; Run cannot resume` });
       }
+      authorizationService.requireRun(state);
       return execute(runId, body.commandId, body.expectedRevision, {
         type: "resume_run", reason: body.reason, requestedBy: "operator", at,
       });

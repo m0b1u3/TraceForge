@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ScenarioKernel } from "./kernel.js";
 import type { ScenarioDefinition } from "./model.js";
 import { ScenarioDefinitionRegistry } from "./runtime.js";
+import { CapabilityScheduler } from "./scheduler.js";
 
 const definition: ScenarioDefinition = {
   kind: "example.neutral_investigation",
@@ -44,6 +45,24 @@ const definition: ScenarioDefinition = {
 };
 
 describe("ScenarioDefinitionRegistry", () => {
+  it.each([false, true])("schedules exhausted work only with an authorized checkpoint continuation: %s", (resumeFromCheckpoint) => {
+    const at = "2026-08-28T00:00:00.000Z";
+    const kernel = new ScenarioKernel(definition);
+    let state = kernel.execute(undefined, { type: "start_run", runId: "run", caseId: "case", goal: "Review",
+      scenarioPackage: { id: "fixture.neutral", version: "1.0.0", schemaRevision: 1 },
+      scopeRef: "scope", availableCapabilities: ["fixture.scope.read"], at }).state;
+    state = kernel.execute(state, { type: "propose_work", proposal: { id: "work", kind: "candidate_review",
+      title: "Review", objective: "Review", idempotencyKey: "first", maxAttempts: 1 }, at }).state;
+    state.workItems[0] = { ...state.workItems[0]!, attempt: 1, resumeFromCheckpoint };
+    const scheduler = new CapabilityScheduler();
+    const worker = { id: "worker", roles: ["analyst"], capabilities: ["fixture.scope.read"],
+      maxConcurrentWork: 1, status: "online" as const, heartbeatAt: at };
+    const options = { now: at, heartbeatTimeoutMs: 1000, maxParallelWork: 1 };
+    expect(scheduler.plan(state, [worker], options)).toEqual(resumeFromCheckpoint ? [{ workId: "work", workerId: "worker" }] : []);
+    expect(scheduler.plan(state, [{ ...worker, capabilities: [] }], options)).toEqual([]);
+    expect(scheduler.plan(state, [worker], { ...options, workerActiveWork: { worker: 1 } })).toEqual([]);
+  });
+
   it("supports a host with no installed scenarios", () => {
     const registry = new ScenarioDefinitionRegistry();
     expect(registry.list()).toEqual([]);

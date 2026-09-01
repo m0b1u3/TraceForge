@@ -79,6 +79,7 @@ describe("SqliteScenarioAuthorizationService", () => {
       () => Date.parse("2026-08-28T01:00:00.000Z"),
     );
 
+    service.pin("scope_1","case_1",{id:scenarioPackage.id,version:scenarioPackage.version,schemaRevision:scenarioPackage.schemaRevision},0);
     expect(service.requireAction("scope_1", "case_1", "fixture.read")).toMatchObject({ scenarioKind: "fixture.neutral" });
     expect(service.authorizeResource("scope_1", "case_1", "fixture.read", "fixture.subject", "first").canonicalValue)
       .toBe("subject:first");

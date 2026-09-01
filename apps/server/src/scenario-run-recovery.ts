@@ -4,7 +4,6 @@ import { z } from "zod";
 import {
   RevisionConflictError,
   canonicalJson,
-  replayScenario,
   type DurableScenarioRuntime,
   type ScenarioRunState,
   type WorkerDescriptor,
@@ -180,13 +179,13 @@ export class ScenarioRunRecoveryService {
   }
 
   replay(runId: string, revision?: number): RunReplayProjection | undefined {
-    const stream = this.events.load(runId);
+    const stream = { revision: this.events.revision(runId) };
     if (stream.revision === 0) return undefined;
     const through = revision ?? stream.revision;
     if (!Number.isInteger(through) || through < 1 || through > stream.revision) {
       throw new Error(`Replay revision must be between 1 and ${stream.revision}`);
     }
-    const state = replayScenario(stream.events.slice(0, through));
+    const state = this.events.loadState(runId, through);
     if (!state) throw new Error(`Run ${runId} has no replayable state at revision ${through}`);
     return {
       runId,

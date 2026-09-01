@@ -23,7 +23,7 @@ const forbiddenImports = [
 const foundationSources = [
   ...sourceFiles("packages").filter((path) => path.includes("/src/") && !/(?:\.test|\.integration\.test)\.[cm]?[jt]sx?$/.test(path)),
   ...sourceFiles("apps/server/src").filter((path) =>
-    !path.endsWith("/main.ts") && !/(?:\.test|\.integration\.test)\.[cm]?[jt]sx?$/.test(path)),
+    !path.endsWith("/main.ts") && !path.includes("/test-fixtures/") && !/(?:\.test|\.integration\.test)\.[cm]?[jt]sx?$/.test(path)),
 ];
 
 for (const path of foundationSources) {

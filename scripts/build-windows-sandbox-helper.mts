@@ -10,7 +10,13 @@ if (process.platform !== "win32") {
 const manifest = resolve("packages/windows-sandbox-helper/Cargo.toml");
 const binary = resolve("packages/windows-sandbox-helper/target/release/traceforge-windows-sandbox.exe");
 const bundled = resolve("packages/execution-node/native/win32-x64/traceforge-windows-sandbox.exe");
-const result = spawnSync("cargo", ["build", "--release", "--manifest-path", manifest], {
+// Run the native Job Object regression on the platform that actually implements it before bundling.
+const tests = spawnSync("cargo", ["test", "--locked", "--manifest-path", manifest], {
+  cwd: resolve("."), env: { ...process.env }, stdio: "inherit",
+});
+if (tests.error) throw tests.error;
+if (tests.status !== 0) throw new Error("Windows sandbox helper native tests failed; refusing to bundle.");
+const result = spawnSync("cargo", ["build", "--locked", "--release", "--manifest-path", manifest], {
   cwd: resolve("."),
   env: { ...process.env },
   stdio: "inherit",

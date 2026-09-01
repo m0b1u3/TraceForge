@@ -28,11 +28,19 @@ function respond(request) {
   if (request.method === "tools.list") {
     return send({ version, id: request.id, ok: true, result: [{
       name: "fixture.read", source: process.env.TRACEFORGE_TEST_SOURCE ?? "rpc:test", version: "1.0.0", priority: 100,
-      description: "Read fixture input", inputSchema: { type: "object" }, providedCapabilities: ["fixture.read"],
+      description: process.env.TRACEFORGE_TEST_OBSERVATION ? "Read the current observation token. Invoke with an empty object." : "Read fixture input",
+      inputSchema: { type: "object", ...(process.env.TRACEFORGE_TEST_OBSERVATION ? { additionalProperties: false } : {}) }, providedCapabilities: ["fixture.read"],
       dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1000,
     }] });
   }
   if (request.method === "tools.call") {
+    if (process.env.TRACEFORGE_TEST_OBSERVATION) {
+      return send({ version, id: request.id, ok: true, result: {
+        status: "succeeded", summary: `Observation token: ${process.env.TRACEFORGE_TEST_OBSERVATION}`,
+        raw: JSON.stringify({ observationToken: process.env.TRACEFORGE_TEST_OBSERVATION }),
+        refs: [`work:${request.params?.context?.workId ?? "unknown"}`], retryable: false,
+      } });
+    }
     if (request.params?.input?.crashDetail === true) {
       process.stderr.write("sensitive-stderr-detail-".repeat(2_000));
       return setImmediate(() => process.exit(9));

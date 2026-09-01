@@ -1,6 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import type { ProcessEnforcementAttestation, ProcessOutputStream, ProcessSignal, ResourceLimitKind, StartProcessRequest } from "./protocol.js";
 import type { LaunchedProcess, ManagedProcess, ProcessLauncher } from "./runtime.js";
+import type { ProcessLaunchIdentity } from "./protocol.js";
+import { ProcessWatchdog, prepareProcessLaunch, processWatchdogOptions, validateDeadline, writeProcessPipe, type ProcessWatchdogOptions } from "./process-watchdog.js";
 
 const NATIVE_TERMINAL_MAX_FRAME_BYTES = 1024 * 1024;
 const FRAME_INPUT = 0x01;
@@ -41,6 +44,10 @@ export class NativeTerminalFrameDecoder {
     }
     return frames;
   }
+
+  finish(): void {
+    if (this.buffered.length) throw new Error("Native terminal helper ended with a truncated frame");
+  }
 }
 
 export function encodeNativeTerminalFrame(type: number, payload: Buffer = Buffer.alloc(0)): Buffer {
@@ -63,19 +70,25 @@ export interface WindowsConptyLaunchSpec {
 }
 
 export class WindowsConptyProcessLauncher implements ProcessLauncher {
+  private readonly watchdogOptions: ProcessWatchdogOptions;
   constructor(
     private readonly resolveLaunch: (request: StartProcessRequest) => Promise<WindowsConptyLaunchSpec> | WindowsConptyLaunchSpec,
-  ) {}
+    watchdogOptions: Partial<ProcessWatchdogOptions> = {},
+  ) { this.watchdogOptions = processWatchdogOptions(watchdogOptions); }
 
-  async launch(request: StartProcessRequest): Promise<LaunchedProcess> {
+  async launch(request: StartProcessRequest, identity?: ProcessLaunchIdentity): Promise<LaunchedProcess> {
     if (!request.terminal) throw new Error("Windows ConPTY launcher requires a terminal request");
     if (request.permissions.network === "brokered") {
       throw new Error("Windows ConPTY helper does not implement brokered network transport");
     }
-    const spec = await this.resolveLaunch(request);
+    validateDeadline(request.timeoutMs, "Execution timeout");
+    const spec = await prepareProcessLaunch(() => this.resolveLaunch(request), this.watchdogOptions.startupTimeoutMs);
+    const executionNonce = identity?.launchId ?? randomBytes(32).toString("hex");
+    if (!/^[a-f0-9]{64}$/.test(executionNonce)) throw new Error("Invalid launch identity");
     const args = [
       ...(spec.helperArgumentsPrefix ?? []),
       "pty-run",
+      "--execution-nonce", executionNonce,
       "--mode", spec.mode,
       "--network", request.permissions.network === "deny" ? "deny" : "allow",
       "--cwd", request.workingDirectory,
@@ -91,7 +104,7 @@ export class WindowsConptyProcessLauncher implements ProcessLauncher {
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const process = await NativeTerminalManagedProcess.connect(helper);
+    const process = await NativeTerminalManagedProcess.connect(helper, executionNonce, this.watchdogOptions, request.timeoutMs);
     return { process, enforcement: structuredClone(spec.enforcement) };
   }
 }
@@ -108,13 +121,28 @@ class NativeTerminalManagedProcess implements ManagedProcess {
   private pendingResourceLimit: ResourceLimitKind | null = null;
   private helperStderr = "";
   private exited = false;
+  private completion: { exitCode: number } | null = null;
   private nextOperationId = 1;
   private readonly pendingOperations = new Map<number, { resolve(): void; reject(error: Error): void }>();
+  private readonly watchdog: ProcessWatchdog;
 
-  private constructor(private readonly helper: ChildProcessWithoutNullStreams) {}
+  private constructor(private readonly helper: ChildProcessWithoutNullStreams, private readonly executionNonce: string,
+    options: ProcessWatchdogOptions, timeoutMs: number) {
+    this.helper.stdin.setMaxListeners(66); // 64 bounded operations plus transport listeners.
+    this.watchdog = new ProcessWatchdog(options, timeoutMs, (error) => {
+      this.emitError(error);
+      // Close our transport even if the helper cannot be killed. This is NOT an OS cleanup report.
+      try { this.helper.kill("SIGKILL"); } catch { /* outcome remains unknown */ }
+      this.helper.stdin.destroy();
+      this.helper.stdout.destroy();
+      this.helper.stderr.destroy();
+      this.emitExit(null, null);
+    });
+  }
 
-  static async connect(helper: ChildProcessWithoutNullStreams): Promise<NativeTerminalManagedProcess> {
-    const managed = new NativeTerminalManagedProcess(helper);
+  static async connect(helper: ChildProcessWithoutNullStreams, executionNonce: string,
+    options: ProcessWatchdogOptions, timeoutMs: number): Promise<NativeTerminalManagedProcess> {
+    const managed = new NativeTerminalManagedProcess(helper, executionNonce, options, timeoutMs);
     await managed.initialize();
     return managed;
   }
@@ -175,6 +203,7 @@ class NativeTerminalManagedProcess implements ManagedProcess {
   }
 
   async terminate(force: boolean): Promise<void> {
+    this.watchdog.beginShutdown();
     await this.writeFrame(FRAME_TERMINATE, Buffer.from([force ? 1 : 0]));
   }
 
@@ -188,16 +217,26 @@ class NativeTerminalManagedProcess implements ManagedProcess {
       try {
         for (const frame of decoder.push(chunk)) this.receive(frame);
       } catch (error) {
-        this.emitError(error as Error);
-        this.helper.kill();
+        this.watchdog.fail(error as Error);
       }
     });
-    this.helper.once("error", (error) => this.emitError(error));
+    this.helper.once("error", (error) => this.watchdog.fail(error));
+    for (const pipe of [this.helper.stdin, this.helper.stdout, this.helper.stderr]) {
+      pipe.on("error", (error) => this.watchdog.fail(error));
+    }
+    this.helper.once("exit", () => this.watchdog.beginShutdown());
     this.helper.once("close", (code, signal) => {
       if (!this.exited) {
-        const detail = this.helperStderr.trim();
-        this.emitError(new Error(detail || `Native terminal helper exited before terminal completion (${code ?? signal ?? "unknown"})`));
-        this.emitExit(code, signal);
+        try {
+          decoder.finish();
+          if (this.pendingError) throw this.pendingError;
+          if (!this.completion || signal || code === null || (code >>> 0) !== (this.completion.exitCode >>> 0)) {
+            throw new Error(this.helperStderr.trim() || "Native terminal helper exited without matching cleanup completion");
+          }
+          this.emitExit(this.completion.exitCode, null);
+        } catch (error) {
+          this.watchdog.fail(error instanceof Error ? error : new Error(String(error)));
+        }
       }
     });
     await new Promise<void>((resolvePromise, reject) => {
@@ -229,11 +268,16 @@ class NativeTerminalManagedProcess implements ManagedProcess {
   private readonly startErrorListeners = new Set<(error: Error) => void>();
 
   private receive(frame: NativeTerminalFrame): void {
+    if (this.completion || this.exited) throw new Error("Native terminal returned a frame after completion");
+    if (frame.type !== FRAME_STARTED && frame.type !== FRAME_ERROR && !this.processId) {
+      throw new Error("Native terminal returned a frame before process start");
+    }
     if (frame.type === FRAME_STARTED) {
       if (frame.payload.length !== 4) throw new Error("Native terminal returned an invalid process id frame");
       const pid = frame.payload.readUInt32BE(0);
       if (!pid || this.processId) throw new Error("Native terminal returned an invalid or duplicate process id");
       this.processId = pid;
+      this.watchdog.started();
       for (const listener of this.startListeners) listener();
       return;
     }
@@ -246,8 +290,12 @@ class NativeTerminalManagedProcess implements ManagedProcess {
       return;
     }
     if (frame.type === FRAME_EXITED) {
-      if (frame.payload.length !== 4) throw new Error("Native terminal returned an invalid exit frame");
-      this.emitExit(frame.payload.readInt32BE(0), null);
+      if (frame.payload.length !== 68 || !frame.payload.subarray(4).equals(Buffer.from(this.executionNonce, "ascii"))) {
+        throw new Error("Native terminal returned an invalid cleanup completion identity");
+      }
+      // A frame is only a candidate until the helper closes normally and the decoder reaches clean EOF.
+      this.completion = { exitCode: frame.payload.readInt32BE(0) };
+      this.watchdog.beginShutdown();
       return;
     }
     if (frame.type === FRAME_ACK) {
@@ -266,18 +314,18 @@ class NativeTerminalManagedProcess implements ManagedProcess {
         throw new Error("Native terminal returned an invalid resource-limit frame");
       }
       this.pendingResourceLimit = resource;
+      this.watchdog.beginShutdown();
       for (const listener of this.resourceLimitListeners) listener(resource);
       return;
     }
     if (frame.type === FRAME_ERROR) {
-      this.emitError(new Error(frame.payload.toString("utf8") || "Native terminal helper reported an error"));
-      return;
+      throw new Error(frame.payload.toString("utf8") || "Native terminal helper reported an error");
     }
     throw new Error(`Native terminal returned unknown frame type ${frame.type}`);
   }
 
   private async writeFrame(type: number, payload = Buffer.alloc(0)): Promise<void> {
-    if (this.exited || this.helper.stdin.destroyed || !this.helper.stdin.writable) {
+    if (this.exited || this.completion || this.pendingError || this.helper.stdin.destroyed || !this.helper.stdin.writable) {
       throw new Error("Native terminal input is closed");
     }
     const operationId = this.nextOperationId;
@@ -286,25 +334,27 @@ class NativeTerminalManagedProcess implements ManagedProcess {
     body.writeUInt32BE(operationId, 0);
     payload.copy(body, 4);
     const frame = encodeNativeTerminalFrame(type, body);
-    const acknowledged = new Promise<void>((resolvePromise, reject) => {
-      this.pendingOperations.set(operationId, { resolve: resolvePromise, reject });
+    await this.watchdog.operation("control write/acknowledgment", async (signal) => {
+      let rejectAcknowledgment: (error: Error) => void = () => undefined;
+      const acknowledged = new Promise<void>((resolvePromise, reject) => {
+        rejectAcknowledgment = reject;
+        this.pendingOperations.set(operationId, { resolve: resolvePromise, reject });
+      });
+      const onAbort = () => rejectAcknowledgment(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        await Promise.all([writeProcessPipe(this.helper.stdin, frame, signal), acknowledged]);
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+        this.pendingOperations.delete(operationId);
+      }
     });
-    if (!this.helper.stdin.write(frame)) await new Promise<void>((resolvePromise, reject) => {
-      const done = () => { cleanup(); resolvePromise(); };
-      const failed = (error: Error) => { cleanup(); reject(error); };
-      const cleanup = () => {
-        this.helper.stdin.off("drain", done);
-        this.helper.stdin.off("error", failed);
-      };
-      this.helper.stdin.once("drain", done);
-      this.helper.stdin.once("error", failed);
-    });
-    return acknowledged;
   }
 
   private emitExit(exitCode: number | null, signal: string | null): void {
     if (this.exited) return;
     this.exited = true;
+    this.watchdog.dispose();
     this.rejectPendingOperations(new Error("Native terminal process exited"));
     this.pendingExit = { exitCode, signal };
     for (const listener of this.exitListeners) listener(exitCode, signal);

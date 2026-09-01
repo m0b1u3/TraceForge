@@ -7,12 +7,21 @@ import type {
 } from "./model.js";
 
 interface CommandResponse { state: ScenarioRunState }
+export interface WorkerControlPlaneTransportLimits { timeoutMs: number; maximumResponseBytes: number; maximumRequestBytes: number }
 
 export class HttpWorkerControlPlaneClient implements WorkerControlPlaneClient {
+  private readonly limits: WorkerControlPlaneTransportLimits;
   constructor(
     private readonly baseUrl: string,
     private readonly fetcher: typeof fetch = fetch,
-  ) {}
+    limits: Partial<WorkerControlPlaneTransportLimits> = {},
+  ) {
+    this.limits = { timeoutMs: 10000, maximumResponseBytes: 4 * 1024 * 1024, maximumRequestBytes: 1024 * 1024, ...limits };
+    if (!Object.values(this.limits).every((n) => Number.isSafeInteger(n) && n > 0) || this.limits.timeoutMs > 60000
+      || this.limits.maximumRequestBytes > 16 * 1024 * 1024 || this.limits.maximumResponseBytes > 16 * 1024 * 1024) {
+      throw new Error("Invalid Worker control-plane transport limits");
+    }
+  }
 
   async register(worker: WorkerDescriptor): Promise<void> {
     await this.request("POST", "/api/scenarios/workers", {
@@ -113,15 +122,40 @@ export class HttpWorkerControlPlaneClient implements WorkerControlPlaneClient {
   }
 
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
-    const response = await this.fetcher(new URL(path, this.baseUrl), {
-      method,
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const payload = await response.json().catch(() => ({ error: `HTTP ${response.status}` })) as { error?: string };
-    if (response.ok) return payload;
-    const message = payload.error ?? `Control plane returned HTTP ${response.status}`;
-    if (response.status === 409 || response.status === 403 || response.status === 404) throw new LeaseLostError(message);
-    throw new Error(message);
+    const encoded = body === undefined ? undefined : JSON.stringify(body);
+    if (encoded && Buffer.byteLength(encoded) > this.limits.maximumRequestBytes) throw new Error("Worker control-plane request exceeds its size limit");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error("Worker control-plane request timed out")), this.limits.timeoutMs);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const response = await this.fetcher(new URL(path, this.baseUrl), {
+        method, redirect: "error", signal: controller.signal,
+        headers: encoded === undefined ? undefined : { "content-type": "application/json" }, body: encoded,
+      });
+      if (Number(response.headers.get("content-length")) > this.limits.maximumResponseBytes) {
+        void response.body?.cancel().catch(() => {});
+        throw new Error("Worker control-plane response exceeds its size limit");
+      }
+      const chunks: Uint8Array[] = []; let bytes = 0;
+      reader = response.body?.getReader();
+      if (reader) while (true) {
+        const chunk = await reader.read(); if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+        if (bytes > this.limits.maximumResponseBytes) throw new Error("Worker control-plane response exceeds its size limit");
+        chunks.push(chunk.value);
+      }
+      let payload: unknown;
+      try { payload = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+      catch { throw new Error(`Worker control plane returned invalid JSON (HTTP ${response.status})`); }
+      if (response.ok) return payload;
+      const detail = payload && typeof payload === "object" && "error" in payload ? payload.error : undefined;
+      const message = typeof detail === "string" ? detail.slice(0, 1024) : `Control plane returned HTTP ${response.status}`;
+      if (response.status === 409 || response.status === 403 || response.status === 404) throw new LeaseLostError(message);
+      throw new Error(message);
+    } finally {
+      clearTimeout(timer);
+      if (reader) { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+      controller.abort();
+    }
   }
 }

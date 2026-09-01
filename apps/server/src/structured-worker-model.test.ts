@@ -40,6 +40,14 @@ function provider(result: unknown): LlmProvider {
 }
 
 describe("StructuredWorkerModel", () => {
+  it("refuses a stale prepared projection before calling the provider", async () => {
+    let checks = 0; let calls = 0;
+    const model = new StructuredWorkerModel({ async extractJson() { calls++; return { type: "complete", summary: "Done", outputs: [] }; }, async runTools() { throw new Error("unused"); } },
+      undefined, undefined, undefined, undefined, { async prepare(value) {
+        checks++; return { request: { ...value, steering: checks === 1 ? ["original"] : ["withdrawn"] }, manifest: {} };
+      } });
+    await expect(model.decide(request())).rejects.toThrow("authorization changed"); expect(calls).toBe(0); expect(checks).toBe(2);
+  });
   it("converts validated provider JSON into a worker decision", async () => {
     const model = new StructuredWorkerModel(provider({
       type: "invoke_tool",

@@ -8,6 +8,8 @@ import {
   permissionProfileFingerprint,
   resourceLimitsFingerprint,
   type ExecutionNode,
+  type ProcessExecutionJournal,
+  type StartProcessResponse,
 } from "@traceforge/execution-node";
 import type { EffectivePermissionProfile } from "@traceforge/orchestration-core";
 import {
@@ -23,6 +25,9 @@ import { createManagedToolProviderSourceFactory } from "./managed-tool-provider-
 import { SqliteProviderCapabilityReceiptStore } from "./provider-capability-adapters.js";
 import type { ToolProviderInstallation } from "./tool-provider-control-plane.js";
 import { SqliteToolProviderRecoveryStateStore } from "./tool-provider-recovery-adapter.js";
+import { ManagedExecutionCapacity } from "./managed-execution-capacity.js";
+import { SqliteProcessExecutionJournal } from "./execution-process-journal.js";
+import { initialize, at } from "./test-fixtures/execution-recovery.js";
 
 const temporaryRoots: string[] = [];
 
@@ -66,7 +71,7 @@ function workRoot(): string {
 const platform: EffectivePermissionProfile["platform"] = process.platform === "win32"
   ? "windows" : process.platform === "darwin" ? "darwin" : "linux";
 
-function attestedFixtureNode(onLaunch: () => void = () => undefined): ExecutionNode {
+function attestedFixtureNode(onLaunch: () => void = () => undefined, processJournal?:ProcessExecutionJournal): ExecutionNode {
   const launcher = new NodeSpawnProcessLauncher((request) => {
     onLaunch();
     return {
@@ -88,6 +93,7 @@ function attestedFixtureNode(onLaunch: () => void = () => undefined): ExecutionN
     };
   });
   return new LocalExecutionNode(launcher, {
+    processJournal,
     platform,
     sandboxBackends: ["attested-neutral-fixture"],
     maximumOutputBytesPerProcess: 64 * 1024 * 1024,
@@ -171,6 +177,46 @@ function capabilityHost(
 }
 
 describe("managed Tool Provider capability composition", () => {
+  it.each(["normal","cancel","cleanup-failure","storage-refusal"])("accounts for managed Provider capacity after %s",async(mode)=>{
+    const root=workRoot(),sqlite=getSqliteClient(createDb(join(root,"occupancy.sqlite"))),c=initialize(sqlite);
+    const scheduler=new ToolProviderFairScheduler({global:1,maximumWaitMs:20});
+    const capacity=new ManagedExecutionCapacity(sqlite,scheduler,c.bindings);
+    const controller=new AbortController();
+    const journal=new SqliteProcessExecutionJournal(sqlite);let launches=0,started:StartProcessResponse|undefined;
+    const rawNode=attestedFixtureNode(()=>{launches++;},journal);
+    const node=new Proxy(rawNode,{get(target,key){
+      if(key==="startProcess")return async(request:Parameters<ExecutionNode["startProcess"]>[0])=>{started=await target.startProcess(request);if(mode==="cancel")controller.abort();return started;};
+      if(key==="terminateProcess"&&mode==="cleanup-failure")return async()=>{throw new Error("injected cleanup unavailable");};
+      const value=Reflect.get(target,key);return typeof value==="function"?value.bind(target):value;
+    }});
+    const source=createManagedToolProviderSourceFactory(node,join(root,"work"),undefined,{state:new SqliteToolProviderRecoveryStateStore(sqlite),scheduler,capacity})(executableInstallation());
+    const [tool]=await source.discover();
+    await c.bindings.prepare({idempotencyKey:"call",invocationId:"first",tool:{name:tool!.name,source:tool!.source,version:tool!.version,contractFingerprint:"a".repeat(64)},inputFingerprint:"b".repeat(64),attribution:{caseId:"case",runId:"run",workId:"work"}});
+    await c.bindings.beginExecution("call","lease","worker");
+    if(mode==="storage-refusal")sqlite.exec("CREATE TRIGGER refuse_occupancy BEFORE INSERT ON managed_execution_occupancy BEGIN SELECT RAISE(ABORT,'injected storage refusal'); END");
+    const context={caseId:"case",runId:"run",workId:"work",workerId:"worker",scopeRef:"scope",leaseId:"lease",leaseExpiresAt:"2099-01-01T00:00:00.000Z",idempotencyKey:"call",effectivePermissions:{},signal:controller.signal} as ToolExecutionContext;
+    try{
+      const execution=tool!.execute(mode==="cancel"?{delayMs:2000}:{candidate:"first"},context);
+      if(mode==="storage-refusal"){
+        await expect(execution).rejects.toMatchObject({countsTowardProviderRecovery:false});
+        expect(launches).toBe(0);expect(scheduler.snapshot()).toMatchObject({active:0,retained:0,occupied:0});
+        expect(source.diagnostics?.()).toMatchObject({recovery:{status:"healthy",failures:[]}});return;
+      }
+      if(mode==="normal")expect((await execution).status).toBe("succeeded");
+      else await expect(execution).rejects.toThrow();
+      expect(launches).toBe(1);expect(scheduler.snapshot()).toMatchObject({active:0,retained:1,occupied:1});
+      expect(capacity.inspect("call").externallyOccupied).toBe(true);
+      const restored=new ManagedExecutionCapacity(sqlite,new ToolProviderFairScheduler({global:1}),c.bindings);
+      expect(restored.scheduler.snapshot().retained).toBe(1);
+    }finally{
+      if(started&&mode==="cleanup-failure"){
+        const access={processId:started.process.id,adoptionToken:started.adoptionToken};let descriptor=await rawNode.terminateProcess({...access,force:true});
+        const until=Date.now()+3000;while(!["exited","failed"].includes(descriptor.state)&&Date.now()<until)descriptor=(await rawNode.waitProcessEvents({...access,afterSequence:descriptor.lastEventSequence,maximumEvents:256},100)).process;
+        expect(["exited","failed"]).toContain(descriptor.state);
+      }
+      sqlite.close();
+    }
+  });
   it("reports the capability host as disabled by default and enabled only when explicitly injected", () => {
     const node = {} as ExecutionNode;
     const withoutHost = createManagedToolProviderSourceFactory(node, workRoot())(installation());

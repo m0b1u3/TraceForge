@@ -1,4 +1,4 @@
-use crate::job_limits::{configure as configure_job_limits, ResourceLimits, ResourceMonitor};
+use crate::job_limits::{terminate_and_wait, ResourceLimits, ResourceMonitor};
 use std::ffi::{c_void, OsStr};
 use std::io::{Read, Write};
 use std::os::windows::ffi::OsStrExt;
@@ -6,7 +6,9 @@ use std::path::Path;
 use std::ptr::{null, null_mut};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetLastError, ERROR_BROKEN_PIPE, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+};
 use windows_sys::Win32::Security::{
     GetTokenInformation, TokenIsAppContainer, PSID, SECURITY_CAPABILITIES, TOKEN_QUERY,
 };
@@ -14,7 +16,7 @@ use windows_sys::Win32::Storage::FileSystem::{ReadFile, WriteFile};
 use windows_sys::Win32::System::Console::{
     ClosePseudoConsole, CreatePseudoConsole, ResizePseudoConsole, COORD, HPCON,
 };
-use windows_sys::Win32::System::JobObjects::{CreateJobObjectW, TerminateJobObject};
+use windows_sys::Win32::System::JobObjects::TerminateJobObject;
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
     CreateProcessAsUserW, DeleteProcThreadAttributeList, GetExitCodeProcess,
@@ -200,6 +202,25 @@ impl Drop for PseudoConsole {
     }
 }
 
+struct SessionCleanup {
+    job: HANDLE,
+    output: Option<OwnedHandle>,
+    pseudoconsole: Arc<PseudoConsole>,
+}
+
+impl Drop for SessionCleanup {
+    fn drop(&mut self) {
+        // Early launch/token failures happen before the output reader exists. Close that read end
+        // before ConPTY shutdown and stop the owned job before unwinding to its outer owner.
+        // This is best-effort error cleanup, never a source of a successful completion frame.
+        unsafe {
+            TerminateJobObject(self.job, 137);
+        }
+        drop(self.output.take());
+        self.pseudoconsole.close();
+    }
+}
+
 fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
     value
         .as_ref()
@@ -252,6 +273,16 @@ fn send_frame(writer: &Arc<Mutex<std::io::Stdout>>, kind: u8, payload: &[u8]) ->
     output
         .flush()
         .map_err(|error| format!("flush terminal frame: {error}"))
+}
+
+pub fn send_completion(exit_code: i32, execution_nonce: &str) -> Result<()> {
+    let mut payload = exit_code.to_be_bytes().to_vec();
+    payload.extend_from_slice(execution_nonce.as_bytes());
+    send_frame(
+        &Arc::new(Mutex::new(std::io::stdout())),
+        FRAME_EXITED,
+        &payload,
+    )
 }
 
 fn write_pipe(handle: HANDLE, payload: &[u8]) -> Result<()> {
@@ -320,6 +351,7 @@ pub unsafe fn run(
     resource_limits: ResourceLimits,
     columns: i16,
     rows: i16,
+    job: HANDLE,
 ) -> Result<i32> {
     if command.is_empty() {
         return Err("missing command".to_string());
@@ -356,12 +388,14 @@ pub unsafe fn run(
     let pseudoconsole = Arc::new(PseudoConsole {
         handle: Mutex::new(Some(pseudoconsole)),
     });
-
-    let job = OwnedHandle(CreateJobObjectW(null(), null()));
-    if job.0.is_null() {
-        return Err(format!("CreateJobObjectW failed: {}", GetLastError()));
-    }
-    configure_job_limits(job.0, resource_limits)?;
+    // ConPTY owns duplicates. Keeping our output write handle open prevents reader EOF forever.
+    drop(pty_input_read);
+    drop(pty_output_write);
+    let mut session_cleanup = SessionCleanup {
+        job,
+        output: Some(output_read),
+        pseudoconsole: Arc::clone(&pseudoconsole),
+    };
 
     let hpc = pseudoconsole
         .handle
@@ -376,7 +410,7 @@ pub unsafe fn run(
             Reserved: 0,
         })
     });
-    let mut attrs = AttributeList::new(hpc, job.0, security_capabilities.as_deref_mut())?;
+    let mut attrs = AttributeList::new(hpc, job, security_capabilities.as_deref_mut())?;
     let command_line = command
         .iter()
         .map(|arg| quote_arg(OsStr::new(arg)))
@@ -421,10 +455,14 @@ pub unsafe fn run(
 
     let writer = Arc::new(Mutex::new(std::io::stdout()));
     send_frame(&writer, FRAME_STARTED, &process.dwProcessId.to_be_bytes())?;
-    let monitor = ResourceMonitor::start(job.0, resource_limits);
+    let monitor = ResourceMonitor::start(job, resource_limits);
 
     let output_writer = Arc::clone(&writer);
-    let output_thread = thread::spawn(move || {
+    let output_read = session_cleanup
+        .output
+        .take()
+        .ok_or_else(|| "ConPTY output handle is unavailable".to_string())?;
+    let output_thread = thread::spawn(move || -> Result<()> {
         let _output_read = output_read;
         let mut buffer = vec![0u8; 32 * 1024];
         loop {
@@ -438,26 +476,39 @@ pub unsafe fn run(
                     null_mut(),
                 )
             };
-            if ok == 0 || read == 0 {
+            if ok == 0 {
+                let error = unsafe { GetLastError() };
+                if error != ERROR_BROKEN_PIPE {
+                    return Err(format!("ReadFile(ConPTY output) failed: {error}"));
+                }
                 break;
             }
-            if send_frame(&output_writer, FRAME_OUTPUT, &buffer[..read as usize]).is_err() {
+            if read == 0 {
                 break;
             }
+            send_frame(&output_writer, FRAME_OUTPUT, &buffer[..read as usize])?;
         }
+        Ok(())
     });
 
     let controller_pty = Arc::clone(&pseudoconsole);
     let controller_writer = Arc::clone(&writer);
-    let controller_activity = Arc::new(Mutex::new(()));
+    // Clear the shared handle before returning, so a delayed control frame cannot use a reused handle.
+    let controller_activity = Arc::new(Mutex::new(Some(job as usize)));
     let input_activity = Arc::clone(&controller_activity);
-    let job_handle = job.0 as usize;
     thread::spawn(move || {
-        let _input_write = input_write;
+        let mut input_write = Some(input_write);
         let mut stdin = std::io::stdin();
         loop {
             let mut header = [0u8; 5];
             if stdin.read_exact(&mut header).is_err() {
+                if let Ok(guard) = input_activity.lock() {
+                    if let Some(job_handle) = *guard {
+                        unsafe {
+                            TerminateJobObject(job_handle as HANDLE, 137);
+                        }
+                    }
+                }
                 break;
             }
             let length = u32::from_be_bytes(header[1..5].try_into().unwrap()) as usize;
@@ -487,9 +538,14 @@ pub unsafe fn run(
                 Ok(value) => value,
                 Err(_) => break,
             };
-            let mut close_input = false;
+            let Some(job_handle) = *_activity else {
+                break;
+            };
             let result = match header[0] {
-                FRAME_INPUT => write_pipe(_input_write.0, body),
+                FRAME_INPUT => match input_write.as_ref() {
+                    Some(pipe) => write_pipe(pipe.0, body),
+                    None => Err("ConPTY input is already closed".to_string()),
+                },
                 FRAME_RESIZE if body.len() == 4 => {
                     let columns = u16::from_be_bytes([body[0], body[1]]) as i16;
                     let rows = u16::from_be_bytes([body[2], body[3]]) as i16;
@@ -523,7 +579,8 @@ pub unsafe fn run(
                     }
                 }
                 FRAME_CLOSE_INPUT if body.is_empty() => {
-                    close_input = true;
+                    // EOF closes only target input, not the helper's resize/termination channel.
+                    drop(input_write.take());
                     Ok(())
                 }
                 FRAME_TERMINATE if body.len() == 1 => {
@@ -548,16 +605,25 @@ pub unsafe fn run(
                 }
             }
             let _ = send_frame(&controller_writer, FRAME_ACK, &acknowledgment);
-            if close_input {
-                break;
-            }
         }
     });
 
-    WaitForSingleObject(process_handle.0, INFINITE);
-    let _activity = controller_activity
+    let waited = WaitForSingleObject(process_handle.0, INFINITE);
+    // Kill remaining job members before waiting for the controller lock or draining ConPTY.
+    // A descendant can otherwise hold the input/output pipes and block those operations forever.
+    let tree_cleanup = terminate_and_wait(job);
+    let mut activity = controller_activity
         .lock()
         .map_err(|_| "terminal controller lock is poisoned".to_string())?;
+    *activity = None;
+    drop(activity);
+    tree_cleanup?;
+    if waited != WAIT_OBJECT_0 {
+        return Err(format!(
+            "WaitForSingleObject(ConPTY child) failed: {}",
+            GetLastError()
+        ));
+    }
     let mut exit_code = 1u32;
     if GetExitCodeProcess(process_handle.0, &mut exit_code) == 0 {
         return Err(format!("GetExitCodeProcess failed: {}", GetLastError()));
@@ -566,7 +632,8 @@ pub unsafe fn run(
         send_frame(&writer, FRAME_RESOURCE_LIMIT, resource.as_str().as_bytes())?;
     }
     pseudoconsole.close();
-    let _ = output_thread.join();
-    send_frame(&writer, FRAME_EXITED, &(exit_code as i32).to_be_bytes())?;
+    output_thread
+        .join()
+        .map_err(|_| "ConPTY output reader panicked".to_string())??;
     Ok(exit_code as i32)
 }

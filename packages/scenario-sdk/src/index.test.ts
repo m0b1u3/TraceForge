@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ScenarioDefinition } from "@traceforge/orchestration-core";
-import { ScenarioPackageRegistry, type ScenarioPackageInstallation } from "./index.js";
+import { ScenarioPackageRegistry, validateSkillContract, validateSkillRecord, type ScenarioSkillContract, type ScenarioPackageInstallation } from "./index.js";
 
 const definition: ScenarioDefinition = {
   kind: "fixture.first-scenario",
@@ -65,6 +65,31 @@ function installation(overrides: Partial<ScenarioPackageInstallation> = {}): Sce
 }
 
 describe("Scenario Package foundation contract", () => {
+  const contract: ScenarioSkillContract = { version: 1, input: { fields: { candidate: { type: "string", required: true } } },
+    output: { fields: { complete: { type: "boolean", required: true } } }, checks: [{ id: "complete", field: "complete", equals: true }] };
+  it("validates bounded Skill data independently of Scenario outputs", () => {
+    expect(() => validateSkillContract(contract)).not.toThrow();
+    expect(() => validateSkillRecord(contract.input, { candidate: "first" })).not.toThrow();
+    expect(() => validateSkillRecord(contract.output, { complete: true })).not.toThrow();
+  });
+  it.each(["unknown", "version", "missing_field", "wrong_type", "duplicate", "optional"])("rejects malformed Skill %s contracts", (mode) => {
+    const c = structuredClone(contract);
+    if (mode === "unknown") Object.assign(c.input, { script: "do-not-execute" });
+    if (mode === "version") c.version = 0;
+    if (mode === "missing_field") c.checks[0]!.field = "missing";
+    if (mode === "wrong_type") c.checks[0]!.equals = "true";
+    if (mode === "duplicate") c.checks.push(c.checks[0]!);
+    if (mode === "optional") c.output.fields.complete!.required = false;
+    expect(() => validateSkillContract(c)).toThrow();
+  });
+  it.each([null, [], {}, { candidate: 1 }, { candidate: "first", extra: "unreviewed" }, { candidate: "x".repeat(1025) }])("rejects incompatible Skill data %#", (input) => {
+    expect(() => validateSkillRecord(contract.input, input)).toThrow();
+  });
+  it("does not allow a knowledge resource to masquerade as a Skill contract", () => {
+    const pkg = installation(); pkg.resourceManifest!.resources[0]!.context = { type: "knowledge", summary: "notes",
+      authorizationAction: "fixture.subject.read", requiredCapabilities: [], phaseIds: [], references: [], skill: contract };
+    expect(() => new ScenarioPackageRegistry([pkg])).toThrow("Only Skill");
+  });
   it("registers open identifiers with versioned prompt, knowledge, and migration resources", () => {
     const registry = new ScenarioPackageRegistry([installation()]);
     expect(registry.list()).toHaveLength(1);

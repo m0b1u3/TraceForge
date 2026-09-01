@@ -20,6 +20,10 @@ class Receipts implements ToolReceiptStore {
 }
 
 class Bindings implements ToolInvocationBindingStore {
+  async assertReceiptIdentity() {}
+  async beginExecution() {}
+  async markUncertain() {}
+  async assertWorkReady() {}
   values = new Map<string, ToolInvocationBinding>();
   closed = new Set<string>();
   async prepare(input: ToolInvocationBindingInput) {
@@ -67,6 +71,40 @@ const policy: ToolGatewayPolicy = {
 };
 
 describe("PolicyExecutionToolGateway", () => {
+  it.each(["approval","dispatch"])("rechecks host authorization after %s waits without executing the tool",async phase=>{
+    let allowed=true,effects=0;const receipts=new Receipts(),bindings=new Bindings();
+    if(phase==="dispatch")bindings.beginExecution=async()=>{allowed=false;};
+    const gateway=new PolicyExecutionToolGateway(createExecutionToolRegistry([{name:"read",source:"test",version:"1",priority:1,
+      description:"Read",inputSchema:{},providedCapabilities:["evidence.read"],dependencyCapabilities:[],permissionRequirements:{},risk:"privileged",timeoutMs:1000,
+      async execute(){effects++;return {status:"succeeded",summary:"Read",raw:"",refs:[],retryable:false};}}]),
+      {async authorize(){if(phase==="approval")allowed=false;return {decision:"approved"};}},receipts,
+      {...policy,allowedRisks:["privileged"],assertAuthorized(){if(!allowed)throw new Error("Scope revoked");}},undefined,bindings);
+    const {assignment:current,worker}=assignment();current.work.requiredCapabilities=["evidence.read"];
+    await expect(gateway.execute({worker,assignment:current,invocation:{id:"first",tool:"read",input:{},rationale:"Read"},idempotencyKey:"first"})).rejects.toThrow(phase==="approval"?"Scope revoked":"reconciliation");
+    expect(effects).toBe(0);expect(receipts.values.size).toBe(0);
+  });
+  it("keeps a cancelled dispatched action uncertain and refuses its late result as a receipt", async () => {
+    const receipts = new Receipts(), bindings = new Bindings(), controller = new AbortController();
+    let uncertain = false, started!: () => void, release!: (value: ToolExecutionResult) => void, seen: AbortSignal | undefined;
+    bindings.markUncertain = async () => { uncertain = true; };
+    const ready = new Promise<void>((r) => { started = r; });
+    const gateway = new PolicyExecutionToolGateway(createExecutionToolRegistry([{ name: "read", source: "test", version: "1", priority: 1,
+      description: "Read", inputSchema: {}, providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 10000,
+      execute(_input, context) { seen = context.signal; started(); return new Promise((resolve) => { release = resolve; }); } }]), { async authorize() { return { decision: "approved" }; } }, receipts, policy, undefined, bindings);
+    const { assignment: current, worker } = assignment();
+    current.work.requiredCapabilities = ["evidence.read"];
+    const call = gateway.execute({ worker, assignment: current, invocation: { id: "first", tool: "read", input: {}, rationale: "Observe" }, idempotencyKey: "first", signal: controller.signal });
+    const rejected = expect(call).rejects.toThrow("reconciliation"); await ready; controller.abort(new Error("operator stopped")); await rejected;
+    expect(seen?.aborted).toBe(true); expect(uncertain).toBe(true); expect(receipts.values.size).toBe(0);
+    release({ status: "succeeded", summary: "late", raw: "late", refs: [], retryable: false }); await new Promise((r) => setTimeout(r, 0)); expect(receipts.values.size).toBe(0);
+  });
+  it("rejects a pre-cancelled request before discovery or invocation preparation", async () => {
+    const bindings = new Bindings(), controller = new AbortController(); controller.abort(new Error("already stopped"));
+    const gateway = new PolicyExecutionToolGateway(createExecutionToolRegistry([]), { async authorize() { throw new Error("must not authorize"); } }, new Receipts(), policy, undefined, bindings);
+    await expect(gateway.execute({ ...assignment(),
+      invocation: { id: "first", tool: "read", input: {}, rationale: "Observe" }, idempotencyKey: "first", signal: controller.signal })).rejects.toThrow("already stopped");
+    expect(bindings.values.size).toBe(0);
+  });
   it("refreshes due discovery sources before resolving the model catalog", async () => {
     const adapter = {
       name: "discovered", source: "external", version: "1.0.0", priority: 100, description: "Discovered", inputSchema: {},
@@ -104,6 +142,20 @@ describe("PolicyExecutionToolGateway", () => {
     expect(executions).toBe(1);
     expect(permissionSources).toEqual(["test"]);
     expect(first.metadata?.effectivePermissions).toMatchObject({ network: "direct", sources: ["test"] });
+  });
+
+  it("does not dispatch when the tool contract changed after its checkpoint", async () => {
+    let calls = 0;
+    const gateway = new PolicyExecutionToolGateway(createExecutionToolRegistry([{
+      name: "read", source: "test", version: "2", priority: 1, description: "Read", inputSchema: {},
+      providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1000,
+      async execute() { calls++; return { status: "succeeded", summary: "done", raw: "", refs: [], retryable: false }; },
+    }]), { async authorize() { return { decision: "approved" }; } }, new Receipts(), policy);
+    const input = assignment();
+    input.assignment.work.requiredCapabilities = ["evidence.read"];
+    await expect(gateway.execute({ ...input, invocation: { id: "first", tool: "read", input: {}, rationale: "Observe" },
+      idempotencyKey: "effect:first", expectedContractFingerprint: "0".repeat(64) })).rejects.toThrow("contract changed");
+    expect(calls).toBe(0);
   });
 
   it("removes tools whose permission requirements exceed the effective profile", async () => {

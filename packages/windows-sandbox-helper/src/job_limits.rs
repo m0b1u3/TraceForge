@@ -2,7 +2,7 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{GetLastError, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
     JobObjectBasicAndIoAccountingInformation, JobObjectExtendedLimitInformation,
@@ -13,6 +13,48 @@ use windows_sys::Win32::System::JobObjects::{
 };
 
 pub type Result<T> = std::result::Result<T, String>;
+
+/// The handle is private, non-inheritable, and no more processes may be assigned by the owner.
+/// This proves only emptiness of this job hierarchy, not absence of external side effects.
+pub unsafe fn terminate_and_wait(job: HANDLE) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    crate::cleanup::terminate_and_confirm(
+        || {
+            if TerminateJobObject(job, 137) == 0 {
+                Err(format!(
+                    "TerminateJobObject(cleanup) failed: {}",
+                    GetLastError()
+                ))
+            } else {
+                Ok(())
+            }
+        },
+        || {
+            let mut accounting: JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION = std::mem::zeroed();
+            if QueryInformationJobObject(
+                job,
+                JobObjectBasicAndIoAccountingInformation,
+                &mut accounting as *mut _ as *mut c_void,
+                std::mem::size_of_val(&accounting) as u32,
+                std::ptr::null_mut(),
+            ) == 0
+            {
+                return Err(format!(
+                    "QueryInformationJobObject(cleanup) failed: {}",
+                    GetLastError()
+                ));
+            }
+            Ok(accounting.BasicInfo.ActiveProcesses)
+        },
+        || {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(10));
+            true
+        },
+    )
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ResourceLimits {
@@ -154,6 +196,16 @@ impl ResourceMonitor {
     }
 }
 
+impl Drop for ResourceMonitor {
+    fn drop(&mut self) {
+        // Never leave a monitor querying a closed/reused job handle on an early return.
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 unsafe fn observe(job: HANDLE, limits: ResourceLimits) -> Result<Option<ResourceLimitKind>> {
     let mut accounting: JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION = std::mem::zeroed();
     if QueryInformationJobObject(
@@ -202,4 +254,130 @@ unsafe fn observe(job: HANDLE, limits: ResourceLimits) -> Result<Option<Resource
         return Ok(Some(ResourceLimitKind::Memory));
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessW, ResumeThread, TerminateProcess, WaitForSingleObject, CREATE_SUSPENDED,
+        PROCESS_INFORMATION, STARTUPINFOW,
+    };
+
+    struct Handle(HANDLE);
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+
+    // Actual Windows Job Object regression, not a mock. Does not validate restricted-token isolation.
+    #[test]
+    fn cleans_descendant_after_root_has_already_exited() {
+        unsafe {
+            let job = Handle(CreateJobObjectW(null(), null()));
+            assert!(!job.0.is_null());
+            configure(
+                job.0,
+                ResourceLimits {
+                    cpu_time_ms: 30_000,
+                    memory_bytes: 256 * 1024 * 1024,
+                    maximum_processes: 8,
+                    write_bytes: 1024 * 1024,
+                },
+            )
+            .unwrap();
+            let executable = std::env::current_exe().unwrap();
+            let command = format!(
+                "\"{}\" --exact job_limits::tests::descendant_fixture --ignored",
+                executable.display()
+            );
+            let mut command_w: Vec<u16> = std::ffi::OsStr::new(&command)
+                .encode_wide()
+                .chain(Some(0))
+                .collect();
+            let mut startup: STARTUPINFOW = std::mem::zeroed();
+            startup.cb = std::mem::size_of_val(&startup) as u32;
+            let mut process: PROCESS_INFORMATION = std::mem::zeroed();
+            assert_ne!(
+                CreateProcessW(
+                    null(),
+                    command_w.as_mut_ptr(),
+                    null(),
+                    null(),
+                    0,
+                    CREATE_SUSPENDED,
+                    null(),
+                    null(),
+                    &startup,
+                    &mut process
+                ),
+                0
+            );
+            let process_handle = Handle(process.hProcess);
+            let _thread_handle = Handle(process.hThread);
+            if AssignProcessToJobObject(job.0, process.hProcess) == 0 {
+                TerminateProcess(process.hProcess, 125);
+                panic!("test could not assign the suspended root to its job");
+            }
+            assert_ne!(ResumeThread(process.hThread), u32::MAX);
+            assert_eq!(WaitForSingleObject(process_handle.0, 10_000), WAIT_OBJECT_0);
+            let mut accounting: JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION = std::mem::zeroed();
+            assert_ne!(
+                QueryInformationJobObject(
+                    job.0,
+                    JobObjectBasicAndIoAccountingInformation,
+                    &mut accounting as *mut _ as *mut c_void,
+                    std::mem::size_of_val(&accounting) as u32,
+                    null_mut()
+                ),
+                0
+            );
+            assert!(
+                accounting.BasicInfo.ActiveProcesses > 0,
+                "fixture must leave a descendant alive"
+            );
+            terminate_and_wait(job.0).unwrap();
+            assert_ne!(
+                QueryInformationJobObject(
+                    job.0,
+                    JobObjectBasicAndIoAccountingInformation,
+                    &mut accounting as *mut _ as *mut c_void,
+                    std::mem::size_of_val(&accounting) as u32,
+                    null_mut()
+                ),
+                0
+            );
+            assert_eq!(accounting.BasicInfo.ActiveProcesses, 0);
+        }
+    }
+
+    #[test]
+    fn invalid_job_is_not_cleanup_success() {
+        assert!(unsafe { terminate_and_wait(null_mut()) }.is_err());
+    }
+
+    #[test]
+    #[ignore = "child-only fixture for the owned-job integration test"]
+    fn descendant_fixture() {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "job_limits::tests::idle_fixture", "--ignored"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+    }
+
+    #[test]
+    #[ignore = "child-only fixture, terminated by its owned job"]
+    fn idle_fixture() {
+        thread::sleep(Duration::from_secs(60));
+    }
 }

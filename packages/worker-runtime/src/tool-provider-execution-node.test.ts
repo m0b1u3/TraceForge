@@ -159,6 +159,46 @@ function client(
 }
 
 describe("ExecutionNodeToolProviderClient", () => {
+  it("never dispatches when the durable capacity barrier refuses admission",async()=>{
+    const fixture=new FakeProviderNode(),node=fixture.asNode();let starts=0;
+    const original=node.startProcess;node.startProcess=async(request)=>{starts++;return original(request);};
+    const rpc=new ExecutionNodeToolProviderClient({node,executable:"C:\\provider.exe",workingDirectory:"C:\\provider",
+      attribution:fixture.descriptor.attribution,permissions,resources,beforeProcessStart:()=>{throw new Error("capacity storage unavailable");}});
+    await expect(rpc.listTools()).rejects.toThrow("capacity storage unavailable");await rpc.close();
+    expect(starts).toBe(0);expect(fixture.inputWrites).toBe(0);
+  });
+  it.each(["handshake", "startProcess"] as const)("bounds a noncooperative %s and never sends a late provider command", async (phase) => {
+    const fixture = new FakeProviderNode(), node = fixture.asNode(); let release!: (value: any) => void;const dispatches:string[]=[];
+    if (phase === "handshake") node.handshake = async () => new Promise((resolve) => { release = resolve; });
+    else node.startProcess = async () => new Promise((resolve) => { release = resolve; });
+    const rpc = new ExecutionNodeToolProviderClient({ node, executable: "C:\\provider.exe", workingDirectory: "C:\\provider",
+      attribution: fixture.descriptor.attribution, permissions, resources, requestTimeoutMs: 20,beforeProcessStart:(id)=>{dispatches.push(id);} });
+    await expect(rpc.listTools()).rejects.toThrow("deadline");
+    release(phase === "handshake" ? {} : { process: fixture.descriptor, adoptionToken: "adopt_1", replayed: false });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fixture.inputWrites).toBe(0); expect(fixture.terminated).toBe(phase === "handshake" ? 0 : 1);
+    expect(dispatches).toHaveLength(phase === "handshake" ? 0 : 1);
+    await expect(rpc.listTools()).rejects.toThrow("closed");
+    if (phase === "startProcess") await expect(rpc.close()).rejects.toThrow("unconfirmed");
+    else await rpc.close();
+  });
+  it("reports failed cleanup and refuses restart when termination never acknowledges", async () => {
+    const fixture = new FakeProviderNode(), node = fixture.asNode();
+    node.terminateProcess = async () => new Promise(() => {});
+    const rpc = new ExecutionNodeToolProviderClient({ node, executable: "C:\\provider.exe", workingDirectory: "C:\\provider",
+      attribution: fixture.descriptor.attribution, permissions, resources, requestTimeoutMs: 30 });
+    await rpc.listTools(); await expect(rpc.close()).rejects.toThrow("cleanup");
+    expect(rpc.status().state).toBe("failed"); await expect(rpc.restart()).rejects.toThrow("cleanup");
+  });
+  it("does not treat a running termination acknowledgement or empty observation stream as cleanup", async () => {
+    const fixture = new FakeProviderNode(), node = fixture.asNode();
+    const rpc = new ExecutionNodeToolProviderClient({ node, executable: "C:\\provider.exe", workingDirectory: "C:\\provider",
+      attribution: fixture.descriptor.attribution, permissions, resources, requestTimeoutMs: 30 });
+    await rpc.listTools();
+    node.terminateProcess = async () => fixture.descriptor;
+    node.waitProcessEvents = async (request) => ({ process: fixture.descriptor, events: [], nextSequence: request.afterSequence, lostEvents: false });
+    await expect(rpc.close()).rejects.toThrow("cleanup"); expect(rpc.status().state).toBe("failed");
+  });
   it("accepts a Provider only after verifying Execution Node enforcement", async () => {
     const node = new FakeProviderNode();
     const rpc = client(node);
@@ -293,7 +333,7 @@ describe("ExecutionNodeToolProviderClient", () => {
       requestBytes: 1, responseBytes: 2, retryable: false,
       startedAt: "2026-08-28T12:00:00.000Z", completedAt: "2026-08-28T12:00:00.001Z",
     });
-    await expect(pendingCall).rejects.toThrow(/process stopped/);
+    await expect(pendingCall).rejects.toThrow(/process stopping/);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(node.inputWrites).toBe(writesBeforeClose);
     expect(node.terminated).toBe(1);

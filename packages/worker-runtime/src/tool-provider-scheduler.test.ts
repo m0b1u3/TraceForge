@@ -18,6 +18,29 @@ function identity(runId: string, workId: string, toolName = "neutral.inspect"): 
 }
 
 describe("ToolProviderFairScheduler", () => {
+  it("keeps retained external occupancy after local release and restores it idempotently", async () => {
+    const scheduler=new ToolProviderFairScheduler({global:1,maximumWaitMs:20});
+    const first=await scheduler.acquire(identity("first","one"));
+    scheduler.retain("call",identity("first","one"));first.release();scheduler.retain("call",identity("first","one"));
+    expect(scheduler.snapshot()).toMatchObject({active:0,retained:1,occupied:1,activeByRun:{},occupiedByRun:{first:1}});
+    await expect(scheduler.acquire(identity("second","two"))).rejects.toMatchObject({reason:"wait_timeout"});
+    expect(()=>scheduler.retain("call",identity("other","one"))).toThrow("conflict");
+    scheduler.releaseRetained("call");scheduler.releaseRetained("call");
+    const second=await scheduler.acquire(identity("second","two"));second.release();
+    expect(scheduler.snapshot()).toMatchObject({active:0,retained:0,occupied:0});
+  });
+  it("counts recovered holds against Provider/tool/Run/Work limits while allowing unrelated capacity", async()=>{
+    const scheduler=new ToolProviderFairScheduler({global:3,perProvider:3,perTool:2,perRun:1,maximumWaitMs:20});
+    scheduler.retain("old",identity("first","one"));
+    await expect(scheduler.acquire(identity("first","two"))).rejects.toMatchObject({reason:"wait_timeout"});
+    const lease=await scheduler.acquire(identity("second","one"));lease.release();
+    expect(scheduler.snapshot()).toMatchObject({active:0,retained:1});
+  });
+  it("rejects incomplete or delimiter-containing scheduling identities",()=>{
+    const scheduler=new ToolProviderFairScheduler();
+    expect(()=>scheduler.acquire({...identity("first","one"),runId:"first\0second"})).toThrow("Invalid");
+    expect(()=>scheduler.acquire({} as ToolProviderSchedulingIdentity)).toThrow("Invalid");
+  });
   it("admits another Run when the current Run is at its quota", async () => {
     const scheduler = new ToolProviderFairScheduler({ global: 2, perProvider: 2, perTool: 2, perRun: 1, perWork: 1 });
     const first = await scheduler.acquire(identity("first", "one"));

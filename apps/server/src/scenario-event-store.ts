@@ -12,6 +12,7 @@ import {
   type WorkerStatus,
 } from "@traceforge/orchestration-core";
 import type { BlackboardChangeBus } from "@traceforge/cognitive-runtime";
+import { historyRevision, readHistoryRows, readHistoryState } from "./db/scenario-history.js";
 
 interface StreamRow { revision: number }
 export interface ScenarioRunSummaryRow {
@@ -68,12 +69,34 @@ function parseEvents(rows: EventRow[]): ScenarioEvent[] {
 export class SqliteScenarioEventStore implements ScenarioEventStore {
   constructor(private readonly sqlite: Database.Database, private readonly changes?: BlackboardChangeBus) {}
 
+  loadState(runId: string, through?: number) { return readHistoryState(this.sqlite, runId, through); }
+  validateState(state: import("@traceforge/orchestration-core").ScenarioRunState) {
+    if (Buffer.byteLength(JSON.stringify(state)) > 2 * 1024 * 1024) throw new Error("Run state capacity exceeded before commit");
+  }
+  revision(runId: string) { return historyRevision(this.sqlite, runId); }
+  page(runId: string, after = 0, limit = 100, through?: number) { return readHistoryRows(this.sqlite, runId, after, limit, through); }
+  recent(runId: string, limit: number): ScenarioEvent[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("Invalid recent event limit");
+    return this.page(runId, Math.max(0, this.revision(runId) - limit), limit).map(row => JSON.parse(row.payload_json) as ScenarioEvent);
+  }
+  hasUsedLease(runId: string, leaseId: string): boolean {
+    return !!this.sqlite.prepare("SELECT 1 FROM scenario_lease_history WHERE run_id=? AND lease_id=?").get(runId, leaseId)
+      || !!this.sqlite.prepare(`SELECT 1 FROM scenario_events WHERE run_id=? AND event_type='work_claimed'
+        AND json_extract(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END,'$.leaseId')=? LIMIT 1`).get(runId, leaseId);
+  }
+
   load(runId: string): ScenarioEventStream {
     const row = this.sqlite.prepare("SELECT revision FROM scenario_event_streams WHERE run_id = ?").get(runId) as StreamRow | undefined;
     if (!row) return { runId, revision: 0, events: [] };
-    const events = this.sqlite.prepare(
-      "SELECT payload_json FROM scenario_events WHERE run_id = ? ORDER BY sequence ASC",
-    ).all(runId) as EventRow[];
+    if (row.revision > 5000) throw new Error("Full event export budget exceeded; use event pages");
+    const events: EventRow[] = []; let bytes = 0;
+    for (let after = 0; after < row.revision;) {
+      const page = this.page(runId, after, Math.min(1000, row.revision - after));
+      if (!page.length || page[0]!.sequence !== after + 1) throw new Error("Run event sequence integrity mismatch");
+      bytes += page.reduce((n, event) => n + Buffer.byteLength(event.payload_json), 0);
+      if (bytes > 16 * 1024 * 1024) throw new Error("Full event export byte budget exceeded; use event pages");
+      events.push(...page); after = page.at(-1)!.sequence;
+    }
     return { runId, revision: row.revision, events: parseEvents(events) };
   }
 
@@ -82,9 +105,11 @@ export class SqliteScenarioEventStore implements ScenarioEventStore {
       "SELECT fingerprint, resulting_revision FROM scenario_commands WHERE run_id = ? AND command_id = ?",
     ).get(runId, commandId) as CommandRow | undefined;
     if (!command) return undefined;
-    const events = this.sqlite.prepare(
-      "SELECT payload_json FROM scenario_events WHERE run_id = ? AND command_id = ? ORDER BY event_index ASC",
-    ).all(runId, commandId) as EventRow[];
+    const span = this.sqlite.prepare("SELECT min(sequence) first,count(*) n FROM scenario_events WHERE run_id=? AND command_id=?")
+      .get(runId, commandId) as { first: number; n: number };
+    if (!span.n || span.n > 1000 || span.first + span.n - 1 !== command.resulting_revision) throw new Error("Run command event range mismatch");
+    const events = this.page(runId, span.first - 1, span.n);
+    if (events.length !== span.n || events.some((event, index) => event.command_id !== commandId || event.event_index !== index)) throw new Error("Run command event identity mismatch");
     return {
       commandId,
       fingerprint: command.fingerprint,
@@ -95,6 +120,7 @@ export class SqliteScenarioEventStore implements ScenarioEventStore {
 
   append(request: AppendEventsRequest): AppendEventsResult {
     if (request.events.length === 0) throw new Error(`Command ${request.commandId} emitted no events`);
+    if (request.events.length > 1000 || Buffer.byteLength(JSON.stringify(request.events)) > 16 * 1024 * 1024) throw new Error("Run command event budget exceeded");
     const result = this.sqlite.transaction(() => {
       const existing = this.findCommand(request.runId, request.commandId);
       if (existing) {
@@ -151,6 +177,8 @@ export class SqliteScenarioEventStore implements ScenarioEventStore {
           JSON.stringify(event),
           timestamp,
         );
+        if (event.type === "work_claimed") this.sqlite.prepare("INSERT INTO scenario_lease_history VALUES (?,?,?)")
+          .run(request.runId, event.leaseId, request.expectedRevision + index + 1);
         this.updateLeaseProjection(request.runId, event, timestamp);
         this.updateRunProjection(request.runId, event);
         this.updateApprovalProjection(request.runId, event, timestamp);
@@ -299,6 +327,10 @@ export class SqliteScenarioEventStore implements ScenarioEventStore {
 
   private updateRunProjection(runId: string, event: ScenarioEvent): void {
     switch (event.type) {
+      case "run_package_migrated":
+        this.sqlite.prepare("UPDATE scenario_event_streams SET scenario_package_id=?,scenario_package_version=?,scenario_schema_revision=?,definition_version=? WHERE run_id=?")
+          .run(event.to.id,event.to.version,event.to.schemaRevision,event.toDefinitionVersion,runId);
+        return;
       case "phase_advanced":
         this.sqlite.prepare("UPDATE scenario_event_streams SET active_phase_id = ? WHERE run_id = ?").run(event.to, runId);
         return;
