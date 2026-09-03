@@ -1,6 +1,6 @@
 # TraceForge 当前开发进度与生产化计划
 
-更新日期：2026-09-01
+更新日期：2026-09-03
 
 当前排期调整（2026-08-31，用户要求）：跳过实际 24/72 小时超长长稳测试，状态记为“暂缓、未执行”，不再作为后续底座开发的前置阻塞。
 保留测试入口、已有短时结果及长期稳定性风险，不安排自动或后台长跑，也不将跳过等同于验收通过。
@@ -23,9 +23,9 @@ TraceForge 的目标不是通用编程 Agent，也不是某个漏洞扫描器，
 
 | 范围 | 完成度估算 | 说明 |
 | --- | ---: | --- |
-| 通用安全智能体底座 | 约 90% | 调度、证据、执行与 Provider 主链已经成型；Provider 恢复、Discovery 历史状态和默认生产接线已落地，Scenario Runtime 与 Tool Runtime 后续故障治理仍待完善 |
+| 通用安全智能体底座 | 约 90% | 仓库内调度、证据、执行、Provider、数据化 Scenario 及资源装配主链已收口，可进入首个真实场景接入；真实模型、原生平台矩阵和长稳仍是外部发布验收，不能按代码完成冒充生产验收 |
 | 单机生产化能力 | 约 71% | 已具备持久化、门禁、Execution Node、Provider 生命周期与受控分发；执行异常查询、可信凭据核验、对账和授权重试已连通，并通过选定跨进程强杀窗口；Windows 实机隔离、容量与长稳验收仍未完成，不按新增接口数量上调完成度 |
-| Web 黑盒实战场景 | 约 35% | HTTP、会话、授权、流量和证据工具已接入；受控浏览器和完整探索/验证策略仍未闭环 |
+| Web 黑盒实战场景 | 约 60% | 签名数据包和独立进程已接入；结构化同源探索、断点续跑、网络回执—Artifact—Evidence 关联、受控认证会话、秘密句柄和按 Run 脱敏流量历史已闭环；业务流程/身份差异建模、受控浏览器和完整验证策略仍未完成 |
 | 白盒代码审计场景 | 尚未正式开发 | 只复用底座，不在当前开发主线上加入 AST、污点规则等场景工具 |
 | 红队内网横向场景 | 尚未正式开发 | PTY、隧道、长期远程会话和高风险审批策略仍待后续装配 |
 
@@ -33,7 +33,7 @@ TraceForge 的目标不是通用编程 Agent，也不是某个漏洞扫描器，
 
 当前最准确的产品定位是：TraceForge 已经是一套可运行、可持久化、可恢复、具备安全执行主链的
 Security Agent Runtime，并进入底座生产化阶段；Core、Agent Runtime、Scenario SDK 和通用 Foundation
-已不再持有 Web Session/Traffic/Cookie/HTTP/Browser Contract，当前产品入口仍显式选择 Web 黑盒作为首个纵向场景。
+已不再持有 Web Session/Traffic/Cookie/HTTP/Browser Contract；产品入口也已改为读取通用本机审核安装配置，缺省不安装任何场景。
 
 关键能力的实际状态如下：
 
@@ -45,21 +45,22 @@ Security Agent Runtime，并进入底座生产化阶段；Core、Agent Runtime�
 | Cognitive Snapshot、Model Runtime、预算与并发准入 | 已实现 |
 | Capability Registry、Tool Discovery、Risk/Permission Gateway | 已实现 |
 | Managed Provider、签名/哈希、generation draining | 生产主链已实现 |
-| Execution Node RPC、Scope 再授权、Brokered HTTP | 主链已实现 |
+| Skills/Knowledge/MCP/Provider 统一扩展装配 | 当前选择的精确身份、Package 绑定、运行期撤销、整代回退、Provider 生命周期对账、Package Process 启动摘要、活动代切换恢复和有界压缩历史归档已实现；Scenario Package 已可从审核材料的纯数据描述文件装配，本地 Skill/Knowledge/迁移正文自动进入既有存储，外部 MCP 继续绑定宿主 Profile；可分发的混合扩展包安装与签名轮换尚未实现 |
+| Execution Node RPC、Scope 再授权、Brokered HTTP | 本机主链、五类逐操作永久账本及透明归档、容量健康、helper 发布清单、结构化启动预检、运行中摘要健康检查和有界全进程树关闭已实现；Linux framed PTY 已接生产代码和 19 类验收入口，协议 2 的 Linux 实机重跑与 Windows 双模式实机证明仍是发布门槛。远程 TLS/节点/跨主机装配已撤回；桌面软件更新系统按用户要求暂缓 |
 | Scope 策略版本固定与升级 | 新授权精确绑定、统一策略读取、生产派发复检、历史显式确认、保守兼容升级及原子恢复已实现；语义变化的旧 Run 改绑未实现 |
-| Scenario 审核材料与受信装配 | 本地入口/依赖清单、Ed25519 审核、不可变版本登记、当前信任复检及独立撤销审计已实现；内存对象来源仍须可信宿主确认，不是自动模块加载或任意 JS 沙箱 |
+| Scenario 审核材料与受信装配 | 本地入口/依赖清单、Ed25519 审核、不可变版本登记、当前信任复检及独立撤销审计已实现；纯数据 `scenario.json` 可提供自动来源关联，手工旧对象仍须可信宿主确认；不是下载器或任意 JS 沙箱 |
 | 失信包下旧 Run 处置 | 无包依赖取证/分页、独立授权停止、当前占用核对、退役回执、生产取消和原子/强杀恢复已实现，并接入有界快照与冷热回读；不删除历史、不自动清理未知动作，超大状态和任意长度历史仍有限制 |
 | Run 长历史快照与归档 | 连续前缀原件压缩、版本化状态快照、当前完整性校验、冷热分页、命令幂等/租约索引、生产恢复和强杀原子性已实现；冷正文仍在同一 SQLite，已纳入一致灾难备份，但未交付独立冷对象库，校验成本仍随压缩历史增长 |
 | 底座备份与灾难恢复 | 一致备份、加密签名离线介质、默认法证保留/精确销毁、隔离恢复和永久只读取证围栏已实现；六类依赖核对、独立候选工作库、当前材料重新装配、活动指针启动、相邻候选回退及切换强杀恢复已接生产控制面；旧 Run 默认暂停且不重放，真实异地介质、密钥轮换/恢复、断电及 Windows 切换演练未完成 |
 | Windows 可证明执行约束 | 约束、Job 清理屏障、watchdog 与持久化启动身份已实现；未完成 Windows 双模式实机验收，未启用原生可信清理签发者 |
-| Scenario 插件化、零场景运行 | 部分实现：独立 SDK、空 Registry、Web 物理迁移、Run 版本固定、输出校验/证据映射、资源 Contract、保留状态的显式版本迁移及独立底座门禁已完成；任意结构转换、自动排空和混合资产安装未完成 |
+| Scenario 插件化、零场景运行 | 独立 SDK、空 Registry、Run 版本固定、资源 Contract、显式版本迁移、生产工具强制 Scenario Process、声明式授权/输出/证据合同和签名数据描述文件加载已实现；应用入口已取消 Web 硬编码并从本机审核配置装配，附带离线打包签名命令；显式词法资源前缀可表达场景预先规范化的授权命名空间，但底座不解释 URL/路径语义；任意结构转换、自动排空和分发市场未完成 |
 | Provider-to-Host 反向能力 Broker | 底座主链已实现：Core、双向 RPC、持久化授权、可选 Host Registry 和中性真实子进程验收通过；具体能力 Adapter 冻结到场景阶段 |
 | Tool Provider 恢复与隔离 | 主链、七类记录逻辑容量、v2 精确续跑、受控归档/回读已实现；物理空间准入、WAL 维护、授权快照迁移/清理与连续组合验收入口已交付；真实 24/72 小时长稳、全卷容量、永久键扩展和平台发布验收仍未完成 |
-| 受控执行来源外部占用 | 默认 Managed Provider、内置进程、MCP 和显式注册的自定义来源/Scenario 受控端口共享配额与重启围栏；旧工厂默认拒绝、旧 Scenario 端口禁止进程；同进程任意 JS 不受此机制沙箱隔离，原生可信签发仍关闭 |
-| 单用户宿主管理/Worker 通道 | 生产默认能力票据门禁、Worker/定义/租约绑定、撤销/轮换/重启失效已实现；旧匿名 API 不兼容，旧前端/桌面受信桥接与远程管理未实现；不是多用户账号系统或同进程 JS 沙箱 |
+| 受控执行来源外部占用 | 默认 Managed Provider、内置进程、MCP 和显式注册的自定义来源/Scenario Process 共享配额与重启围栏；生产 Scenario 工具工厂和授权/输出回调均在调用前拒绝，开发兼容须分别显式 opt-in；原生可信签发仍关闭 |
+| 单用户宿主管理/Worker 通道 | 生产默认能力票据门禁、Worker/定义/租约绑定、撤销/轮换/重启失效已实现；旧匿名 API 不兼容，桌面本机受信桥接仍未完成；不是多用户账号系统、远程管理系统或同进程 JS 沙箱 |
 | 上下文资源包迁移 | context-only 完整资源清单的 Ed25519 导出/导入、原子发布、授权审计与持续信任校验已接生产宿主；目标须已有匹配契约，混合资产/可执行 Scenario 迁移未实现 |
-| Linux 可证明沙箱后端 | 未实现，保持关闭 |
-| Brokered Browser、多节点执行、统一运维控制台 | 未实现 |
+| Linux 可证明沙箱后端 | 原生 Rust Helper、构建/发布门禁、严格探测/measurement/enforcement Contract、stdio 与 framed PTY 生产路径已完成；Ubuntu 24.04 x64 的协议 1/16 类历史验收保留，当前协议 2/19 类矩阵尚待 Linux 实机重跑。其他 Linux 平台矩阵、独立可信报告签发与正式安全审计仍未完成，失败时无普通进程回退 |
+| Brokered Browser、多节点调度、统一运维控制台 | 未实现；远程 Execution Node 与多节点调度均已排除出当前产品范围，不作为底座缺口或后续优先级 |
 
 目标依赖方向按六层约束，依赖只能向下指向 Contract，底层不得反向认识 Application：
 
@@ -92,10 +93,10 @@ Security Execution Runtime
 - SQLite 事件存储是当前单机黑板事实来源，进程内事件总线负责低延迟唤醒，定时扫描只承担恢复职责。
 - `ScenarioKind`、Work/Role/Output 身份已经改为开放字符串，Work 默认角色、同类并发上限、Hypothesis
   引用下限和完成输出要求由 Definition 声明，Core 不再解释 `validation` 等具体工作语义。
-- `web_blackbox` Definition、能力、阶段、Worker 拓扑、授权策略和执行工具已经移入
-  `scenarios/web-blackbox`。独立 `scenario-sdk` 只暴露 Package、Authorization、Evidence、不透明 Capability Registry
-  和 Governed Execution 装配端口；Session、Traffic、Cookie 及其能力 ID 均由 Web 包声明。通用 Foundation
-  不创建 Web 端口，也不知道能力 ID；只有产品入口显式安装 Web 包并绑定现有 Adapter。
+- `web_blackbox` 的新版数据描述、阶段、Worker 拓扑、声明式授权/输出、Skill、Knowledge 和进程工具位于
+  `scenarios/web-blackbox`。独立 `scenario-sdk` 只暴露通用 Package、Authorization、Evidence、Capability Registry
+  和 Governed Execution 装配端口；通用 Foundation 与产品入口均不知道 Web 场景常量。场景进程只能申请 Package 明确声明且宿主提供的通用授权、
+  Execution Node 受控 HTTP、Artifact、State、Evidence、Session 和 Traffic；旧同进程 Web 工厂只保留为历史测试/迁移代码，不再进入生产组合根。
 
 ### 3.2 统一证据图谱
 
@@ -152,11 +153,11 @@ Security Execution Runtime
 
 ## 4. 当前尚未达到生产要求的部分
 
-### 4.1 Scenario 尚未从 Core 和 Composition Root 真正抽离
+### 4.1 Scenario 已从 Core/Foundation 与应用组合根抽离
 
 第一段抽离已经完成：`orchestration-core` 不再声明具体 Scenario/Work/Role/Output 枚举，也不再包含或导出
 Web Definition；Scenario Definition Registry 可以为空，路由 Definition Catalog 在未安装场景时返回空列表，
-Server Foundation 接受外部 Definition 清单，产品入口显式安装 Web Definition。
+Server Foundation 接受外部 Definition 清单，产品入口在没有审核安装配置时保持空 Catalog。
 
 第二段抽离也已完成：Foundation 接受显式 `ScenarioPackageInstallation`，Package Registry 汇总 Definition、
 Authorization Policy 和 Tool Discovery Source；通用 Embedded Worker 只装配 Knowledge/Execution 平台工具和外部
@@ -166,9 +167,8 @@ Authorization Policy 和 Tool Discovery Source；通用 Embedded Worker 只装�
 负责解析不透明 Scope、动作集合和具体资源；Execution Node 只提交 `resourceKind + value`，不再直接认识 URL、
 Web Guard 或 Web 黑盒。中性 Scope/资源测试证明该服务可以处理非 URL 资源。
 
-第四段物理边界已经完成：`ScenarioPackageInstallation/Registry`、授权/会话/流量端口进入独立
-`@traceforge/scenario-sdk`；Web HTTP/Traffic/Session/Browser 工具和安装清单进入 Web 包；Server 只保留
-SQLite 授权、会话和流量 Adapter 以及产品装配。Scenario 包不再 import Server 类型或直接访问 SQLite。
+第四段物理边界已经完成：`ScenarioPackageInstallation/Registry` 与通用授权、证据、Artifact、State 和进程能力进入独立
+`@traceforge/scenario-sdk`；Web 专属定义、工具、Skill 和 Knowledge 留在 Web 包。Scenario 包不再 import Server 类型或直接访问 SQLite。
 
 第五段版本绑定已经完成：新 Run 在事件事实和 SQLite 投影中同时持久化 Package id/version/schema revision；
 Runtime、Routes 和 Embedded Worker 在加载或执行前验证准确绑定。缺包、Schema revision 不匹配或历史 Run
@@ -179,14 +179,15 @@ Runtime、Routes 和 Embedded Worker 在加载或执行前验证准确绑定。�
 通用 `ScenarioEvidencePort` 幂等映射到 Evidence Graph。Web 的输出类型和映射规则只存在于 Web 包，Server 只提供
 Evidence Graph Adapter，Core 仍只处理通用 Output Envelope。
 
-尚未完成的是具体场景资源装配与生命周期控制：通用 Package 已能声明和校验 Prompt、知识与 migration
-资源；保留状态的显式包迁移已实现，具体内容仍冻结，自动排空及任意状态转换尚未实现。新增取证、恶意代码分析、
+通用场景资源装配与生命周期控制已形成生产调用路径：数据描述包可自动安装受信本地 Skill、Knowledge 和 migration
+正文，外部 MCP 通过宿主 Profile 绑定；保留状态的显式包迁移已实现。自动排空及任意状态转换仍未实现。新增取证、恶意代码分析、
 云安全或移动审计可能需要新的通用宿主能力端口，但不再需要修改 Core、通用 Foundation、通用 Routes、
 Embedded Worker 默认工具数组或 Execution Node Service。
 
-在完成抽离前，TraceForge 只能称为“具备通用运行机制的 Web-aware 应用底座”，不能宣称 Scenario
-已经插件化。不得继续向 Core、通用 Server 或默认 builtin tool source 增加任何场景名称、能力、阶段、
-角色、输出类型、Prompt、工具或授权动作。
+应用组合根迁移也已完成：`apps/server/src/main.ts` 只读取严格的 `config/scenarios.json`，由审核材料构造数据 Package 并绑定本机
+Scenario Process Profile，不再引用 Web 包或创建 Web 专属 Host Adapter。Web `0.3.0` 已证明数据化场景、结构化探索与受控认证链可用；旧 `0.1.0`
+同进程工厂暂留在场景工程用于历史回归，不进入生产入口。不得继续向 Core、通用 Server 或默认 builtin tool source 增加任何场景名称、
+能力、阶段、角色、输出类型、Prompt、工具或授权动作。审查清单见 [通用安全智能体底座完成度审查](architecture/foundation-completion-audit.md)。
 
 ### 4.2 Tool Provider 控制面仍需完成生产化后半段
 
@@ -200,13 +201,14 @@ Embedded Worker 默认工具数组或 Execution Node Service。
 可信证据验证端口、不可变审计和安全释放已完成。具体部署的执行节点/外部系统证明器、任意残留进程的自动可信清理、
 持续存储故障及真实平台隔离验收仍未完成，不能将软件夹具或可注入 Contract 等同于全平台生产保证。
 
-### 4.3 Provider 反向能力 Broker 已完成底座主链，具体 Adapter 尚未开发
+### 4.3 反向能力 Broker 已完成底座主链，场景 Adapter 开始接入
 
 Provider 进程现在必须使用固定的最小 OS 权限。通用 Broker Core、双向 RPC、持久化 Receipt、授权组合和
 可选 Host Registry 已实现；零 Handler/Policy 时 Host 不创建，反向方法不对 Provider 开放。中性真实 Provider
 子进程已经穿过 Managed Provider Source、Execution Node、Host Registry、授权和 SQLite Receipt，并验证重启
-replay 与关闭后的迟到响应隔离。当前没有注册任何 HTTP、文件、浏览器或秘密句柄等具体能力；这些 Adapter
-必须在底座验收通过后的场景阶段装配。
+replay 与关闭后的迟到响应隔离。Scenario Process 侧已经接入通用授权、Artifact、State、Evidence、Session、Traffic 与 Execution Node HTTP 桥接；
+首个 Web 包已通过这些端口保存结构化探索状态、使用 Vault 内秘密句柄和 Cookie Jar，并关联脱敏流量、网络回执、工件和证据。Managed Provider 的文件或浏览器 Adapter 仍未注册，后续只有真实场景需要时才按
+最小能力装配，不能把场景能力变成全局默认。
 
 ### 4.4 Web Browser 尚未进入可用执行链
 
@@ -214,14 +216,14 @@ replay 与关闭后的迟到响应隔离。当前没有注册任何 HTTP、文�
 
 ### 4.5 Web 黑盒的场景认知策略还不完整
 
-当前底座能调度 Research 与 Validation Work，但还缺少生产级的资产面建模、页面状态覆盖、身份矩阵、业务流程状态机、参数与数据关系学习、验证矩阵、受控外带回调和最终覆盖评估。具体 Payload 和漏洞知识应放入 Web Scenario 工具/知识包，不进入通用底座。
+当前 Package 已具备有界 URL 规范化、同源链接发现、去重队列、逐 URL 授权、HTTP 摘要、断点续跑、受控认证会话、秘密正文构造、短期值捕获及 Network Receipt—Traffic—Artifact—Evidence 关联。仍缺少页面状态覆盖、身份矩阵、业务流程状态机、参数与数据关系学习、验证矩阵、受控外带回调和最终覆盖评估。任意 JavaScript 登录、OAuth/OIDC、MFA 及人工接管也尚未支持。具体 Payload 和漏洞知识应放入 Web Scenario 工具/知识包，不进入通用底座。
 
 ### 4.6 运维与可靠性仍需补齐
 
 - 工具、Worker、Planner、Observer、模型预算和执行节点虽有 API/事件，但缺少统一运维控制台。
 - 缺少长时间运行、断电恢复、磁盘耗尽、Provider 频繁崩溃、模型供应商波动和高并发任务的系统级验证。
-- 当前以 SQLite 单机模式为主，尚未给出多节点 Worker 的生产部署、队列和数据库拓扑。
-- Linux 进程执行因缺少可证明的托管 cgroup 后端保持关闭。
+- 当前明确采用单用户、单宿主 SQLite；不建设多节点 Worker、跨主机队列和远程数据库拓扑。
+- Linux 原生执行已在 Ubuntu 24.04 x64 打通，仍缺其他发行版/内核矩阵、安装升级回滚和独立可信报告签发。
 - 凭据实体可以进入受权限控制的黑板，但面向操作者的查看、脱敏、授权与审计体验还未完成闭环。
 
 ### 4.7 `apps/server` 同时承担 API、组合根和大量 Runtime 实现
@@ -239,18 +241,14 @@ Model Runtime/Admission、Evidence Store、Execution Session 和 Provider Contro
 
 以下顺序按生产依赖关系排列，不是原型阶段划分。
 
-### 当前开发边界：先完成底座，冻结应用与具体场景
+### 当前开发边界：底座冻结，具体场景通过 Package 边界推进
 
 交付节奏：后续按完整底座能力批次推进，将状态模型、生产接线、故障/并发回归、完整门禁与计划同步合并交付，
 不再每补一个小故障点就要求用户回复“继续”。必要授权、架构选择或真实外部环境缺失时才暂停并说明。
 
-从当前周期开始，开发严格分为两个阶段。底座验收完成前，只允许修改通用 Contract、Runtime、Provider/Tool
-执行基础设施、恢复与隔离、安全后端、持久化、控制面 API 和底座测试门禁；`apps/web`、Web 黑盒策略、
-Brokered Browser 的场景接线、Web 专属 Prompt/知识库、其他具体 Scenario Package 以及运维界面均冻结。
-期间可以为了证明底座可扩展而使用中性 fixture 或最小测试宿主，但不能借测试宿主继续实现某个应用场景。
-
-冻结不等于删除现有应用或场景代码。现有实现只接受阻断底座验收的兼容性修复，且修复不得新增场景语义、
-工具策略或 UI 功能。所有新能力必须先证明属于多个场景共同需要的底座职责；无法证明时留到第二阶段。
+通用底座的仓库主链已经收口并冻结，当前只接受真实 Scenario Package 接入暴露出的通用边界缺陷；不得为了某个场景把
+URL、协议、漏洞类型、状态码、工具或策略硬编码回 Core/Foundation。具体能力在独立 Package 进程、Skill、Knowledge 和
+宿主显式能力内推进；应用 UI、远程节点、多用户和桌面更新不属于当前开发范围。Browser 仍按自身强制代理与原生隔离门槛关闭。
 
 当前实际执行队列：
 
@@ -259,12 +257,13 @@ Brokered Browser 的场景接线、Web 专属 Prompt/知识库、其他具体 Sc
 3. ~~Provider-to-Host Capability Broker。~~ 底座主链与中性生产组合验收已完成。
 4. ~~Tool Runtime 的恢复、隔离和故障治理。~~ 主链、可信回执、授权重试/精确续跑、归档/回读、物理空间门禁、授权存储维护及组合压力入口已完成；真实 24/72 小时长稳、完整生产宿主负载、永久键规模扩展和平台验收仍是发布门槛。
 5. ~~Provider 归档分发、签名工具、持久化调用回执与旧包回收。~~ 已完成；真实平台断电、持续存储故障和全平台清理证明仍属于发布验收。
-6. Linux 可证明执行后端（保持关闭，直到证明链可用）。
-7. **当前进行中：**底座长期运行可靠性里程碑，并吸收下方列出的 Codex 底层机制参考。
-8. 完成“底座完成门禁”后，另开阶段开发 Web 黑盒、Browser、其他 Scenario 和应用界面。
+6. Linux 可证明执行后端的仓库实现已完成；协议 2/19 类 Linux 实机重跑与 Windows 双模式仍是外部发布门槛，证明缺失时能力继续关闭。
+7. ~~底座长期运行可靠性、Codex 通用 Runtime 机制吸收及仓库完成度审查。~~ 仓库主链已收口；真实模型、24/72 小时长稳和原生平台矩阵按既定口径保留为外部发布验收，不再继续堆叠没有真实调用路径的控制层。
+8. ~~**首个真实安全 Scenario Package 接入。**~~ Web 黑盒已从应用入口硬编码对象迁到审核目录中的 `scenario.json`、Scenario Process、Skill/Knowledge 与宿主 Profile 装配；缺省保持零场景。
+9. **当前阶段：Web 黑盒场景闭环。** 结构化 HTTP 探索、受控认证会话与脱敏流量历史已经落地；下一批完成业务流程/参数/身份关系建模和单任务因果验证。Browser 在 HTTP 主链证明不足以覆盖真实页面状态后再按完整安全门槛实现，不提供直连临时版。
 
 同一优先级内只允许并行处理依赖方向已经稳定、不会扩大场景耦合的工作；不得以“并行开发”为由
-绕过底座冻结边界。当前不以任何具体场景的端到端效果作为底座代码的设计输入。
+绕过底座冻结边界。场景的端到端效果可以驱动 Package 自身演进，但不能直接变成底座领域规则。
 
 ### Codex 可参考机制的纳入原则（仅用于网络安全智能体底座）
 
@@ -471,10 +470,9 @@ migration manifest 引用完整性；产品入口仍可显式装配 Web 包，�
 - Scenario Package 与 Tool Provider 是两个独立概念：前者定义调查语义、策略和装配，后者提供受控执行能力；
   Web 包可以声明所需 Provider capability，但不得绕过 Tool Runtime、Provider 签名或权限门禁直接启动工具。
 
-进度：Definition、能力常量、阶段、Worker 拓扑、Authorization Scope/Resource Policy、HTTP/Traffic/Session/Browser
-工具、场景回归测试和显式 Tool Source 安装均已迁移/接线；Web 包生产代码不再 import Server 或 SQLite。
-输出 Schema 已迁移；Prompt、知识资源和场景 migration manifest 尚未迁移，因此 Web Package 仍未完成全部职责。
-这些 Web 专属迁移在底座验收前冻结；底座阶段只允许用中性 fixture 验证对应 Package Contract。
+进度：Definition、阶段、Worker 拓扑、声明式 Authorization/Output、Skill、Knowledge、Scenario Process 与结构化 HTTP
+探索均已迁入签名数据包；Web 包生产代码不再 import Server 或 SQLite，应用入口也不再硬编码 Web 安装。旧同进程
+Traffic/Session/Browser 工具不进入生产组合根；认证会话、脱敏流量历史和 Brokered Browser 将继续通过 Package 与宿主显式能力接入。
 
 阶段 D：架构验收与防回退
 
@@ -1133,20 +1131,25 @@ Skills/知识资源/MCP 的通用装配，也未完成真实多日负载、实�
 
 ### P1：Linux 可证明执行后端
 
-当前状态：Linux 进程执行在缺少可验证后端时保持关闭。Provider、代码审计和大量安全工具不能以普通
-`child_process.spawn()` 作为生产回退，因此这一项是实际安全场景扩展的基础设施前置条件。
+当前状态：严格 Host Contract 和 Linux Rust helper 源码/装配/出包门禁已完成。底座只识别 TraceForge Linux native helper，
+完整核对 namespace、cgroup v2、seccomp、`no_new_privileges`、文件/网络/资源与进程树屏障探测，并在宿主启动和每次执行之间固定 Helper
+SHA-256；替换或证明缺项均关闭执行。helper 已实现原子 cgroup 归属、独立 namespace、最小文件根、capability 清除、受控环境、
+资源监督、进程树清空以及 stdio/framed PTY。Ubuntu 24.04 x64 已保留协议 1/16 类历史证明；当前协议 2/19 类矩阵、第二发行版/内核与正式安全审计尚未完成，因此仍不能签发当前版本的生产平台证明，也没有普通 `child_process.spawn()` 回退。
 
 开发内容：
 
-- 建立独立 Linux native helper 与能力探测，明确内核、cgroup v2、namespace、seccomp/Landlock 等可用约束，
-  不把“命令成功启动”等同于“策略已执行”。
-- 对 CPU、内存、进程数、写入字节、文件系统可见范围和网络模式生成可验证 attestation，并与请求指纹绑定。
-- 使用独立 user/pid/mount/network namespace、受控工作目录和最小 capability；不允许继承宿主敏感环境变量或凭据。
-- 定义 rootless 与受管 helper 两种部署能力边界；缺少某项强制属性时按能力关闭，而不是降级为弱沙箱。
-- 增加逃逸、资源耗尽、孤儿进程、租约过期、helper 崩溃、主机重启和不受支持内核的集成测试。
+- ~~建立独立 Linux native helper 的严格 Host Contract 与能力探测，明确内核、cgroup v2、namespace、seccomp 等强制约束，
+  不把“命令成功启动”等同于“策略已执行”。~~ 已完成；当前使用 mount policy，Landlock 仍只是可选后续增强。
+- ~~固定 CPU、内存、进程数、写入字节、文件系统可见范围、网络模式、进程树屏障和请求 Profile/资源指纹的 enforcement Contract。~~
+  已完成；平台侧生成这些事实的 native 实现仍待验收。
+- ~~实现 Linux native helper 源码、framed PTY 与 Linux-only 打包/真实 probe 门禁。~~ 已完成；当前协议 2 的目标发行版构建产物、可复现性和 19 类实机矩阵待执行。
+- ~~使用独立 user/pid/mount/ipc/uts/network namespace、受控工作目录和最小 capability；不允许继承宿主敏感环境变量或凭据。~~ 已完成源码与契约，待实机对抗验收。
+- 明确 rootless user namespace + 受管 cgroup delegation 的安装边界、发行版配置与升级撤销；缺少某项强制属性时继续按能力关闭。
+- 逃逸、资源耗尽、孤儿进程、helper/上层宿主崩溃与启动恢复已有协议 1 的 Ubuntu 实机覆盖；仍需在协议 2 重跑并补不受支持内核、第二发行版和 Windows 对应矩阵。
 
 验收条件：Linux 后端只能在所有声明约束均有可验证证明时返回成功；Provider 和工具无法绕过网络、
 文件系统或资源策略；不满足生产策略的主机明确报告 unavailable，且不存在直接 spawn 回退。
+详细边界见 [本机原生 Execution Node 信任边界](architecture/local-native-execution-node.md)。
 
 ### P1：将 Runtime 从 `apps/server` 提取为可复用 packages
 
@@ -1218,7 +1221,7 @@ volatile 语义去重，Observer 删除自身的游标分支。第五片新增 `
 - SQLite 查询与 Fastify request/reply 类型不得泄漏到 Runtime public API；Adapter 负责转换。
 - 提取完成后删除 Server 中的旧实现，不长期保留双写、双运行时或兼容代理层。
 
-### P1（底座验收前冻结）：Web 黑盒包内的 Brokered Browser Execution
+### P1（场景后续门槛）：Web 黑盒包内的 Brokered Browser Execution
 
 开发内容：
 
@@ -1230,7 +1233,7 @@ volatile 语义去重，Observer 删除自身的游标分支。第五片新增 `
 
 验收条件：浏览器无法绕过授权代理；身份撤销或租约过期立即冻结会话；人工接管后 Worker 能从持久化状态继续。
 
-### P1（底座验收前冻结）：Web 黑盒 Scenario Package 闭环
+### P1（当前场景主线）：Web 黑盒 Scenario Package 闭环
 
 开发内容：
 
@@ -1243,7 +1246,7 @@ volatile 语义去重，Observer 删除自身的游标分支。第五片新增 `
 
 验收条件：在多个授权测试应用上完成无人值守探索、人工门禁、因果验证、失败回溯和可复现报告；不能把扫描器单一命中直接升级为漏洞。
 
-### P1（底座验收前冻结）：统一运维控制台
+### P1（应用层暂缓）：统一运维控制台
 
 开发内容：
 
@@ -1254,27 +1257,26 @@ volatile 语义去重，Observer 删除自身的游标分支。第五片新增 `
 
 验收条件：操作者能够从一个界面解释“当前为什么执行这个动作、用了什么权限、产生了什么证据、谁批准了什么”。
 
-### P2：长稳、发布与多节点准备
+### P2：长稳、发布与未来扩展接口准备
 
 开发内容：
 
 - 24/72 小时 soak test 入口已建立；实际超长运行按用户要求暂缓，不阻塞后续底座开发。继续保留有界故障注入、重启恢复和磁盘/内存/模型故障测试。
 - 完成 Windows 桌面发布包、原生 helper 和 Provider 包的签名、升级及回滚验证。
-- 定义 SQLite 单机容量边界，并为 PostgreSQL、持久化队列和远程 Execution Node 抽象迁移接口。
+- 定义 SQLite 单机容量边界；不为尚无产品需求的 PostgreSQL、持久化队列或远程 Execution Node 提前建设迁移实现。
 - 建立场景级评测集：探索覆盖率、无效动作率、循环率、验证准确率、证据完整率、人工介入率和单位发现成本。
 
 验收条件：发布包在干净 Windows 环境独立安装运行；升级和崩溃不破坏 Run、Evidence、Approval 和 Provider 状态；关键指标具备稳定基线。
 
 ### 后续独立 Scenario Packages（底座验收后解锁）
 
-底座完成门禁通过后，各场景按独立包推进，不再通过修改 Core 增加场景：
+底座仓库门禁通过后，各场景按独立包推进，不再通过修改 Core 增加场景：
 
 - 白盒代码审计 Profile：仓库快照、增量 Diff、AST/语义索引、Source-Sink 数据流、验证与修复证据。
 - 红队横向 Profile：PTY、远程 Session、跳板与隧道、凭据实体、网络拓扑以及更严格的审批策略。
 
 这些场景不会复制底座，只通过 `ScenarioPackage` Contract 注册自己的 Profile、Worker 策略、
-授权策略、输出 Schema、图谱映射和工具 Provider。底座验收前不得提前开发任一场景的端到端能力；
-验收后 Web 黑盒与其他场景可以独立排期，彼此不构成代码依赖。
+授权策略、输出 Schema、图谱映射和工具 Provider。当前只推进 Web 黑盒；白盒与红队场景继续保持未开发，彼此不构成代码依赖。
 
 ### 2026-08-31：Skill/知识文本与受控 MCP Tools 组合交付
 
@@ -1674,14 +1676,15 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
 
 ## 6. 当前质量基线
 
-- 全工作区构建通过。
-- `test:fast`：227 个测试文件、1,946 项测试通过，包含 Agent Session/Harness、Scenario Host Capability、通用 Artifact/State、受信宿主部署，以及既有备份恢复、强杀窗口、Run 历史、授权、Provider、Skill/知识/MCP、执行节点与完整宿主回归。
-- `verify:foundation`：检查 272 个通用生产源码文件；15 个通用 packages 与通用 Server 独立编译通过；
-  门禁内共 94 个测试文件、1,446 项测试通过（主门禁 90/1,423，Agent/Deployment/Artifact/State 终验 4/23），包含 Agent Runtime 工具策略、framework-only WorkerHost integration host、通用 Artifact/State 的归属/幂等/CAS/容量/重启恢复，且不构建 `apps/web` 或 Web Scenario Package。边界门禁新增旧 Lease 类名禁回退和 Artifact/State Contract 保留检查，并继续验证 Scenario SDK Web/transport Contract、Agent Runtime 反向依赖、WorkerHost → AgentHarness 委派和 workspace 无循环依赖。
+- 2026-09-02 本机 Execution Node 发布/健康/关闭生命周期批次后，全工作区 19 个项目构建通过。
+- `verify:foundation` 检查 290 个通用生产源码文件，15 个通用 packages 与通用 Server 独立编译通过；门禁内共 113 个测试文件、1,600 项测试调用通过：主门禁 90/1,449（206.07 秒），本机 Execution Node/Linux helper 发布、生命周期、长期逐操作账本、统一扩展装配与崩溃终验 8/61（8.69 秒），Agent/Deployment/Artifact/State/Scenario Process/数据包加载及 Session 安全终验 15/90（9.31 秒）。Execution Node 故障文件固定串行执行；10 项控制操作强杀、2 项操作归档事务强杀、1 项装配活动指针强杀和 26 项 Provider/Assembly 生命周期强杀均未跳过。门禁不再包含远程 TLS、远程节点证明、远程派发围栏或跨主机夹具；继续固定本机 pipe-only RPC、逐操作账本与透明归档、容量健康、真实宿主 SIGKILL、Linux framed PTY 合同、helper 发布身份、结构化启动预检、运行中摘要健康、全进程树有界关闭、Linux fail-closed、统一扩展身份、MCP 精确 Package 绑定/撤销/显式回退、Scenario Process Profile、生产同进程工具及授权/输出回调拒绝、声明式合同容量/字段/显式词法前缀门禁、签名纯数据 Package 加载、严格 UTF-8、安全材料路径、本地 Skill/Knowledge/迁移正文自动装配及入口/资源材料绑定、通用 Scenario HTTP/Session/Traffic 桥接、身份/租约/URL 范围复检与秘密脱敏、Managed Provider 状态对账、Assembly 有界压缩历史、OS-backed 启动、SQLite 监督账本、Package Capability Broker、宿主归属注入、Agent Journal、SDK/Core 边界和 workspace 无循环依赖。
+- 新增回归明确验证新数据库不存在 `remote_execution_%` 表；生产边界同时扫描 Execution Node Service 与 Foundation 组合根，禁止恢复远程 trust、远程配置或远程对账入口。旧数据库中的历史远程表无人读取且不自动删除。
+- 最近一次完整 `test:fast` 基线仍是 241 个测试文件、2,015 项测试；本轮按此前“跳过超长测试”的决定没有重复执行整套快速回归，以完整 `verify:foundation` 113 文件/1,600 项、Server/Web Scenario 编译和 290 源码边界检查作为底座回归，并以 `test:scenario:web` 5 文件/27 项验证零配置、宿主配置、签名主服务装配、独立进程授权/HTTP、结构化同源探索、受控身份/Session/秘密正文/短期值捕获、脱敏 Traffic、逐步 CAS 状态、工件/证据关联、跨进程续跑和组合根无 Web import。另有 5 文件/47 项针对性回归覆盖 Session 加密与冻结、Scope 身份过滤、秘密 URL 边界和旧 Web Adapter 兼容。离线场景打包命令前批已用真实临时 Ed25519 密钥、全新输出目录和 sidecar 成功执行。前一本机生命周期批次的 Linux Rust 9 项、Linux x64 交叉检查和全工作区 19 项目构建基线继续有效；真实模型、协议 2 Linux 实机重跑和 24/72 小时长稳仍按用户要求或平台条件暂缓。
 - 前批 44 项多来源占用/清理证明/服务归属/强杀恢复回归通过；前批 37 项签名资源包迁移/撤销/请求快照/HTTP/强杀恢复回归通过；前批 31 项外部占用/派发屏障/授权释放/GC/重启回归通过；前批 32 项审计 codec/游标/原子补记/源引用/取消故障隔离/崩溃恢复回归通过；前批 22 项取消/身份/截止/清理回归保留；前批 29 项跨角色来源/有界压缩回归保留；前批 48 项 Skill/外部上下文/资源退役回归保留；前批资源搜索/投影 31 项、资源/MCP 47 项仍包含在回归中。此前模型验收器 14 项离线测试不能代替真实模型验收；前轮完整宿主/HTTP/模型截止/续跑调度 33 项与物理存储/受控维护/连续可靠性 44 项测试通过；此前独立 120.826 秒组合运行通过，74 次强杀及两次新宿主回读、常驻进程 234 轮。此前归档 30 项、精确恢复/授权续跑 47 项、统一容量 32 项与执行历史/取消 26 项也通过完整回归。完整快速回归与全工作区构建使用
   `env pnpm_config_verify_deps_before_run=false pnpm ...`。本轮新增 workspace package 后执行一次受供应链校验的 `pnpm install`，锁文件只增加 `@traceforge/agent-runtime` workspace link，未修改 `.npmrc` 或外部依赖版本。
-- 本机本轮最终快速回归用时 238.70 秒；Agent/Deployment/Artifact/State 最终验收用时 2.55 秒。底座独立构建及全工作区 19 个项目构建通过。
-  本轮完整快速回归 227/1,946、底座门禁 94/1,446 均通过。生产边界源码增至 272 个。全工作区构建首次被 pnpm 的运行前依赖检查误触发联网/重装阻断，该次不计通过；关闭环境级检查后 19 个项目全部构建通过，未安装或更新依赖。
+  Linux helper 当前通过 Rust 9 项与 `x86_64-unknown-linux-gnu` 完整源码/测试图检查；Ubuntu 24.04/x86_64/Linux 6.8 的协议 1/16 类历史原生验收仍有效，但当前协议 2 增加 PTY 后必须重跑 19 类入口，尚未把交叉检查写成实机通过。临时 Linux 主机仅作为验收环境，不是当前或未来产品节点。
+  本轮新增 Observer 验收 2 项、独立冷库集成 4 项、冷库真实强杀 4 项；Observer 必须在签发前证明至少两个不同 claim 的确定性、证据可复查、完整回执身份、预取消响应和宿主可观测无副作用，同一验收不能复制给另一个 Adapter。冷库不接活动 SQLite，完成签名接收、原子发布、幂等重授权、容量/路径/符号链接围栏、默认取证保留、revision 固定的解除保留、二次授权精确销毁和 `secureErase:false` 诚实声明；接收 staging/发布后、销毁准备/删除后四个 SIGKILL 窗口均由新宿主收敛。真实模型、真实外部 Observer、对象存储/异地主机以及 24/72 小时长稳仍未执行，不能把确定性 Observer 夹具写成生产事实源验收。
+  此前基础批次新增 Scenario Process 持久化监督 6 项与生产重建 1 项，联合既有 Runtime/Execution Node 定向共 4 个文件、35 项；覆盖真实 OS 子进程、启动证明核对、跨 Runtime generation、跨宿主回执重放、未决结果拒绝重做、撤销/预算持久化、两代永久容量占用，以及宿主进程被真实 SIGKILL 后由新宿主恢复 generation 2。真实模型与 24/72 小时长稳仍按用户要求跳过，没有把模拟模型测试写成真实模型验收。
   本轮新增受信宿主部署/启动预检/整代切换与相邻回退 12 项底座回归全部通过；与生产 `main` 联合定向共 2 个文件、24 项通过。快速回归增加 1 个文件、12 项，底座门禁增加 1 个文件、12 项，生产边界增加 1 个源码至 270 个。
   新增回归覆盖严格无秘密清单、完整组件类别、secret reference、缺件/未知件/版本摘要漂移、默认拒绝/命令冲突/固定计划、连续 generation 和 migration chain、不可回退 Schema、管理通道、生产启动前短路、健康状态、审计不可变，以及发布两个窗口和切换三个窗口的真实 SIGKILL 恢复。
   前批新增恢复候选/重新装配/人工切换与回退 13 项底座回归全部通过；与备份、离线介质和生产入口联合定向共 4 个文件、98 项通过。快速回归增加 1 个文件、13 项，底座门禁增加 1 个文件、13 项，生产边界当时增加 1 个源码至 269 个。
@@ -1724,8 +1727,8 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
   前轮 CLI 启动器曾遇本机 IPC 权限限制，获得许可后重跑明确返回 `not_run / model_configuration_missing_or_invalid / modelApiCalls=0`；
   真实模型联调已按用户要求暂缓，待后续提供配置再恢复。此前 TCP 权限失败不算通过，已有监听失败即报错/清理。没有启动实际 24/72 小时测试。
 - `git diff --check` 通过；本轮未提交或推送 GitHub。
-- 原生 helper（此前基线，本批未修改 Rust 或重跑原生验收）：6 项跨平台 Rust 清理状态机测试通过；Windows GNU target 的生产源码及测试 `cargo check --tests` 通过；Rust 格式检查通过。
-  Windows 原生 Job 测试已接入 `build:windows-sandbox` 打包前门禁，但本机为 macOS，未执行这三项平台测试，也未完成双模式隔离验收。
+- 原生 helper：Windows 6 项、Linux 9 项 Rust 测试通过；Linux x64 GNU target 的全部 Linux-only 源码及测试 `cargo check --tests` 通过；本轮 Linux crate 格式检查通过。
+  Windows 原生 Job 测试已接入 `build:windows-sandbox`；Linux 真实 probe、19 类协议 2 原生矩阵和启动恢复已接入 `build:linux-sandbox` 与桌面发布前门禁。当前实机历史证明只覆盖 Ubuntu 24.04/x86_64/Linux 6.8 的协议 1/16 类，不覆盖当前 PTY 协议 2、Windows 双模式、第二 Linux 发行版/内核、aarch64 或完整生产服务/数据库重启组合。
 - 核心测试覆盖黑板调度、Planner/Observer、证据图谱、模型运行时、租约与审批、Execution Node、Brokered HTTP、Tool Runtime、真实 Provider 子进程崩溃恢复和 Execution Node attestation 拒绝。
 - 三项需要真实外部配置的 Live 测试不属于快速基线，发布验收时必须单独执行。
 - 仓库忽略本地 `.pnpm-store` 与所有 TypeScript 增量构建缓存，避免把机器相关缓存误提交为产品源码。
@@ -1843,15 +1846,92 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
 5. Scenario SDK 新增无场景词汇的 Artifact/State Contract；生产 Foundation 装配独立 SQLite Store。Artifact 保存内容引用、摘要、SHA-256、大小和有界元数据，State 使用有界 JSON、revision compare-and-set 与命令结果重放；两者都有每 Package 精确版本的记录总量上限，完整关闭并重开数据库后仍可恢复。
 6. Registry 将 Artifact/State 端口固定到接收端的 Package id/version，跨包或跨版本访问在进入 Store 前拒绝；Store 查询继续按 Package/版本/Case/Run 隔离。命令重放返回原结果，复用相同命令修改输入会冲突，不会静默覆盖。
 7. 已删除 `LeaseWorkerRuntime/LeaseWorkerOptions` 兼容导出和全部调用，边界脚本会阻止旧名称或通用 Artifact/State Contract 被后续修改恢复/删掉。
+8. 新增 `traceforge-agent-execution-journal@1`，认知状态从 Worker checkpoint 顶层迁入 Agent Runtime 定义的版本化 Journal；稳定 Session 身份只由 Run/Work 决定，不绑定 Worker、lease、Server、SQLite 或具体 Scenario。
+9. v3 Host Checkpoint 只保存 Journal、执行归属、pending Invocation 和 pending Control command；v1/v2 在 Host Adapter 中单向迁移。Journal/旧字段混放、非法终态、重复 Intent、过深/非 JSON 输入、超大正文/条目/引用和整体超过 1 MiB 均拒绝。
+10. 完成/阻断在调用控制面前先落 Agent 终态与精确控制命令。同租约强杀重启直接幂等重放，不再调用模型或工具；completed 命令跨租约关闭，显式重新租赁的 blocked Journal 才可清除旧终态继续。
+11. framework-only 测试覆盖 JSON 序列化搬迁到另一 Store、替换 Worker Host 后恢复；生产新增 `terminal-committed` SIGKILL 窗口，与 pending、receipt、result 三个旧窗口联合证明副作用仍为一次。
+12. 新增 `traceforge-scenario-process-rpc@1` Scenario 专用进程 Profile；Package 必须在同进程工厂和进程声明中二选一。包合同只声明入口身份和能力，可信宿主独立提供可执行路径、环境、服务归属、权限 Profile 与资源上限；生产装配不再接受配置自报的沙箱证明。
+13. 新增 Package Capability Broker，反向 RPC 只能绑定仍存活的父工具调用。Package/版本/进程代次、Case/Run/Work/Worker/lease、能力/动作、请求响应容量、并发和截止均复检；子进程伪造归属、未声明能力、旧代次和过期租约全部拒绝。
+14. 授权、证据、Artifact、State 已有通用 Host Adapter；Package id/version 与 Work 归属由宿主注入。能力调用支持并发同键合并、跨进程代次回执重放、异键冲突拒绝和运行中撤销。
+15. Scenario 进程工具进入 Foundation 共享公平调度；损坏帧关闭进程，崩溃与真实 SIGKILL 只能在重启预算内生成新代次。生产装配识别进程型 Package，不再调用其同进程工厂。详见[Scenario Process Runtime 与 Package Capability Broker](architecture/scenario-process-runtime.md)。
+16. 生产 Scenario Process 已改走 `ExecutionNodeToolProviderClient`：真实启动后核对进程归属、节点/PID、沙箱后端、权限指纹、资源上限指纹和网络模式；每一代使用独立 OS 执行幂等身份。开发专用直启仍只用于协议测试，Foundation 遇到它会拒绝装配。
+17. 新增 SQLite 监督账本，持久化 Package 精确版本、清单/启动指纹、单调 generation、reserved/started/ready/exited/failed/interrupted/revoked 状态及跨宿主重启预算。启动时把未终结代次保守标记为 `interrupted`；同版本修改清单、启动材料或预算会拒绝继续，不能靠重启应用刷新次数。
+18. 能力 Broker 在调用宿主 Handler 前先持久化 `pending` claim，成功后再提交完整回执。新 Runtime/新宿主可重放已完成回执；若中断发生在两次写入之间，后续请求被标成结果未知并阻断自动重做，同键换输入继续冲突。
+19. 每个 Scenario 进程 generation 已进入现有 `ProcessExecutionCapacity`、公平调度和 Execution Node 进程观察链。正常退出、失败和撤销会结束本地 lease，但主进程终结只形成保守占用，仍需既有独立清理证据才能释放；因此宿主重启不会洗掉 OS 占用风险。
+20. 监督/代次/回执表具有记录数、单条大小和物理磁盘准入；生产边界门禁固定 Execution Node、持久化 generation、未完成能力围栏和 Host 归属注入。生产装配回归证明真实子进程正常关闭、重建 Runtime 后 generation 从 1 增至 2、同一能力不二次派发，并保留两代进程容量记录。
+21. 未决能力现在在任何 Host Handler 执行前保存完整、无原始输入的通用 claim：Package/版本、generation、父请求、能力/动作、输入指纹和 Case/Run/Work/Worker/scope/lease 均固定。旧宿主中断后，普通错误、重启或本地超时不能解除 `pending`。
+22. 新增 Ed25519 签名恢复证据合同和独立授权运维入口。部署侧恢复权威按 Package 与能力显式限域；签名、时间窗、claim 和回执归属全部核对。只有外部事实证明成功才补写回执，证明从未执行才转成 `retry_allowed`；同键重试必须保持原身份/输入，只允许 generation 与开始时间前进并累加 attempt。
+23. 新增 Scenario Process、generation、能力记录、控制审计和退役档案的有界分页查询。命令固定指纹、拒绝默认授权、证据与审计不可变；运维清单只暴露状态、摘要、归属和引用，不返回原始调用输入或输出。
+24. Package 版本退役已与撤销和进程清理链串联：必须先撤销，等待 generation 终结、所有 Scenario Process 容量占用获得既有可信清理证明、且没有 `pending` 能力，才可受权退役。完整热回执进入同库 gzip 不可变档案，热表只保留永久防重放身份/摘要并释放活跃回执配额；档案读取会重新校验压缩长度、摘要和 Package 身份。
+25. 新增部署侧 `ScenarioCapabilityRecoveryIssuer`：通用 Observer 接口只提交外部事实结论、原回执和稳定证据引用；Issuer 固定 Package/能力范围、观察截止、Ed25519 私钥、key generation、有效期和最大证据年龄。私钥不进入 HTTP、SQLite 或审计，Observer 的具体判断逻辑不进入 Core。
+26. 恢复 key 支持并存换代和动态撤销。Issuer ID/key ID 冲突、外部权威与本地 Issuer key 重叠、过期/越界/撤销 key、超时观察、身份不一致回执均 fail closed；旧 key 撤销后旧证据不能继续对账，新 key 可对同一未决 claim 重新观察签发。
+27. 退役档案新增独立授权的签名导出。输出固定 Package/版本、档案摘要、原始/压缩大小、创建/导出时间和压缩正文，并由独立 Ed25519 export key 签名；接收校验重新执行 Base64、签名、解压上限、长度、摘要和内部身份检查。每次重放仍重新授权，export key 撤销后旧包不再被当前权威接受。
+28. 新增四个真实宿主 SIGKILL 窗口：对账证据事务未提交/已提交、退役档案事务未提交/已提交。全新宿主分别重新完成或精确重放命令，SQLite 完整性、单份证据、单份档案、最终能力/版本状态均保持一致；测试夹具不属于生产签发器或具体场景。
+29. 新增 `ScenarioCapabilityRecoveryObserver` 部署验收契约。至少两个不同 claim 必须重复产生完全一致的观察，稳定证据引用须由部署读取器复查并匹配预期摘要，成功回执逐项绑定 Package/版本/generation/父请求/能力/动作/幂等键/输入指纹；可信宿主快照还须证明正常与取消观察没有可见写副作用。验收绑定同一对象实例、有明确到期时间，复制结果或更换 Adapter 后必须重新验收，Issuer 未取得有效验收一律拒绝签发。
+30. 新增可选 `ScenarioProcessColdArchive` 与 Foundation 管理路由。独立根目录不读取或写入活动 SQLite；签名包经重新授权、权威有效性、Base64/签名/解压上限/长度/摘要/内部 Package 身份核对后，使用同目录 staging、文件及目录 `fsync` 和原子 rename 发布。命令回执固定请求指纹且重放重新授权；归档目录只接受固定文件和 SHA-256 名称，符号链接或未知条目 fail closed。
+31. 冷库默认永久 `forensic_hold`，不按场景或墙上时间自动删档。必须先用期望 revision 独立授权解除保留，再用另一条独立授权命令进入 `purge_prepared` 并精确删除目标目录的固定文件；旁边档案不受影响，记录明确 `secureErase:false`。接收 staging/发布后和销毁准备/文件删除后四个真实 SIGKILL 窗口均可由新宿主收敛，未完成 staging 不冒充档案，已删除证据不会恢复。
+32. Execution Node 协议提升到 1.8。该批曾实现并验证远程 TLS/节点证明/派发围栏；2026-09-02 明确产品不需要远程节点后，相关产品代码、配置入口、管理路由和发布门禁已在第 36 项定向撤回。历史事实保留在记录中，但不再构成当前架构或完成度。
+33. 新增真正的 `traceforge-linux-sandbox` Rust helper 源码与 Linux x64 发布链：`clone3` 创建即加入 cgroup，独立 user/mount/pid/ipc/uts/network namespace，tmpfs + bind/mask + `pivot_root` 文件策略，清除 capability，seccomp 封锁逃逸/重挂载面，目标环境白名单编码，CPU/内存/进程/写 I/O 监控以及 `cgroup.kill` + 空树屏障。宿主只有在显式 cgroup delegation、启动残留恢复和真实 probe 成功后开放能力；Linux 桌面构建、资源复制和发布校验缺一项即拒绝。
+34. 完成首个真实 Linux 平台闭环：Ubuntu 24.04/x86_64、Linux 6.8、cgroup v2、systemd 255 上以专用非 root 账号和 `Delegate=yes` 运行。新增固定 root-owned helper 路径的 AppArmor `userns` Profile，未全局关闭 Ubuntu 防护；同一运行 ID 关联 cgroup/scratch，启动 `recover` 只清理受控前缀，存活残余先 `cgroup.kill` 并等待空树。16 类原生验收覆盖文件读写/deny、环境隔离、软链接与非规范路径、读写/拒绝重叠、断网、seccomp、孤儿进程、CPU/内存/进程/写入超限、不支持网络/cgroup 配置拒绝、helper 与 Execution Node 父进程 SIGKILL、死亡传播及新宿主恢复，全部通过，最终活动 cgroup/scratch 均为 0。实机发现并修复 PID namespace 父 PID 判断、合并 `/usr` 顶层运行时别名、资源事件基线和多行 cgroup 字段解析问题；Linux release 构建现强制跑完整矩阵。环境、helper SHA-256、证据与适用边界记录在 [首个 Linux 原生验收记录](validation/linux-native-ubuntu-24.04-x64.md)，但该记录不是独立签名的生产 attestation。
+35. 完成 **进程控制逐操作可靠性**：stdin、PTY resize、signal、terminate、adopt 均要求稳定 `operationId`，生产 Execution Node 在产生副作用前以有界 SQLite 账本原子 claim，完成后保存可回放响应；换内容复用 ID、仅有 claim、持久记录损坏均 fail closed。该能力最初曾通过远程 TLS 子进程验证提交后、响应前 SIGKILL；第 36 项撤回远程链后，只保留适用于本机 IPC 断开、Execution Node 或应用崩溃的逐操作身份、节点账本和回放语义。
+36. 完成 **远程 Execution Node 定向撤回与本机主链收口**：删除远程 trust wrapper、TLS/证书固定分支、远程派发围栏与对账控制面、Foundation 远程配置入口、跨主机测试夹具及发布门禁；RPC 地址收窄为用户本机命名管道，不再暴露 TCP/TLS 地址类型。保留本机进程隔离所需的 RPC token、并发/帧/截止门禁、逐操作 `operationId` 与 SQLite 节点账本、PTY/signal/terminate/adopt，以及 Linux 原生 helper。新数据库不创建远程表；旧数据库可能保留无人读取的历史表，不做破坏性删表。
+37. 完成 **本机 Execution Node 发布身份、启动健康与关闭清场闭环**：新增严格 `traceforge-native-helper-release-v1` 清单，Linux/Windows 构建原子写入平台、x64、后端、协议、文件名和 helper SHA-256，桌面出包与运行时共用校验；打包启动强制要求相邻清单。启动预检结构化区分平台/架构、缺件/权限、清单漂移、Linux runtime 配置和 native probe 失败，Linux 先执行受控残留恢复并报告清理数量。`/api/health` 暴露无路径/无秘密的节点状态，每次检查重新量取 helper，运行中替换立即降级且 Launcher 继续逐执行 fail closed。节点关闭先停 RPC，再等待并发启动收敛、强制终止全部受管进程树并要求有界退出证明；进入关闭后拒绝新进程。桌面更新关闭“下载后随普通退出自动安装”，避免未经明确操作切换 helper generation；安装器级旧版本自动回退尚未实现。
+38. 完成 **本机进程控制跨宿主崩溃矩阵**：新增独立真实 Node 宿主、用户本机 pipe、真实 SQLite/WAL 和确定性受管进程副作用夹具，对 stdin、PTY resize、signal、terminate、adopt 五类操作分别在“claim 已提交、尚未执行”和“副作用及完成响应已提交、RPC 尚未回复”两个边界执行 `SIGKILL`。新宿主以相同节点身份重开账本后，前者保持结果未知且副作用为零，后者精确回放已提交响应且副作用仍为一次；adopt 同时证明新 token 不会因重放再次轮换。该夹具证明本机 IPC、逐操作账本和新宿主恢复语义，不冒充 Linux/Windows 原生沙箱验收，也不引入远程节点。
+39. 完成 **本机执行底座生产闭环的仓库实现**：Linux helper 协议提升到 2，新增与 Windows 共用控制器语义的 framed PTY，复用原有原子 cgroup 加入、namespace/tmpfs 文件边界、seccomp、资源监督、`PDEATHSIG` 和空树屏障；生产 Service 同时装配 Linux stdio/PTY，并在每次启动前重验 helper measurement。Linux 原生验收入口从 16 类扩为 19 类，增加输入/resize/terminate、Ctrl-C 与 close-input/EOF；当前 macOS 已通过 Rust 9 项、Linux x64 完整交叉检查和 TypeScript 合同，协议 2 的 Linux 实机重跑仍是发布门槛。逐操作 SQLite 账本新增 24 小时默认热保留、有界 gzip 归档、精确透明回放、摘要/解压上限/损坏拒绝、活跃/总量/字节/物理空间准入与无秘密健康摘要；未知 claim 永不归档。归档提交前后两类真实 `SIGKILL` 证明重启只出现完整热记录或完整归档。Foundation 边界固定 PTY、操作归档与故障门禁；完整 `verify:foundation` 110 文件/1,555 项通过。本批不包含远程节点、桌面更新、具体场景或应用 UI。
+40. 完成 **受控扩展装配与信任生命周期闭环**：新增统一、无秘密的 `traceforge.extension-assembly.v1`，以精确 Package、Skill、Knowledge、MCP Tool/Context Profile、Package Process Provider 和 Managed Tool Provider 单元记录内容/契约摘要、生命周期状态及依赖闭包；不可变 Profile 身份、装配快照、单调 activation 和活动指针进入有界 SQLite 与物理空间准入。MCP Tools 不再是宿主全局能力，Profile 必须声明精确 Package 版本，能力名相同的另一个 Package 也不能借用；相同 reviewVersion 不能换身份或扩权。MCP Tool/Context Profile 新增默认拒绝、逐次授权、不可变且重启保留的精确撤销，执行链在发现/启动/发送/响应各关键边界复查，撤销后不启动新进程、不缓存或投递返回。低版本 Profile 默认拒绝，只能凭受信宿主的整代 Deployment rollback 同步证明记录回退；可信部署清单新增必填 `extension_assembly` 组件。现有 Managed Provider 的签名 manifest、签名者与 installed/enabled/draining/disabled/quarantined/failed/collected 状态会在成功控制命令后同步更新同一 Assembly generation，直接存储变化也会在读取时对账，不把本机安装路径写入清单。Package Process 单元同时固定签名 runtime manifest 与 Host 启动材料摘要，原始路径/环境不落库，同一 Package 版本偷换启动配置会在执行前拒绝。Provider 状态提交、排空/失败补偿、装配同步和启动恢复之间的 26 个真实 `SIGKILL` 窗口均在新宿主对账到完整 generation；装配活动指针切换强杀也只保留旧代或完整新代。历史容量新增默认拒绝、逐次授权的同库有界 gzip 归档，保留活动代和最近 32 个热代，旧 activation/snapshot 只有在归档正文、摘要、索引和审计同事务提交后才释放，并可按 generation 完整校验回读；这不是独立冷对象库或备份。回归还覆盖运行中撤销、跨 Package 拒绝、Provider 状态代次、进程启动材料替换、隐式降级、归档重放/冲突/热窗口保护和审计不可改写。本批没有添加场景常量、远程节点、账号/租户或桌面更新。
+41. 完成 **生产 Scenario 工具执行强制进程化**：Foundation 和 `GovernedExecutionSources` 默认在调用 `createToolSources` 前拒绝任何同进程 Scenario 工具工厂，已审核签名不构成绕过理由；生产工具正文只能声明 `ScenarioProcessManifest`，经本机 Execution Node、真实沙箱证明、持久监督、共享容量和 Package Capability Broker 运行。SDK 直接 `toolSources` 也改为逐调用显式开发 opt-in，防止其他组合根误用；Foundation 的兼容开关默认关闭并在容量诊断中明确显示 `disabled/development_opt_in`。中性回归证明默认拒绝时工厂调用次数为零，明确开发夹具仍可运行，正式 Scenario Process 的宿主 State 能力、版本归属、重启回执去重和运行期撤销保持有效。本批不修改应用层或任何具体安全场景。Package Definition、授权解析与 Output Schema 回调仍是可信宿主编译代码，尚未声明式化，因此本项不能扩大表述为“任意 Package JavaScript 已隔离”。
+42. 完成 **生产 Scenario 授权、输出和证据映射声明式化**：SDK 新增 `traceforge.scenario-scope-policy.v1` 与 `traceforge.scenario-output-contract.v1` 固定解释器。Scope 只可声明静态允许/拒绝动作、有界 JSON 和固定值/`payloadPath` 资源规则；Output 固定 kind/version、摘要/引用容量及引用前缀，并可用白名单 selector 映射证据字段。未知字段、未知 selector、非 JSON、递归/字节/数量越界和未授权资源均 fail closed，不支持表达式、正则或任意转换代码。完整合同进入 Package 信任摘要、Scope 固定绑定和 Run 迁移兼容判断，相同 kind/version 但规则不同也拒绝。Foundation 生产默认拒绝旧 `parseScope`、`authorizeResource`、`validate`、`mapToEvidence` 回调，并以 `legacyScenarioContracts: disabled/development_opt_in` 暴露唯一显式测试/迁移兼容开关；与生产同进程工具工厂门禁相互独立。本批仍不修改应用层和具体安全场景。
+43. 完成 **签名纯数据 Scenario Package 描述文件加载链**：新增 `traceforge.scenario-package.v1`，用 `scenario.json` 表达 Package/Definition、声明式 Scope/Output、Skill/Knowledge/MCP 引用和 Scenario Process 清单。SDK 解析器限制 1 MiB/32 层并逐层拒绝未知字段、回调、表达式、非法类型和路径逃逸，复用 Registry 校验引用后深冻结整个对象。Server 加载器只从真实绝对审核根读取清单声明的 `scenario.json`，使用 `O_NOFOLLOW`、字节数和 SHA-256 防替换；进程 `package://` 入口必须是材料唯一 `entry`，本地 Skill/Knowledge/迁移资源必须对应摘要一致的 `data` 文件。描述身份同时匹配材料和审核，官方加载对象保留内存来源证明，因此无需宿主再手写 `assertAssembly`；手工旧对象继续要求显式关联。Foundation 提供与预装 Registry 互斥的加载开关，并立即进入原有签名、当前信任、撤销、Extension Assembly、Execution Node 和运行时复检；失败版本隔离且不启动。描述文件不能选择宿主可执行程序、环境、权限、资源上限或沙箱后端。本批没有应用层、具体场景、下载器、远程节点或桌面更新改动。
+44. 完成 **底座完成度审查与数据包资源生产接线收口**：沿 Foundation 真实组合路径核对 Package、Skill/Knowledge、MCP、Scenario Process、迁移、Model、Tool、Execution 与恢复能力，修复数据描述包仍需宿主重复提供本地正文和迁移信任的断链。当前受信的本地 Skill、Knowledge 和 migration data 会从同一审核材料自动读取，复核安全相对路径、data 角色、单文件 64 KiB、稳定 inode/size/mtime、SHA-256 和严格 UTF-8，再进入既有不可变 Context/迁移存储；加载后替换、路径逃逸、摘要错配均拒绝。外部 MCP Profile、进程可执行程序/权限/沙箱及模型配置仍由可信宿主提供，防止 Package 自行扩权。审查确认 Core/Foundation 已达到首个真实场景接入条件；`main.ts` 的 Web 硬编码和旧 MCP 直连是下一阶段应用装配欠账，本批按冻结边界未修改。详见 [通用安全智能体底座完成度审查](architecture/foundation-completion-audit.md)。
+45. 完成 **首个 Web 黑盒场景的数据化、进程化接入**：应用组合根删除 `WEB_BLACKBOX_PACKAGE`、Web Host Capability 和生产依赖，不再默认创建 Web Session/Traffic Adapter；新增严格 `traceforge.scenario-host.v1` 本机部署配置，缺失时零场景启动，从中装配审核材料、公钥与 Scenario Process 启动 Profile。Web `0.2.0` 以 `scenario.json` 声明 Definition、Scope、Output/Evidence、Skill、Knowledge 和进程清单，子进程提供 Scope Snapshot 与有界 HTTP 请求；HTTP 先经精确资源授权，再通过新增的通用 `traceforge.scenario.execution@1` Host 能力进入本机 Execution Node，沿用 Case/Run/Work/Worker/lease、权限、截止、响应容量和网络回执，不获得裸网络或底座对象。离线 `scenario:package` 命令可复制精确材料、生成 SHA-256 清单、Ed25519 审核和宿主 sidecar，私钥不随包交付。回归覆盖零配置、严格宿主配置、组合根无 Web import、真实描述解析、独立子进程反向授权/HTTP，以及主服务从临时签名安装加载真实 Web Definition。本批没有远程节点、多用户、桌面更新、浏览器直连或漏洞特判。
+46. 完成 **Web 黑盒结构化 HTTP 探索与证据闭环**：Web Package 进程新增 `web.surface.explore`，一次调用最多执行 8 个受控 GET；在场景内完成 HTTP(S) URL 规范化、同源 `href/src/action` 发现、去重队列、内容类型判断、正文摘要、外部 origin 清单和明确覆盖统计。每个 URL 都独立申请 `network.url` 授权，经本机 Execution Node 获得 Network Receipt，再记录带正文摘要哈希的 Artifact 与 Evidence；每个尝试后把队列、已访问项、观察和跳过项通过 revision CAS 写入 Package 私有 State，新进程可从相同 Run 续跑。队列、历史、链接、摘要和响应均有硬上限，正文不复制进场景状态。SDK 仅新增领域无关的显式词法前缀资源选择器，底座不解释 URL/路径语义；Web 包用预先规范化的 `urlPrefixes` 表达授权范围。本批没有 Browser、登录凭据、漏洞 Payload、应用 UI、远程节点或多用户逻辑。
+47. 完成 **Web 黑盒受控认证会话与脱敏流量闭环**：Web Package 升至 `0.3.0`，新增身份目录、Session 打开/请求、认证探索和当前 Run 流量快照。Package 只接收 Scope 允许的身份/Session 描述符和命名秘密句柄；Vault 中的秘密头、Cookie、表单/JSON 字段只在 Host 内解密、按显式 URL 前缀和 Cookie 规则注入，短期文本值以最多 16 个精确分隔符捕获并加密回写，场景进程只收到名称。每次 Session 使用重验 Case/Run/Scope/身份版本/有效期/当前租约，同一 Session 不能跨有效租约并发转交；撤销或失效会冻结。认证响应移除 `Set-Cookie` 并替换已知秘密，Traffic 只保留请求头存在性、秘密模板或正文摘要以及身份版本、Network Receipt 和 Run 归属。通用 SDK/Foundation 只增加声明式 Session/Traffic 能力 ID 和按 Package 声明的惰性 Adapter，不包含登录流程或 Web 字段语义；旧应用身份路径未在本批迁移。本批没有 Browser、应用 UI、远程节点、多用户或漏洞特判。
 
-当前明确边界：真实工具效果、pending receipt/checkpoint 的精确持久化和控制面终态提交必须留在可信 `WorkerHost`，因为这些动作依赖租约、执行权和宿主存储；Agent Runtime 已拥有通用认知/Observation 策略，但当前 checkpoint 文档类型仍定义在 Worker Runtime，framework-only Harness 还不能仅凭通用 Agent Journal 跨宿主恢复。Artifact/State 已是通用资料能力，但不把任意同进程 Scenario JS 说成已被 OS 沙箱隔离。
+### 2026-09-02 排期决定：暂缓桌面软件更新系统
 
-下一明确开发优先级：**版本化 Agent Execution Journal + Host Adapter 整体批次**。把 checkpoint 中与“智能体思考过程”有关的回合、Intent、Observation、连续失败、已提交调用和终止原因整理成 Agent Runtime 定义的版本化 Journal；WorkerHost 只负责把 Journal 与租约/pending receipt 对齐、持久化并向控制面提交。整批同时交付旧 checkpoint 迁移、命令幂等、容量上限、损坏拒绝、framework-only 存储更换与重启恢复、生产强杀窗口回归，再同步边界门禁和文档。仍不开发应用层、Web Browser、代码审计、内网横向或其他具体场景。
+- 暂不开发桌面自动更新、下载管理、相邻旧版本保留、更新后首次启动确认或安装器级自动回退。
+- 现有 helper 发布清单和运行时摘要校验继续保留，因为它们也用于确认当前本机安装材料没有缺失、错配或被替换，不依赖自动更新系统。
+- `autoInstallOnAppQuit=false` 继续作为安全默认值，防止已下载内容在普通退出时静默切换；不据此宣称桌面更新闭环已经实现。
+- 只有用户以后明确恢复桌面更新需求时，才重新规划安装器、平台签名、失败回退与撤销流程；当前不为它继续建设代码。
 
-通俗作用：这批已经让智能体知道“这个工具请求是不是重复、工具结果算成功/失败/待审批、连续失败到哪一步必须停”，并给所有未来安全场景准备了按包隔离、重启不丢的通用资料柜。下一批要做的是统一“工作日记格式”：无论以后 Worker 跑在本机进程、受控沙箱还是别的宿主，只要读到同一份 Journal，就知道上次想到哪、哪个调用已经做过、哪个结果还没确认，避免换宿主或重启后重复执行有副作用的安全操作。
+### 2026-09-02 产品范围决定：不提供远程 Execution Node
+
+- 产品唯一执行主链固定为“本机应用 → 本机 Execution Node → 本机原生沙箱 → 安全工具”；本机 RPC 仍用于进程/权限边界，不等于远程服务器。
+- Linux VPS 只用于验证 Linux namespace、cgroup、seccomp、AppArmor、崩溃清理和发布产物，不是安装、运行或授权 TraceForge 的依赖。
+- 保留原生沙箱、本机 Execution Node、本机 RPC、PTY/signal/terminate/adopt，以及逐操作 ID/节点账本；这些能力对本机 IPC 断线、应用崩溃和副作用去重仍然必要。
+- 已定向撤回仅服务远程部署的 TLS 双向认证、远程证书固定、Ed25519 远程节点世代证明、Host 侧远程派发围栏/管理路由及跨主机测试装配；引用和数据库建表已审计，新库不再创建远程表，旧库历史表不做破坏性删除。本机共用能力未回滚。
+- 历史完成记录继续如实保留，不能把已经实现和验证过的远程代码改写成“从未存在”；但它不再计入当前产品完成度，也不进入后续发布门禁。
+
+当前明确边界：Agent Journal 已与宿主存储解耦，但真实工具效果、pending receipt、pending Control command 和控制面提交仍必须留在可信 `WorkerHost`，因为它们依赖租约和执行权。Artifact/State 已是通用资料能力；生产 Scenario 工具正文已强制进入进程型 Package 和 OS-backed Execution Node，实际隔离强度仍取决于部署主机通过验收的原生后端。Package 授权、输出校验和证据映射已由固定解释器读取有界数据合同，生产默认不执行对应 Package 回调；官方 `scenario.json` 加载链可从签名材料构造冻结 Package，手工旧对象仍由受信宿主代码装配。macOS 测试启动器不能冒充 Windows 原生实机认证。
+
+刚完成的里程碑：**本机执行底座生产闭环（仓库内部分）**。五类控制身份、Linux stdio/framed PTY、宿主/helper 异常清理、长期逐操作账本、归档中断恢复、容量健康、生命周期与发布门禁已经在同一轮完成并通过完整 Foundation 回归。当前不能在 macOS 伪造的两项仍如实保留为发布外部门槛：Ubuntu x64 重跑协议 2 的 19 类原生矩阵，以及 Windows restricted-token/AppContainer 的 stdio/ConPTY 双模式实机验收。它们不引入远程产品节点。
+
+受控扩展装配与信任生命周期里程碑现已完成：统一静态/动态身份、MCP 精确 Package 绑定、运行期撤销、显式整代回退、Managed Provider 对账、Package Process 启动身份、Provider/Assembly 强杀恢复和 Assembly 有界压缩历史已形成同一闭环。
+
+刚完成的新增底座边界包括：**生产 Scenario 工具执行强制进程化，以及授权/输出/证据合同声明式化**。签名审核后的 Package 也不能把工具工厂、Scope 解析器、资源授权器或输出映射回调直接放进 Server；正式工具只能走 Scenario Process，Host 内只解释有界数据。旧接口仅在测试/迁移显式开关下可用，并会在诊断中暴露。宽泛的统一 Extension Bundle 安装器因当前没有真实分发需求继续暂缓。
+
+底座完成度审查与仓库收口已经完成，不再默认增加新的控制层。审查按实际代码核对 Scenario/Core 边界、Runtime/Model/Tool/Context/Execution/恢复主链、生产默认配置和文档声明，并修复签名数据包本地资源正文仍需宿主重复配置的问题；“仓库实现/外部平台验收/场景阶段”清单已经落档。
+
+下一开发里程碑为：**Web 黑盒业务流程、参数与身份差异模型 + 单任务因果验证闭环**。在 Scenario Package 内把已观察请求组织为端点、参数、身份、页面状态和前后置步骤，形成可恢复的流程图；Research Worker 保留多个独立 Hypothesis 与排队任务，Validation Worker 一次只执行一个基线/变量/反事实对照，结果必须关联 Traffic、Network Receipt、Artifact 和 Evidence，不能因单次差异直接生成 verified Finding。先覆盖结构化 HTTP 流程，不提前解冻 Browser，不把 Web 语义写进 Core。
+
+里程碑完成标准不变：新扩展只靠声明的 Package/Skill/Knowledge/MCP/Provider 资源即可装配，不修改 Core 默认工具或场景常量；安装内容和运行内容可追溯到同一签名身份，撤销后新的模型上下文和工具调用立即停止使用，旧任务保留证据但不盲目重做；升级/崩溃/数据库重开不会留下半安装、半授权或被误释放的未知外部占用；完整 `verify:foundation` 与相关跨进程强杀门禁通过。真实模型与 24/72 小时长稳仍按用户要求暂缓，实机平台门槛另行执行。
+
+通俗作用：现在底座已经有一块可信“总配电板”——某个 MCP 连接只给指定 Package 用，被撤销后会真的断电；Provider 安装、启用、排空、隔离或失败都会形成可追溯代次；进程实际采用的启动配置也钉在总图上。即使断电发生在 Provider 与总图切换之间，重启也会自动对齐；旧总图太多时会先封装成可校验压缩档案，再释放热记录，而不是直接删历史。
+
+本批的实际作用：安全场景提供的工具代码现在不能再“坐进底座驾驶室”，即使它有签名也必须待在本机沙箱进程，只能通过受控窗口申请授权、写证据和读写自己的状态；它崩溃、卡死或被撤销时，不会直接带走 Server 进程。
+
+本批的实际作用：以前场景即使工具在隔离进程里，仍能通过几段“规则函数”进入 Server；现在这些函数换成底座只读的标准表格。场景只能写允许哪些动作、资源从 Scope 哪个固定字段取得、输出多大、引用必须以什么开头、怎样用固定字段生成证据，不能在这些位置夹带任意 JavaScript。
+
+本批的实际作用：现在已经把“开发者在宿主源码里手写并注册一个 Package 对象”改成“底座读取一份签名且只含数据的场景说明书”。以后新增代码审计、取证或红队场景时，不需要修改 Core 或编译场景装配回调；底座核对说明书、资源和程序文件完全匹配后，再把程序交给本机沙箱。
+
+本批的实际作用：智能体现在不只会“对一个地址发一次请求”，而是能在授权范围里有秩序地认识一个站点：知道发现了哪些页面、每条观察来自哪次真实响应、还剩多少没覆盖；进程崩溃后也能从保存的队列继续，不会从头乱扫。
+
+本批的实际作用：智能体现在能检查“登录后才能看到”的内网页面，但密码、Token、Cookie 不交给模型，也不会散落在普通日志里。会话被撤销或任务失去执行权时会立即冻结，同时能追溯某条流量使用了哪个受控身份。
+
+下一批的实际作用：让智能体不再把页面和请求看成互不相干的碎片，而是理解“登录 → 查询 → 修改”这类连续业务流程，并在相同请求上比较两个受控身份或一个变量变化前后的结果。实际排查越权或业务逻辑问题时，它会先保存多个可疑点，再一次验证一个，只有差异可重复、原因和影响都成立才形成漏洞结论。
 跨角色结构化 lineage、有界压缩生命周期及压缩事实协议已实现，但任意文本污染追踪、真实语义质量与全部事件历史冷热归档/扩容未完成。
-用户取消信号与 Discovery/RPC 截止已接线，任意远端进程强制停止和可信清理仍不可一概保证；
-永久键/上下文规模扩展、任意同进程插件的隔离、桌面受信宿主桥接/远程管理、多活/多节点配额、混合资产包迁移及签名轮换仍为显式缺口。
+用户取消信号与 Discovery/RPC 截止已接线，本机原生进程的强制停止与可信清理仍须继续扩大平台实机证明；
+永久键/上下文规模扩展、桌面本机受信宿主桥接、混合资产包迁移及签名轮换仍为显式缺口。签名数据化 Scenario Package 加载已完成；生产 Scenario 工具工厂与授权/输出回调已禁止同进程执行。远程管理与多活/多节点配额已排除出产品范围，不再列作缺口。
 
 独立平台发布门槛仍是 Windows 双模式实机验收，以及原生可信报告签发/独立通道与 profile 残留恢复；需要真实 Windows 主机，
 不能用当前 macOS 的 Node 子进程测试或源码交叉检查替代。未满足时继续关闭默认原生信任，不影响本机继续推进通用可靠性工作。
@@ -1881,8 +1961,8 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
 本批让“同样写着 1.0 版”不再足以放行：审核文件被替换、丢失或撤销会阻止后续受控使用；文件和内存对象的对应仍须可信宿主确认，不等于系统沙箱。
 本批解决“包已经不可信，但旧任务不能只剩一个报错”：仍能查看它做过什么、安全叫停并核实哪些外部动作尚未结束，保留证据与历史，不误当成已经清理干净。
 本批解决“任务跑得越久，重启和查历史越吃力”的一部分：旧事件可分段保存，用可核验状态快照接上尾部；查证仍按原顺序找回事实，不靠模型摘要猜进度，不重复执行旧动作。压缩档案仍需校验，因此不是恒定时间恢复。
-下一步解决“电脑或数据库出了问题，能不能把工作找回来”：准备经过校验的备份，在新位置验证恢复，并保留哪些外部动作还没核实的记录；不能因为恢复了一份旧备份，就再次执行可能已经做过的动作。
+此前“电脑或数据库出了问题，能不能把工作找回来”的灾难恢复批次已经完成仓库实现：备份在隔离位置校验恢复，未核实的外部动作继续保留未知围栏，不因恢复旧备份而自动重做。当前下一里程碑以本节上方的受控扩展装配与信任生命周期为准。
 单用户前提保持不变：不开发账号/租户系统。管理端口只需与模型和工具进程隔离，actor 继续作为本人操作的审计说明。
 以后换安全场景仍然是换技能、资料和工具包，不把场景写死进底座。等用户提供配置后，再检查真实模型是否能读懂任务和工具结果。
 现有离线回归只证明预设输入下的运行机制；暂缓联调不等于真实模型已验收，跳过长跑也不等于连续多日稳定性已验收。
-应用和具体场景继续冻结。
+通用底座继续冻结；具体场景只通过审核 Package 边界推进。

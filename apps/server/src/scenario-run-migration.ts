@@ -123,8 +123,8 @@ export class ScenarioRunMigrationControl {
         if(!work.latestCheckpoint)continue;
         const checkpoint=validateWorkerCheckpoint(await this.checkpoints.load(work.latestCheckpoint.payloadRef));
         bytes+=Buffer.byteLength(canonicalJson(checkpoint));if(bytes>16*1024*1024)throw new Error("Migration checkpoint budget exceeded");
-        if(checkpoint.version!==2 || checkpoint.caseId!==state.caseId || checkpoint.runId!==state.id || checkpoint.workId!==work.id
-          || checkpoint.workKey!==work.idempotencyKey || checkpoint.pendingInvocation)throw new Error("Migration requires an intact v2 checkpoint without a pending invocation");
+        if(![2,3].includes(checkpoint.version) || checkpoint.caseId!==state.caseId || checkpoint.runId!==state.id || checkpoint.workId!==work.id
+          || checkpoint.workKey!==work.idempotencyKey || checkpoint.pendingInvocation)throw new Error("Migration requires an intact current checkpoint without a pending invocation");
         this.bindings.validateCheckpoint({runId:state.id,leaseId:checkpoint.leaseId,leaseExpiresAt:this.now(),runRevision:state.revision,work,
           runContext:{caseId:state.caseId,goal:state.goal,scopeRef:state.scopeRef,activePhaseId:state.activePhaseId,directives:state.directives}},checkpoint);
         checkpointHashes.push(hash(checkpoint));

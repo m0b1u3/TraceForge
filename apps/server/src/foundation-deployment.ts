@@ -13,7 +13,7 @@ const text = z.string().trim().min(1).max(1024);
 const secretReference = z.string().regex(/^host-secret:\/\/[a-zA-Z0-9][a-zA-Z0-9_./-]{0,255}$/);
 const componentKind = z.enum([
   "foundation", "database_schema", "native_helper", "trust_root", "scenario_package", "skill",
-  "knowledge_resource", "mcp_provider", "model_configuration", "capacity_policy", "recovery_identity",
+  "knowledge_resource", "mcp_provider", "extension_assembly", "model_configuration", "capacity_policy", "recovery_identity",
 ]);
 const componentSchema = z.object({ kind: componentKind, id, version: text, digest, required: z.boolean() }).strict();
 export const foundationDeploymentInventorySchema = z.object({

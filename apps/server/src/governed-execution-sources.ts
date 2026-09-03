@@ -3,10 +3,14 @@ import { randomUUID } from "node:crypto";
 import type { ExecutionNode, BrokeredHttpRequest } from "@traceforge/execution-node";
 import type { ScenarioPackageRegistry, ScenarioToolHostContext } from "@traceforge/scenario-sdk";
 import { waitForCancellation, type ExecutionSourcePolicy, type ExecutionToolDiscoverySource,
-  type GovernedExecutionPort, type GovernedExecutionSourceRegistration, type ToolExecutionContext } from "@traceforge/worker-runtime";
+  ScenarioProcessRuntime, type ScenarioProcessLaunch, type GovernedExecutionPort, type GovernedExecutionSourceRegistration, type ToolExecutionContext } from "@traceforge/worker-runtime";
 import { ExecutionNodeProcessTool } from "./worker-execution-adapters.js";
 import type { ProcessCapacityInput, ProcessExecutionCapacity } from "./process-execution-capacity.js";
 import type { ToolProviderInstallation } from "./tool-provider-control-plane.js";
+import { createScenarioProcessCapabilityHandlers } from "./scenario-process-capabilities.js";
+import type { SqliteScenarioProcessSupervisionStore } from "./scenario-process-supervision.js";
+import type { ExecutionSessionGateway } from "./execution-session-gateway.js";
+import type { SqliteScenarioTrafficStore } from "./scenario-traffic-store.js";
 
 interface Scope {
   token: object;
@@ -24,10 +28,17 @@ interface Scope {
 export class GovernedExecutionSources {
   private readonly scopes = new AsyncLocalStorage<Scope>();
   private readonly coverage = new Map<string,{ source: string; version: string; process: string; origin: string }>();
+  private readonly scenarioProcesses = new Map<string, ScenarioProcessRuntime>();
 
-  constructor(private readonly node: ExecutionNode | undefined, private readonly capacity: ProcessExecutionCapacity) {}
+  constructor(private readonly node: ExecutionNode | undefined, private readonly capacity: ProcessExecutionCapacity,
+    private readonly scenarioSupervision?: SqliteScenarioProcessSupervisionStore) {}
 
   diagnostics() { return [...this.coverage.values()].map(item => ({ ...item })); }
+
+  revokeScenarioPackage(id: string, version: string, reason: string): void {
+    const runtime = this.scenarioProcesses.get(`${id}\u0000${version}`);
+    if (runtime) void runtime.revoke(reason).catch(() => undefined);
+  }
 
   register(registration: GovernedExecutionSourceRegistration): ExecutionToolDiscoverySource {
     const policy = this.policy(registration), source = validText(registration.source);
@@ -47,14 +58,48 @@ export class GovernedExecutionSources {
   }
 
   scenarioSources(registry: ScenarioPackageRegistry, context: Omit<ScenarioToolHostContext,"execution">,
-    policies: Readonly<Record<string, ExecutionSourcePolicy>> = {}): ExecutionToolDiscoverySource[] {
-    const sources: ExecutionToolDiscoverySource[] = [], seen = new Set<string>(), consumed = new Set<string>();let quarantined=false;
+    policies: Readonly<Record<string, ExecutionSourcePolicy>> = {},
+    launches: Readonly<Record<string, ScenarioProcessLaunch>> = {},
+    allowInProcessDevelopment = false,
+    processServices: {sessions?:ExecutionSessionGateway;traffic?:SqliteScenarioTrafficStore} = {}): ExecutionToolDiscoverySource[] {
+    const sources: ExecutionToolDiscoverySource[] = [], seen = new Set<string>(), consumed = new Set<string>(), consumedLaunches = new Set<string>();let quarantined=false;
     for (const installation of registry.list()) {
       if(registry.bindingStatus(registry.bindingFor(installation),installation.definition.kind,installation.definition.version).status!=="available"){quarantined=true;continue;}
+      if (installation.runtime) {
+        if (seen.has(installation.runtime.source)) throw new Error("Duplicate Scenario execution source");
+        seen.add(installation.runtime.source);
+        const launch = launches[installation.runtime.source];
+        if (!launch) throw new Error(`Scenario Process ${installation.runtime.source} requires trusted Host launch material`);
+        if (!("attribution" in launch) || !this.node || !this.scenarioSupervision) {
+          throw new Error(`Scenario Process ${installation.runtime.source} requires Execution Node and durable supervision`);
+        }
+        consumedLaunches.add(installation.runtime.source);
+        const declared = Object.hasOwn(policies, installation.runtime.source) ? policies[installation.runtime.source] : undefined;
+        if (declared) {
+          consumed.add(installation.runtime.source);
+          const policy = this.policy(declared);
+          if (policy.version !== installation.version || policy.process !== "governed") throw new Error("Scenario Process policy identity mismatch");
+        }
+        const runtime = new ScenarioProcessRuntime({ manifest: installation.runtime, launch,
+          capabilityHandlers: createScenarioProcessCapabilityHandlers(installation, context, undefined, this.node,processServices.sessions,processServices.traffic)
+            .filter((handler) => installation.runtime!.hostCapabilities.includes(handler.capability)),
+          transport: { allowUnsandboxedDevelopment: false }, assertAvailable: () => registry.assertAvailable(installation),
+          scheduler: this.capacity.scheduler, executionNode: this.node, supervision: this.scenarioSupervision,
+          processCapacity:{acquire:(generation,attribution)=>this.capacity.acquire({source:installation.runtime!.source,
+            version:installation.version,operation:`scenario-process:generation:${generation}`,kind:"service",attribution})} });
+        this.scenarioProcesses.set(`${installation.id}\u0000${installation.version}`, runtime);
+        this.coverage.set(runtime.source, { source: runtime.source, version: installation.version,
+          process: "governed", origin: "scenario_process" });
+        sources.push(runtime);
+        continue;
+      }
+      if (!allowInProcessDevelopment) {
+        throw new Error(`Scenario Package ${installation.id}@${installation.version} cannot execute in the trusted Host; declare a Scenario Process runtime`);
+      }
       const token = Object.freeze({});
       // Policy is selected by the active source scope, never by the package calling the port.
       const port = this.port(token);
-      const adapters = installation.createToolSources({ ...context, execution: port });
+      const adapters = installation.createToolSources!({ ...context, execution: port });
       for (const adapter of adapters) {
         if (seen.has(adapter.source)) throw new Error("Duplicate Scenario execution source");
         seen.add(adapter.source);
@@ -69,6 +114,7 @@ export class GovernedExecutionSources {
       }
     }
     for (const source of Object.keys(policies)) if (!consumed.has(source) && !quarantined) throw new Error(`Unknown Scenario execution policy: ${source}`);
+    for (const source of Object.keys(launches)) if (!consumedLaunches.has(source) && !quarantined) throw new Error(`Unknown Scenario Process launch material: ${source}`);
     return sources;
   }
 

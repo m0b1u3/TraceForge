@@ -7,6 +7,7 @@ import { z } from "zod";
 import { canonicalJson, type ScenarioPackageBinding } from "@traceforge/orchestration-core";
 import { ScenarioPackageRegistry, type ScenarioPackageInstallation } from "@traceforge/scenario-sdk";
 import { waitForCancellation } from "@traceforge/worker-runtime";
+import { assertScenarioPackageDescriptorAssembly, isScenarioPackageDescriptorAssembly } from "./scenario-package-descriptor-loader.js";
 
 const text=z.string().trim().min(1).max(256),digest=z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const binding=z.object({id:text,version:text,schemaRevision:z.number().int().positive()}).strict();
@@ -28,20 +29,25 @@ export interface ScenarioPackageTrustOptions {
   assertAssembly?:(installation:ScenarioPackageInstallation,review:ScenarioPackageReview)=>void;
   revokeAuthorizer?:{authorize(request:RevocationRequest):Promise<{decision:"allowed";authorizationRef:string;expiresAt:string}|{decision:"denied"}>};
   allowUnreviewedDevelopmentPackages?:boolean;
+  /** Trusted-host runtime hook. Revocation is already committed before this is called. */
+  onRevoked?:(binding:ScenarioPackageBinding,reason:string)=>void;
 }
 export const scenarioMaterialDigest=(value:unknown)=>`sha256:${createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
 const bytesDigest=(value:Buffer)=>`sha256:${createHash("sha256").update(value).digest("hex")}`;
 export function scenarioPackageContractDigest(pkg:ScenarioPackageInstallation):string {
   return scenarioMaterialDigest({id:pkg.id,version:pkg.version,schemaRevision:pkg.schemaRevision,definition:pkg.definition,
-    outputs:pkg.outputSchemas.map(s=>({kind:s.kind,version:s.version})),resources:pkg.resourceManifest??null,migrations:pkg.migrationManifest??null});
+    authorization:"format" in pkg.authorizationPolicy?pkg.authorizationPolicy:"legacy-host-callback",
+    outputs:pkg.outputSchemas.map(s=>"format" in s?s:{kind:s.kind,version:s.version}),resources:pkg.resourceManifest??null,migrations:pkg.migrationManifest??null,
+    runtime:pkg.runtime??null});
 }
 export function signScenarioPackageReview(payload:Omit<ScenarioPackageReview,"signature">,privateKeyPem:string):ScenarioPackageReview {
   const key=createPrivateKey(privateKeyPem);if(key.asymmetricKeyType!=="ed25519")throw new Error("Review signing requires Ed25519");
   return reviewSchema.parse({...payload,signature:sign(null,Buffer.from(canonicalJson(payload)),key).toString("base64")});
 }
 const versionKey=(pkg:ScenarioPackageBinding)=>canonicalJson([pkg.id,pkg.version]);
-const functions=(pkg:ScenarioPackageInstallation)=>[pkg.createToolSources,pkg.authorizationPolicy.parseScope,pkg.authorizationPolicy.authorizeResource,
-  ...pkg.outputSchemas.flatMap(s=>[s.validate,s.mapToEvidence])];
+const functions=(pkg:ScenarioPackageInstallation)=>[pkg.createToolSources,
+  ...("format" in pkg.authorizationPolicy?[]:[pkg.authorizationPolicy.parseScope,pkg.authorizationPolicy.authorizeResource]),
+  ...pkg.outputSchemas.flatMap(s=>"format" in s?[]:[s.validate,s.mapToEvidence])];
 interface Registration {root:string;manifest:ScenarioMaterialManifest;review:ScenarioPackageReview;contract:string;functions:unknown[]}
 
 /** Reads explicitly configured local material; never imports code, writes files, or fetches dependencies. */
@@ -109,12 +115,13 @@ export class ScenarioPackageTrustControl {
       if(!saved || saved.material_digest!==review.materialDigest || saved.contract_digest!==review.contractDigest || saved.binding_json!==canonicalJson(pkgBinding)
         || saved.manifest_json!==canonicalJson(manifest) || endorsement?.review_json!==canonicalJson(review))throw new Error("Package trust record integrity mismatch");}
     verifyMaterialFiles(registration.root,manifest);
-    if(!this.options.assertAssembly)throw new Error("Trusted host assembly attestation is missing");
-    const result:unknown=this.options.assertAssembly(pkg,structuredClone(review));
-    if(result!==undefined){void Promise.resolve(result).catch(()=>{});throw new Error("Host assembly attestation must be synchronous");}
+    if(this.options.assertAssembly){const result:unknown=this.options.assertAssembly(pkg,structuredClone(review));
+      if(result!==undefined){void Promise.resolve(result).catch(()=>{});throw new Error("Host assembly attestation must be synchronous");}}
+    else assertScenarioPackageDescriptorAssembly(pkg,{root:registration.root,manifest,review},review);
     if(scenarioPackageContractDigest(pkg)!==registration.contract || functions(pkg).some((f,i)=>f!==registration.functions[i]))throw new Error("Package changed during assembly attestation");
   }
-  snapshot(){return {mode:this.options.allowUnreviewedDevelopmentPackages?"development_opt_in":"review_required",automaticCodeLoading:false,arbitraryJavaScriptIsolation:false,
+  snapshot(){return {mode:this.options.allowUnreviewedDevelopmentPackages?"development_opt_in":"review_required",automaticCodeLoading:false,
+    dataDescriptorLoading:this.source.list().length>0&&this.source.list().every(isScenarioPackageDescriptorAssembly),arbitraryJavaScriptIsolation:false,
     packages:this.source.list().map(pkg=>{const registration=this.configured.get(versionKey(pkg));let status="reviewed_available",reason:string|null=null;
       try{this.registry.assertAvailable(pkg);if(!registration)status="development_unreviewed";}catch(error){status="recovery_required";reason=message(error);}
       return {package:this.source.bindingFor(pkg),status,reason,materialDigest:registration?.review.materialDigest??null,reviewRef:registration?.review.reviewRef??null};})};}
@@ -128,7 +135,7 @@ export class ScenarioPackageTrustControl {
     if(!material || material.binding_json!==canonicalJson(input.package))throw new Error("Reviewed Package binding not found");
     const grant=structuredClone(await waitForCancellation(()=>this.options.revokeAuthorizer?.authorize(structuredClone(input))??Promise.resolve({decision:"denied" as const}),AbortSignal.timeout(10000)));
     if(grant.decision!=="allowed" || !grant.authorizationRef.trim() || !(Date.parse(grant.expiresAt)>Date.parse(this.now())))throw new Error("Package revocation authorization denied or expired");
-    return this.sqlite.transaction(()=>{
+    const result=this.sqlite.transaction(()=>{
       if(!(Date.parse(grant.expiresAt)>Date.parse(this.now())))throw new Error("Package revocation authorization expired");
       const saved=this.sqlite.prepare("SELECT * FROM scenario_package_revocations WHERE command_id=?").get(input.commandId) as {request_hash:string;audit_hash:string;audit_json:string}|undefined;
       if(saved){if(saved.request_hash!==requestHash)throw new Error("Package trust command conflicts");const audit=JSON.parse(saved.audit_json);if(scenarioMaterialDigest(audit)!==saved.audit_hash)throw new Error("Package revocation audit is corrupt");return {audit,replayed:true};}
@@ -136,6 +143,9 @@ export class ScenarioPackageTrustControl {
       this.sqlite.prepare("INSERT INTO scenario_package_revocations VALUES (?,?,?,?,?)").run(material.material_digest,input.commandId,requestHash,scenarioMaterialDigest(audit),canonicalJson(audit));
       return {audit,replayed:false};
     })();
+    const notification:unknown=this.options.onRevoked?.(structuredClone(input.package),input.reason);
+    if(notification!==undefined){void Promise.resolve(notification).catch(()=>{});throw new Error("Package revocation hook must be synchronous");}
+    return result;
   }
 }
 function verifyMaterialFiles(root:string,manifest:ScenarioMaterialManifest):void {

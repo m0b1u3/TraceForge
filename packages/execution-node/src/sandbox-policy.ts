@@ -6,11 +6,14 @@ import { isAbsolute, join, win32 } from "node:path";
 import { allowsFileSystemPath, type EffectivePermissionProfile, type PermissionPathGrant } from "@traceforge/orchestration-core";
 import { permissionProfileFingerprint, resourceLimitsFingerprint, type StartProcessRequest } from "./protocol.js";
 import type { SpawnLaunchSpec } from "./runtime.js";
-import type { WindowsConptyLaunchSpec } from "./native-terminal.js";
+import type { NativeTerminalLaunchSpec, WindowsConptyLaunchSpec } from "./native-terminal.js";
 
 export interface SandboxPolicyCompilerOptions {
   windowsHelperPath?: string;
-  bubblewrapPath?: string;
+  linuxHelperPath?: string;
+  linuxCgroupRoot?: string;
+  linuxScratchRoot?: string;
+  backendMeasurement?: string;
   pathExists?: (path: string) => boolean;
   pathKind?: (path: string) => "file" | "directory" | "other";
 }
@@ -88,6 +91,7 @@ function windowsPolicy(
     profileArguments: windowsGrantArguments(request.permissions),
     enforcement: {
       sandboxBackend: "traceforge-windows-native",
+      backendMeasurement: options.backendMeasurement,
       sandboxed: true,
       filesystemPolicyApplied: true,
       permissionProfileFingerprint: permissionProfileFingerprint(request.permissions),
@@ -147,9 +151,95 @@ function terminateHelper(child: ChildProcessWithoutNullStreams): void {
 
 export function compileLinuxStdioSandboxLaunch(
   request: StartProcessRequest,
-  _options: SandboxPolicyCompilerOptions,
+  options: SandboxPolicyCompilerOptions,
 ): SpawnLaunchSpec {
   if (request.terminal) throw new Error("Linux stdio sandbox compiler does not provide a PTY");
+  const policy = linuxPolicy(request, options);
+  return {
+    executable: policy.helper,
+    arguments: [
+      "run", "--network", request.permissions.network, "--cwd", request.workingDirectory,
+      "--status-file", policy.statusFile, "--cgroup-root", policy.cgroupRoot, "--scratch-root", policy.scratchRoot,
+      ...resourceLimitArguments(request), ...policy.grantArguments,
+      "--", request.executable, ...request.arguments,
+    ],
+    workingDirectory: request.workingDirectory,
+    environment: policy.targetEnvironment,
+    detached: false,
+    windowsHide: true,
+    resourceLimitStatusFile: policy.statusFile,
+    enforcement: policy.enforcement,
+  };
+}
+
+export function compileLinuxPtySandboxLaunch(
+  request: StartProcessRequest,
+  options: SandboxPolicyCompilerOptions,
+): NativeTerminalLaunchSpec {
+  if (!request.terminal) throw new Error("Linux PTY sandbox compiler requires a terminal request");
+  const policy = linuxPolicy(request, options);
+  return {
+    helperExecutable: policy.helper,
+    helperEnvironment: policy.targetEnvironment,
+    modeArguments: [],
+    commandSeparator: ["--"],
+    profileArguments: [
+      "--status-file", policy.statusFile, "--cgroup-root", policy.cgroupRoot, "--scratch-root", policy.scratchRoot,
+      ...resourceLimitArguments(request), ...policy.grantArguments,
+    ],
+    enforcement: policy.enforcement,
+  };
+}
+
+function linuxPolicy(request: StartProcessRequest, options: SandboxPolicyCompilerOptions) {
+  if (request.permissions.network !== "deny") {
+    throw new Error("Linux native helper supports only denied process networking");
+  }
   assertCommon(request, "linux");
-  throw new Error("Linux process-tree resource limits require the managed cgroup execution backend; execution denied");
+  const pathExists = options.pathExists ?? existsSync;
+  assertExistingPolicyPaths(request.permissions, pathExists);
+  const helper = options.linuxHelperPath?.trim();
+  if (!helper || !pathExists(helper)) {
+    throw new Error("TraceForge Linux sandbox helper is missing; execution denied");
+  }
+  const cgroupRoot = options.linuxCgroupRoot?.trim();
+  const scratchRoot = options.linuxScratchRoot?.trim();
+  if (!cgroupRoot || !isAbsolute(cgroupRoot) || !scratchRoot || !isAbsolute(scratchRoot)) {
+    throw new Error("TraceForge Linux sandbox runtime directories are unavailable; execution denied");
+  }
+  const statusFile = resourceLimitStatusPath();
+  const grants = (kind: "read" | "write" | "deny", values: PermissionPathGrant[]) => (
+    values.flatMap((item) => [`--${kind}-${item.scope}`, item.path])
+  );
+  // The helper must not inherit host variables such as LD_PRELOAD. Only the encoded target map is exposed.
+  const targetEnvironment = Object.fromEntries(Object.entries(request.environment).map(([key, value]) => [
+    `TRACEFORGE_TARGET_ENV_${Buffer.from(key).toString("hex")}`,
+    Buffer.from(value).toString("hex"),
+  ]));
+  return {
+    helper, cgroupRoot, scratchRoot, statusFile, targetEnvironment,
+    grantArguments: [
+      ...grants("read", request.permissions.filesystem.read),
+      ...grants("write", request.permissions.filesystem.write),
+      ...grants("deny", request.permissions.filesystem.deny),
+    ],
+    enforcement: {
+      sandboxBackend: "traceforge-linux-native",
+      backendMeasurement: options.backendMeasurement,
+      sandboxed: true,
+      filesystemPolicyApplied: true,
+      permissionProfileFingerprint: permissionProfileFingerprint(request.permissions),
+      resourceLimitsApplied: true,
+      resourceLimitsFingerprint: resourceLimitsFingerprint(request.resources),
+      network: request.permissions.network,
+      atomicProcessTreeAssignment: true,
+      processTreeEmptyBarrier: true,
+      linux: {
+        namespaces: ["user", "mount", "pid", "ipc", "uts", "network"],
+        cgroupV2: true,
+        seccomp: true,
+        noNewPrivileges: true,
+      },
+    } satisfies SpawnLaunchSpec["enforcement"],
+  };
 }

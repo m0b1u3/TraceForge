@@ -27,7 +27,9 @@ function emitUpdateState(state: Record<string, unknown>): void {
 
 function configureUpdates(): void {
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // A downloaded release must be installed explicitly; quitting alone must not
+  // switch the native helper generation before the operator sees readiness.
+  autoUpdater.autoInstallOnAppQuit = false;
   const updateUrl = process.env.TRACEFORGE_UPDATE_URL?.trim();
   if (updateUrl) autoUpdater.setFeedURL({ provider: "generic", url: updateUrl });
   autoUpdater.on("checking-for-update", () => emitUpdateState({ status: "checking" }));
@@ -43,14 +45,19 @@ function configureUpdates(): void {
 
 async function start(): Promise<void> {
   if (process.platform === "win32" && app.isPackaged) {
-    process.env.TRACEFORGE_WINDOWS_SANDBOX_HELPER = join(
-      process.resourcesPath,
-      "native",
-      "win32-x64",
-      "traceforge-windows-sandbox.exe",
-    );
+    const helperRoot = join(process.resourcesPath, "native", "win32-x64");
+    process.env.TRACEFORGE_WINDOWS_SANDBOX_HELPER = join(helperRoot, "traceforge-windows-sandbox.exe");
+    process.env.TRACEFORGE_NATIVE_HELPER_RELEASE_MANIFEST = join(helperRoot, "release.json");
+    process.env.TRACEFORGE_REQUIRE_NATIVE_HELPER_RELEASE_MANIFEST = "1";
   }
   const paths = resolveDesktopPaths(app.getPath("userData"));
+  if (process.platform === "linux" && app.isPackaged) {
+    const helperRoot = join(process.resourcesPath, "native", "linux-x64");
+    process.env.TRACEFORGE_LINUX_SANDBOX_HELPER = join(helperRoot, "traceforge-linux-sandbox");
+    process.env.TRACEFORGE_NATIVE_HELPER_RELEASE_MANIFEST = join(helperRoot, "release.json");
+    process.env.TRACEFORGE_REQUIRE_NATIVE_HELPER_RELEASE_MANIFEST = "1";
+    process.env.TRACEFORGE_LINUX_SANDBOX_SCRATCH_ROOT = join(paths.root, "data", "linux-sandbox");
+  }
   ensureDesktopData(paths);
   const webRoot = app.isPackaged ? join(process.resourcesPath, "web") : resolve(moduleDirectory, "../../web/dist");
   server = await buildServer(paths.database, paths.mcpConfig, paths.llmConfig, paths.root, webRoot);

@@ -87,4 +87,21 @@ describe("SqliteScenarioAuthorizationService", () => {
       .toThrow("outside authorization");
     expect(() => service.requireAction("scope_1", "another_case", "fixture.read")).toThrow("assigned Case");
   });
+  it("interprets declarative scope and resource rules without invoking Package callbacks", () => {
+    const sqlite = getSqliteClient(createDb(":memory:"));databases.push(sqlite);
+    sqlite.prepare("INSERT INTO cases (id,name,status,scope_rules_json,created_at) VALUES (?,?,?,?,?)")
+      .run("case_2","Declarative","active","{}","2026-08-28T00:00:00.000Z");
+    sqlite.prepare(`INSERT INTO scenario_authorizations
+      (id,case_id,scenario_kind,scope_json,approved_by,status,expires_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,'active',?,?,?)`).run("scope_2","case_2",definition.kind,JSON.stringify({subjects:["first"]}),"operator",
+        "2027-08-28T00:00:00.000Z","2026-08-28T00:00:00.000Z","2026-08-28T00:00:00.000Z");
+    const pkg:ScenarioPackageInstallation={...scenarioPackage,authorizationPolicy:{format:"traceforge.scenario-scope-policy.v1",
+      allowedActions:["fixture.read"],deniedActions:[],payload:{maximumBytes:1024,maximumDepth:4},
+      resources:[{kind:"fixture.subject",payloadPath:["subjects"]}]},outputSchemas:[{kind:"first_output",version:1,
+        format:"traceforge.scenario-output-contract.v1",maximumSummaryBytes:1024,maximumRefs:8}]};
+    const service=new SqliteScenarioAuthorizationService(sqlite,new ScenarioPackageRegistry([pkg]),()=>Date.parse("2026-08-28T01:00:00.000Z"));
+    service.pin("scope_2","case_2",{id:pkg.id,version:pkg.version,schemaRevision:pkg.schemaRevision},0);
+    expect(service.authorizeResource("scope_2","case_2","fixture.read","fixture.subject","first").canonicalValue).toBe("first");
+    expect(()=>service.authorizeResource("scope_2","case_2","fixture.read","fixture.subject","second")).toThrow(/does not authorize/);
+  });
 });

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { ScenarioPackageBinding, ScenarioRunState } from "@traceforge/orchestration-core";
-import { ScenarioPackageRegistry, validateSkillRecord, type ScenarioPackageResource } from "@traceforge/scenario-sdk";
+import { authorizeScenarioResource, ScenarioPackageRegistry, validateSkillRecord, type ScenarioPackageResource } from "@traceforge/scenario-sdk";
 import { toolInvocationInputFingerprint, type ExecutionToolAdapter, type ExecutionToolDiscoverySource, type ToolExecutionContext, type ToolExecutionResult } from "@traceforge/worker-runtime";
 import type { PackageContextRemoteLoader } from "./mcp-context-loader.js";
 import { SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
@@ -161,12 +161,14 @@ export class PackageContextDiscoverySource implements ExecutionToolDiscoverySour
         || !info.requiredCapabilities.every((c) => capabilities.includes(c))
         || (info.phaseIds.length && !info.phaseIds.includes(phaseId))) return false;
       try {
-        const authorize = policyPackage.authorizationPolicy.authorizeResource;
-        if (!authorize || authorize(scope.payload, "context.resource", resource.id) !== resource.id) return false;
+        const authorize = (kind: string, value: string) => authorizeScenarioResource(policyPackage.authorizationPolicy,scope.payload,kind,value);
+        if (authorize("context.resource", resource.id) !== resource.id) return false;
         const external = info.external;
         if (external) {
-          if (this.remoteLoaders.get(external.source)?.profileDigest !== external.profileDigest
-            || authorize(scope.payload, `mcp.${external.kind}`, external.target) !== external.target) return false;
+          const loader = this.remoteLoaders.get(external.source);
+          if (loader?.profileDigest !== external.profileDigest
+            || authorize(`mcp.${external.kind}`, external.target) !== external.target) return false;
+          loader.assertAvailable();
           this.store.assertAvailable(run.scenarioPackage!, resource);
           this.store.hasContent(run.scenarioPackage!, resource);
         } else this.store.read(run.scenarioPackage!, resource);

@@ -30,6 +30,7 @@ interface Snapshot {
   acceptingSources: string[];
   activations: string[];
   activationFences: string[];
+  assembly: { state: string; generation: number; digest: string; unitCounts: { managed_provider: number }; managedDigests: string[] };
 }
 interface HostReport {
   checkpoint?: string;
@@ -119,6 +120,11 @@ describe("Provider activation cross-process crash recovery", () => {
     const recovered = await host(root, "recover", action, phase);
     expect(recovered.before.integrity).toBe("ok");
     expect(recovered.after.integrity).toBe("ok");
+    expect(recovered.after.assembly).toMatchObject({ state: "ready",
+      unitCounts: { managed_provider: recovered.after.installations.length } });
+    if (["lifecycle-committed", "admission-open"].includes(phase)) {
+      expect(crashed.snapshot.assembly.digest).not.toBe(recovered.after.assembly.digest);
+    }
     expect(recovered.before.activeVersions).toEqual([]);
     expect(delivery(recovered.before)?.status).toBe(committed ? phase === "delivery-completed" ? "completed" : "pending" : undefined);
     expect(recovered.before.events.filter((event) => event.commandId === "activation-command")).toHaveLength(committed ? 1 : 0);

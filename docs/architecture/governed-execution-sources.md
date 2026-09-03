@@ -5,8 +5,8 @@
 这是单用户安全智能体底座的执行边界，不是账号、租户或用户权限平台。
 自定义工具和 Scenario 不应因接入方式不同而绕过进程配额、任务归属、取消和重启围栏。
 
-本机制约束**宿主发放的执行端口**。同进程 JavaScript 工厂仍是需要审核的可信宿主代码：
-它可以自行 import `node:child_process`，也可能事先在闭包中持有外部注入的节点。
+本机制约束**宿主发放的执行端口**。生产 Scenario 工具工厂现已在调用前拒绝，只能使用进程型 Package。
+宿主自身显式编译和注册的 `governedToolSources` 仍是可信代码：它可以自行 import `node:child_process`，也可能事先在闭包中持有外部注入的节点。
 声明、类型和 AsyncLocalStorage 均不能阻止这种任意代码行为，不能声称已经实现恶意插件隔离。
 不可信可执行包必须使用受控的进程外 Provider/MCP 和经过验收的系统沙箱；不能把它当本机工厂加载。
 原生可信清理签发、Windows 双模式验收和 Linux 沙箱的既有缺口不因本批消失。
@@ -28,11 +28,11 @@
   没有此开关时，旧 `toolDiscoverySources` 非空或 `toolProviderSourceFactory` 存在即拒绝初始化。
   开关只表示承认未治理来源，不赋予生产安全保证；旧、新 Provider factory 不能同时配置。
 
-Scenario 工厂获得新增 `context.execution`。兼容字段 `context.executionNode` 不再是裸节点，
+旧 Scenario 工厂只在 `allowInProcessScenarioDevelopment=true` 的测试/迁移模式获得 `context.execution`；该开关默认关闭并进入诊断。
+兼容字段 `context.executionNode` 不再是裸节点，
 只保留绑定当前调用的 brokered HTTP；进程、文件、恢复/adopt、handshake 等原始方法全部拒绝。
-未声明的旧 Scenario source 采取**进程禁止**迁移模式，而不是宣称已审核、完全没有外部副作用。
-新增 Scenario 进程工具必须显式声明并使用 `context.execution.executeProcess`。
-本批未改具体场景工具实现；纯内存工具与旧 HTTP 场景不制造进程占用。
+生产模式不再装配旧 Scenario source；新增 Scenario 工具必须声明 Scenario Process runtime，并由 Execution Node 启动。
+Web 黑盒 `0.3.0` 已改用 Scenario Process，并通过 `traceforge.scenario.execution@1` 申请上述受控 HTTP；认证请求额外经 Package 声明的通用 Session/Traffic 能力使用宿主秘密句柄和脱敏历史，Web 规则仍只存在于场景包。旧同进程工具只保留为显式测试/迁移兼容路径。
 
 ## 操作边界
 
@@ -69,7 +69,7 @@ HTTP 节点接口没有独立 AbortSignal：限制请求超时并丢弃取消后
 ## 覆盖诊断与验证
 
 `GET /api/security-tools/process-capacity-policy` 增加 `governedSources`，列出注册来源、版本、模式、
-custom/scenario_declared/scenario_legacy_process_denied 来源类型，以及开发逃生开关/旧工厂是否启用。
+custom/scenario_process 来源类型，以及开发逃生开关/旧工厂是否启用。
 这里是**装配声明**，不是实时目录健康或 OS 隔离证明；实时状态仍查 Tool Runtime。
 `arbitraryJavaScriptIsolation=false` 固定显式展示；禁止把装配成功当作任意 JS 已隔离。
 

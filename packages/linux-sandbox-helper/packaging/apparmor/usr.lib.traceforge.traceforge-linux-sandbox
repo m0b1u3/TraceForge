@@ -1,0 +1,10 @@
+abi <abi/4.0>,
+
+include <tunables/global>
+
+/usr/lib/traceforge/traceforge-linux-sandbox flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides.
+  include if exists <local/usr.lib.traceforge.traceforge-linux-sandbox>
+}

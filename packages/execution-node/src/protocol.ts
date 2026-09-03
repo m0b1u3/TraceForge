@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { EffectivePermissionProfile } from "@traceforge/orchestration-core";
 
-export const EXECUTION_PROTOCOL_VERSION = { major: 1, minor: 6 } as const;
+export const EXECUTION_PROTOCOL_VERSION = { major: 1, minor: 8 } as const;
 
 export interface ExecutionProtocolVersion {
   major: number;
@@ -15,6 +15,7 @@ export type ExecutionCapabilityName =
   | "process.adopt"
   | "process.resource_limits"
   | "process.execution_observation"
+  | "process.operation_observation"
   | "filesystem.canonicalize"
   | "filesystem.read"
   | "filesystem.write"
@@ -32,6 +33,7 @@ export interface ExecutionNodeCapabilities {
     adoption: boolean;
     resourceLimits: boolean;
     executionObservation?: boolean;
+    operationObservation?: boolean;
     signals: ProcessSignal[];
   };
   filesystem: {
@@ -45,7 +47,11 @@ export interface ExecutionNodeCapabilities {
   };
   network: { brokered: boolean };
   http: { request: boolean; streaming: boolean };
-  sandbox: { backends: string[] };
+  sandbox: {
+    backends: string[];
+    /** SHA-256 of the exact native helper accepted during host startup. */
+    measurements?: Record<string, string>;
+  };
 }
 
 export interface ExecutionNodeDescriptor {
@@ -219,7 +225,38 @@ export interface ProcessExecutionJournal {
   get(idempotencyKey: string): ProcessExecutionObservation | undefined;
 }
 
-export interface AdoptProcessRequest extends ProcessAccess {
+export type ProcessOperationKind = "process.writeInput" | "process.resizeTerminal" | "process.signal" | "process.terminate" | "process.adopt";
+
+export interface ProcessOperationIdentity {
+  operationId: string;
+  operation: ProcessOperationKind;
+  processId: string;
+  requestFingerprint: string;
+}
+
+export interface ProcessOperationObservation {
+  schemaVersion: 1;
+  identity: ProcessOperationIdentity;
+  nodeId: string;
+  state: "claimed" | "completed";
+  response: ProcessDescriptor | AdoptProcessResponse | null;
+  updatedAt: string;
+}
+
+export interface ProcessOperationJournal {
+  claim(observation: ProcessOperationObservation): void;
+  complete(observation: ProcessOperationObservation): void;
+  get(operationId: string): ProcessOperationObservation | undefined;
+}
+
+export interface ProcessOperationQuery extends ProcessOperationIdentity {}
+
+export interface ProcessOperationAccess extends ProcessAccess {
+  /** Stable caller-generated identity for exactly one process-side effect. */
+  operationId: string;
+}
+
+export interface AdoptProcessRequest extends ProcessOperationAccess {
   attribution: ExecutionAttribution;
 }
 
@@ -256,32 +293,39 @@ export interface ReadProcessEventsResponse {
   lostEvents: boolean;
 }
 
-export interface WriteProcessInputRequest extends ProcessAccess {
+export interface WriteProcessInputRequest extends ProcessOperationAccess {
   dataBase64: string;
   closeAfterWrite?: boolean;
 }
 
-export interface ResizeProcessTerminalRequest extends ProcessAccess {
+export interface ResizeProcessTerminalRequest extends ProcessOperationAccess {
   columns: number;
   rows: number;
 }
 
-export interface SignalProcessRequest extends ProcessAccess {
+export interface SignalProcessRequest extends ProcessOperationAccess {
   signal: ProcessSignal;
 }
 
-export interface TerminateProcessRequest extends ProcessAccess {
+export interface TerminateProcessRequest extends ProcessOperationAccess {
   force?: boolean;
 }
 
 export interface ProcessEnforcementAttestation {
   sandboxBackend: string;
+  /** SHA-256 of the helper executable used for this launch, when the backend is measured. */
+  backendMeasurement?: string;
   sandboxed: boolean;
   filesystemPolicyApplied: boolean;
   permissionProfileFingerprint: string;
   resourceLimitsApplied: boolean;
   resourceLimitsFingerprint: string;
   network: "deny" | "brokered" | "direct";
+  /** Native helper accepted the child into its owned process-tree boundary before releasing exec. */
+  atomicProcessTreeAssignment?: boolean;
+  /** Helper does not report terminal until its owned OS process tree is empty. */
+  processTreeEmptyBarrier?: boolean;
+  linux?: {namespaces:readonly ("user"|"mount"|"pid"|"ipc"|"uts"|"network")[];cgroupV2:true;seccomp:true;noNewPrivileges:true};
 }
 
 function canonicalPermissionJson(value: unknown): string {
@@ -417,6 +461,7 @@ export interface BrokeredHttpResponse {
 
 export interface ExecutionNode {
   lookupProcessExecution?(query: ProcessExecutionQuery): Promise<ProcessExecutionObservation | undefined>;
+  lookupProcessOperation?(query: ProcessOperationQuery): Promise<ProcessOperationObservation | undefined>;
   handshake(request: ExecutionHandshakeRequest): Promise<ExecutionHandshakeResponse>;
   startProcess(request: StartProcessRequest): Promise<StartProcessResponse>;
   describeProcess(access: ProcessAccess): Promise<ProcessDescriptor>;
@@ -443,6 +488,7 @@ export function capabilityNames(capabilities: ExecutionNodeCapabilities): Execut
   if (capabilities.process.adoption) names.push("process.adopt");
   if (capabilities.process.resourceLimits) names.push("process.resource_limits");
   if (capabilities.process.executionObservation) names.push("process.execution_observation");
+  if (capabilities.process.operationObservation) names.push("process.operation_observation");
   if (capabilities.filesystem.canonicalize) names.push("filesystem.canonicalize");
   if (capabilities.filesystem.read) names.push("filesystem.read");
   if (capabilities.filesystem.write) names.push("filesystem.write");

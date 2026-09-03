@@ -153,8 +153,9 @@ describe("Current context projection", () => {
     // Scope capabilities must explicitly admit search, not infer it from read permission.
     const pkg = settings.scenarioPackageRegistry.requireForScenario("neutral", 1);
     pkg.definition.authorizationActions.push("context.search");
-    const parse = pkg.authorizationPolicy.parseScope;
-    pkg.authorizationPolicy.parseScope = (payload) => ({ ...parse(payload), allowedActions: ["context.search", "context.read", "context.catalog"] });
+    const policy = pkg.authorizationPolicy as { parseScope(payload: unknown): { payload: unknown; allowedActions: string[]; deniedActions: string[] } };
+    const parse = policy.parseScope;
+    policy.parseScope = (payload) => ({ ...parse(payload), allowedActions: ["context.search", "context.read", "context.catalog"] });
     let h!: Awaited<ReturnType<typeof foundationHost>>; let turns = 0;
     h = await foundationHost({ foundation: settings, model: async (args) => {
       turns++; const c = JSON.parse(args.user);
@@ -334,7 +335,8 @@ describe("Package context assembly", () => {
     const f = fixture();
     if (mode === "revoked") f.store.revoke(contextContentDigest(contextText), "retired");
     if (mode === "expired") f.sqlite.prepare("UPDATE scenario_authorizations SET expires_at='2020-01-01'").run();
-    if (mode === "denied") f.pkg.authorizationPolicy.parseScope = (payload) => ({ payload, allowedActions: ["context.read"], deniedActions: ["context.read"] });
+    if (mode === "denied") (f.pkg.authorizationPolicy as { parseScope(payload: unknown): unknown }).parseScope =
+      (payload) => ({ payload, allowedActions: ["context.read"], deniedActions: ["context.read"] });
     if (mode === "capability") f.run.workItems[0]!.requiredCapabilities = [];
     if (mode === "phase") f.run.workItems[0]!.phaseId = "other";
     if (mode === "missing") f.sqlite.prepare("DELETE FROM package_context_content").run();

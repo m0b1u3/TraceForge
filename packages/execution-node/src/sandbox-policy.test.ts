@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EffectivePermissionProfile } from "@traceforge/orchestration-core";
 import { permissionProfileFingerprint, type StartProcessRequest } from "./protocol.js";
 import {
+  compileLinuxPtySandboxLaunch,
   compileLinuxStdioSandboxLaunch,
   compileWindowsConptySandboxLaunch,
   compileWindowsStdioSandboxLaunch,
@@ -106,13 +107,57 @@ describe("Execution Node sandbox policy compiler", () => {
     })).toThrow(/missing path.*execution denied/);
   });
 
-  it("fails closed on Linux until a managed cgroup backend can prove process-tree quotas", () => {
+  it("compiles Linux only through the native namespace/cgroup/seccomp helper contract", () => {
     const input = request("linux");
     input.permissions.network = "deny";
-    expect(() => compileLinuxStdioSandboxLaunch(input, {
-      bubblewrapPath: "/usr/bin/bwrap",
+    const spec=compileLinuxStdioSandboxLaunch(input, {
+      linuxHelperPath: "/usr/lib/traceforge/traceforge-linux-sandbox",
+      linuxCgroupRoot: "/sys/fs/cgroup/traceforge",
+      linuxScratchRoot: "/var/lib/traceforge/sandbox",
+      backendMeasurement: "a".repeat(64),
       pathExists: () => true,
       pathKind: (path) => path.endsWith("private") ? "directory" : path.endsWith("node") ? "file" : "directory",
-    })).toThrow(/managed cgroup execution backend/);
+    });
+    expect(spec.arguments).toContain("--deny-tree");
+    expect(spec.arguments).toContain("/sys/fs/cgroup/traceforge");
+    expect(spec.arguments).toContain("/var/lib/traceforge/sandbox");
+    expect(spec.environment).toEqual({ TRACEFORGE_TARGET_ENV_4c414e47: "432e5554462d38" });
+    expect(spec.enforcement).toMatchObject({sandboxBackend:"traceforge-linux-native",backendMeasurement:"a".repeat(64),network:"deny",atomicProcessTreeAssignment:true,processTreeEmptyBarrier:true,
+      linux:{cgroupV2:true,seccomp:true,noNewPrivileges:true}});
+    expect(()=>compileLinuxStdioSandboxLaunch(input,{
+      linuxHelperPath:"/missing/helper",linuxCgroupRoot:"/sys/fs/cgroup/traceforge",linuxScratchRoot:"/tmp/traceforge",
+      pathExists:path=>path!=="/missing/helper",
+    })).toThrow(/helper is missing/);
+    expect(()=>compileLinuxStdioSandboxLaunch(input,{
+      linuxHelperPath:"/helper",linuxCgroupRoot:"relative",linuxScratchRoot:"/tmp/traceforge",pathExists:()=>true,
+    })).toThrow(/runtime directories/);
+
+    const direct = request("linux");
+    expect(()=>compileLinuxStdioSandboxLaunch(direct,{
+      linuxHelperPath:"/helper",linuxCgroupRoot:"/sys/fs/cgroup/traceforge",linuxScratchRoot:"/tmp/traceforge",pathExists:()=>true,
+    })).toThrow(/only denied process networking/);
+  });
+
+  it("binds Linux PTY framing to the same native isolation profile", () => {
+    const input = request("linux");
+    input.stdin = "pipe";
+    input.terminal = { columns: 120, rows: 40, terminalType: "xterm-256color" };
+    input.permissions.network = "deny";
+    input.permissions.process.interactive = true;
+    const spec = compileLinuxPtySandboxLaunch(input, {
+      linuxHelperPath: "/usr/lib/traceforge/traceforge-linux-sandbox",
+      linuxCgroupRoot: "/sys/fs/cgroup/traceforge",
+      linuxScratchRoot: "/var/lib/traceforge/sandbox",
+      backendMeasurement: "b".repeat(64),
+      pathExists: () => true,
+    });
+    expect(spec.helperExecutable).toBe("/usr/lib/traceforge/traceforge-linux-sandbox");
+    expect(spec.modeArguments).toEqual([]);
+    expect(spec.commandSeparator).toEqual(["--"]);
+    expect(spec.profileArguments).toContain("--status-file");
+    expect(spec.profileArguments).toContain("--deny-tree");
+    expect(spec.helperEnvironment).toEqual({ TRACEFORGE_TARGET_ENV_4c414e47: "432e5554462d38" });
+    expect(spec.enforcement).toMatchObject({ sandboxBackend: "traceforge-linux-native", backendMeasurement: "b".repeat(64),
+      atomicProcessTreeAssignment: true, processTreeEmptyBarrier: true, network: "deny" });
   });
 });

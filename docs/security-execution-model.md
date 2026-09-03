@@ -77,11 +77,20 @@ Execution is platform-native and fail-closed:
   parsing target-controlled stdout/stderr. A `direct` profile uses the restricted
   token without AppContainer network isolation. Brokered process networking
   remains unavailable until its explicit transport exists.
-- On Linux, `bubblewrap` alone cannot prove process-tree CPU, memory, process-count
-  and write-I/O budgets. The Linux compiler therefore rejects process execution
-  until a managed cgroup backend is installed. It does not silently launch an
-  unbounded bubblewrap process. Brokered process networking and PTY execution
-  remain unavailable until their native backends exist.
+- On Linux, the repository-owned Rust helper creates user/mount/pid/ipc/uts/network
+  namespaces and atomically places the child into a delegated cgroup v2 before
+  any target code runs. It pivots into a tmpfs root assembled only from explicit
+  read/write grants and deny masks, drops capabilities, installs seccomp and
+  `no_new_privileges`, passes only the requested encoded environment, and kills
+  the complete cgroup on root exit or a resource violation. Completion requires
+  observing the cgroup empty. Helper protocol 2 supports both bounded stdio and a
+  framed native PTY. The PTY path uses the same namespace, filesystem, cgroup,
+  seccomp, resource-monitoring and empty-tree boundary; its frames cover input,
+  resize, close-input, interrupt/termination acknowledgement, bounded output,
+  resource-limit reason and nonce-bound completion. Denied process networking is
+  still the only supported mode; brokered/direct process networking remain unavailable.
+  Missing delegation, kernel features, helper measurement or a successful live
+  probe closes process capability instead of falling back to direct spawn.
 
 If the required native resource-limiting backend is absent, or the Windows helper
 fails its versioned execution-contract probe, the Execution Node remains
@@ -94,6 +103,16 @@ TraceForge packages and invokes its own helper;
 it does not require the Codex application, CLI, configuration, or runtime to be
 installed. Direct network permission is not target authorization, so Scope
 Guard and human approval remain authoritative.
+
+Each stdin, terminal-resize, signal, termination and adoption request also carries
+a stable operation identity. The local SQLite journal claims that identity before
+the effect and persists the exact response afterward. Confirmed responses older
+than the retention window may be gzip archived without losing replayability;
+claim-only outcomes are never compacted or guessed safe. Record, active-record,
+byte and physical-disk limits fail closed, and health reports when new process
+controls can no longer be admitted. SQLite transactions guarantee that a crash
+during archival leaves either the original complete response or the complete
+verified archive, never a partially released identity.
 
 ## External Tool Provider execution
 
@@ -128,6 +147,17 @@ permission fingerprint and response metadata. The server stores that receipt
 atomically with the corresponding Traffic record. Session credentials and
 cookies travel only across the authenticated local RPC channel and are redacted
 from receipts, events and model-visible summaries.
+
+Operator-provisioned identity material is encrypted at rest with the local Vault
+and exposed to Scenario processes only as scoped identity and Session handles.
+Every use revalidates the Case, Run, Scope, identity version, expiry and active
+Work lease. Secret headers require explicit destination URL prefixes; cookies
+still obey host/domain, path, secure and expiry rules. For sensitive form or JSON
+bodies, the process supplies named handles and the trusted Host constructs the
+wire body. Bounded exact-delimiter captures and `Set-Cookie` updates are written
+back into the encrypted Session while only secret names and redacted Traffic are
+returned. Provisioning remains a trusted local control operation, not a model or
+Scenario tool capability.
 
 The native Browser Worker still requires direct networking and is therefore not
 exposed by the brokered-only Web profile. It will be re-enabled only after its

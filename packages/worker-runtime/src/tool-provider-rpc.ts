@@ -42,6 +42,8 @@ export interface ToolProviderHandshake {
   providerId: string;
   providerVersion: string;
   protocolVersion: typeof TOOL_PROVIDER_RPC_VERSION;
+  /** Optional stricter application profile layered over this transport. */
+  profile?: string;
 }
 
 export interface ToolProviderProcessAttestation {
@@ -480,7 +482,8 @@ export function encodeLengthPrefixedJson(value: unknown, maximumFrameBytes: numb
 export function validateToolProviderHandshake(value: unknown): ToolProviderHandshake {
   if (!isRecord(value) || typeof value.providerId !== "string" || !value.providerId.trim()
     || typeof value.providerVersion !== "string" || !value.providerVersion.trim()
-    || value.protocolVersion !== TOOL_PROVIDER_RPC_VERSION) throw new Error("Tool Provider handshake is incompatible");
+    || value.protocolVersion !== TOOL_PROVIDER_RPC_VERSION
+    || (value.profile !== undefined && (typeof value.profile !== "string" || !value.profile.trim()))) throw new Error("Tool Provider handshake is incompatible");
   return value as unknown as ToolProviderHandshake;
 }
 

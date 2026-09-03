@@ -1,7 +1,8 @@
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
-import { parseWindowsSandboxHelperProbe } from "../packages/execution-node/src/windows-helper-contract.js";
+import { parseWindowsSandboxHelperProbe, WINDOWS_SANDBOX_HELPER_PROTOCOL } from "../packages/execution-node/src/windows-helper-contract.js";
+import { createNativeHelperReleaseManifest } from "../packages/execution-node/src/native-helper-release.js";
 
 if (process.platform !== "win32") {
   throw new Error("The TraceForge Windows sandbox helper must be built on Windows.");
@@ -39,4 +40,10 @@ const probeResult = spawnSync(bundled, ["probe"], {
 if (probeResult.error) throw probeResult.error;
 if (probeResult.status !== 0) throw new Error(`Windows sandbox helper probe failed: ${probeResult.stderr.trim()}`);
 parseWindowsSandboxHelperProbe(probeResult.stdout);
+const releaseManifest = createNativeHelperReleaseManifest({
+  platform: "windows", protocol: WINDOWS_SANDBOX_HELPER_PROTOCOL, bytes: readFileSync(bundled),
+});
+const manifestPath = resolve(dirname(bundled), "release.json"), temporaryManifest = `${manifestPath}.tmp`;
+writeFileSync(temporaryManifest, `${JSON.stringify(releaseManifest, null, 2)}\n`);
+renameSync(temporaryManifest, manifestPath);
 console.log(`Bundled TraceForge Windows sandbox helper: ${bundled}`);

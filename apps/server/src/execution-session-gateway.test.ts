@@ -38,9 +38,11 @@ describe("ExecutionSessionGateway", () => {
       secret: {
         headers: { Authorization: "Bearer highly-sensitive-token" },
         cookies: [{ name: "session", value: "highly-sensitive-cookie", domain: "authorized.example" }],
+        urlPrefixes:["https://authorized.example/"],
       },
     });
     expect(identity).not.toHaveProperty("secret");
+    expect(identity).toMatchObject({urlPrefixes:["https://authorized.example/"],headerNames:["Authorization"],cookieNames:["session"]});
     expect(JSON.stringify(gateway.listIdentities("case_1"))).not.toContain("highly-sensitive");
     const encrypted = sqlite.prepare("SELECT ciphertext FROM encrypted_secret_entries").pluck().get() as Buffer;
     expect(encrypted.toString("utf8")).not.toContain("highly-sensitive");
@@ -50,7 +52,8 @@ describe("ExecutionSessionGateway", () => {
     const { gateway } = setup();
     gateway.createIdentity({
       id: "identity_1", caseId: "case_1", name: "User", kind: "user",
-      secret: { headers: { Authorization: "Bearer token" }, cookies: [{ name: "base", value: "one", domain: "authorized.example" }] },
+      secret: { headers: { Authorization: "Bearer token" }, cookies: [{ name: "base", value: "one", domain: "authorized.example" }],
+        urlPrefixes:["https://authorized.example/"] },
     });
     const session = gateway.openSession({ caseId: "case_1", runId: "run_1", scopeRef: "scope_1", identityId: "identity_1" });
     gateway.updateCookies(session.id, [{ name: "rotated", value: "two", domain: "authorized.example" }]);
@@ -65,7 +68,8 @@ describe("ExecutionSessionGateway", () => {
 
   it("freezes dependent Sessions and destroys secret material when an identity is revoked", () => {
     const { sqlite, gateway } = setup();
-    gateway.createIdentity({ id: "identity_1", caseId: "case_1", name: "User", kind: "user", secret: { headers: { Authorization: "secret" }, cookies: [] } });
+    gateway.createIdentity({ id: "identity_1", caseId: "case_1", name: "User", kind: "user", secret: { headers: { Authorization: "secret" }, cookies: [],
+      urlPrefixes:["https://authorized.example/"] } });
     const session = gateway.openSession({ caseId: "case_1", runId: "run_1", scopeRef: "scope_1", identityId: "identity_1" });
     gateway.revokeIdentity("identity_1");
     expect(gateway.listSessions("run_1")[0].status).toBe("frozen");
@@ -74,5 +78,20 @@ describe("ExecutionSessionGateway", () => {
       workerId: "worker_1", workId: "work_1", caseId: "case_1", runId: "run_1", scopeRef: "scope_1",
       leaseId: "lease_1", leaseExpiresAt: "2026-08-24T09:30:00.000Z",
     })).toThrow(/frozen/);
+    expect(gateway.listIdentities("case_1")).toEqual([expect.objectContaining({id:"identity_1",status:"revoked",headerNames:[],cookieNames:[]})]);
+    expect(()=>gateway.createIdentity({caseId:"case_1",name:"Unsafe",kind:"user",secret:{headers:{Authorization:"secret"},cookies:[]}}))
+      .toThrow(/URL prefix/);
+  });
+
+  it("rechecks Run, Scope and exclusive lease ownership on every use",()=>{
+    const {sqlite,gateway}=setup();gateway.createIdentity({id:"identity_1",caseId:"case_1",name:"User",kind:"user",
+      secret:{headers:{Authorization:"secret"},cookies:[],urlPrefixes:["https://authorized.example/"]}});
+    const session=gateway.openSession({caseId:"case_1",runId:"run_1",scopeRef:"scope_1",identityId:"identity_1"}),first={workerId:"worker_1",workId:"work_1",
+      caseId:"case_1",runId:"run_1",scopeRef:"scope_1",leaseId:"lease_1",leaseExpiresAt:"2026-08-24T09:30:00.000Z"};
+    expect(gateway.use(session.id,first).session.lastLeaseId).toBe("lease_1");
+    expect(()=>gateway.use(session.id,{...first,workerId:"worker_2",workId:"work_2",leaseId:"lease_2"})).toThrow(/another Work/);
+    sqlite.prepare("UPDATE scenario_authorizations SET status='revoked' WHERE id='scope_1'").run();
+    expect(()=>gateway.use(session.id,first)).toThrow(/authorization is no longer active/);
+    expect(gateway.listSessions("run_1")[0]!.status).toBe("frozen");
   });
 });

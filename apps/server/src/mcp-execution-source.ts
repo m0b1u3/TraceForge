@@ -2,8 +2,8 @@ import type Database from "better-sqlite3";
 import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
 import { randomUUID } from "node:crypto";
 import type { ExecutionNode } from "@traceforge/execution-node";
-import type { ScenarioRunState } from "@traceforge/orchestration-core";
-import type { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import { canonicalJson, type ScenarioPackageBinding, type ScenarioRunState } from "@traceforge/orchestration-core";
+import { authorizeScenarioResource, type ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
 import { ExecutionNodeToolProviderClient, type ExecutionNodeToolProviderOptions, type ExecutionToolAdapter,
   type ExecutionToolDiscoverySource, type McpToolPolicy, type ToolExecutionContext, toolInvocationInputFingerprint } from "@traceforge/worker-runtime";
 import type { ProcessExecutionCapacity, ProcessCapacityLease } from "./process-execution-capacity.js";
@@ -12,6 +12,10 @@ export interface FoundationMcpServer {
   source: string;
   serverName: string;
   serverVersion: string;
+  /** Must increase whenever reviewed policy, launch material, or package bindings change. */
+  reviewVersion: number;
+  /** Exact Package versions allowed to discover and invoke this reviewed MCP profile. */
+  packages: readonly ScenarioPackageBinding[];
   process: Omit<ExecutionNodeToolProviderOptions, "node" | "mcp" | "capabilityHost" | "expectedProviderId" | "expectedProviderVersion" | "beforeProcessStart">;
   tools: Array<McpToolPolicy & {
     authorizationAction: string;
@@ -21,26 +25,45 @@ export interface FoundationMcpServer {
   }>;
 }
 
+export function mcpToolProfileDigest(config: FoundationMcpServer): `sha256:${string}` {
+  const { diagnosticWriter: _writer, ...process } = config.process;
+  return `sha256:${toolInvocationInputFingerprint("mcp.tool.profile", {
+    source: config.source, serverName: config.serverName, serverVersion: config.serverVersion,
+    reviewVersion: config.reviewVersion,
+    packages: [...config.packages].sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right))),
+    process,
+    tools: config.tools.map(({ remoteName, authorizationAction, tool }) => ({ remoteName, authorizationAction, tool })),
+  })}`;
+}
+
 /** Each discovery/call has its own isolated process. No cross-Run session or raw stdio fallback. */
 export function createFoundationMcpSource(config: FoundationMcpServer, node: ExecutionNode | undefined,
   sqlite: Database.Database, packages: ScenarioPackageRegistry, loadRun: (id: string) => ScenarioRunState | null,
-  capacity?: ProcessExecutionCapacity): ExecutionToolDiscoverySource {
+  capacity?: ProcessExecutionCapacity, assertProfileAvailable: () => void = () => undefined): ExecutionToolDiscoverySource {
   if (!node) throw new Error("MCP requires a controlled Execution Node");
-  if (config.tools.some((p) => p.tool.source !== config.source || !p.authorizationAction.trim()
+  const allowedPackageKeys = new Set(config.packages.map((binding) => canonicalJson(binding)));
+  if (!config.source.trim() || !config.serverName.trim() || !config.serverVersion.trim()
+    || !Number.isSafeInteger(config.reviewVersion) || config.reviewVersion < 1
+    || !config.packages.length || config.packages.length > 64
+    || new Set(config.packages.map((binding) => canonicalJson(binding))).size !== config.packages.length
+    || config.packages.some((binding) => {
+      return !packages.list().some((candidate) => canonicalJson(packages.bindingFor(candidate)) === canonicalJson(binding));
+    })
+    || config.tools.some((p) => p.tool.source !== config.source || !p.authorizationAction.trim()
     || typeof p.validateInput !== "function" || typeof p.authorizeInput !== "function")) throw new Error("Invalid MCP host policy");
   const { diagnosticWriter, ...serializableProcess } = config.process;
   const processOptions = { ...structuredClone(serializableProcess), diagnosticWriter };
-  const tools = config.tools.map((p) => ({ ...p, tool: { ...structuredClone(p.tool), version: `${p.tool.version}+mcp.${toolInvocationInputFingerprint("mcp.binding", {
-    serverName: config.serverName, serverVersion: config.serverVersion, remoteName: p.remoteName,
-    authorizationAction: p.authorizationAction, process: serializableProcess,
-  })}` } }));
+  const profileDigest = mcpToolProfileDigest(config);
+  assertProfileAvailable();
+  const tools = config.tools.map((p) => ({ ...p, tool: { ...structuredClone(p.tool), version: `${p.tool.version}+mcp.${profileDigest.slice(7)}` } }));
   const protocol = { serverName: config.serverName, serverVersion: config.serverVersion,
     tools: tools.map(({ remoteName, tool }) => ({ remoteName, tool })) };
   const active = new Map<ExecutionNodeToolProviderClient,ProcessCapacityLease|undefined>(); let closed = false;
   const closing=new AbortController();
-  const capacityVersion=toolInvocationInputFingerprint("mcp.process",{source:config.source,serverName:config.serverName,serverVersion:config.serverVersion,process:serializableProcess});
+  const capacityVersion=profileDigest.slice(7);
   const client = async (attribution = processOptions.attribution,operation="mcp.discovery",context?:ToolExecutionContext,signal?:AbortSignal,authorize?:()=>void) => {
     if (closed) throw new Error("MCP source is closed");
+    assertProfileAvailable();
     const owned={...attribution,idempotencyKey:`${attribution.idempotencyKey}:mcp-session:${randomUUID()}`};
     const admission=await capacity?.acquire({source:config.source,version:capacityVersion,operation,kind:context?"work":"service",attribution:owned,
       ...(context?{parentInvocationKey:context.idempotencyKey}:{})},AbortSignal.any([closing.signal,...(signal?[signal]:[])]),authorize);
@@ -62,14 +85,16 @@ export function createFoundationMcpSource(config: FoundationMcpServer, node: Exe
       return specs.map((tool) => ({ ...tool, execute: async (input, context) => {
         const policy = tools.find((p) => p.tool.name === tool.name)!;
         const authorize = () => {
+          assertProfileAvailable();
           policy.validateInput(input);
           const run = loadRun(context.runId); const work = run?.workItems.find((w) => w.id === context.workId);
           if (!run?.scenarioPackage || run.status !== "running" || run.caseId !== context.caseId || run.scopeRef !== context.scopeRef
             || !work || work.status !== "running" || work.workerId !== context.workerId || work.leaseId !== context.leaseId
             || !work.leaseExpiresAt || !(Date.parse(work.leaseExpiresAt) > Date.now()) || context.signal?.aborted) throw new Error("Inactive MCP Work");
           const {scope,package:pkg} = new SqliteScenarioAuthorizationService(sqlite,packages).requireRun(run);
-          if (!scope.allowedActions.includes(policy.authorizationAction) || scope.deniedActions.includes(policy.authorizationAction)
-            || pkg.authorizationPolicy.authorizeResource?.(scope.payload, "mcp.tool", policy.remoteName) !== policy.remoteName) throw new Error("MCP action not authorized");
+          if (!allowedPackageKeys.has(canonicalJson(packages.bindingFor(pkg)))
+            || !scope.allowedActions.includes(policy.authorizationAction) || scope.deniedActions.includes(policy.authorizationAction)
+            || authorizeScenarioResource(pkg.authorizationPolicy,scope.payload,"mcp.tool",policy.remoteName) !== policy.remoteName) throw new Error("MCP action not authorized");
           policy.authorizeInput(scope.payload, input);
         };
         try { authorize(); }

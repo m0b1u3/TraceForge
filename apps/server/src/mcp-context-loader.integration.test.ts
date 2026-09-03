@@ -68,13 +68,30 @@ describe("Pinned external context through the foundation Worker", () => {
   });
   it.each(["denied", "profile", "expired"])("rejects %s context before starting a process", async (mode) => {
     const f = fixtureMcpNode(); const s = settings(f);
-    if (mode === "denied") s.pkg.authorizationPolicy.authorizeResource = (_scope, kind, value) => kind === "mcp.resource" ? "denied" : value;
+    if (mode === "denied") (s.pkg.authorizationPolicy as { authorizeResource?: (scope: unknown, kind: string, value: string) => string })
+      .authorizeResource = (_scope, kind, value) => kind === "mcp.resource" ? "denied" : value;
     if (mode === "profile") s.config.reviewVersion++;
     if (mode === "expired") s.resource.context!.expiresAt = "2020-01-01T00:00:00Z";
     const h = await foundationHost({ foundation: s.foundation, model: async (args) => JSON.parse(args.user).transcript.some((t: any) => t.kind === "tool")
       ? { type: "complete", summary: "Rejected", outputs: [] } : { type: "invoke_tool", invocation: { id: "read", tool: "context.read", input: { id: "first", digest: s.resource.digest }, rationale: "Read" } } });
     cleanup.push(() => h.close()); await h.start(); await eventually(async () => (await h.state()).workItems[0]?.status === "completed");
     expect(f.starts).toHaveLength(0); expect(h.requests.at(-1)!.transcript.some((t: any) => t.summary.includes("rejected"))).toBe(true);
+  });
+  it("cuts off a revoked external context profile before starting its process", async () => {
+    const f = fixtureMcpNode(); const s = settings(f); let h!: Awaited<ReturnType<typeof foundationHost>>;
+    h = await foundationHost({ foundation: { ...s.foundation, extensionAssembly: { revokeAuthorizer: { async authorize() {
+      return { decision: "allowed" as const, authorizationRef: "independent-extension-review", expiresAt: "2099-01-01T00:00:00.000Z" };
+    } } } }, model: async (args) => {
+      if (JSON.parse(args.user).transcript.some((entry: { kind: string }) => entry.kind === "tool")) {
+        return { type: "complete", summary: "Profile withdrawal observed", outputs: [] };
+      }
+      await h.request("/api/foundation/extension-assembly/profiles/revoke", { commandId: "withdraw_context_profile", kind: "mcp_context",
+        source: s.config.source, profileDigest: mcpContextProfileDigest(s.config), actor: "operator", reason: "review withdrawn" });
+      return { type: "invoke_tool", invocation: { id: "read", tool: "context.read",
+        input: { id: "first", digest: s.resource.digest }, rationale: "Read" } };
+    } }); cleanup.push(() => h.close());
+    await h.start(); await eventually(async () => (await h.state()).workItems[0]?.status === "completed");
+    expect(f.starts).toHaveLength(0); expect(f.calls()).toBe(0);
   });
   it.each(["resourceText", "wrongUri", "binary", "missing", "hangCall", "invalidAttestation"] as const)("does not retain invalid or uncertain %s content", async (mode) => {
     const f = fixtureMcpNode({ [mode]: mode === "resourceText" ? "CHANGED_PRIVATE_TEXT" : true }); const s = settings(f);

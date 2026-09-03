@@ -28,6 +28,10 @@ import {
   type ProcessExecutionJournal,
   type ProcessExecutionObservation,
   type ProcessExecutionQuery,
+  type ProcessOperationJournal,
+  type ProcessOperationKind,
+  type ProcessOperationObservation,
+  type ProcessOperationQuery,
   type ProcessLaunchIdentity,
   type ProcessDescriptor,
   type ProcessEnforcementAttestation,
@@ -274,12 +278,14 @@ interface WriteReceipt {
 
 export interface LocalExecutionNodeOptions {
   processJournal?: ProcessExecutionJournal;
+  operationJournal?: ProcessOperationJournal;
   id?: string;
   platform?: EffectivePermissionProfile["platform"];
   architecture?: string;
   now?: () => string;
   capabilities?: Partial<ExecutionNodeCapabilities>;
   sandboxBackends: string[];
+  sandboxMeasurements?: Readonly<Record<string, string>>;
   maximumProcesses?: number;
   maximumResidentProcesses?: number;
   terminalRetentionMs?: number;
@@ -344,7 +350,9 @@ export class LocalExecutionNode implements ExecutionNode {
   private readonly processByIdempotencyKey = new Map<string, string>();
   private readonly writeReceipts = new Map<string, WriteReceipt>();
   private readonly startingKeys = new Set<string>();
+  private shuttingDown = false;
   private readonly processJournal?: ProcessExecutionJournal;
+  private readonly operationJournal?: ProcessOperationJournal;
   private readonly now: () => string;
   private readonly httpBroker: ExecutionHttpBroker | undefined;
   private readonly maximumResidentProcesses: number;
@@ -354,6 +362,7 @@ export class LocalExecutionNode implements ExecutionNode {
     this.now = options.now ?? (() => new Date().toISOString());
     this.httpBroker = options.httpBroker;
     this.processJournal = options.processJournal;
+    this.operationJournal = options.operationJournal;
     this.maximumResidentProcesses = options.maximumResidentProcesses ?? 128;
     this.terminalRetentionMs = options.terminalRetentionMs ?? 60_000;
     if (!Number.isSafeInteger(this.maximumResidentProcesses) || this.maximumResidentProcesses < 1
@@ -370,6 +379,7 @@ export class LocalExecutionNode implements ExecutionNode {
         signals: ["interrupt", "terminate", "kill"],
         ...options.capabilities?.process,
         executionObservation: Boolean(options.processJournal),
+        operationObservation: Boolean(options.operationJournal),
       },
       filesystem: {
         canonicalize: true,
@@ -383,7 +393,11 @@ export class LocalExecutionNode implements ExecutionNode {
       },
       network: { brokered: Boolean(options.httpBroker) },
       http: { request: Boolean(options.httpBroker), streaming: false },
-      sandbox: { backends: [...new Set(options.sandboxBackends)], ...options.capabilities?.sandbox },
+      sandbox: {
+        backends: [...new Set(options.sandboxBackends)],
+        measurements: options.sandboxMeasurements ? { ...options.sandboxMeasurements } : undefined,
+        ...options.capabilities?.sandbox,
+      },
     };
     if (options.capabilities?.network?.brokered !== undefined
       && options.capabilities.network.brokered !== capabilities.network.brokered) {
@@ -444,6 +458,7 @@ export class LocalExecutionNode implements ExecutionNode {
   }
 
   async startProcess(request: StartProcessRequest): Promise<StartProcessResponse> {
+    if (this.shuttingDown) throw new Error("Execution Node is shutting down and cannot start new processes");
     if (Buffer.byteLength(JSON.stringify(request)) > 128 * 1024) throw new Error("Process request exceeds its size limit");
     const snapshot = structuredClone(request);
     const key = snapshot.attribution.idempotencyKey;
@@ -459,6 +474,14 @@ export class LocalExecutionNode implements ExecutionNode {
     const observation = this.processJournal.get(query.idempotencyKey);
     if (!observation) return undefined;
     if (canonicalJson(observation.identity) !== canonicalJson(query)) throw new Error("Execution observation identity mismatch");
+    return structuredClone(observation);
+  }
+
+  async lookupProcessOperation(query: ProcessOperationQuery): Promise<ProcessOperationObservation | undefined> {
+    if (!this.operationJournal) throw new Error("Durable process operation observation is unavailable");
+    const observation = this.operationJournal.get(query.operationId);
+    if (!observation) return undefined;
+    if (canonicalJson(observation.identity) !== canonicalJson(query)) throw new Error("Process operation observation identity mismatch");
     return structuredClone(observation);
   }
 
@@ -611,26 +634,32 @@ export class LocalExecutionNode implements ExecutionNode {
   }
 
   async writeProcessInput(request: WriteProcessInputRequest): Promise<ProcessDescriptor> {
+    const replay = this.replayProcessOperation<ProcessDescriptor>(request, "process.writeInput");
+    if (replay) return replay;
     const record = this.requireAccess(request);
     this.assertActiveLease(record.descriptor.attribution);
     if (record.stdinMode !== "pipe") throw new Error(`Process ${record.descriptor.id} was started with closed input`);
     if (record.descriptor.state !== "running") throw new Error(`Process ${record.descriptor.id} is ${record.descriptor.state}`);
     const data = decodeBase64(request.dataBase64);
+    this.claimProcessOperation(request, "process.writeInput");
     if (data.length) await record.process.writeInput(data);
     if (request.closeAfterWrite) {
       await record.process.closeInput();
       record.stdinMode = "closed";
       this.append(record, { type: "process.stdin_closed" });
     }
-    return cloneDescriptor(record.descriptor);
+    return this.completeProcessOperation(request, "process.writeInput", cloneDescriptor(record.descriptor));
   }
 
   async resizeProcessTerminal(request: ResizeProcessTerminalRequest): Promise<ProcessDescriptor> {
+    const replay = this.replayProcessOperation<ProcessDescriptor>(request, "process.resizeTerminal");
+    if (replay) return replay;
     const record = this.requireAccess(request);
     this.assertActiveLease(record.descriptor.attribution);
     if (!record.descriptor.terminal) throw new Error(`Process ${record.descriptor.id} was not started with a terminal`);
     if (record.descriptor.state !== "running") throw new Error(`Process ${record.descriptor.id} is ${record.descriptor.state}`);
     this.assertTerminalSize(request.columns, request.rows);
+    this.claimProcessOperation(request, "process.resizeTerminal");
     await record.process.resizeTerminal(request.columns, request.rows);
     record.descriptor.terminal = {
       ...record.descriptor.terminal,
@@ -638,30 +667,40 @@ export class LocalExecutionNode implements ExecutionNode {
       rows: request.rows,
     };
     record.descriptor.updatedAt = this.now();
-    return cloneDescriptor(record.descriptor);
+    return this.completeProcessOperation(request, "process.resizeTerminal", cloneDescriptor(record.descriptor));
   }
 
   async signalProcess(request: SignalProcessRequest): Promise<ProcessDescriptor> {
+    const replay = this.replayProcessOperation<ProcessDescriptor>(request, "process.signal");
+    if (replay) return replay;
     const record = this.requireAccess(request);
     this.assertActiveLease(record.descriptor.attribution);
     if (!this.descriptor.capabilities.process.signals.includes(request.signal)) throw new Error(`Execution Node does not support signal ${request.signal}`);
     if (record.descriptor.state !== "running") throw new Error(`Process ${record.descriptor.id} is ${record.descriptor.state}`);
+    this.claimProcessOperation(request, "process.signal");
     await record.process.sendSignal(request.signal);
     this.append(record, { type: "process.signal_sent", signal: request.signal });
-    return cloneDescriptor(record.descriptor);
+    return this.completeProcessOperation(request, "process.signal", cloneDescriptor(record.descriptor));
   }
 
   async terminateProcess(request: TerminateProcessRequest): Promise<ProcessDescriptor> {
+    const replay = this.replayProcessOperation<ProcessDescriptor>(request, "process.terminate");
+    if (replay) return replay;
     const record = this.requireAccess(request);
-    if (["exited", "failed"].includes(record.descriptor.state)) return cloneDescriptor(record.descriptor);
+    this.claimProcessOperation(request, "process.terminate");
+    if (["exited", "failed"].includes(record.descriptor.state)) {
+      return this.completeProcessOperation(request, "process.terminate", cloneDescriptor(record.descriptor));
+    }
     record.descriptor.state = "terminating";
     record.descriptor.updatedAt = this.now();
     await record.process.terminate(request.force ?? false);
     this.append(record, { type: "process.signal_sent", signal: request.force ? "kill" : "terminate" });
-    return cloneDescriptor(record.descriptor);
+    return this.completeProcessOperation(request, "process.terminate", cloneDescriptor(record.descriptor));
   }
 
   async adoptProcess(request: AdoptProcessRequest): Promise<AdoptProcessResponse> {
+    const replay = this.replayProcessOperation<AdoptProcessResponse>(request, "process.adopt");
+    if (replay) return replay;
     const record = this.requireAccess(request);
     this.assertAttribution(request.attribution);
     const previous = record.descriptor.attribution;
@@ -669,12 +708,101 @@ export class LocalExecutionNode implements ExecutionNode {
       || previous.workId !== request.attribution.workId || previous.scopeRef !== request.attribution.scopeRef) {
       throw new Error("A process can only be adopted by a new lease for the same Case, Run, Work, and authorization scope");
     }
+    this.claimProcessOperation(request, "process.adopt");
     const token = randomBytes(32).toString("base64url");
     record.token = token;
     record.tokenHash = hashToken(token);
     record.descriptor.attribution = structuredClone(request.attribution);
     record.descriptor.updatedAt = this.now();
-    return { process: cloneDescriptor(record.descriptor), adoptionToken: token };
+    return this.completeProcessOperation(request, "process.adopt", { process: cloneDescriptor(record.descriptor), adoptionToken: token });
+  }
+
+  async shutdown(timeoutMs = 10_000): Promise<{ requested: number; terminated: number }> {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new Error("Execution Node shutdown deadline is invalid");
+    this.shuttingDown = true;
+    const deadline = Date.now() + timeoutMs;
+    while (this.startingKeys.size && Date.now() < deadline) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, Math.min(10, Math.max(1, deadline - Date.now()))));
+    }
+    if (this.startingKeys.size) throw new Error("Execution Node shutdown could not settle processes still starting");
+    const active = [...this.records.values()].filter(record => !["exited", "failed"].includes(record.descriptor.state));
+    if (!active.length) return { requested: 0, terminated: 0 };
+    const exits = active.map(record => new Promise<void>(resolvePromise => record.process.onExit(() => resolvePromise())));
+    for (const record of active) {
+      record.descriptor.state = "terminating";
+      this.append(record, { type: "process.signal_sent", signal: "kill" });
+    }
+    const terminations = Promise.allSettled(active.map(record => record.process.terminate(true)));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.all([terminations, Promise.all(exits)]),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Execution Node shutdown did not prove all process trees terminated")), Math.max(1, deadline - Date.now())); }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    const unresolved = active.filter(record => !["exited", "failed"].includes(record.descriptor.state));
+    if (unresolved.length) throw new Error(`Execution Node shutdown left ${unresolved.length} process trees unresolved`);
+    return { requested: active.length, terminated: active.length };
+  }
+
+  private processOperationIdentity(
+    request: { operationId: string; processId: string }, operation: ProcessOperationKind,
+  ): ProcessOperationQuery {
+    if (typeof request.operationId !== "string" || !request.operationId.trim()
+      || Buffer.byteLength(request.operationId) > 256) throw new Error("Process operation identity is invalid");
+    return {
+      operationId: request.operationId,
+      operation,
+      processId: request.processId,
+      requestFingerprint: createHash("sha256").update(canonicalJson(request)).digest("hex"),
+    };
+  }
+
+  private replayProcessOperation<T>(
+    request: { operationId: string; processId: string }, operation: ProcessOperationKind,
+  ): T | undefined {
+    const identity = this.processOperationIdentity(request, operation);
+    const prior = this.operationJournal?.get(identity.operationId);
+    if (!prior) return undefined;
+    if (canonicalJson(prior.identity) !== canonicalJson(identity) || prior.nodeId !== this.descriptor.id) {
+      throw new Error("Process operation identity was reused with different input");
+    }
+    if (prior.state !== "completed" || prior.response === null) {
+      throw new Error("Process operation outcome is unconfirmed; reconciliation is required");
+    }
+    return structuredClone(prior.response) as T;
+  }
+
+  private claimProcessOperation(
+    request: { operationId: string; processId: string }, operation: ProcessOperationKind,
+  ): void {
+    if (!this.operationJournal) return;
+    this.operationJournal.claim({
+      schemaVersion: 1,
+      identity: this.processOperationIdentity(request, operation),
+      nodeId: this.descriptor.id,
+      state: "claimed",
+      response: null,
+      updatedAt: this.now(),
+    });
+  }
+
+  private completeProcessOperation<T extends ProcessDescriptor | AdoptProcessResponse>(
+    request: { operationId: string; processId: string }, operation: ProcessOperationKind, response: T,
+  ): T {
+    if (this.operationJournal) {
+      this.operationJournal.complete({
+        schemaVersion: 1,
+        identity: this.processOperationIdentity(request, operation),
+        nodeId: this.descriptor.id,
+        state: "completed",
+        response: structuredClone(response),
+        updatedAt: this.now(),
+      });
+    }
+    return response;
   }
 
   async canonicalizePath(request: CanonicalizePathRequest): Promise<string> {
@@ -821,6 +949,10 @@ export class LocalExecutionNode implements ExecutionNode {
     if (!this.descriptor.capabilities.sandbox.backends.includes(enforcement.sandboxBackend)) {
       throw new Error(`Launcher used unregistered sandbox backend ${enforcement.sandboxBackend}`);
     }
+    const expectedMeasurement = this.descriptor.capabilities.sandbox.measurements?.[enforcement.sandboxBackend];
+    if (expectedMeasurement && enforcement.backendMeasurement !== expectedMeasurement) {
+      throw new Error(`Launcher sandbox backend measurement does not match registered ${enforcement.sandboxBackend} helper`);
+    }
     if (permissions.process.access === "sandboxed" && !enforcement.sandboxed) throw new Error("Launcher did not enforce the required process sandbox");
     if (!enforcement.filesystemPolicyApplied) throw new Error("Launcher did not enforce the effective filesystem profile");
     if (enforcement.permissionProfileFingerprint !== permissionProfileFingerprint(permissions)) {
@@ -838,6 +970,8 @@ export class LocalExecutionNode implements ExecutionNode {
     if (!allowedNetwork[permissions.network].includes(enforcement.network)) {
       throw new Error(`Launcher network enforcement ${enforcement.network} exceeds effective permission ${permissions.network}`);
     }
+    if(enforcement.sandboxBackend==="traceforge-linux-native"&&(!enforcement.atomicProcessTreeAssignment||!enforcement.processTreeEmptyBarrier||!enforcement.linux?.cgroupV2||!enforcement.linux.seccomp||!enforcement.linux.noNewPrivileges
+      ||["user","mount","pid","ipc","uts","network"].some(name=>!enforcement.linux!.namespaces.includes(name as any))))throw new Error("Linux launcher did not provide the required namespace/cgroup/seccomp process-tree proof");
   }
 
   private assertAttribution(attribution: StartProcessRequest["attribution"]): void {

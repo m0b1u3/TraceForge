@@ -27,5 +27,6 @@ data/
 workspace/
 apps/desktop/release/
 **/target/
+packages/execution-node/native/
 .playwright-cli/
 tips.txt

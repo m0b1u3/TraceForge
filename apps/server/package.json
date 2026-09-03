@@ -23,7 +23,6 @@
     "@traceforge/orchestration-core": "workspace:*",
     "@traceforge/reasoning-core": "workspace:*",
     "@traceforge/scenario-sdk": "workspace:*",
-    "@traceforge/scenario-web-blackbox": "workspace:*",
     "@traceforge/shared": "workspace:*",
     "@traceforge/tool-resolver": "workspace:*",
     "@traceforge/worker-runtime": "workspace:*",
@@ -34,6 +33,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@traceforge/scenario-web-blackbox": "workspace:*",
     "@types/better-sqlite3": "^7.6.0",
     "tsx": "^4.22.4"
   }

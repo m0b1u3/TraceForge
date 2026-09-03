@@ -27,6 +27,7 @@ function inventory(version = "1.0.0", model = "model-v1"): FoundationDeploymentI
     { kind: "skill", id: "investigate", version: "1", digest: sha("skill:1"), required: true },
     { kind: "knowledge_resource", id: "security-guidance", version: "1", digest: sha("knowledge:1"), required: true },
     { kind: "mcp_provider", id: "local-tools", version: "1", digest: sha("mcp:1"), required: true },
+    { kind: "extension_assembly", id: "active", version: "1", digest: sha("assembly:1"), required: true },
     { kind: "model_configuration", id: "primary", version: model, digest: sha(`model:${model}`), required: true },
     { kind: "capacity_policy", id: "host", version: "1", digest: sha("capacity:1"), required: true },
     { kind: "recovery_identity", id: "host-root", version: "1", digest: sha("recovery:1"), required: true },

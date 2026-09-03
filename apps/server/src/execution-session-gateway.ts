@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import type Database from "better-sqlite3";
 
 export interface ExecutionCookie { name: string; value: string; domain?: string; path?: string; expires?: number;
-  httpOnly?: boolean; secure?: boolean; sameSite?: "Strict" | "Lax" | "None"; }
+  httpOnly?: boolean; secure?: boolean; sameSite?: "Strict" | "Lax" | "None"; hostOnly?: boolean; }
 export interface ExecutionSessionDescriptor {
   id: string; caseId: string; runId: string; scopeRef: string; identityId: string | null; identityVersion: number | null;
   status: "active" | "frozen" | "closed" | "expired"; lastWorkerId: string | null; lastWorkId: string | null;
@@ -12,16 +12,22 @@ export interface ExecutionSessionDescriptor {
 }
 export interface SessionUseContext { workerId: string; workId: string; caseId: string; runId: string; scopeRef: string;
   leaseId: string; leaseExpiresAt: string; }
-export interface SessionMaterial { session: ExecutionSessionDescriptor; headers: Record<string, string>; cookies: ExecutionCookie[]; }
+export interface SessionMaterial { session: ExecutionSessionDescriptor; headers: Record<string, string>; cookies: ExecutionCookie[]; urlPrefixes:string[];
+  values:Record<string,string>; }
 interface ScenarioSessionPort {
   openSession(input: { caseId: string; runId: string; scopeRef: string; identityId?: string; ttlMs?: number }): ExecutionSessionDescriptor;
   use(sessionId: string, context: SessionUseContext): SessionMaterial;
   updateCookies(sessionId: string, cookies: ExecutionCookie[]): void;
+  updateValues(sessionId:string,values:Record<string,string>):void;
 }
 
 export interface ExecutionIdentitySecret {
   headers: Record<string, string>;
   cookies: ExecutionCookie[];
+  /** Canonical HTTP(S) lexical prefixes on which secret headers may be injected. */
+  urlPrefixes?: string[];
+  /** Named opaque values for Host-built form or JSON bodies. */
+  values?:Record<string,string>;
 }
 
 export interface ExecutionIdentityDescriptor {
@@ -31,11 +37,15 @@ export interface ExecutionIdentityDescriptor {
   kind: "anonymous" | "user" | "admin" | "service" | "custom";
   version: number;
   status: "active" | "revoked";
+  urlPrefixes: string[];
+  headerNames: string[];
+  cookieNames: string[];
+  secretNames:string[];
   createdAt: string;
   updatedAt: string;
 }
 
-interface SessionSecretState { cookies: ExecutionCookie[] }
+interface SessionSecretState { cookies: ExecutionCookie[];values:Record<string,string> }
 interface IdentityRow {
   id: string; case_id: string; name: string; kind: ExecutionIdentityDescriptor["kind"];
   version: number; status: ExecutionIdentityDescriptor["status"]; secret_ref: string; created_at: string; updated_at: string;
@@ -123,35 +133,39 @@ export class ExecutionSessionGateway implements ScenarioSessionPort {
   }): ExecutionIdentityDescriptor {
     if (!this.sqlite.prepare("SELECT 1 FROM cases WHERE id = ?").get(input.caseId)) throw new Error(`Unknown Case ${input.caseId}`);
     const id = input.id ?? `identity_${randomUUID()}`;
-    const secretRef = `identity-secret:${id}:1`;
+    if(!id.trim()||Buffer.byteLength(id)>256||!input.name.trim()||Buffer.byteLength(input.name)>256)throw new Error("Execution identity metadata is invalid");
+    const secretRef = `identity-secret:${id}:1`,secret=normalizeIdentitySecret(input.secret);
     const at = this.now();
     const transaction = this.sqlite.transaction(() => {
-      this.vault.put(secretRef, normalizeIdentitySecret(input.secret));
+      this.vault.put(secretRef, secret);
       this.sqlite.prepare(`
         INSERT INTO execution_identities (id, case_id, name, kind, version, status, secret_ref, created_at, updated_at)
         VALUES (?, ?, ?, ?, 1, 'active', ?, ?, ?)
       `).run(id, input.caseId, input.name.trim(), input.kind, secretRef, at, at);
     });
     transaction();
-    return { id, caseId: input.caseId, name: input.name.trim(), kind: input.kind, version: 1, status: "active", createdAt: at, updatedAt: at };
+    return identityDescriptor({id,case_id:input.caseId,name:input.name.trim(),kind:input.kind,version:1,status:"active",secret_ref:secretRef,created_at:at,updated_at:at},secret);
   }
 
   listIdentities(caseId: string): ExecutionIdentityDescriptor[] {
     return (this.sqlite.prepare(`
       SELECT id, case_id, name, kind, version, status, secret_ref, created_at, updated_at
       FROM execution_identities WHERE case_id = ? ORDER BY created_at ASC
-    `).all(caseId) as IdentityRow[]).map(identityDescriptor);
+    `).all(caseId) as IdentityRow[]).map(row=>identityDescriptor(row,row.status==="revoked"?{headers:{},cookies:[],urlPrefixes:[],values:{}}
+      :this.vault.get<ExecutionIdentitySecret>(row.secret_ref)));
   }
 
   revokeIdentity(identityId: string): ExecutionIdentityDescriptor {
     const row = this.requireIdentity(identityId);
+    if(row.status==="revoked")return identityDescriptor(row,{headers:{},cookies:[],urlPrefixes:[],values:{}});
     const at = this.now();
+    const descriptorBeforeRevocation=identityDescriptor(row,this.vault.get<ExecutionIdentitySecret>(row.secret_ref));
     this.sqlite.transaction(() => {
       this.sqlite.prepare("UPDATE execution_identities SET status = 'revoked', updated_at = ? WHERE id = ?").run(at, identityId);
       this.sqlite.prepare("UPDATE execution_sessions SET status = 'frozen', updated_at = ? WHERE identity_id = ? AND status = 'active'").run(at, identityId);
       this.vault.delete(row.secret_ref);
     })();
-    return { ...identityDescriptor(row), status: "revoked", updatedAt: at };
+    return { ...descriptorBeforeRevocation, status: "revoked", updatedAt: at };
   }
 
   openSession(input: { caseId: string; runId: string; scopeRef: string; identityId?: string; ttlMs?: number }): ExecutionSessionDescriptor {
@@ -173,7 +187,7 @@ export class ExecutionSessionGateway implements ScenarioSessionPort {
     const requestedExpiry = Date.parse(at) + Math.min(24 * 60 * 60_000, Math.max(60_000, input.ttlMs ?? 60 * 60_000));
     const expiresAt = new Date(Math.min(requestedExpiry, Date.parse(authorization.expires_at))).toISOString();
     this.sqlite.transaction(() => {
-      this.vault.put(stateSecretRef, { cookies: [] } satisfies SessionSecretState);
+      this.vault.put(stateSecretRef, { cookies: [],values:{} } satisfies SessionSecretState);
       this.sqlite.prepare(`
         INSERT INTO execution_sessions
           (id, case_id, run_id, scope_ref, identity_id, identity_version, state_secret_ref, status,
@@ -196,6 +210,17 @@ export class ExecutionSessionGateway implements ScenarioSessionPort {
       throw new Error(`Execution Session ${sessionId} does not belong to the assigned Run and authorization`);
     }
     if (Date.parse(context.leaseExpiresAt) <= Date.parse(at)) throw new Error(`Worker lease ${context.leaseId} is expired`);
+    const run=this.sqlite.prepare("SELECT case_id,status FROM scenario_event_streams WHERE run_id=?").get(context.runId) as
+      {case_id:string;status:string}|undefined;
+    const authorization=this.sqlite.prepare("SELECT case_id,status,expires_at FROM scenario_authorizations WHERE id=?").get(context.scopeRef) as
+      {case_id:string;status:string;expires_at:string}|undefined;
+    if(!run||run.case_id!==context.caseId||run.status!=="running"||!authorization||authorization.case_id!==context.caseId
+      ||authorization.status!=="active"||Date.parse(authorization.expires_at)<=Date.parse(at)){
+      this.freeze(sessionId,"Run or authorization is no longer active");
+      throw new Error(`Execution Session ${sessionId} authorization is no longer active`);
+    }
+    if(row.last_lease_id&&row.last_lease_id!==context.leaseId&&row.last_lease_expires_at
+      &&Date.parse(row.last_lease_expires_at)>Date.parse(at))throw new Error(`Execution Session ${sessionId} is leased by another Work`);
     const identity = row.identity_id ? this.requireIdentity(row.identity_id) : undefined;
     if (identity && (identity.status !== "active" || identity.version !== row.identity_version)) {
       this.freeze(sessionId, "identity changed or was revoked");
@@ -211,6 +236,8 @@ export class ExecutionSessionGateway implements ScenarioSessionPort {
       session: descriptor({ ...row, last_worker_id: context.workerId, last_work_id: context.workId, last_lease_id: context.leaseId, last_lease_expires_at: context.leaseExpiresAt, updated_at: at }),
       headers: { ...identitySecret.headers },
       cookies: mergeCookies(identitySecret.cookies, sessionState.cookies),
+      urlPrefixes:[...(identitySecret.urlPrefixes??[])],
+      values:{...(identitySecret.values??{}),...(sessionState.values??{})},
     };
   }
 
@@ -218,8 +245,17 @@ export class ExecutionSessionGateway implements ScenarioSessionPort {
     const row = this.requireSessionRow(sessionId);
     if (row.status !== "active") throw new Error(`Execution Session ${sessionId} is ${row.status}`);
     const state = this.vault.get<SessionSecretState>(row.state_secret_ref);
-    this.vault.put(row.state_secret_ref, { cookies: mergeCookies(state.cookies, cookies) } satisfies SessionSecretState);
+    this.vault.put(row.state_secret_ref, { cookies: mergeCookies(state.cookies, cookies),values:state.values??{} } satisfies SessionSecretState);
     this.sqlite.prepare("UPDATE execution_sessions SET updated_at = ? WHERE id = ?").run(this.now(), sessionId);
+  }
+
+  updateValues(sessionId:string,values:Record<string,string>):void{
+    const row=this.requireSessionRow(sessionId);if(row.status!=="active")throw new Error(`Execution Session ${sessionId} is ${row.status}`);
+    if(Object.keys(values).length>32||Object.entries(values).some(([name,value])=>!/^[a-zA-Z][a-zA-Z0-9_.:-]{0,127}$/.test(name)
+      ||typeof value!=="string"||Buffer.byteLength(value)>8192))throw new Error("Session secret values are invalid");
+    const state=this.vault.get<SessionSecretState>(row.state_secret_ref);
+    this.vault.put(row.state_secret_ref,{cookies:state.cookies,values:{...(state.values??{}),...values}} satisfies SessionSecretState);
+    this.sqlite.prepare("UPDATE execution_sessions SET updated_at=? WHERE id=?").run(this.now(),sessionId);
   }
 
   freezeByScope(scopeRef: string, reason = "authorization revoked"): number {
@@ -265,24 +301,41 @@ export class ExecutionSessionGateway implements ScenarioSessionPort {
 }
 
 function normalizeIdentitySecret(secret: ExecutionIdentitySecret): ExecutionIdentitySecret {
-  return {
-    headers: Object.fromEntries(Object.entries(secret.headers).map(([name, value]) => [name.trim(), String(value)]).filter(([name]) => name.length > 0)),
-    cookies: mergeCookies([], secret.cookies),
-  };
+  if(!secret||typeof secret!=="object"||Array.isArray(secret))throw new Error("Execution identity secret is invalid");
+  const headerEntries=Object.entries(secret.headers??{});if(headerEntries.length>64)throw new Error("Execution identity has too many headers");
+  const headers=Object.fromEntries(headerEntries.map(([name,value])=>{
+    const normalized=name.trim(),lower=normalized.toLowerCase();if(!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(normalized)
+      ||new Set(["cookie","host","content-length","connection","transfer-encoding","proxy-authorization"]).has(lower)||typeof value!=="string"||/[\r\n]/.test(value)
+      ||Buffer.byteLength(value)>8192)throw new Error("Execution identity header is invalid");return [normalized,value];}));
+  const urlPrefixes=(secret.urlPrefixes??[]).map(value=>{if(typeof value!=="string"||Buffer.byteLength(value)>2048)throw new Error("Identity URL prefix is invalid");
+    const url=new URL(value);if(!["http:","https:"].includes(url.protocol)||url.username||url.password||url.hash)throw new Error("Identity URL prefix is invalid");return url.href;});
+  if(Object.keys(headers).length!==0&&!urlPrefixes.length)throw new Error("Secret headers require an explicit URL prefix");
+  if(urlPrefixes.length>32||new Set(urlPrefixes).size!==urlPrefixes.length)throw new Error("Identity URL prefixes are invalid");
+  const values=secret.values??{};if(!values||typeof values!=="object"||Array.isArray(values)||Object.keys(values).length>32
+    ||Object.entries(values).some(([name,value])=>!/^[a-zA-Z][a-zA-Z0-9_.:-]{0,127}$/.test(name)||typeof value!=="string"||Buffer.byteLength(value)>8192))
+    throw new Error("Execution identity secret values are invalid");
+  if(!Array.isArray(secret.cookies)||secret.cookies.length>128||secret.cookies.some(cookie=>!cookie||typeof cookie!=="object"||!cookie.name?.trim()
+    ||!cookie.domain||!cookie.path?.startsWith("/")&&cookie.path!==undefined||Buffer.byteLength(cookie.name)>256||Buffer.byteLength(String(cookie.value))>8192
+    ||/[\r\n;]/.test(cookie.name+String(cookie.value))))throw new Error("Execution identity cookies are invalid");
+  return {headers,cookies:mergeCookies([],secret.cookies),urlPrefixes,values:{...values}};
 }
 
 function mergeCookies(base: ExecutionCookie[], next: ExecutionCookie[]): ExecutionCookie[] {
   const merged = new Map<string, ExecutionCookie>();
   for (const cookie of [...base, ...next]) {
-    if (!cookie.name.trim()) continue;
+    if (!cookie.name.trim()||!cookie.domain||Buffer.byteLength(cookie.name)>256||Buffer.byteLength(String(cookie.value))>8192
+      ||/[\r\n;]/.test(cookie.name+String(cookie.value))) continue;
     const normalized = { ...cookie, name: cookie.name.trim(), value: String(cookie.value), path: cookie.path ?? "/" };
     merged.set(`${normalized.domain ?? ""}\u0000${normalized.path}\u0000${normalized.name}`, normalized);
   }
   return [...merged.values()];
 }
 
-function identityDescriptor(row: IdentityRow): ExecutionIdentityDescriptor {
-  return { id: row.id, caseId: row.case_id, name: row.name, kind: row.kind, version: row.version, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at };
+function identityDescriptor(row: IdentityRow,secret:ExecutionIdentitySecret): ExecutionIdentityDescriptor {
+  return { id: row.id, caseId: row.case_id, name: row.name, kind: row.kind, version: row.version, status: row.status,
+    urlPrefixes:[...(secret.urlPrefixes??[])],headerNames:Object.keys(secret.headers).sort(),cookieNames:[...new Set(secret.cookies.map(cookie=>cookie.name))].sort(),
+    secretNames:Object.keys(secret.values??{}).sort(),
+    createdAt: row.created_at, updatedAt: row.updated_at };
 }
 
 function descriptor(row: SessionRow): ExecutionSessionDescriptor {

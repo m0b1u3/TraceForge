@@ -27,6 +27,7 @@ const run = (args: string[]) => {
 const target = requestedPlatform === "win32" ? "dist:win" : requestedPlatform === "darwin" ? "dist:mac" : "dist:linux";
 
 if (requestedPlatform === "win32") run(["build:windows-sandbox"]);
+if (requestedPlatform === "linux") run(["build:linux-sandbox"]);
 run(["-r", "build"]);
 run(["--filter", "@traceforge/desktop", target]);
 run(["verify:desktop-release", "apps/desktop/release", requestedPlatform]);

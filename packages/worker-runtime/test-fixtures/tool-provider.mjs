@@ -23,13 +23,24 @@ function respond(request) {
     } });
   }
   if (request.method === "provider.handshake") {
-    return send({ version, id: request.id, ok: true, result: { providerId: "fixture", providerVersion: "1.0.0", protocolVersion: version } });
+    return send({ version, id: request.id, ok: true, result: {
+      providerId: process.env.TRACEFORGE_TEST_PROVIDER_ID ?? "fixture",
+      providerVersion: process.env.TRACEFORGE_TEST_PROVIDER_VERSION ?? "1.0.0",
+      protocolVersion: version,
+      ...(process.env.TRACEFORGE_TEST_PROTOCOL_PROFILE ? { profile: process.env.TRACEFORGE_TEST_PROTOCOL_PROFILE } : {}),
+    } });
   }
   if (request.method === "tools.list") {
+    if (process.env.TRACEFORGE_TEST_PROTOCOL_CORRUPT === "true") {
+      const invalid = Buffer.alloc(4); invalid.writeUInt32BE(0); process.stdout.write(invalid); return;
+    }
+    if (process.env.TRACEFORGE_TEST_INVALID_CATALOG === "true") return send({ version, id: request.id, ok: true, result: [{ invalid: true }] });
     return send({ version, id: request.id, ok: true, result: [{
-      name: "fixture.read", source: process.env.TRACEFORGE_TEST_SOURCE ?? "rpc:test", version: "1.0.0", priority: 100,
+      name: "fixture.read", source: process.env.TRACEFORGE_TEST_SOURCE ?? "rpc:test",
+      version: process.env.TRACEFORGE_TEST_PROVIDER_VERSION ?? "1.0.0", priority: 100,
       description: process.env.TRACEFORGE_TEST_OBSERVATION ? "Read the current observation token. Invoke with an empty object." : "Read fixture input",
-      inputSchema: { type: "object", ...(process.env.TRACEFORGE_TEST_OBSERVATION ? { additionalProperties: false } : {}) }, providedCapabilities: ["fixture.read"],
+      inputSchema: { type: "object", ...(process.env.TRACEFORGE_TEST_OBSERVATION ? { additionalProperties: false } : {}) },
+      providedCapabilities: (process.env.TRACEFORGE_TEST_CAPABILITIES ?? "fixture.read").split(",").filter(Boolean),
       dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1000,
     }] });
   }
@@ -60,8 +71,8 @@ function respond(request) {
         method: "host.capability.call",
         params: {
           parentRequestId: request.params.input.unknownParent === true ? "missing-parent" : request.id,
-          capability: "fixture.lookup",
-          action: "fixture.inspect",
+          capability: process.env.TRACEFORGE_TEST_HOST_CAPABILITY ?? "fixture.lookup",
+          action: process.env.TRACEFORGE_TEST_HOST_ACTION ?? "fixture.inspect",
           idempotencyKey: `fixture:${request.params.context?.idempotencyKey ?? request.id}`,
           input: { subject: "first candidate" },
         },

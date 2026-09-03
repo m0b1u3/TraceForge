@@ -81,6 +81,7 @@ import { SignedToolRecoveryEvidenceVerifier, type RecoveryEvidenceAuthority } fr
 import { ToolExecutionRecoveryControl, registerToolExecutionRecoveryRoutes } from "./tool-execution-recovery.js";
 import type { ScenarioWorkRetryControl } from "./scenario-work-retry.js";
 import { SqliteWorkerCheckpointStore } from "./worker-checkpoint-store.js";
+import type { ExtensionAssemblyControl } from "./extension-assembly.js";
 
 function serverBaseUrl(app: FastifyInstance): string {
   const address = app.server.address();
@@ -344,6 +345,7 @@ export function registerEmbeddedWorkers(
   processCapacity?: ProcessExecutionCapacity,
   hostControl?: FoundationHostControl,
   authorization?: SqliteScenarioAuthorizationService,
+  extensionAssembly?: ExtensionAssemblyControl,
 ): void {
   const builtinTools: ExecutionToolAdapter[] = [
     new EvidenceGraphSnapshotTool(evidenceGraph),
@@ -398,6 +400,7 @@ export function registerEmbeddedWorkers(
       },
     ) : undefined);
   const providerControlStore = new SqliteToolProviderControlStore(sqlite);
+  extensionAssembly?.attachManagedProviderInventory(() => providerControlStore.list());
   const providerPackageStore = new ManagedToolProviderPackageStore(resolve(projectRoot, "data/tool-providers/packages"));
   const providerWorkRoot = resolve(projectRoot, "data/tool-providers/work");
   const providerControl = new ToolProviderControlPlane(
@@ -412,6 +415,7 @@ export function registerEmbeddedWorkers(
     providerPackageStore,
     () => new Date().toISOString(),
     invocationBindings,
+    () => extensionAssembly?.reconcileManagedProviders(providerControlStore.list()),
   );
   const providerGarbageCollector = new ToolProviderGarbageCollector(
     sqlite, providerControlStore, providerPackageStore, providerWorkRoot, () => toolRuntime.snapshot(),

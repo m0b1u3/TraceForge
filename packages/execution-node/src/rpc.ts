@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { chmod, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConnection, createServer, type AddressInfo, type Server, type Socket } from "node:net";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
 import type {
   AdoptProcessRequest,
   AdoptProcessResponse,
@@ -17,6 +17,8 @@ import type {
   ProcessAccess,
   ProcessExecutionQuery,
   ProcessExecutionObservation,
+  ProcessOperationObservation,
+  ProcessOperationQuery,
   ProcessDescriptor,
   ReadFileChunkRequest,
   ReadFileChunkResponse,
@@ -41,6 +43,7 @@ export type ExecutionRpcMethod =
   | "process.start"
   | "process.describe"
   | "process.lookupExecution"
+  | "process.lookupOperation"
   | "process.readEvents"
   | "process.waitEvents"
   | "process.writeInput"
@@ -72,9 +75,7 @@ export type ExecutionRpcResponse =
       error: { code: string; message: string; retryable: boolean };
     };
 
-export type ExecutionRpcAddress =
-  | { kind: "pipe"; path: string }
-  | { kind: "tcp"; host: "127.0.0.1" | "::1"; port: number };
+export interface ExecutionRpcAddress { kind: "pipe"; path: string }
 
 export class ExecutionRpcRemoteError extends Error {
   constructor(
@@ -156,6 +157,10 @@ export class ExecutionRpcDispatcher {
         if (!this.node.lookupProcessExecution) throw new Error("Execution observation unavailable");
         return (await this.node.lookupProcessExecution(params as ProcessExecutionQuery)) ?? null;
       }
+      case "process.lookupOperation": {
+        if (!this.node.lookupProcessOperation) throw new Error("Process operation observation unavailable");
+        return (await this.node.lookupProcessOperation(params as ProcessOperationQuery)) ?? null;
+      }
       case "process.readEvents": return this.node.readProcessEvents(params as ReadProcessEventsRequest);
       case "process.waitEvents": {
         const value = params as { request: ReadProcessEventsRequest; timeoutMs: number };
@@ -191,7 +196,7 @@ export class ExecutionNodeRpcServer {
   private readonly maximumInFlight: number;
   private listeningAddress: ExecutionRpcAddress | null = null;
 
-  constructor(private readonly dispatcher: ExecutionRpcDispatcher, options: ExecutionNodeRpcServerOptions) {
+  constructor(private readonly dispatcher: ExecutionRpcDispatcher, private readonly options: ExecutionNodeRpcServerOptions) {
     if (options.authToken.length < 32) throw new Error("Execution RPC authentication token must contain at least 32 characters");
     this.token = Buffer.from(options.authToken);
     this.maximumFrameBytes = options.maximumFrameBytes ?? 8 * 1024 * 1024;
@@ -202,22 +207,15 @@ export class ExecutionNodeRpcServer {
 
   async listen(address: ExecutionRpcAddress): Promise<ExecutionRpcAddress> {
     if (this.listeningAddress) throw new Error("Execution RPC server is already listening");
-    if (address.kind === "tcp" && address.host !== "127.0.0.1" && address.host !== "::1") throw new Error("Execution RPC TCP transport is restricted to loopback");
     await new Promise<void>((resolvePromise, reject) => {
       const onError = (error: Error) => { this.server.off("listening", onListening); reject(error); };
       const onListening = () => { this.server.off("error", onError); resolvePromise(); };
       this.server.once("error", onError);
       this.server.once("listening", onListening);
-      if (address.kind === "pipe") this.server.listen(address.path);
-      else this.server.listen(address.port, address.host);
+      this.server.listen(address.path);
     });
-    if (address.kind === "pipe") {
-      this.listeningAddress = address;
-      if (process.platform !== "win32") await chmod(address.path, 0o600);
-    } else {
-      const resolved = this.server.address() as AddressInfo;
-      this.listeningAddress = { kind: "tcp", host: address.host, port: resolved.port };
-    }
+    this.listeningAddress = address;
+    if (process.platform !== "win32") await chmod(address.path, 0o600);
     return this.listeningAddress;
   }
 
@@ -227,7 +225,7 @@ export class ExecutionNodeRpcServer {
     this.listeningAddress = null;
     for (const socket of this.sockets) socket.destroy();
     await new Promise<void>((resolvePromise, reject) => this.server.close((error) => error ? reject(error) : resolvePromise()));
-    if (address.kind === "pipe" && process.platform !== "win32") await unlink(address.path).catch((error: NodeJS.ErrnoException) => {
+    if (process.platform !== "win32") await unlink(address.path).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error;
     });
   }
@@ -321,6 +319,9 @@ export class ExecutionNodeRpcClient implements ExecutionNode {
   async lookupProcessExecution(query: ProcessExecutionQuery): Promise<ProcessExecutionObservation | undefined> {
     return (await this.call("process.lookupExecution", query) as ProcessExecutionObservation | null) ?? undefined;
   }
+  async lookupProcessOperation(query: ProcessOperationQuery): Promise<ProcessOperationObservation | undefined> {
+    return (await this.call("process.lookupOperation", query) as ProcessOperationObservation | null) ?? undefined;
+  }
   private socket: Socket | null = null;
   private connecting: Promise<Socket> | null = null;
   private readonly pending = new Map<string, PendingRequest>();
@@ -379,7 +380,7 @@ export class ExecutionNodeRpcClient implements ExecutionNode {
       timer = setTimeout(() => {
         expired = true;
         this.pending.delete(id);
-        reject(new ExecutionRpcTransportError(`Execution RPC ${method} deadline exceeded; remote outcome is unconfirmed`));
+        reject(new ExecutionRpcTransportError(`Execution RPC ${method} deadline exceeded; operation outcome is unconfirmed`));
       }, this.requestTimeoutMs);
     });
     try {
@@ -406,9 +407,7 @@ export class ExecutionNodeRpcClient implements ExecutionNode {
     if (this.connecting) return this.connecting;
     const generation = ++this.connectionGeneration;
     this.connecting = new Promise<Socket>((resolvePromise, reject) => {
-      const socket = this.address.kind === "pipe"
-        ? createConnection(this.address.path)
-        : createConnection({ host: this.address.host, port: this.address.port });
+      const socket = createConnection(this.address.path);
       const decoder = new ExecutionFrameDecoder(this.maximumFrameBytes);
       const timer = setTimeout(() => socket.destroy(new ExecutionRpcTransportError("Execution RPC connection timed out")), this.connectTimeoutMs);
       const fail = (error: Error) => {

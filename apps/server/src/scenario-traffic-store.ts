@@ -2,15 +2,18 @@ import type Database from "better-sqlite3";
 import type { BrokeredNetworkReceipt } from "@traceforge/execution-node";
 
 export interface ScenarioTrafficEntrySummary { id: string; runId: string; url: string; method: string;
+  identityId: string | null; identityVersion: number | null; attributionSource: string | null;
   responseStatus: number | null; responseSize: number | null; contentType: string | null; createdAt: string; }
 interface ScenarioTrafficPort {
   recordHttpExchange(input: { trafficId: string; caseId: string; runId: string; url: string; method: string;
     requestHeaders: Record<string, string>; requestBody: string | null; responseStatus: number;
     responseHeaders: Record<string, string>; responseSize: number; contentType: string | null; responseBody: string | null;
-    receipt: BrokeredNetworkReceipt; createdAt: string }): void;
+    receipt: BrokeredNetworkReceipt; createdAt: string; identityId?: string | null; identityVersion?: number | null;
+    attributionSource?: string }): void;
   recordBrowserObservation(input: { trafficId: string; caseId: string; runId: string; url: string;
     responseStatus: number | null; responseSize: number; responseBody: string; createdAt: string }): void;
   list(caseId: string, limit: number): ScenarioTrafficEntrySummary[];
+  listRun(caseId: string, runId: string, limit: number): ScenarioTrafficEntrySummary[];
 }
 
 export class SqliteScenarioTrafficStore implements ScenarioTrafficPort {
@@ -23,9 +26,9 @@ export class SqliteScenarioTrafficStore implements ScenarioTrafficPort {
           (id, case_id, run_id, identity_id, identity_version, attribution_source, parent_traffic_id,
            url, method, request_headers_json, request_body, response_status, response_headers_json,
            response_size, content_type, response_body, created_at)
-        VALUES (?, ?, ?, NULL, NULL, 'agent', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        input.trafficId, input.caseId, input.runId, input.url, input.method,
+        input.trafficId, input.caseId, input.runId, input.identityId??null,input.identityVersion??null,input.attributionSource??"agent",input.url, input.method,
         JSON.stringify(input.requestHeaders), input.requestBody, input.responseStatus,
         JSON.stringify(input.responseHeaders), input.responseSize, input.contentType,
         input.responseBody, input.createdAt,
@@ -64,16 +67,26 @@ export class SqliteScenarioTrafficStore implements ScenarioTrafficPort {
   }
 
   list(caseId: string, limit: number): ScenarioTrafficEntrySummary[] {
-    const rows = this.sqlite.prepare(`
-      SELECT id, run_id, url, method, response_status, response_size, content_type, created_at
-      FROM traffic_entries WHERE case_id = ? ORDER BY created_at DESC LIMIT ?
-    `).all(caseId, limit) as Array<{
-      id: string; run_id: string; url: string; method: string; response_status: number | null;
-      response_size: number | null; content_type: string | null; created_at: string;
+    return this.rows("case_id = ?",[caseId,limit]);
+  }
+
+  listRun(caseId:string,runId:string,limit:number):ScenarioTrafficEntrySummary[]{
+    return this.rows("case_id = ? AND run_id = ?",[caseId,runId,limit]);
+  }
+
+  private rows(where:string,parameters:unknown[]):ScenarioTrafficEntrySummary[]{
+    if(!Number.isSafeInteger(parameters.at(-1))||Number(parameters.at(-1))<1||Number(parameters.at(-1))>200)throw new Error("Traffic list limit must be 1..200");
+    const rows=this.sqlite.prepare(`SELECT id,run_id,identity_id,identity_version,attribution_source,url,method,response_status,response_size,content_type,created_at
+      FROM traffic_entries WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT ?`).all(...parameters) as Array<{
+      id:string;run_id:string;identity_id:string|null;identity_version:number|null;attribution_source:string|null;url:string;method:string;
+      response_status:number|null;response_size:number|null;content_type:string|null;created_at:string;
     }>;
     return rows.map((row) => ({
       id: row.id,
       runId: row.run_id,
+      identityId:row.identity_id,
+      identityVersion:row.identity_version,
+      attributionSource:row.attribution_source,
       url: row.url,
       method: row.method,
       responseStatus: row.response_status,

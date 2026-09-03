@@ -111,7 +111,7 @@ describe("scenario Web execution tools", () => {
     const { sqlite, authorization, sessions, traffic } = setup();
     const identity = sessions.createIdentity({
       id: "identity_1", caseId: "case_1", name: "User", kind: "user",
-      secret: { headers: { Authorization: "Bearer secret" }, cookies: [] },
+      secret: { headers: { Authorization: "Bearer secret" }, cookies: [],urlPrefixes:["https://authorized.example/"] },
     });
     const session = sessions.openSession({ caseId: "case_1", runId: "run_1", scopeRef: "scope_1", identityId: identity.id });
     const requestHttp = vi.fn(async (request: BrokeredHttpRequest) => {

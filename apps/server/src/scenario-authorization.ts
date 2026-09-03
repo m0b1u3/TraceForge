@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import { canonicalJson, type ScenarioPackageBinding, type ScenarioRunState } from "@traceforge/orchestration-core";
-import { ScenarioPackageRegistry, type ActiveScenarioAuthorization, type ScenarioAuthorizationPort,
+import { authorizeScenarioResource, parseScenarioScope, ScenarioPackageRegistry, type ActiveScenarioAuthorization, type ScenarioAuthorizationPort,
   type ScenarioPackageInstallation, type ScenarioResourceAuthorization } from "@traceforge/scenario-sdk";
 
 export const authorizationHash=(value:unknown)=>createHash("sha256").update(canonicalJson(value)).digest("hex");
@@ -31,12 +31,13 @@ export class SqliteScenarioAuthorizationService implements ScenarioAuthorization
     if(!pkg)throw new AuthorizationRecoveryRequired("Pinned authorization Package is not installed; recovery required");this.packages.assertAvailable(pkg);return pkg;
   }
   contract(pkg:ScenarioPackageInstallation):string {
-    return authorizationHash({package:this.packages.bindingFor(pkg),definition:pkg.definition});
+    return authorizationHash({package:this.packages.bindingFor(pkg),definition:pkg.definition,
+      policy:"format" in pkg.authorizationPolicy?pkg.authorizationPolicy:"legacy-host-callback"});
   }
   parse(row:AuthorizationRow,pkg:ScenarioPackageInstallation) {
     if(Buffer.byteLength(row.scope_json)>1024*1024)throw new Error("Authorization scope budget exceeded");
     if(pkg.definition.kind!==row.scenario_kind)throw new AuthorizationRecoveryRequired("Authorization scenario mismatch");
-    const scope=pkg.authorizationPolicy.parseScope(JSON.parse(row.scope_json));
+    const scope=parseScenarioScope(pkg.authorizationPolicy,JSON.parse(row.scope_json));
     const declared=new Set(pkg.definition.authorizationActions);
     if([...scope.allowedActions,...scope.deniedActions].some(a=>!declared.has(a)))throw new Error("Authorization contains undeclared actions");
     return scope;
@@ -77,12 +78,11 @@ export class SqliteScenarioAuthorizationService implements ScenarioAuthorization
   }
   authorizeResource(scopeRef:string,caseId:string,action:string,resourceKind:string,value:string):ScenarioResourceAuthorization {
     const authorization=this.requireAction(scopeRef,caseId,action),{package:pkg}=this.requireScope(scopeRef,caseId);
-    const authorize=pkg.authorizationPolicy.authorizeResource;
-    if(!authorize)throw new Error(`Scenario ${authorization.scenarioKind} does not authorize ${resourceKind} resources`);
-    return {...authorization,canonicalValue:authorize(authorization.scopePayload,resourceKind,value)};
+    return {...authorization,canonicalValue:authorizeScenarioResource(pkg.authorizationPolicy,authorization.scopePayload,resourceKind,value)};
   }
 }
 export function sameAuthorizationPolicy(a:ScenarioPackageInstallation,b:ScenarioPackageInstallation):boolean {
-  return a.id===b.id && a.authorizationPolicy.parseScope===b.authorizationPolicy.parseScope
-    && a.authorizationPolicy.authorizeResource===b.authorizationPolicy.authorizeResource;
+  const left=a.authorizationPolicy,right=b.authorizationPolicy;
+  if("format" in left || "format" in right)return a.id===b.id && canonicalJson(left)===canonicalJson(right);
+  return a.id===b.id && left.parseScope===right.parseScope && left.authorizeResource===right.authorizeResource;
 }

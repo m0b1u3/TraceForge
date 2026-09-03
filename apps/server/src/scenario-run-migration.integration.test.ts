@@ -127,6 +127,16 @@ describe("Preserved-state Run Package migration",()=>{
       if(kind==="factory")p.target.createToolSources=()=>[];
     });await blocked(f,/structural|output schemas|policy|tool factory/);
   });
+  it("compares complete declarative contracts rather than only their identity",async()=>{
+    const f=fixture({},p=>{
+      const policy={format:"traceforge.scenario-scope-policy.v1" as const,allowedActions:["observe"],deniedActions:[],
+        payload:{maximumBytes:1024,maximumDepth:4},resources:[]};
+      p.source.authorizationPolicy=policy;p.target.authorizationPolicy=structuredClone(policy);
+      p.source.outputSchemas=[{kind:"decision",version:1,format:"traceforge.scenario-output-contract.v1",maximumSummaryBytes:1024,maximumRefs:4}];
+      p.target.outputSchemas=[{kind:"decision",version:1,format:"traceforge.scenario-output-contract.v1",maximumSummaryBytes:1024,maximumRefs:5}];
+    });
+    await blocked(f,/output schemas/);
+  });
   it("rejects a missing migration declaration body",async()=>{await blocked(fixture({resources:[]}),/missing or corrupt/);});
   it("rejects a revoked migration resource",async()=>{const f=fixture();f.contexts.revoke(f.target.resourceManifest!.resources[0]!.digest,"Revoked");await blocked(f,/revoked/);});
   it("rejects an absent direct manifest step",async()=>{const f=fixture({},p=>{p.target.migrationManifest={revision:1,steps:[]};});await blocked(f,/direct manifest step/);});

@@ -13,24 +13,20 @@ import { LlmConfigService } from "./llm-config-service.js";
 import { registerSecurityAgentFoundation, type SecurityAgentFoundationOptions } from "./security-agent-foundation.js";
 import { startLocalExecutionNodeService } from "./execution-node-service.js";
 import { loadToolProviderTrustRoots } from "./tool-provider-control-plane.js";
-import { WEB_BLACKBOX_HOST_CAPABILITIES, WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
-import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
-import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
-import { ScenarioPackageTrustControl } from "./scenario-package-trust.js";
-import { ExecutionSessionGateway, loadOrCreateVaultKey, SqliteEncryptedSecretVault } from "./execution-session-gateway.js";
-import { registerExecutionSessionRoutes } from "./execution-session-routes.js";
-import { SqliteScenarioTrafficStore } from "./scenario-traffic-store.js";
+import type { ScenarioAuthorizationPort } from "@traceforge/scenario-sdk";
 import { readFoundationRestoreFence } from "./db/foundation-restore-fence.js";
 import { registerFoundationInspectionRoutes } from "./foundation-backup.js";
 import { registerFoundationHostControl } from "./foundation-host-control.js";
 import { resolveFoundationActiveDatabase } from "./foundation-recovery-activation.js";
 import { resolveFoundationDeployment } from "./foundation-deployment.js";
+import { loadScenarioHostConfiguration } from "./scenario-host-configuration.js";
 
 // 运行时数据固定放在项目根目录 data/ 下，避免受 process.cwd() 影响（tsx watch 从 apps/server 启动）
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const DEFAULT_DB_PATH = resolve(PROJECT_ROOT, "data/traceforge.sqlite");
 const DEFAULT_MCP_CONFIG_PATH = resolve(PROJECT_ROOT, "config/mcp.json");
 const DEFAULT_LLM_CONFIG_PATH = resolve(PROJECT_ROOT, "config/llm.json");
+const DEFAULT_SCENARIO_CONFIG_PATH = resolve(PROJECT_ROOT, "config/scenarios.json");
 
 export function trustedUiOrigin(origin: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
   if (!origin) return true;
@@ -114,22 +110,27 @@ export async function buildServer(
     app.log.warn({ err }, "LLM provider not initialized from config; save settings before running Agent");
   }
   const provider = llmService.getProvider();
-  // The application package remains quarantined until trusted host review is configured.
-  const scenarioPackages = new ScenarioPackageTrustControl(sqlite,new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE])).registry;
-  const scenarioAuthorization = new SqliteScenarioAuthorizationService(sqlite, scenarioPackages);
-  const sessions = new ExecutionSessionGateway(sqlite,
-    new SqliteEncryptedSecretVault(sqlite, loadOrCreateVaultKey(projectRoot)));
-  const traffic = new SqliteScenarioTrafficStore(sqlite);
-  registerExecutionSessionRoutes(app, sessions);
-  const executionNodeService = await startLocalExecutionNodeService(projectRoot, scenarioAuthorization, sqlite);
+  const scenarioHost = loadScenarioHostConfiguration(projectRoot === PROJECT_ROOT
+    ? DEFAULT_SCENARIO_CONFIG_PATH : resolve(projectRoot, "config/scenarios.json"));
+  let scenarioAuthorization: ScenarioAuthorizationPort | undefined;
+  const authorizationProxy: ScenarioAuthorizationPort = {
+    requireAction(scopeRef, caseId, action) {
+      if (!scenarioAuthorization) throw new Error("Scenario authorization is not assembled");
+      return scenarioAuthorization.requireAction(scopeRef, caseId, action);
+    },
+    authorizeResource(scopeRef, caseId, action, resourceKind, value) {
+      if (!scenarioAuthorization) throw new Error("Scenario authorization is not assembled");
+      return scenarioAuthorization.authorizeResource(scopeRef, caseId, action, resourceKind, value);
+    },
+  };
+  const executionNodeService = await startLocalExecutionNodeService(projectRoot, authorizationProxy, sqlite);
 
   registerSecurityAgentFoundation(app, sqlite, provider, projectRoot, () => llmService.hasProvider(), {
     ...effectiveHostOptions,
-    scenarioPackageRegistry: scenarioPackages,
-    scenarioHostCapabilities: {
-      [WEB_BLACKBOX_HOST_CAPABILITIES.sessions]: sessions,
-      [WEB_BLACKBOX_HOST_CAPABILITIES.traffic]: traffic,
-    },
+    scenarioPackageTrust: scenarioHost.trust,
+    loadScenarioPackageDescriptors: (scenarioHost.trust.installations?.length ?? 0) > 0,
+    scenarioProcessLaunches: scenarioHost.launches,
+    onScenarioAuthorizationReady: (authorization) => { scenarioAuthorization = authorization; },
     modelRoutes: llmService.getModelRoutes(),
     modelPolicies: llmService.getRolePolicies(),
     modelResourcePolicy: llmService.getResourcePolicy(),
@@ -140,14 +141,18 @@ export async function buildServer(
   // Register application APIs after the host transport fence. No unguarded legacy API back door.
   registerRoutes(app, db, bus, provider, mcp, llmService, projectRoot);
 
-  app.get("/api/health", async () => ({
-    status: "ok",
-    llmConfigured,
-    mcpTools: mcp.listTools().length,
-    executionNodeReady: true,
-    executionProcessReady: executionNodeService.processReady,
-    deployment:deployment?{managed:true,releaseId:deployment.manifest.releaseId,deploymentGeneration:deployment.manifest.deploymentGeneration,switchGeneration:deployment.pointer.switchGeneration}:{managed:false},
-  }));
+  app.get("/api/health", async () => {
+    const executionNode = await executionNodeService.health();
+    return {
+      status: "ok",
+      llmConfigured,
+      mcpTools: mcp.listTools().length,
+      executionNodeReady: executionNode.state !== "stopped",
+      executionProcessReady: executionNode.processReady,
+      executionNode,
+      deployment:deployment?{managed:true,releaseId:deployment.manifest.releaseId,deploymentGeneration:deployment.manifest.deploymentGeneration,switchGeneration:deployment.pointer.switchGeneration}:{managed:false},
+    };
+  });
 
   app.get("/ws", { websocket: true }, (socket) => {
     const off = bus.subscribe((e) => socket.send(JSON.stringify(e)));

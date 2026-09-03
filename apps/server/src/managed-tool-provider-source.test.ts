@@ -210,7 +210,7 @@ describe("managed Tool Provider capability composition", () => {
       expect(restored.scheduler.snapshot().retained).toBe(1);
     }finally{
       if(started&&mode==="cleanup-failure"){
-        const access={processId:started.process.id,adoptionToken:started.adoptionToken};let descriptor=await rawNode.terminateProcess({...access,force:true});
+        const access={processId:started.process.id,adoptionToken:started.adoptionToken};let descriptor=await rawNode.terminateProcess({...access,operationId:`test-terminate:${started.process.id}`,force:true});
         const until=Date.now()+3000;while(!["exited","failed"].includes(descriptor.state)&&Date.now()<until)descriptor=(await rawNode.waitProcessEvents({...access,afterSequence:descriptor.lastEventSequence,maximumEvents:256},100)).process;
         expect(["exited","failed"]).toContain(descriptor.state);
       }

@@ -42,7 +42,9 @@ describe("Package-independent Run forensics and disposal", () => {
     const trust = new ScenarioPackageTrustControl(f.sqlite, new ScenarioPackageRegistry([f.source]), material.options);
     await trust.revoke({ commandId: "revoke", package: f.from, actor: "operator", reason: "Withdraw" });
     const forbidden = vi.fn(() => { throw new Error("Package code must not execute"); });
-    f.source.createToolSources = forbidden; f.source.authorizationPolicy.parseScope = forbidden; f.source.outputSchemas[0]!.validate = forbidden;
+    f.source.createToolSources = forbidden;
+    (f.source.authorizationPolicy as { parseScope: typeof forbidden }).parseScope = forbidden;
+    (f.source.outputSchemas[0]! as unknown as { validate: typeof forbidden }).validate = forbidden;
     const runtime = new DurableScenarioRuntime(new SqliteScenarioEventStore(f.sqlite), new ScenarioDefinitionRegistry([f.source.definition]), trust.registry);
     expect(() => runtime.load("run")).toThrow();
     const events = new SqliteScenarioEventStore(f.sqlite).load("run").events;

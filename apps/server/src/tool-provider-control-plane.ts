@@ -434,6 +434,7 @@ export class ToolProviderControlPlane {
     private readonly packages: ManagedToolProviderPackageStore,
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly invocationBindings?: Pick<ToolInvocationBindingStore, "hasOpenBindings" | "closeAdmission" | "openAdmission">,
+    private readonly onChanged?: () => void,
   ) {}
 
   list(): ToolProviderInstallation[] { return this.store.list(); }
@@ -506,12 +507,13 @@ export class ToolProviderControlPlane {
         completed ? null : "Activation no longer owns the recovered enabled lifecycle", this.now());
       this.activationCompletions.delete(commandId);
     }
+    this.onChanged?.();
     return { enabled, failed };
   }
 
   install(manifestValue: unknown, signatureValue: unknown, packageRootValue: unknown, actor: string, commandId: string): ToolProviderInstallation {
     const replay = this.replay(commandId, { action: "install", manifestValue, signatureValue, packageRootValue });
-    if (replay) return replay;
+    if (replay) { this.onChanged?.(); return replay; }
     const manifest = validateToolProviderManifest(manifestValue);
     const signature = validateToolProviderSignature(signatureValue);
     const importRoot = validatePackageRoot(packageRootValue);
@@ -520,15 +522,18 @@ export class ToolProviderControlPlane {
       importRoot, manifest.providerId, manifest.version, manifest.artifact.packageSha256,
     );
     this.verifyInstallation(manifest, signature, packageRoot);
-    return this.store.install({
+    const installed = this.store.install({
       manifest, packageRoot, fingerprint: manifestFingerprint, signature, actor: required(actor, "actor"),
       commandId: required(commandId, "commandId"),
       commandFingerprint: fingerprint({ action: "install", manifestValue, signatureValue, packageRootValue }), at: this.now(),
     });
+    this.onChanged?.();
+    return installed;
   }
 
   async enable(providerId: string, version: string, actor: string, commandId: string): Promise<ToolProviderInstallation> {
-    return this.serialize(providerId, () => this.enableLocked(providerId, version, actor, commandId));
+    const result = await this.serialize(providerId, () => this.enableLocked(providerId, version, actor, commandId));
+    this.onChanged?.(); return result;
   }
 
   private async enableLocked(providerId: string, version: string, actor: string, commandId: string): Promise<ToolProviderInstallation> {
@@ -594,18 +599,18 @@ export class ToolProviderControlPlane {
   }
 
   async drain(providerId: string, version: string, reason: string, actor: string, commandId: string): Promise<ToolProviderInstallation> {
-    return this.serialize(providerId, () => this.changeState(
+    const result = await this.serialize(providerId, () => this.changeState(
       "drain", providerId, version, "draining", "draining", reason, actor, commandId,
       async (installation) => {
         await this.fenceAndAssertNoOpenBindings(installation, "drain");
         try { await this.runtime.drain(installation.manifest.source); }
         catch (error) { await this.openAdmission(installation); throw error; }
       },
-    ));
+    )); this.onChanged?.(); return result;
   }
 
   async disable(providerId: string, version: string, reason: string, actor: string, commandId: string): Promise<ToolProviderInstallation> {
-    return this.serialize(providerId, () => this.changeState(
+    const result = await this.serialize(providerId, () => this.changeState(
       "disable", providerId, version, "disabled", "disabled", reason, actor, commandId,
       async (installation) => {
         if (installation.state === "enabled" || installation.state === "draining") {
@@ -614,11 +619,11 @@ export class ToolProviderControlPlane {
           catch (error) { await this.openAdmission(installation); throw error; }
         }
       },
-    ));
+    )); this.onChanged?.(); return result;
   }
 
   async quarantine(providerId: string, version: string, reason: string, actor: string, commandId: string): Promise<ToolProviderInstallation> {
-    return this.serialize(providerId, () => this.changeState(
+    const result = await this.serialize(providerId, () => this.changeState(
       "quarantine", providerId, version, "quarantined", "quarantined", reason, actor, commandId,
       async (installation) => {
         await this.closeAdmission(installation, `quarantine: ${reason}`);
@@ -626,11 +631,12 @@ export class ToolProviderControlPlane {
           await this.runtime.deactivate(installation.manifest.source);
         }
       },
-    ));
+    )); this.onChanged?.(); return result;
   }
 
   async rollback(providerId: string, fromVersion: string, toVersion: string, reason: string, actor: string, commandId: string): Promise<ToolProviderInstallation> {
-    return this.serialize(providerId, () => this.rollbackLocked(providerId, fromVersion, toVersion, reason, actor, commandId));
+    const result = await this.serialize(providerId, () => this.rollbackLocked(providerId, fromVersion, toVersion, reason, actor, commandId));
+    this.onChanged?.(); return result;
   }
 
   private async rollbackLocked(providerId: string, fromVersion: string, toVersion: string, reason: string, actor: string, commandId: string): Promise<ToolProviderInstallation> {

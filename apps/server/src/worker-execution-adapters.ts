@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { ToolInvocationRecoveryRequiredError, validateToolProviderResult, toolInvocationInputFingerprint } from "@traceforge/worker-runtime";
+import { ToolInvocationRecoveryRequiredError, validateToolProviderResult, toolInvocationInputFingerprint,
+  workerCheckpointJournal } from "@traceforge/worker-runtime";
 import { z } from "zod";
 import { reserveToolReceipt } from "./db/execution-storage.js";
 import type { ExecutionNode, ProcessAccess } from "@traceforge/execution-node";
@@ -124,7 +125,7 @@ export class SqliteToolInvocationBindingStore implements ToolInvocationBindingSt
     const rows = this.sqlite.prepare(`SELECT idempotency_key FROM tool_invocation_bindings
       WHERE run_id = ? AND work_id = ? LIMIT 10001`).all(assignment.runId, assignment.work.id) as Array<{ idempotency_key: string }>;
     if (rows.length > 10000) throw new ToolInvocationRecoveryRequiredError("Work invocation history exceeds continuation limit");
-    const completed = new Set(checkpoint.completedInvocationIds);
+    const completed = new Set(workerCheckpointJournal(checkpoint).completedIntentIds);
     const found = new Set<string>();
     for (const row of rows) {
       const binding = this.get(row.idempotency_key)!;
@@ -464,7 +465,7 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        this.node.terminateProcess({ ...access, force: true }),
+        this.node.terminateProcess({ ...access, operationId: `process:${access.processId}:terminate`, force: true }),
         new Promise<void>((resolve) => { timer = setTimeout(resolve, 5_000); }),
       ]);
     } catch {
@@ -505,6 +506,7 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
     onStarted({ processId: started.process.id, adoptionToken: started.adoptionToken });
     if (parsed.stdin !== undefined) {
       await this.node.writeProcessInput({
+        operationId: `process:${context.idempotencyKey}:stdin`,
         processId: started.process.id,
         adoptionToken: started.adoptionToken,
         dataBase64: Buffer.from(parsed.stdin).toString("base64"),

@@ -157,7 +157,7 @@ describe("Execution Node RPC transport", () => {
     let release!: () => void; let calls = 0;
     vi.spyOn(node, "handshake").mockImplementation(async (input) => { calls++; if (calls === 1) await new Promise<void>((r) => { release = r; }); return original(input); });
     const token = createExecutionRpcAuthToken(), server = new ExecutionNodeRpcServer(new ExecutionRpcDispatcher(node), { authToken: token });
-    const address = await server.listen({ kind: "tcp", host: "127.0.0.1", port: 0 });
+    const address = await server.listen(defaultExecutionRpcPipe(`timeout-${randomUUID()}`));
     const client = new ExecutionNodeRpcClient(address, { authToken: token, requestTimeoutMs: 30 });
     const input = { clientId: "first", protocol: EXECUTION_PROTOCOL_VERSION, requiredCapabilities: [] };
     try {
@@ -170,18 +170,18 @@ describe("Execution Node RPC transport", () => {
     const ready = new Promise<void>((r) => { started = r; }), original = node.handshake.bind(node);
     const spy = vi.spyOn(node, "handshake").mockImplementation(async (input) => { started(); await new Promise<void>((r) => { release = r; }); return original(input); });
     const token = createExecutionRpcAuthToken(), server = new ExecutionNodeRpcServer(new ExecutionRpcDispatcher(node), { authToken: token });
-    const address = await server.listen({ kind: "tcp", host: "127.0.0.1", port: 0 });
+    const address = await server.listen(defaultExecutionRpcPipe(`capacity-${randomUUID()}`));
     const client = new ExecutionNodeRpcClient(address, { authToken: token, maximumPendingRequests: 1, requestTimeoutMs: 1000 });
     const input = { clientId: "first", protocol: EXECUTION_PROTOCOL_VERSION, requiredCapabilities: [] };
     try { const first = client.handshake(input); await ready; await expect(client.handshake(input)).rejects.toThrow("capacity"); release(); await first; expect(spy).toHaveBeenCalledTimes(1); }
     finally { client.disconnect(); await server.close(); }
   });
-  it("supports authenticated concurrent calls, reconnect, and process adoption over loopback", async () => {
+  it("supports authenticated concurrent calls, reconnect, and process adoption over a user-local pipe", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "traceforge-rpc-"));
     const { launcher, node } = fixture();
     const token = createExecutionRpcAuthToken();
     const server = new ExecutionNodeRpcServer(new ExecutionRpcDispatcher(node), { authToken: token, maximumFrameBytes: 1024 * 1024 });
-    const address = await server.listen({ kind: "tcp", host: "127.0.0.1", port: 0 });
+    const address = await server.listen(defaultExecutionRpcPipe(`lifecycle-${randomUUID()}`));
     const client = new ExecutionNodeRpcClient(address, { authToken: token });
     try {
       const handshake = await client.handshake({
@@ -210,6 +210,7 @@ describe("Execution Node RPC transport", () => {
       })));
       expect(descriptions.every((descriptor) => descriptor.id === started.process.id)).toBe(true);
       const adopted = await client.adoptProcess({
+        operationId: "rpc-adopt-1",
         processId: started.process.id,
         adoptionToken: started.adoptionToken,
         attribution: attribution({ workerId: "worker_2", leaseId: "lease_2", idempotencyKey: "effect_rpc_2" }),

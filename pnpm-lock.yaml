@@ -78,9 +78,6 @@ importers:
       '@traceforge/scenario-sdk':
         specifier: workspace:*
         version: link:../../packages/scenario-sdk
-      '@traceforge/scenario-web-blackbox':
-        specifier: workspace:*
-        version: link:../../scenarios/web-blackbox
       '@traceforge/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -106,6 +103,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@traceforge/scenario-web-blackbox':
+        specifier: workspace:*
+        version: link:../../scenarios/web-blackbox
       '@types/better-sqlite3':
         specifier: ^7.6.0
         version: 7.6.13

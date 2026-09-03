@@ -8,6 +8,11 @@ import { createDb, getSqliteClient } from "./db/client.js";
 import { FoundationBackupControl } from "./foundation-backup.js";
 
 describe("server listen configuration", () => {
+  it("keeps concrete Scenario packages out of the application composition root",()=>{
+    const source=readFileSync(new URL("./main.ts",import.meta.url),"utf8");
+    expect(source).not.toMatch(/scenario-web-blackbox|WEB_BLACKBOX|web_blackbox/);
+    expect(source).toContain("loadScenarioHostConfiguration");
+  });
   it("boots an isolated restore before model/MCP configuration or execution node startup", async () => {
     const root = mkdtempSync("/private/tmp/traceforge-main-restore-");
     const sqlite = getSqliteClient(createDb(join(root, "source.sqlite")));
@@ -59,6 +64,9 @@ describe("server listen configuration", () => {
       mcpTools: 0,
       executionNodeReady: expect.any(Boolean),
       executionProcessReady: expect.any(Boolean),
+      executionNode: expect.objectContaining({ schemaVersion: 1, state: expect.any(String), processReady: expect.any(Boolean),
+        operationJournal: expect.objectContaining({ state: "ready", records: 0, activeRecords: 0, uncertainRecords: 0,
+          maximumRecords: expect.any(Number), maximumBytes: expect.any(Number) }) }),
       deployment: { managed: false },
     });
     expect(response.body).not.toMatch(/api.?key|secret/i);
@@ -81,6 +89,7 @@ describe("server listen configuration", () => {
       const management=foundationHostControl(app).management();
       expect((await app.inject({url:"/api/cases",headers:management.headers()})).statusCode).toBe(200);
       expect((await app.inject({url:"/api/scenarios/definitions",headers:management.headers()})).statusCode).toBe(200);
+      expect((await app.inject({url:"/api/execution/identities?caseId=missing",headers:management.headers()})).statusCode).toBe(404);
     } finally { await app.close(); }
   });
 

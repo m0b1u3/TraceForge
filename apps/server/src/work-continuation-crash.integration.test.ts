@@ -36,10 +36,11 @@ function host(root: string, mode: string, phase: string): Promise<Record<string,
   });
 }
 describe("Work continuation after actual host termination", () => {
-  it.each(["pending-committed", "receipt-before-checkpoint", "result-committed"])("continues after SIGKILL at %s without a second effect", async (phase) => {
+  it.each(["pending-committed", "receipt-before-checkpoint", "result-committed", "terminal-committed"])("continues after SIGKILL at %s without a second effect", async (phase) => {
     const root = await mkdtemp(join(tmpdir(), "traceforge-continuation-crash-")); roots.push(root);
     await host(root, "crash", phase);
-    expect(await host(root, "recover", phase)).toMatchObject({ outcome: "completed", effects: 1, workCount: 1, modelCalls: 1, integrity: "ok" });
+    expect(await host(root, "recover", phase)).toMatchObject({ outcome: "completed", effects: 1, workCount: 1,
+      modelCalls: phase === "terminal-committed" ? 0 : 1, integrity: "ok" });
     expect(await host(root, "recover", phase)).toMatchObject({ outcome: "completed", effects: 1, workCount: 1, modelCalls: 0, integrity: "ok" });
   });
 });

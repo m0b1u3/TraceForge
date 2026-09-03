@@ -37,7 +37,7 @@ async function fixture(options:{limits?:object;hang?:boolean;path?:string;noNode
   await c.bindings.beginExecution("call","lease","worker");
   const f=fixtureMcpNode();
   const node={...f.node,async waitProcessEvents(...args:Parameters<ExecutionNode["waitProcessEvents"]>){
-    if(!options.hang)await f.node.terminateProcess(args[0]);return f.node.waitProcessEvents(...args);
+    if(!options.hang)await f.node.terminateProcess({...args[0],operationId:`test-terminate:${args[0].processId}`});return f.node.waitProcessEvents(...args);
   }};
   const manager=new GovernedExecutionSources(options.noNode ? undefined : node,capacity);
   const register=(execute:(port:GovernedExecutionPort,input:unknown,context:ToolExecutionContext)=>Promise<typeof success>,
@@ -236,8 +236,22 @@ describe("Production custom-source assembly",()=>{
   });
   it("labels the old fixture escape hatch as unmanaged",async()=>{
     const host=await foundationHost({empty:true});try{
-      expect((await host.request("/api/security-tools/process-capacity-policy")).coverage.unmanagedDevelopmentSources).toBe(true);
+      expect((await host.request("/api/security-tools/process-capacity-policy")).coverage).toMatchObject({
+        unmanagedDevelopmentSources:true,inProcessScenarioExecution:"development_opt_in"});
     }finally{await host.close();}
+  });
+  it("rejects in-process Scenario packages in the production default before invoking tools",async()=>{
+    let factories=0;const registry=new ScenarioPackageRegistry([{id:"neutral",version:"1.0.0",schemaRevision:1,definition,
+      outputSchemas:[{kind:"decision",version:1,format:"traceforge.scenario-output-contract.v1",maximumSummaryBytes:1024,maximumRefs:8}],
+      authorizationPolicy:{format:"traceforge.scenario-scope-policy.v1",allowedActions:[],deniedActions:[],
+        payload:{maximumBytes:1024,maximumDepth:4},resources:[]},createToolSources(){factories++;return [];}}]);
+    await expect(foundationHost({empty:true,foundation:{scenarioPackageRegistry:registry,allowLegacyScenarioContractDevelopment:false,
+      allowInProcessScenarioDevelopment:false,toolDiscoverySources:[]}})).rejects.toThrow(/cannot execute in the trusted Host/);
+    expect(factories).toBe(0);
+  });
+  it("rejects executable authorization and output callbacks in the production default",async()=>{
+    await expect(foundationHost({foundation:{allowLegacyScenarioContractDevelopment:false,
+      toolDiscoverySources:[]}})).rejects.toThrow(/must use valid declarative authorization and output contracts/);
   });
 });
 
@@ -247,12 +261,20 @@ describe("Scenario host port boundary",()=>{
     const registry=new ScenarioPackageRegistry([{id:"neutral",version:"1",schemaRevision:1,definition,
       outputSchemas:[{kind:"decision",version:1,validate(){}}],authorizationPolicy:{parseScope:payload=>({payload,allowedActions:[],deniedActions:[]})},
       createToolSources(value){ctx=value;return [{source:"neutral",async discover(){return [adapter(()=>execute(value))];}}];}}]);
-    const sources=f.manager.scenarioSources(registry,{} as any);
+    const sources=f.manager.scenarioSources(registry,{} as any,{}, {}, true);
     return {...f,source:sources[0]!,ctx,registry};
   }
   it("never exposes a raw Execution Node to a Scenario package",async()=>{
     const f=await scenario(async ctx=>{expect("executionNode" in ctx).toBe(false);return success;});
     await f.invoke(f.source);expect(f.starts).toHaveLength(0);
+  });
+  it("refuses in-process Scenario code by default without invoking its factory",async()=>{
+    const f=await fixture();let factories=0;
+    const registry=new ScenarioPackageRegistry([{id:"isolated",version:"1",schemaRevision:1,definition,
+      outputSchemas:[{kind:"decision",version:1,validate(){}}],authorizationPolicy:{parseScope:payload=>({payload,allowedActions:[],deniedActions:[]})},
+      createToolSources(){factories++;return [];}}]);
+    expect(()=>f.manager.scenarioSources(registry,{} as any)).toThrow(/cannot execute in the trusted Host/);
+    expect(factories).toBe(0);
   });
   it("defaults legacy Scenario factories to process-denied without changing their implementation",async()=>{
     const f=await scenario(async ctx=>{await ctx.execution!.executeProcess(input);return success;});
@@ -261,12 +283,12 @@ describe("Scenario host port boundary",()=>{
   });
   it("allows an explicitly declared Scenario through the same governed process path",async()=>{
     const f=await scenario(async ctx=>{await ctx.execution!.executeProcess(input);return success;});
-    const source=f.manager.scenarioSources(f.registry,{} as any,{neutral:{version:"1",process:"governed"}})[0]!;
+    const source=f.manager.scenarioSources(f.registry,{} as any,{neutral:{version:"1",process:"governed"}}, {}, true)[0]!;
     await f.invoke(source);expect(f.scheduler.snapshot().retained).toBe(1);
   });
   it("rejects unused Scenario policies rather than silently weakening coverage",async()=>{
     const f=await scenario(async()=>success);
-    expect(()=>f.manager.scenarioSources(f.registry,{} as any,{typo:{version:"1",process:"denied"}})).toThrow("Unknown Scenario");
+    expect(()=>f.manager.scenarioSources(f.registry,{} as any,{typo:{version:"1",process:"denied"}}, {}, true)).toThrow("Unknown Scenario");
   });
   it("keeps brokered HTTP scoped and supplies host-owned attribution",async()=>{
     let request:any;

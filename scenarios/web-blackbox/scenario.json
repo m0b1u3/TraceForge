@@ -1,0 +1,94 @@
+{
+  "format": "traceforge.scenario-package.v1",
+  "package": { "id": "traceforge.web-blackbox", "version": "0.3.0", "schemaRevision": 1 },
+  "definition": {
+    "kind": "web_blackbox",
+    "version": 1,
+    "title": "Web black-box security investigation",
+    "authorizationActions": ["scope.read", "web.request.replay", "web.session.use", "web.traffic.read", "evidence.write", "report.write"],
+    "requiredCapabilities": ["scope.read", "evidence.write"],
+    "workKinds": [
+      { "id": "research", "defaultWorkerRoles": ["researcher"] },
+      { "id": "validation", "defaultWorkerRoles": ["validator"], "maximumActiveItems": 1, "minimumHypothesisRefs": 1, "completion": { "anyOfOutputKinds": ["validation_conclusion", "limitation"] } },
+      { "id": "review", "defaultWorkerRoles": ["reviewer"] },
+      { "id": "report", "defaultWorkerRoles": ["reporter"] }
+    ],
+    "initialPhaseId": "scope_setup",
+    "agentTopology": {
+      "planner": { "enabled": true, "pollIntervalMs": 30000, "maximumGraphNodes": 200, "maximumRecentEvents": 40, "maximumRunItems": 100, "maximumProposalsPerEvaluation": 4 },
+      "observer": { "enabled": true, "pollIntervalMs": 30000, "maximumGraphNodes": 200, "maximumRecentEvents": 40, "maximumRunItems": 100 },
+      "workerPools": [
+        { "id": "web-research", "role": "researcher", "workKinds": ["research"], "activation": "resident", "minimumInstances": 1, "maximumInstances": 4, "maxConcurrentWork": 1, "capabilities": ["scope.read", "web.request.replay", "web.surface.explore", "web.session.use", "web.traffic.read", "evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
+        { "id": "web-validation", "role": "validator", "workKinds": ["validation"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["scope.read", "web.request.replay", "web.surface.explore", "web.session.use", "web.traffic.read", "evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
+        { "id": "web-review", "role": "reviewer", "workKinds": ["review"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
+        { "id": "web-report", "role": "reporter", "workKinds": ["report"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["report.write", "knowledge.graph.read"] }
+      ]
+    },
+    "phases": [
+      { "id": "scope_setup", "title": "Scope and execution setup", "objective": "Bind the authorized target scope and record available capabilities and limitations.", "allowedWorkKinds": ["research", "review"], "maxParallelWork": 1, "requiredCapabilities": ["scope.read"], "transitions": [{ "to": "surface_mapping", "allOf": [{ "kind": "scope_snapshot" }, { "kind": "capability_inventory" }] }] },
+      { "id": "surface_mapping", "title": "Authorized surface mapping", "objective": "Collect attributable observations through bounded host-brokered requests and assess coverage.", "allowedWorkKinds": ["research", "review"], "maxParallelWork": 4, "requiredCapabilities": ["web.surface.explore"], "transitions": [{ "to": "hypothesis_planning", "allOf": [{ "kind": "surface_observation" }, { "kind": "coverage_assessment" }] }] },
+      { "id": "hypothesis_planning", "title": "Hypothesis planning", "objective": "Preserve distinct candidates, rank evidence gaps, and propose bounded validation work.", "allowedWorkKinds": ["research", "review"], "maxParallelWork": 3, "requiredCapabilities": ["evidence.write"], "transitions": [{ "to": "validation", "allOf": [{ "kind": "hypothesis" }] }, { "to": "synthesis", "allOf": [{ "kind": "coverage_assessment" }], "noneOf": [{ "kind": "hypothesis" }] }] },
+      { "id": "validation", "title": "Causal validation", "objective": "Execute one validation task at a time and record causal evidence, impact, refutation, or limitations.", "allowedWorkKinds": ["research", "validation", "review"], "maxParallelWork": 3, "requiredCapabilities": ["evidence.write"], "transitions": [{ "to": "synthesis", "anyOf": [{ "kind": "validation_conclusion" }, { "kind": "limitation" }], "noOutstandingWorkKinds": ["validation"] }] },
+      { "id": "synthesis", "title": "Evidence and coverage review", "objective": "Review attribution, conflicts, unresolved hypotheses, limitations, and complete evidence chains.", "allowedWorkKinds": ["review"], "maxParallelWork": 1, "requiredCapabilities": ["evidence.write"], "transitions": [{ "to": "reporting", "allOf": [{ "kind": "evidence_review" }] }] },
+      { "id": "reporting", "title": "Report assembly", "objective": "Separate verified findings, rejected candidates, unresolved work, scope, and limitations.", "allowedWorkKinds": ["report"], "maxParallelWork": 1, "requiredCapabilities": ["report.write"], "transitions": [{ "to": "complete", "allOf": [{ "kind": "report" }] }] }
+    ]
+  },
+  "authorizationPolicy": {
+    "format": "traceforge.scenario-scope-policy.v1",
+    "allowedActions": ["scope.read", "web.request.replay", "web.session.use", "web.traffic.read", "evidence.write", "report.write"],
+    "deniedActions": [],
+    "payload": { "maximumBytes": 65536, "maximumDepth": 8 },
+    "resources": [
+      { "kind": "network.url", "payloadPath": ["targets"] },
+      { "kind": "network.url", "payloadPrefixPath": ["urlPrefixes"] },
+      { "kind": "identity.handle", "payloadPath": ["identityHandles"] }
+    ]
+  },
+  "outputContracts": [
+    { "kind": "scope_snapshot", "version": 1, "format": "traceforge.scenario-output-contract.v1", "maximumSummaryBytes": 8192, "maximumRefs": 32, "evidence": { "kind": "fact", "status": "active", "confidence": 1, "title": { "source": "output.summary" }, "summary": { "source": "output.summary" } } },
+    { "kind": "capability_inventory", "version": 1, "format": "traceforge.scenario-output-contract.v1", "maximumSummaryBytes": 8192, "maximumRefs": 32, "evidence": { "kind": "fact", "status": "active", "confidence": 1, "title": { "source": "output.summary" }, "summary": { "source": "output.summary" } } },
+    { "kind": "surface_observation", "version": 1, "format": "traceforge.scenario-output-contract.v1", "maximumSummaryBytes": 16384, "maximumRefs": 64, "evidence": { "kind": "fact", "status": "active", "confidence": 0.8, "title": { "source": "output.summary" }, "summary": { "source": "output.summary" } } },
+    { "kind": "coverage_assessment", "version": 1, "format": "traceforge.scenario-output-contract.v1", "maximumSummaryBytes": 16384, "maximumRefs": 64, "evidence": { "kind": "fact", "status": "active", "confidence": 0.8, "title": { "source": "output.summary" }, "summary": { "source": "output.summary" } } },
+    { "kind": "hypothesis", "version": 1, "format": "traceforge.scenario-output-contract.v1", "maximumSummaryBytes": 16384, "maximumRefs": 64, "evidence": { "kind": "hypothesis", "status": "candidate", "confidence": 0.5, "title": { "source": "output.summary" }, "summary": { "source": "output.summary" } } },
+    { "kind": "validation_conclusion", "version": 1, "format": "traceforge.scenario-output-contract.v1", "maximumSummaryBytes": 16384, "maximumRefs": 128, "evidence": { "kind": "validation_conclusion", "status": "candidate", "confidence": 0.5, "title": { "source": "output.summary" }, "summary": { "source": "output.summary" } } },
+    { "kind": "limitation", "version": 1, "format": "traceforge.scenario-output-contract.v1", "maximumSummaryBytes": 16384, "maximumRefs": 64, "evidence": { "kind": "limitation", "status": "active", "confidence": 1, "title": { "source": "output.summary" }, "summary": { "source": "output.summary" } } },
+    { "kind": "evidence_review", "version": 1, "format": "traceforge.scenario-output-contract.v1", "maximumSummaryBytes": 32768, "maximumRefs": 256, "evidence": { "kind": "fact", "status": "active", "confidence": 1, "title": { "source": "output.summary" }, "summary": { "source": "output.summary" } } },
+    { "kind": "report", "version": 1, "format": "traceforge.scenario-output-contract.v1", "maximumSummaryBytes": 65536, "maximumRefs": 512 }
+  ],
+  "resourceManifest": {
+    "revision": 1,
+    "resources": [
+      {
+        "id": "web.http-observation", "kind": "skill", "version": 1,
+        "locator": "package://skills/http-observation.md", "digest": "sha256:40ae5539014a161edb16a8d8e223a1da3c355569dc415eb301a107857b172a5c",
+        "context": {
+          "type": "skill", "summary": "Bounded authorized HTTP observation workflow", "authorizationAction": "scope.read",
+          "requiredCapabilities": ["web.request.replay"], "phaseIds": ["scope_setup", "surface_mapping", "validation"], "references": ["web.verification-criteria"],
+          "readerRoles": ["worker", "planner", "observer"],
+          "skill": {
+            "version": 1,
+            "input": { "fields": { "url": { "type": "string", "required": true }, "method": { "type": "string", "required": true } } },
+            "output": { "fields": { "completed": { "type": "boolean", "required": true }, "observation": { "type": "string", "required": true } } },
+            "checks": [{ "id": "request-completed", "field": "completed", "equals": true }]
+          }
+        }
+      },
+      {
+        "id": "web.verification-criteria", "kind": "knowledge", "version": 1,
+        "locator": "package://knowledge/verification-criteria.md", "digest": "sha256:73ef605a479dd81eb5d60013715253d88441e5a5565487fee5e4d5025a7f3a8a",
+        "context": {
+          "type": "knowledge", "summary": "Evidence threshold for security conclusions", "authorizationAction": "scope.read",
+          "requiredCapabilities": [], "phaseIds": ["hypothesis_planning", "validation", "synthesis", "reporting"], "references": ["web.http-observation"],
+          "readerRoles": ["worker", "planner", "observer"]
+        }
+      }
+    ]
+  },
+  "runtime": {
+    "protocol": "traceforge-scenario-process-rpc", "protocolVersion": 1,
+    "id": "traceforge.web-blackbox", "version": "0.3.0", "source": "scenario:web_blackbox@1",
+    "entrypoint": "package://runtime/main.mjs",
+    "providedCapabilities": ["scope.read", "web.request.replay", "web.surface.explore", "web.session.use", "web.traffic.read"],
+    "hostCapabilities": ["traceforge.scenario.authorization@1", "traceforge.scenario.execution@1", "traceforge.scenario.artifacts@1", "traceforge.scenario.state@1", "traceforge.scenario.evidence@1", "traceforge.scenario.sessions@1", "traceforge.scenario.traffic@1"]
+  }
+}

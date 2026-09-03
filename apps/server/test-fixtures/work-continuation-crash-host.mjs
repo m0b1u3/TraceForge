@@ -29,6 +29,7 @@ const control = {
   async checkpoint(a, input) {
     if (input.commandId.endsWith(":committed")) await stop("receipt-before-checkpoint");
     command(input.commandId, { type: "checkpoint_work", workId: "work", leaseId: a.leaseId, ...input, at }, a.runRevision);
+    if (input.progressSummary === "Completion decision persisted") await stop("terminal-committed");
     await stop(input.commandId.endsWith(":pending") ? "pending-committed" : "result-committed");
     return assignment();
   },
@@ -53,6 +54,10 @@ if (mode === "recover") {
   c.bindings.recoverInterrupted();
   const work = c.runtime.load("run").workItems[0];
   if (work.status === "running") {
+    const saved = await store.load(work.latestCheckpoint.payloadRef);
+    if (saved.version === 3 && saved.pendingControl) {
+      // WorkerHost replays the exact durable terminal command below.
+    } else {
     command("recovery-block", { type: "block_work", workId: "work", leaseId: work.leaseId, reason: "Interrupted host", at });
     const continuation = new ScenarioWorkContinuationControl(sqlite, new ScenarioDefinitionRegistry([definition]), store, undefined,
       { async authorize() { return { decision: "allowed", authorizationRef: "test-only grant", expiresAt: "2099-01-01T00:00:00.000Z" }; } }, undefined, () => at);
@@ -61,12 +66,15 @@ if (mode === "recover") {
     if (continued.audit.outcome !== "queued") throw new Error(JSON.stringify(continued));
     command("fresh-claim", { type: "claim_work", workId: "work", leaseId: "fresh", workerId: "worker", workerRoles: ["observer"], workerCapabilities: ["observe"],
       workerCurrentWork: 0, workerMaxConcurrentWork: 1, leaseExpiresAt: "2099-01-01T00:00:00.000Z", at });
+    }
   }
 }
 let modelCalls = 0;
 const runtime = new WorkerHost(worker, control, { async decide(request) {
   modelCalls++;
-  if (mode === "crash") return { type: "invoke_tool", invocation: { id: "first", tool: "observe", input: {}, rationale: "Observe" } };
+  if (mode === "crash" && !request.transcript.some((entry) => entry.refs.includes("evidence:first"))) {
+    return { type: "invoke_tool", invocation: { id: "first", tool: "observe", input: {}, rationale: "Observe" } };
+  }
   if (!request.transcript.some((entry) => entry.refs.includes("evidence:first"))) throw new Error("Confirmed result not restored before model");
   return { type: "complete", summary: "Done", outputs: [] };
 } }, gateway, { async review() { return { action: "continue" }; } }, store, new BoundedOutputDistiller(), {}, () => at);

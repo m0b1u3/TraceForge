@@ -11,8 +11,9 @@ export const skillContract: ScenarioSkillContract = { version: 1,
 export function enableSkillContract(pkg: ScenarioPackageInstallation) {
   pkg.resourceManifest!.resources[0]!.context!.skill = structuredClone(skillContract);
   pkg.definition.authorizationActions.push("context.skill.prepare", "context.skill.evaluate");
-  const parse = pkg.authorizationPolicy.parseScope;
-  pkg.authorizationPolicy.parseScope = (payload) => ({ ...parse(payload), allowedActions: [...parse(payload).allowedActions, "context.skill.prepare", "context.skill.evaluate"] });
+  const policy = pkg.authorizationPolicy as { parseScope(payload: unknown): { payload: unknown; allowedActions: string[]; deniedActions: string[] } };
+  const parse = policy.parseScope;
+  policy.parseScope = (payload) => ({ ...parse(payload), allowedActions: [...parse(payload).allowedActions, "context.skill.prepare", "context.skill.evaluate"] });
 }
 export function contextPackage(capabilities = ["context.catalog", "context.read"]): ScenarioPackageInstallation {
   return { ...contextBinding, definition: { ...definition, requiredCapabilities: capabilities, authorizationActions: ["context.catalog", "context.read", "fixture.read"],

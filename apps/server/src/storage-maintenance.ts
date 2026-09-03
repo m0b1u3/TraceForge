@@ -130,7 +130,7 @@ export class StorageMaintenanceControl {
       if (existing?.phase !== "imported") {
         const source = this.readSource(input.name, input.digest);
         const document = validateWorkerCheckpoint(JSON.parse(source.body));
-        if (document.version !== 2) throw new Error("Legacy v1 checkpoint needs explicit identity migration");
+        if (![2, 3].includes(document.version)) throw new Error("Legacy v1 checkpoint needs explicit identity migration");
         const run = new SqliteScenarioEventStore(this.sqlite).loadState(document.runId);
         const work = run?.workItems.find((entry) => entry.id === document.workId);
         if (!run || run.caseId !== document.caseId || work?.idempotencyKey !== document.workKey) throw new Error("Checkpoint migration attribution mismatch");

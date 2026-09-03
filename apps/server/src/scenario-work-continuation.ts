@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { canonicalJson, DurableScenarioRuntime, type ScenarioDefinitionRegistry, type ScenarioRunBindingValidator,
   type ScenarioRunState } from "@traceforge/orchestration-core";
-import { defaultWorkerRuntimeOptions, toolInvocationInputFingerprint, validateWorkerCheckpoint, type WorkerAssignment,
+import { defaultWorkerRuntimeOptions, toolInvocationInputFingerprint, validateWorkerCheckpoint, workerCheckpointJournal, type WorkerAssignment,
   type WorkerCheckpointStore } from "@traceforge/worker-runtime";
 import type { BlackboardChangeBus } from "@traceforge/cognitive-runtime";
 import { SqliteScenarioEventStore } from "./scenario-event-store.js";
@@ -73,9 +73,10 @@ export class ScenarioWorkContinuationControl {
         const current = this.runtime.load(input.runId)!;
         const work = current.workItems.find((candidate) => candidate.id === input.workId);
         if (!work || work.latestCheckpoint?.payloadRef !== input.checkpointRef) throw new Error("Continuation checkpoint changed or is missing");
-        if (checkpoint.version !== 2 || checkpoint.runId !== current.id || checkpoint.workId !== work.id
-          || checkpoint.caseId !== current.caseId || checkpoint.workKey !== work.idempotencyKey) throw new Error("Continuation requires a matching v2 checkpoint");
-        if (checkpoint.turn >= defaultWorkerRuntimeOptions.maxTurns || checkpoint.consecutiveFailures! >= defaultWorkerRuntimeOptions.repeatedFailureLimit) {
+        if (![2, 3].includes(checkpoint.version) || checkpoint.runId !== current.id || checkpoint.workId !== work.id
+          || checkpoint.caseId !== current.caseId || checkpoint.workKey !== work.idempotencyKey) throw new Error("Continuation requires a matching current checkpoint");
+        const journal = workerCheckpointJournal(checkpoint);
+        if (journal.turn >= defaultWorkerRuntimeOptions.maxTurns || journal.consecutiveFailures >= defaultWorkerRuntimeOptions.repeatedFailureLimit) {
           throw new Error("Continuation cannot reset exhausted execution budgets");
         }
         if (this.sqlite.prepare("SELECT 1 FROM scenario_work_leases WHERE run_id = ? AND work_id = ?").get(input.runId, input.workId)) {

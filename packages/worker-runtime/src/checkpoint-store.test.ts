@@ -2,7 +2,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { JsonFileCheckpointStore, maximumCheckpointBytes, validateWorkerCheckpoint } from "./checkpoint-store.js";
+import { JsonFileCheckpointStore, maximumCheckpointBytes, upgradeWorkerCheckpoint, validateWorkerCheckpoint } from "./checkpoint-store.js";
+import { createAgentExecutionJournal, recordAgentJournalTerminal } from "@traceforge/agent-runtime";
 import type { WorkerCheckpointDocument } from "./model.js";
 
 const roots: string[] = [];
@@ -19,7 +20,7 @@ async function setup() { const root = await mkdtemp(join(tmpdir(), "traceforge-c
 describe("Immutable Worker checkpoints", () => {
   it("preserves host receipt provenance and rejects malformed or non-tool provenance", () => {
     const entry = { turn: 1, kind: "tool", summary: "observed", refs: [], receiptKey: "effect:first" };
-    expect(validateWorkerCheckpoint({ ...document(), transcript: [entry] }).transcript[0]!.receiptKey).toBe("effect:first");
+    expect(validateWorkerCheckpoint({ ...document(), transcript: [entry] }).transcript![0]!.receiptKey).toBe("effect:first");
     expect(() => validateWorkerCheckpoint({ ...document(), transcript: [{ ...entry, receiptKey: 1 }] })).toThrow();
     expect(() => validateWorkerCheckpoint({ ...document(), transcript: [{ ...entry, kind: "model" }] })).toThrow();
   });
@@ -61,6 +62,7 @@ describe("Immutable Worker checkpoints", () => {
   it("rejects pending/completed overlap and incorrect pending turn", () => {
     expect(() => validateWorkerCheckpoint({ ...document(), completedInvocationIds: ["first"] })).toThrow("pending");
     expect(() => validateWorkerCheckpoint({ ...document(), turn: 4 })).toThrow("pending");
+    expect(() => validateWorkerCheckpoint({ ...document(), pendingControl: null })).toThrow("pending control");
   });
   it("reads old v1 snapshots only through the legacy directory", async () => {
     const { root, store } = await setup();
@@ -69,5 +71,22 @@ describe("Immutable Worker checkpoints", () => {
     expect((await store.load("checkpoint://legacy.json")).version).toBe(1);
     await writeFile(join(root, "legacy.json"), JSON.stringify(document()));
     await expect(store.load("checkpoint://legacy.json")).rejects.toThrow("immutable digest");
+  });
+  it("upgrades v1/v2 cognitive fields into a stable v3 Agent Journal", () => {
+    const upgraded = upgradeWorkerCheckpoint(document(), { caseId: "case", workKey: "effect", sessionId: "agent:run:run:work:work",
+      workerId: "replacement-worker", leaseId: "replacement-lease" });
+    expect(upgraded).toMatchObject({ version: 3, workerId: "replacement-worker", leaseId: "replacement-lease",
+      journal: { version: 1, sessionId: "agent:run:run:work:work", turn: 0, completedIntentIds: [] }, pendingControl: null });
+    expect(upgraded.turn).toBeUndefined();
+    expect(upgraded.transcript).toBeUndefined();
+  });
+  it("rejects ambiguous v3 state and terminal commands without matching Agent state", () => {
+    const journal = createAgentExecutionJournal({ sessionId: "agent:run:run:work:work" });
+    const current = { version: 3 as const, caseId: "case", workKey: "effect", workerId: "worker", runId: "run", workId: "work",
+      leaseId: "lease", journal, pendingInvocation: null, pendingControl: null, savedAt: "2026-08-30T00:00:00.000Z" };
+    expect(() => validateWorkerCheckpoint({ ...current, turn: 0 })).toThrow("ambiguous");
+    expect(() => validateWorkerCheckpoint({ ...current, pendingControl: { type: "block", leaseId: "lease", commandId: "block", reason: "Stop" } })).toThrow("terminal");
+    recordAgentJournalTerminal(journal, { outcome: "completed", reason: "Done", turn: 0 });
+    expect(() => validateWorkerCheckpoint({ ...current, pendingControl: { type: "block", leaseId: "lease", commandId: "block", reason: "Stop" } })).toThrow("blocked Agent");
   });
 });

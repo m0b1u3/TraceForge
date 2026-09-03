@@ -23,7 +23,8 @@ export function registerExecutionSessionRoutes(app: FastifyInstance, sessions: E
         caseId: z.string().min(1),
         name: z.string().min(1),
         kind: z.enum(["anonymous", "user", "admin", "service", "custom"]),
-        secret: z.object({ headers: z.record(z.string()).default({}), cookies: z.array(cookie).default([]) }),
+        secret: z.object({ headers: z.record(z.string()).default({}), cookies: z.array(cookie).default([]),
+          urlPrefixes:z.array(z.string().url()).max(32).default([]),values:z.record(z.string()).default({}) }),
       }).parse(request.body);
       return reply.code(201).send(sessions.createIdentity(body));
     } catch (error) { return reply.code(400).send({ error: message(error) }); }

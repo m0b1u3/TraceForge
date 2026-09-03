@@ -8,7 +8,13 @@ import type {
   ScenarioRunBindingValidator,
   ScenarioRunState,
 } from "@traceforge/orchestration-core";
-import type { ExecutionToolDiscoverySource } from "@traceforge/worker-runtime";
+import type { ExecutionToolDiscoverySource, ScenarioProcessManifest } from "@traceforge/worker-runtime";
+import { assertDeclarativeOutputContract, assertDeclarativeScopePolicy, authorizeDeclarativeResource, isDeclarativeOutputContract, isDeclarativeScopePolicy, mapDeclarativeEvidence,
+  parseDeclarativeScope, validateDeclarativeOutput, type ScenarioOutputContractV1, type ScenarioScopePolicyV1 } from "./declarative-contracts.js";
+export { SCENARIO_PROCESS_PROTOCOL, SCENARIO_PROCESS_PROTOCOL_VERSION } from "@traceforge/worker-runtime";
+export type { ScenarioProcessManifest } from "@traceforge/worker-runtime";
+export type { ScenarioEvidenceMappingV1, ScenarioOutputContractV1, ScenarioScopePolicyV1 } from "./declarative-contracts.js";
+export { parseScenarioPackageDescriptor, type ScenarioPackageDescriptorV1 } from "./package-descriptor.js";
 
 export interface ActiveScenarioAuthorization {
   id: string;
@@ -91,11 +97,39 @@ export interface ScenarioStatePort {
     key: string; expectedRevision: number; value: unknown }): ScenarioStateRecord;
 }
 
-export interface ScenarioOutputSchema {
+export interface LegacyScenarioOutputSchema {
   kind: string;
   version: number;
   validate(output: ScenarioOutput): void;
   mapToEvidence?(input: { run: ScenarioRunState; output: ScenarioOutput }): ScenarioEvidenceNodeRecord | null;
+}
+export type ScenarioOutputSchema = LegacyScenarioOutputSchema | ScenarioOutputContractV1;
+export type ScenarioAuthorizationPolicy = ScenarioScopePolicyV1 | {
+  parseScope(input: unknown): { payload: unknown; allowedActions: string[]; deniedActions: string[] };
+  authorizeResource?(scopePayload: unknown, resourceKind: string, value: string): string;
+};
+
+export function parseScenarioScope(policy: ScenarioAuthorizationPolicy, input: unknown) {
+  return isDeclarativeScopePolicy(policy) ? parseDeclarativeScope(policy, input) : policy.parseScope(input);
+}
+export function authorizeScenarioResource(policy: ScenarioAuthorizationPolicy, payload: unknown, kind: string, value: string): string {
+  if (isDeclarativeScopePolicy(policy)) return authorizeDeclarativeResource(policy, payload, kind, value);
+  if (!policy.authorizeResource) throw new Error(`Scenario does not authorize ${kind} resources`);
+  return policy.authorizeResource(payload, kind, value);
+}
+export function isDeclarativeScenarioContract(pkg: Pick<ScenarioPackageInstallation,"authorizationPolicy"|"outputSchemas">): boolean {
+  return isDeclarativeScopePolicy(pkg.authorizationPolicy) && pkg.outputSchemas.every(isDeclarativeOutputContract);
+}
+export function assertDeclarativeScenarioContract(pkg: Pick<ScenarioPackageInstallation,"authorizationPolicy"|"outputSchemas">): void {
+  if (!isDeclarativeScenarioContract(pkg)) throw new Error("Scenario Package uses legacy executable authorization or output contracts");
+  assertDeclarativeScopePolicy(pkg.authorizationPolicy as ScenarioScopePolicyV1);
+  for (const schema of pkg.outputSchemas) assertDeclarativeOutputContract(schema as ScenarioOutputContractV1);
+}
+export function validateScenarioOutput(schema: ScenarioOutputSchema, output: ScenarioOutput): void {
+  if (isDeclarativeOutputContract(schema)) validateDeclarativeOutput(schema, output); else schema.validate(output);
+}
+export function mapScenarioOutputToEvidence(schema: ScenarioOutputSchema, run: ScenarioRunState, output: ScenarioOutput) {
+  return isDeclarativeOutputContract(schema) ? mapDeclarativeEvidence(schema, run, output) : schema.mapToEvidence?.({ run, output });
 }
 
 export interface ScenarioPackageResource {
@@ -153,6 +187,16 @@ export interface ScenarioHostCapabilities {
   require<T>(id: string): T;
 }
 
+export const SCENARIO_PROCESS_HOST_CAPABILITIES = Object.freeze({
+  authorization: "traceforge.scenario.authorization@1",
+  evidence: "traceforge.scenario.evidence@1",
+  artifacts: "traceforge.scenario.artifacts@1",
+  state: "traceforge.scenario.state@1",
+  execution: "traceforge.scenario.execution@1",
+  sessions: "traceforge.scenario.sessions@1",
+  traffic: "traceforge.scenario.traffic@1",
+});
+
 export function createScenarioHostCapabilities(entries: Readonly<Record<string, unknown>>): ScenarioHostCapabilities {
   const values = new Map(Object.entries(entries));
   return Object.freeze({
@@ -181,11 +225,10 @@ export interface ScenarioPackageInstallation {
   outputSchemas: readonly ScenarioOutputSchema[];
   resourceManifest?: ScenarioPackageResourceManifest;
   migrationManifest?: ScenarioPackageMigrationManifest;
-  authorizationPolicy: {
-    parseScope(input: unknown): { payload: unknown; allowedActions: string[]; deniedActions: string[] };
-    authorizeResource?(scopePayload: unknown, resourceKind: string, value: string): string;
-  };
-  createToolSources(context: ScenarioToolHostContext): readonly ExecutionToolDiscoverySource[];
+  authorizationPolicy: ScenarioAuthorizationPolicy;
+  /** Exactly one form: development-only in-process tools or a production child-process manifest. */
+  createToolSources?(context: ScenarioToolHostContext): readonly ExecutionToolDiscoverySource[];
+  runtime?: ScenarioProcessManifest;
 }
 
 export class ScenarioPackageBindingError extends Error {
@@ -217,6 +260,12 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
       const definitionId = `${scenarioPackage.definition.kind}@${scenarioPackage.definition.version}`;
       if (definitions.has(definitionId)) throw new Error(`Duplicate Scenario Definition ${definitionId}`);
       definitions.add(definitionId);
+      if (Boolean(scenarioPackage.createToolSources) === Boolean(scenarioPackage.runtime)) {
+        throw new Error(`Scenario Package ${packageKey} must declare exactly one execution form`);
+      }
+      if (scenarioPackage.runtime && (scenarioPackage.runtime.id !== id || scenarioPackage.runtime.version !== version)) {
+        throw new Error(`Scenario Package ${packageKey} runtime identity mismatch`);
+      }
       this.validateOpenIdentifiers(scenarioPackage);
       this.validateOutputSchemas(scenarioPackage);
       this.validateResourceManifests(scenarioPackage);
@@ -266,7 +315,7 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
       const schema = scenarioPackage.outputSchemas.find((candidate) => candidate.kind === draft.kind);
       if (!schema) throw new Error(`Scenario Package ${scenarioPackage.id}@${scenarioPackage.version} has no Output Schema for ${draft.kind}`);
       const output: ScenarioOutput = { ...draft, schemaVersion: schema.version, phaseId, producedByWorkId };
-      schema.validate(output);
+      validateScenarioOutput(schema, output);
       return output;
     });
   }
@@ -277,8 +326,8 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
       const schema = scenarioPackage.outputSchemas.find((candidate) =>
         candidate.kind === output.kind && candidate.version === output.schemaVersion);
       if (!schema) throw new Error(`Output ${output.id} requires unavailable Schema ${output.kind}@${output.schemaVersion}`);
-      schema.validate(output);
-      const node = schema.mapToEvidence?.({ run: state, output });
+      validateScenarioOutput(schema, output);
+      const node = mapScenarioOutputToEvidence(schema, state, output);
       if (!node) return [];
       return evidence.recordNode({
         commandId: `scenario-output:${state.id}:${output.id}:${output.schemaVersion}`,
@@ -333,9 +382,16 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
     this.requireBinding(state.scenarioPackage, state.definitionKind, state.definitionVersion);
   }
 
-  toolSources(context: ScenarioToolHostContext): ExecutionToolDiscoverySource[] {
+  /** Development/migration compatibility only. Production Hosts assemble ScenarioProcessManifest instead. */
+  toolSources(context: ScenarioToolHostContext, options: { allowInProcessDevelopment?: boolean } = {}): ExecutionToolDiscoverySource[] {
     const sources = [...this.packages.values()].flatMap((scenarioPackage) => {
       this.assertAvailable(scenarioPackage);
+      if (!scenarioPackage.createToolSources) {
+        throw new Error(`Scenario Package ${scenarioPackage.id}@${scenarioPackage.version} requires process-runtime assembly`);
+      }
+      if (options.allowInProcessDevelopment !== true) {
+        throw new Error(`Scenario Package ${scenarioPackage.id}@${scenarioPackage.version} cannot execute in-process outside explicit development mode`);
+      }
       return [...scenarioPackage.createToolSources(this.scopeHostContext(context, scenarioPackage))];
     });
     const sourceIds = new Set<string>();
@@ -524,4 +580,5 @@ export class ScenarioPackageRegistry implements ScenarioRunBindingValidator {
     }
   }
 }
+
 export * from "./run-migration.js";

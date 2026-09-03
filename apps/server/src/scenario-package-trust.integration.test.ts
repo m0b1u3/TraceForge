@@ -141,11 +141,11 @@ describe("Reviewed Scenario material and current host assembly",()=>{
     const material=reviewedMaterial(join(root(),"material"),f.source),trust=new ScenarioPackageTrustControl(sqlite,new ScenarioPackageRegistry([f.source]),material.options),governed=new GovernedExecutionSources(undefined,f.capacity);
     const hostContext={artifacts:{} as any,state:{} as any,capabilities:{optional(){return undefined;},require(){return {};}} as any,
       authorization:{} as any,evidence:{} as any};
-    const sources=governed.scenarioSources(trust.registry,hostContext),tools=await sources[0]!.discover();expect(factories).toBe(1);
+    const sources=governed.scenarioSources(trust.registry,hostContext,{}, {}, true),tools=await sources[0]!.discover();expect(factories).toBe(1);
     await trust.revoke({commandId:"withdraw",package:f.from,actor:"operator",reason:"Stop using material"});
     await expect(sources[0]!.discover()).rejects.toThrow("revoked");
     await expect(tools[0]!.execute({}, {caseId:"case",runId:"run",workId:"work",workerId:"worker",scopeRef:"scope",leaseId:"lease",leaseExpiresAt:"2099-01-01",idempotencyKey:"call",effectivePermissions:{} as any})).rejects.toThrow("revoked");
-    expect(governed.scenarioSources(trust.registry,hostContext)).toEqual([]);expect(factories).toBe(1);expect(effects).toBe(0);
+    expect(governed.scenarioSources(trust.registry,hostContext,{}, {}, true)).toEqual([]);expect(factories).toBe(1);expect(effects).toBe(0);
   });
   it("serves protected trust diagnostics and quarantines unreviewed production packages",async()=>{
     const p=migrationPackages();let factories=0;p.source.createToolSources=()=>{factories++;return [];};

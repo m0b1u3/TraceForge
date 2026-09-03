@@ -6,6 +6,7 @@ import type {
   ScenarioWorkItem,
   WorkerDescriptor,
 } from "@traceforge/orchestration-core";
+import type { AgentExecutionJournal, AgentJournalEntry } from "@traceforge/agent-runtime";
 
 export interface WorkerRunContext {
   caseId: string;
@@ -83,14 +84,7 @@ export type WorkerDecision =
   | { type: "complete"; summary: string; outputs: WorkerOutputDraft[] }
   | { type: "block"; reason: string };
 
-export interface WorkerTranscriptEntry {
-  turn: number;
-  kind: "model" | "tool" | "observer" | "system";
-  summary: string;
-  refs: string[];
-  /** Host-created durable receipt identity, never copied from a tool's payload. */
-  receiptKey?: string;
-}
+export type WorkerTranscriptEntry = AgentJournalEntry;
 
 export interface WorkerModelContextPolicy {
   recordDecision?(request: WorkerModelRequest, snapshotId: string): Promise<void>;
@@ -156,10 +150,13 @@ export interface WorkerObserver {
 }
 
 export interface WorkerCheckpointDocument {
-  version: 1 | 2;
-  /** Required for v2; legacy documents cannot authorize partial Work continuation. */
+  version: 1 | 2 | 3;
+  /** Required for v2/v3; v1 documents cannot authorize partial Work continuation. */
   caseId?: string;
   workKey?: string;
+  /** Required for v3. Cognitive state lives here rather than beside Host recovery state. */
+  journal?: AgentExecutionJournal;
+  /** Legacy v1/v2 cognitive fields. They are forbidden in v3 documents. */
   consecutiveFailures?: number;
   pendingInvocation?: {
     turn: number;
@@ -167,15 +164,37 @@ export interface WorkerCheckpointDocument {
     risk: ExecutionRisk;
     contractFingerprint: string;
   } | null;
+  /** v3 Host-owned terminal command, persisted before control-plane dispatch. */
+  pendingControl?: {
+    type: "complete";
+    leaseId: string;
+    commandId: string;
+    summary: string;
+    outputs: WorkerOutputDraft[];
+  } | {
+    type: "block";
+    leaseId: string;
+    commandId: string;
+    reason: string;
+  } | null;
   workerId: string;
   runId: string;
   workId: string;
   leaseId: string;
-  turn: number;
-  transcript: WorkerTranscriptEntry[];
-  steering: string[];
-  completedInvocationIds: string[];
+  turn?: number;
+  transcript?: WorkerTranscriptEntry[];
+  steering?: string[];
+  completedInvocationIds?: string[];
   savedAt: string;
+}
+
+export interface CurrentWorkerCheckpointDocument extends WorkerCheckpointDocument {
+  version: 3;
+  caseId: string;
+  workKey: string;
+  journal: AgentExecutionJournal;
+  pendingInvocation: NonNullable<WorkerCheckpointDocument["pendingInvocation"]> | null;
+  pendingControl: NonNullable<WorkerCheckpointDocument["pendingControl"]> | null;
 }
 
 export interface WorkerCheckpointStore {

@@ -48,7 +48,8 @@ import { AgentAuditProjection } from "./agent-audit-projection.js";
 import { registerScenarioCollaborationRoutes, ScenarioCollaborationSnapshotService } from "./scenario-collaboration-snapshot.js";
 import { registerScenarioRunRecoveryRoutes, ScenarioRunRecoveryService } from "./scenario-run-recovery.js";
 import type { ToolProviderInstallation } from "./tool-provider-control-plane.js";
-import { createScenarioHostCapabilities, ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import { SqliteToolProviderControlStore } from "./tool-provider-control-plane.js";
+import { assertDeclarativeScenarioContract, createScenarioHostCapabilities, ScenarioPackageRegistry, type ScenarioAuthorizationPort } from "@traceforge/scenario-sdk";
 import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
 import { ScenarioPackageTrustControl, registerScenarioPackageTrustRoutes, type ScenarioPackageTrustOptions } from "./scenario-package-trust.js";
 import { ScenarioHistoryControl, registerScenarioHistoryRoutes, type ScenarioHistoryAuthorizer } from "./scenario-history-control.js";
@@ -73,7 +74,8 @@ import type {
 } from "./tool-invocation-reconciliation.js";
 import type { RecoveryEvidenceAuthority } from "./tool-recovery-evidence.js";
 import { PackageContextDiscoverySource, SqlitePackageContextStore, type PackageContextContent } from "./package-context-resources.js";
-import { createFoundationMcpSource, type FoundationMcpServer } from "./mcp-execution-source.js";
+import { createFoundationMcpSource, mcpToolProfileDigest, type FoundationMcpServer } from "./mcp-execution-source.js";
+import { ExtensionAssemblyControl, registerExtensionAssemblyRoutes, type ExtensionAssemblyOptions } from "./extension-assembly.js";
 import { PackageContextPolicy } from "./package-context-policy.js";
 import { createMcpContextLoader, mcpContextProfileDigest, type FoundationMcpContextServer } from "./mcp-context-loader.js";
 import { PackageContextLifecycle, registerContextLifecycleRoutes, type ContextLifecycleAuthorizer } from "./package-context-lifecycle.js";
@@ -93,6 +95,14 @@ import { SqliteScenarioArtifactStore, SqliteScenarioStateStore } from "./scenari
 import { assertFoundationRestorePublished, assertNotBackupSource, assertNoIncompleteRestore, readFoundationRestoreFence } from "./db/foundation-restore-fence.js";
 import { ScenarioRunMigrationControl, registerScenarioRunMigrationRoutes, type ScenarioRunMigrationOptions } from "./scenario-run-migration.js";
 import type { ExecutionSourcePolicy, GovernedExecutionSourceRegistration } from "@traceforge/worker-runtime";
+import { SqliteScenarioProcessSupervisionStore } from "./scenario-process-supervision.js";
+import { registerScenarioProcessControlRoutes, ScenarioProcessControl, type ScenarioProcessControlOptions } from "./scenario-process-control.js";
+import { registerScenarioProcessColdArchiveRoutes, ScenarioProcessColdArchive, type ScenarioProcessColdArchiveOptions } from "./scenario-process-cold-archive.js";
+import { loadScenarioPackageDescriptors, readScenarioPackageDescriptorResources } from "./scenario-package-descriptor-loader.js";
+import { ExecutionSessionGateway, loadOrCreateVaultKey, SqliteEncryptedSecretVault } from "./execution-session-gateway.js";
+import { registerExecutionSessionRoutes } from "./execution-session-routes.js";
+import { SqliteScenarioTrafficStore } from "./scenario-traffic-store.js";
+import { SCENARIO_PROCESS_HOST_CAPABILITIES } from "@traceforge/scenario-sdk";
 
 export interface SecurityAgentFoundationOptions {
   backup?: FoundationBackupOptions;
@@ -112,6 +122,7 @@ export interface SecurityAgentFoundationOptions {
   revokedContextResources?: readonly { digest: string; reason: string }[];
   mcpServers?: readonly FoundationMcpServer[];
   mcpContextServers?: readonly FoundationMcpContextServer[];
+  extensionAssembly?: ExtensionAssemblyOptions;
   contextLifecycleAuthorizer?: ContextLifecycleAuthorizer;
   contextPackageTransfer?: Omit<ContextPackageTransferOptions,"hasExternalProfile">;
   executionSchedulingLimits?: Partial<ToolProviderSchedulingLimits>;
@@ -122,8 +133,12 @@ export interface SecurityAgentFoundationOptions {
   workRetryAuthorizer?: ScenarioWorkRetryAuthorizer;
   workContinuationAuthorizer?: ScenarioWorkContinuationAuthorizer;
   scenarioPackageRegistry?: ScenarioPackageRegistry;
+  /** Load immutable, data-only scenario.json descriptors from scenarioPackageTrust.installations. */
+  loadScenarioPackageDescriptors?: boolean;
   /** Opaque package-owned host ports, keyed by versioned capability id. */
   scenarioHostCapabilities?: Readonly<Record<string, unknown>>;
+  /** Composition callback for Host services that must delegate to the exact assembled authorization registry. */
+  onScenarioAuthorizationReady?: (authorization: ScenarioAuthorizationPort) => void;
   autoScheduleIntervalMs?: number;
   modelRoutes?: ReadonlyMap<string, LlmProvider>;
   modelPolicies?: Partial<Record<CognitiveModelRole, Partial<ModelRolePolicy>>>;
@@ -133,9 +148,18 @@ export interface SecurityAgentFoundationOptions {
   toolDiscoverySources?: readonly ExecutionToolDiscoverySource[];
   governedToolSources?: readonly GovernedExecutionSourceRegistration[];
   scenarioSourceExecutionPolicies?: Readonly<Record<string, ExecutionSourcePolicy>>;
+  /** Trusted-host launch material, keyed by reviewed Scenario Process source. */
+  scenarioProcessLaunches?: Readonly<Record<string, import("@traceforge/worker-runtime").ScenarioProcessLaunch>>;
+  scenarioProcessControl?:ScenarioProcessControlOptions;
+  /** Independent filesystem receiver; it never reads or writes the active SQLite database. */
+  scenarioProcessColdArchive?:ScenarioProcessColdArchiveOptions;
   governedToolProviderFactory?: (installation: ToolProviderInstallation) => Promise<GovernedExecutionSourceRegistration> | GovernedExecutionSourceRegistration;
   /** Explicit fixture/migration escape hatch. Never reported as governed or production coverage. */
   allowUnmanagedDevelopmentSources?: boolean;
+  /** Fixture-only escape hatch. Production Scenario tool code must use Scenario Process isolation. */
+  allowInProcessScenarioDevelopment?: boolean;
+  /** Fixture/migration-only escape hatch for legacy authorization and output callbacks. */
+  allowLegacyScenarioContractDevelopment?: boolean;
   toolProviderTrustRoots?: ReadonlyMap<string, string>;
   toolProviderSourceFactory?: (installation: ToolProviderInstallation) => Promise<ExecutionToolDiscoverySource> | ExecutionToolDiscoverySource;
   toolProviderArchiveImportAuthorizer?: ToolProviderArchiveImportAuthorizer;
@@ -200,10 +224,31 @@ export function registerSecurityAgentFoundation(
   const scenarioEvidence = new ScenarioEvidenceGraphAdapter(evidenceGraph);
   const scenarioArtifacts = new SqliteScenarioArtifactStore(sqlite);
   const scenarioState = new SqliteScenarioStateStore(sqlite);
-  const packageTrust=new ScenarioPackageTrustControl(sqlite,options.scenarioPackageRegistry??new ScenarioPackageRegistry(),options.scenarioPackageTrust);
-  const scenarioPackages=packageTrust.registry;
+  let governedSources:GovernedExecutionSources|undefined;
+  if(options.loadScenarioPackageDescriptors&&options.scenarioPackageRegistry)throw new Error("Choose descriptor loading or a preassembled Scenario Package Registry, not both");
+  const packageSource=options.loadScenarioPackageDescriptors
+    ?loadScenarioPackageDescriptors(options.scenarioPackageTrust?.installations??[]):options.scenarioPackageRegistry??new ScenarioPackageRegistry();
+  const packageTrust=new ScenarioPackageTrustControl(sqlite,packageSource,{
+    ...options.scenarioPackageTrust,
+    onRevoked:(binding,reason)=>governedSources?.revokeScenarioPackage(binding.id,binding.version,reason),
+  });
+  const allowLegacyScenarioContractDevelopment=options.allowLegacyScenarioContractDevelopment===true;
+  const trustedScenarioPackages=packageTrust.registry;
+  for(const pkg of trustedScenarioPackages.list()){
+    if(trustedScenarioPackages.bindingStatus(trustedScenarioPackages.bindingFor(pkg),pkg.definition.kind,pkg.definition.version).status!=="available")continue;
+    if(!allowLegacyScenarioContractDevelopment)try{assertDeclarativeScenarioContract(pkg);}
+    catch{throw new Error(`Scenario Package ${pkg.id}@${pkg.version} must use valid declarative authorization and output contracts`);}
+  }
+  const scenarioPackages=new ScenarioPackageRegistry(trustedScenarioPackages.list(),pkg=>{
+    trustedScenarioPackages.assertAvailable(pkg);
+    if(!allowLegacyScenarioContractDevelopment)assertDeclarativeScenarioContract(pkg);
+  });
+  const descriptorResources=readScenarioPackageDescriptorResources(scenarioPackages);
   registerScenarioPackageTrustRoutes(app,packageTrust);
   const authorization = new SqliteScenarioAuthorizationService(sqlite, scenarioPackages);
+  const authorizationReady:unknown=options.onScenarioAuthorizationReady?.(authorization);
+  if(authorizationReady!==undefined){void Promise.resolve(authorizationReady).catch(()=>{});
+    throw new Error("Scenario authorization composition callback must be synchronous without a return value");}
   const providerCapabilityHost = createProviderCapabilityHost({
     handlers: options.providerCapabilities?.handlers ?? [],
     policies: options.providerCapabilities?.policies ?? [],
@@ -218,21 +263,37 @@ export function registerSecurityAgentFoundation(
   const scenarioRuntime = new DurableScenarioRuntime(scenarioEvents, definitions, scenarioPackages);
   const processCapacity=new ProcessExecutionCapacity(sqlite,new ToolProviderFairScheduler(options.executionSchedulingLimits,
     new SqliteToolProviderSchedulingAuditStore(sqlite)));
-  const governedSources=new GovernedExecutionSources(options.executionNode,processCapacity);
+  const scenarioProcessSupervision=new SqliteScenarioProcessSupervisionStore(sqlite);
+  scenarioProcessSupervision.recoverInterrupted();
+  registerScenarioProcessControlRoutes(app,new ScenarioProcessControl(sqlite,scenarioProcessSupervision,options.scenarioProcessControl));
+  if(options.scenarioProcessColdArchive)registerScenarioProcessColdArchiveRoutes(app,new ScenarioProcessColdArchive(options.scenarioProcessColdArchive));
+  const executionNode=options.executionNode;
+  const declaredHostCapabilities=new Set(scenarioPackages.list().flatMap(pkg=>pkg.runtime?.hostCapabilities??[]));
+  const needsSessions=declaredHostCapabilities.has(SCENARIO_PROCESS_HOST_CAPABILITIES.sessions);
+  const needsTraffic=declaredHostCapabilities.has(SCENARIO_PROCESS_HOST_CAPABILITIES.traffic)||needsSessions;
+  const executionSessions=needsSessions
+    ?new ExecutionSessionGateway(sqlite,new SqliteEncryptedSecretVault(sqlite,loadOrCreateVaultKey(projectRoot))):undefined;
+  const scenarioTraffic=needsTraffic?new SqliteScenarioTrafficStore(sqlite):undefined;
+  if(executionSessions)registerExecutionSessionRoutes(app,executionSessions);
+  governedSources=new GovernedExecutionSources(executionNode,processCapacity,scenarioProcessSupervision);
   const customSources=(options.governedToolSources??[]).map(source=>governedSources.register(source));
+  const allowInProcessScenarioDevelopment = options.allowInProcessScenarioDevelopment === true;
   const scenarioSources=governedSources.scenarioSources(scenarioPackages,
     {authorization,evidence:scenarioEvidence,artifacts:scenarioArtifacts,state:scenarioState,
       capabilities:createScenarioHostCapabilities(options.scenarioHostCapabilities ?? {})},
-    options.scenarioSourceExecutionPolicies);
+    options.scenarioSourceExecutionPolicies, options.scenarioProcessLaunches, allowInProcessScenarioDevelopment,
+    {sessions:executionSessions,traffic:scenarioTraffic});
   const customProviderFactory=options.governedToolProviderFactory ? (installation:ToolProviderInstallation)=>
     governedSources.registerProvider(installation,options.governedToolProviderFactory!) : options.toolProviderSourceFactory;
   registerProcessCapacityRoutes(app,processCapacity,options.processCleanupAuthorizer,options.toolRecoveryEvidenceAuthority??(()=>undefined));
   const capacityCoverage=Object.freeze({
-    builtinProcess:!!options.executionNode,defaultManagedProviders:!customProviderFactory,
+    builtinProcess:!!executionNode,defaultManagedProviders:!customProviderFactory,
     mcpTools:(options.mcpServers??[]).map(server=>server.source),mcpContext:(options.mcpContextServers??[]).map(server=>server.source),
     customDiscoverySources:(options.toolDiscoverySources??[]).map(source=>source.source),
     customSourcesAndScenarioExecutionPorts:"host_scoped",singleHostOnly:true,
     unmanagedDevelopmentSources:options.allowUnmanagedDevelopmentSources===true,
+    inProcessScenarioExecution:allowInProcessScenarioDevelopment?"development_opt_in":"disabled",
+    legacyScenarioContracts:allowLegacyScenarioContractDevelopment?"development_opt_in":"disabled",
     unmanagedProviderFactory:!!options.toolProviderSourceFactory,arbitraryJavaScriptIsolation:false,
     accounting:"invocation_or_process_not_os_tree",automaticCleanupProofIssuer:false,
   });
@@ -246,14 +307,20 @@ export function registerSecurityAgentFoundation(
     hasExternalProfile:(source,digest)=>contextServers.some(server=>server.source===source && mcpContextProfileDigest(server)===digest),
   });
   registerContextPackageArchiveRoutes(app,contextArchives);
-  contextStore.install(scenarioPackages, options.contextResourceContents ?? []);
+  contextStore.install(scenarioPackages, [...descriptorResources.context,...options.contextResourceContents ?? []]);
   for (const item of options.revokedContextResources ?? []) contextStore.revoke(item.digest, item.reason);
+  const extensionAssembly = new ExtensionAssemblyControl(sqlite, scenarioPackages, contextStore,
+    options.mcpServers ?? [], contextServers, { ...options.extensionAssembly, scenarioProcessLaunches: options.scenarioProcessLaunches,
+      managedProviders: new SqliteToolProviderControlStore(sqlite).list() });
+  registerExtensionAssemblyRoutes(app, extensionAssembly);
   registerContextLifecycleRoutes(app, new PackageContextLifecycle(sqlite, scenarioPackages, contextStore, options.contextLifecycleAuthorizer));
   if (new Set(contextServers.map((server) => server.source)).size !== contextServers.length) throw new Error("Duplicate MCP context source");
   const contextSource = new PackageContextDiscoverySource(scenarioPackages, contextStore, sqlite, (id) => scenarioRuntime.load(id) ?? null,
-    new Map(contextServers.map((server) => [server.source, createMcpContextLoader(server, options.executionNode,processCapacity)])));
-  const mcpSources = (options.mcpServers ?? []).map((config) => createFoundationMcpSource(config, options.executionNode,
-    sqlite, scenarioPackages, (id) => scenarioRuntime.load(id) ?? null,processCapacity));
+    new Map(contextServers.map((server) => [server.source, createMcpContextLoader(server, executionNode,processCapacity,
+      () => extensionAssembly.assertProfileAvailable("mcp_context", server.source, mcpContextProfileDigest(server)))])));
+  const mcpSources = (options.mcpServers ?? []).map((config) => createFoundationMcpSource(config, executionNode,
+    sqlite, scenarioPackages, (id) => scenarioRuntime.load(id) ?? null,processCapacity,
+    () => extensionAssembly.assertProfileAvailable("mcp_tool", config.source, mcpToolProfileDigest(config))));
   const observerStore = new SqliteRunObserverStore(sqlite);
   const cognitiveCursors = new SqliteCognitiveContextCursorStore(sqlite);
   const agentEvents = new SqliteScenarioAgentEventStream(sqlite, options.onAgentEvent);
@@ -350,16 +417,22 @@ export function registerSecurityAgentFoundation(
   registerScenarioAgentEventRoutes(app, agentEvents, auditProjection);
   registerEmbeddedWorkers(
     app, sqlite, provider, projectRoot, providerReady, evidenceGraph, changes,
-    cognitiveSnapshots, modelRuntime, lifecycleEvents, definitions, scenarioPackages, options.executionNode,
+    cognitiveSnapshots, modelRuntime, lifecycleEvents, definitions, scenarioPackages, executionNode,
     [...scenarioSources, contextSource],
     [...customSources, ...(options.toolDiscoverySources ?? []), ...mcpSources],
     options.toolProviderTrustRoots, customProviderFactory, providerCapabilityHost,
     options.toolProviderArchiveImportAuthorizer, options.toolProviderRefreshAuthorizer,
     options.toolInvocationReconciliationAuthorizer, options.toolInvocationReconciliationEvidenceVerifier,
-    workRetry, options.toolRecoveryEvidenceAuthority, contextPolicy, compaction,processCapacity,hostControl,authorization,
+    workRetry, options.toolRecoveryEvidenceAuthority, contextPolicy, compaction,processCapacity,hostControl,authorization,extensionAssembly,
   );
   registerScenarioRunMigrationRoutes(app,new ScenarioRunMigrationControl(sqlite,scenarioPackages,contextStore,
-    new SqliteWorkerCheckpointStore(sqlite,new JsonFileCheckpointStore(resolve(projectRoot,"data","worker-checkpoints"))),options.scenarioRunMigration,changes));
+    new SqliteWorkerCheckpointStore(sqlite,new JsonFileCheckpointStore(resolve(projectRoot,"data","worker-checkpoints"))),
+    {...options.scenarioRunMigration,resources:[...descriptorResources.migrations,...options.scenarioRunMigration?.resources??[]],
+      assertTrusted:options.scenarioRunMigration?.assertTrusted??(options.loadScenarioPackageDescriptors?binding=>{
+        const pkg=scenarioPackages.list().find(candidate=>candidate.id===binding.id&&candidate.version===binding.version
+          &&candidate.schemaRevision===binding.schemaRevision);
+        if(!pkg)throw new Error("Migration Package binding is not installed");scenarioPackages.assertAvailable(pkg);
+      }:undefined)},changes));
   registerAuthorizationUpgradeRoutes(app,new ScenarioAuthorizationUpgradeControl(sqlite,scenarioPackages,options.authorizationUpgrade));
   registerScenarioRunDisposalRoutes(app,new ScenarioRunDisposalControl(sqlite,options.runDisposalAuthorizer,changes));
   registerScenarioHistoryRoutes(app,new ScenarioHistoryControl(sqlite,options.historyArchiveAuthorizer));

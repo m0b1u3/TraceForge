@@ -13,6 +13,9 @@ import { SqliteToolProviderRecoveryStateStore } from "../src/tool-provider-recov
 import { ToolProviderRecoveryReconciler } from "../src/tool-provider-recovery-reconciler.ts";
 import { recoverToolRuntimeStartup } from "../src/tool-runtime-startup-recovery.ts";
 import { SqliteToolInvocationBindingStore } from "../src/worker-execution-adapters.ts";
+import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import { SqlitePackageContextStore } from "../src/package-context-resources.ts";
+import { ExtensionAssemblyControl } from "../src/extension-assembly.ts";
 
 // Checkpoints exist only in this host. SIGKILL prevents catch/finally compensation.
 const [mode, root, action, phase, supersession] = process.argv.slice(2);
@@ -24,6 +27,10 @@ const targetVersion = action === "upgrade" ? "2.0.0" : "1.0.0";
 const trustPath = join(root, "trust.json");
 const sqlite = getSqliteClient(createDb(join(root, "host.sqlite")));
 const store = new SqliteToolProviderControlStore(sqlite);
+const assembly = new ExtensionAssemblyControl(sqlite, new ScenarioPackageRegistry(), new SqlitePackageContextStore(sqlite), [], [], {
+  managedProviders: store.list(),
+});
+assembly.attachManagedProviderInventory(() => store.list());
 const bindings = new SqliteToolInvocationBindingStore(sqlite);
 const packages = new ManagedToolProviderPackageStore(join(root, "packages"));
 let privateKey;
@@ -75,7 +82,8 @@ const port = {
     if (version === targetVersion) checkpoint("admission-open");
   },
 };
-const control = new ToolProviderControlPlane(store, trust, binding, packages, () => new Date().toISOString(), port);
+const control = new ToolProviderControlPlane(store, trust, binding, packages, () => new Date().toISOString(), port,
+  () => assembly.reconcileManagedProviders(store.list()));
 const recover = () => recoverToolRuntimeStartup(runtime, new ToolProviderRecoveryReconciler(recoveryState, control), control);
 const run = () => action === "rollback"
   ? control.rollback(providerId, "2.0.0", "1.0.0", "restore prior version", "operator", commandId)
@@ -119,8 +127,17 @@ function snapshot() {
     fences: sqlite.prepare("SELECT tool_version AS version, status FROM tool_invocation_admission_fences ORDER BY tool_version").all(),
     activeVersions: runtime.snapshot().providers.filter((entry) => entry.lifecycle === "active").map((entry) => entry.tool.version),
     acceptingSources: runtime.snapshot().sources.filter((entry) => entry.acceptingInvocations).map((entry) => entry.source),
-    activations: [...activations], activationFences: [...activationFences],
+    activations: [...activations], activationFences: [...activationFences], assembly: assemblySnapshot(),
   };
+}
+
+function assemblySnapshot() {
+  const row = sqlite.prepare(`SELECT a.generation,a.snapshot_digest,s.manifest_json FROM extension_assembly_active a
+    JOIN extension_assembly_snapshots s ON s.digest=a.snapshot_digest WHERE a.id=1`).get();
+  const manifest = JSON.parse(row.manifest_json);
+  return { state: "ready", generation: row.generation, digest: row.snapshot_digest,
+    unitCounts: { managed_provider: manifest.units.filter((unit) => unit.kind === "managed_provider").length },
+    managedDigests: manifest.units.filter((unit) => unit.kind === "managed_provider").map((unit) => unit.identityDigest).sort() };
 }
 
 async function probeAdmissions() {

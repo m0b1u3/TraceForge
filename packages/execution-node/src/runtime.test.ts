@@ -10,12 +10,15 @@ import {
   type LaunchedProcess,
   type ManagedProcess,
   type ProcessLauncher,
+  type LocalExecutionNodeOptions,
 } from "./runtime.js";
 import type {
   ExecutionAttribution,
   ProcessEnforcementAttestation,
   ProcessOutputStream,
   ProcessSignal,
+  ProcessOperationJournal,
+  ProcessOperationObservation,
   StartProcessRequest,
 } from "./protocol.js";
 import { permissionProfileFingerprint, resourceLimitsFingerprint, type ResourceLimitKind } from "./protocol.js";
@@ -104,7 +107,7 @@ function permissions(readRoots: string[], writeRoots: string[] = []): EffectiveP
   };
 }
 
-function createNode(launcher = new FakeLauncher()) {
+function createNode(launcher = new FakeLauncher(), options: Partial<LocalExecutionNodeOptions> = {}) {
   return {
     launcher,
     node: new LocalExecutionNode(launcher, {
@@ -114,6 +117,7 @@ function createNode(launcher = new FakeLauncher()) {
       maximumCpuTimeMsPerProcess: 60_000, maximumMemoryBytesPerProcess: 1024 * 1024 * 1024,
       maximumProcessesPerExecution: 16, maximumWriteBytesPerProcess: 1024 * 1024,
       capabilities: { process: { spawn: true, stdio: true, tty: false, adoption: true, resourceLimits: true, signals: ["interrupt", "terminate", "kill"] } },
+      ...options,
     }),
   };
 }
@@ -135,6 +139,56 @@ function startRequest(workspace: string): StartProcessRequest {
 }
 
 describe("LocalExecutionNode process lifecycle", () => {
+  it("terminates every owned process tree on shutdown and refuses new launches", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "traceforge-node-shutdown-"));
+    const { node, launcher } = createNode();
+    await node.startProcess(startRequest(workspace));
+    const originalLaunch = launcher.launch.bind(launcher); let release!: () => void, entering = false;
+    const gate = new Promise<void>(resolvePromise => { release = resolvePromise; });
+    launcher.launch = async request => { entering = true; await gate; const launched = await originalLaunch(request);
+      const process = launched.process as FakeProcess; process.terminate = async force => { process.terminations.push(force); queueMicrotask(() => process.exit(null, "SIGKILL")); }; return launched; };
+    const first = launcher.processes[0]!; first.terminate = async force => { first.terminations.push(force); queueMicrotask(() => first.exit(null, "SIGKILL")); };
+    const starting = node.startProcess({ ...startRequest(workspace), requestId: "request_2", attribution: attribution({ idempotencyKey: "effect_2" }) });
+    await expect.poll(() => entering).toBe(true); const closing = node.shutdown(1_000); release(); await starting;
+    await expect(closing).resolves.toEqual({ requested: 2, terminated: 2 });
+    expect(launcher.processes.map(process => process.terminations)).toEqual([[true], [true]]);
+    await expect(node.startProcess({ ...startRequest(workspace), requestId: "request_3",
+      attribution: attribution({ idempotencyKey: "effect_3" }) })).rejects.toThrow("shutting down");
+  });
+
+  it("fails closed when shutdown cannot prove native process-tree exit", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "traceforge-node-shutdown-timeout-"));
+    const { node } = createNode(); await node.startProcess(startRequest(workspace));
+    await expect(node.shutdown(10)).rejects.toThrow("did not prove");
+  });
+
+  it("executes each process operation once and replays the saved result after token rotation", async () => {
+    const records = new Map<string, ProcessOperationObservation>();
+    const journal: ProcessOperationJournal = {
+      claim(value) { if (records.has(value.identity.operationId)) throw new Error("already claimed"); records.set(value.identity.operationId, structuredClone(value)); },
+      complete(value) { records.set(value.identity.operationId, structuredClone(value)); },
+      get(id) { const value = records.get(id); return value ? structuredClone(value) : undefined; },
+    };
+    const workspace = await mkdtemp(join(tmpdir(), "traceforge-operation-"));
+    const { node, launcher } = createNode(new FakeLauncher(), { operationJournal: journal });
+    const started = await node.startProcess(startRequest(workspace));
+    const input = { operationId: "input-once", processId: started.process.id, adoptionToken: started.adoptionToken,
+      dataBase64: Buffer.from("once").toString("base64") };
+    await node.writeProcessInput(input);
+    await node.writeProcessInput(input);
+    expect(launcher.processes[0]!.inputs.map((value) => value.toString())).toEqual(["once"]);
+    await expect(node.writeProcessInput({ ...input, dataBase64: Buffer.from("different").toString("base64") }))
+      .rejects.toThrow(/reused with different input/);
+
+    const adopt = { operationId: "adopt-once", processId: started.process.id, adoptionToken: started.adoptionToken,
+      attribution: attribution({ workerId: "worker_2", leaseId: "lease_2", idempotencyKey: "effect_2" }) };
+    const first = await node.adoptProcess(adopt);
+    const replayed = await node.adoptProcess(adopt);
+    expect(replayed).toEqual(first);
+    const restarted = createNode(new FakeLauncher(), { operationJournal: journal }).node;
+    expect(await restarted.adoptProcess(adopt)).toEqual(first);
+    expect(node.descriptor.capabilities.process.operationObservation).toBe(true);
+  });
   it("reserves capacity across concurrent launches and does not evict history without a durable journal", async () => {
     const launcher = new FakeLauncher();
     let release!: () => void;
@@ -254,9 +308,10 @@ describe("LocalExecutionNode process lifecycle", () => {
     expect(events.events.map((event) => event.type)).toEqual(["process.started", "process.output", "process.output_truncated"]);
     expect(Buffer.from((events.events[1] as { dataBase64: string }).dataBase64, "base64").toString()).toBe("abcd");
 
-    await node.writeProcessInput({ processId: started.process.id, adoptionToken: started.adoptionToken, dataBase64: Buffer.from("input").toString("base64") });
+    await node.writeProcessInput({ operationId: "input-1", processId: started.process.id, adoptionToken: started.adoptionToken, dataBase64: Buffer.from("input").toString("base64") });
     expect(launcher.processes[0]!.inputs[0]!.toString()).toBe("input");
     const adopted = await node.adoptProcess({
+      operationId: "adopt-1",
       processId: started.process.id,
       adoptionToken: started.adoptionToken,
       attribution: attribution({ workerId: "worker_2", leaseId: "lease_2", idempotencyKey: "effect_2" }),
@@ -338,6 +393,7 @@ describe("LocalExecutionNode process lifecycle", () => {
     const started = await node.startProcess(request);
 
     const resized = await node.resizeProcessTerminal({
+      operationId: "resize-1",
       processId: started.process.id,
       adoptionToken: started.adoptionToken,
       columns: 132,
@@ -346,6 +402,7 @@ describe("LocalExecutionNode process lifecycle", () => {
     expect(resized.terminal).toMatchObject({ columns: 132, rows: 43, terminalType: "xterm-256color" });
     expect(launcher.processes[0]!.terminalSizes).toEqual([{ columns: 132, rows: 43 }]);
     await expect(node.resizeProcessTerminal({
+      operationId: "resize-invalid",
       processId: started.process.id,
       adoptionToken: started.adoptionToken,
       columns: 0,

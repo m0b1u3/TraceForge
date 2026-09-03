@@ -62,6 +62,8 @@ export async function foundationHost(options: { root?: string; discoveryGate?: P
     autoScheduleIntervalMs: 100,
     // This RPC fixture deliberately uses a local unsandboxed child, not production governance.
     allowUnmanagedDevelopmentSources: true,
+    allowInProcessScenarioDevelopment: true,
+    allowLegacyScenarioContractDevelopment: true,
     scenarioPackageTrust:{allowUnreviewedDevelopmentPackages:true},
     scenarioPackageRegistry: new ScenarioPackageRegistry(options.empty ? [] : [{ id: "neutral", version: "1.0.0", schemaRevision: 1,
       definition: neutral, outputSchemas: [{ kind: "decision", version: 1, validate() {} }], authorizationPolicy: { parseScope: (payload) => ({ payload, allowedActions: ["fixture.read"], deniedActions: [] }) }, createToolSources: () => [] }]),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { AgentHarness } from "./index.js";
+import { AgentHarness, createAgentExecutionJournal, migrateLegacyAgentExecutionJournal,
+  recordAgentJournalTerminal, resumeAgentExecutionJournal, validateAgentExecutionJournal } from "./index.js";
 
 describe("AgentHarness", () => {
   it("owns the turn budget and returns a terminal session value", async () => {
@@ -41,5 +42,33 @@ describe("AgentHarness", () => {
     expect(session.applyToolObservation("failed", 1, 2)).toEqual({ consecutiveFailures: 2,
       commitInvocation: true, requiresApproval: false, failureLimitReached: true });
     expect(session.applyToolObservation("succeeded", 2, 3).consecutiveFailures).toBe(0);
+  });
+
+  it("creates and migrates a bounded, versioned execution journal", () => {
+    const created = createAgentExecutionJournal({ sessionId: "agent:run/work",
+      initialEntries: [{ turn: 0, kind: "system", summary: "Started", refs: ["scope:first"] }] });
+    expect(created).toMatchObject({ format: "traceforge-agent-execution-journal", version: 1, turn: 0, terminal: null });
+    const migrated = migrateLegacyAgentExecutionJournal({ sessionId: "agent:run/work", turn: 2, consecutiveFailures: 1,
+      transcript: [{ turn: 1, kind: "tool", summary: "Observed", refs: ["receipt:first"], receiptKey: "effect:first" }],
+      steering: ["Continue"], completedInvocationIds: ["first"] });
+    expect(migrated).toMatchObject({ turn: 2, consecutiveFailures: 1, completedIntentIds: ["first"] });
+  });
+
+  it("rejects corrupt, ambiguous, or unbounded journal state", () => {
+    const journal = createAgentExecutionJournal({ sessionId: "agent:run/work" });
+    expect(() => validateAgentExecutionJournal({ ...journal, completedIntentIds: ["same", "same"] })).toThrow("Invalid");
+    expect(() => validateAgentExecutionJournal({ ...journal, terminal: { outcome: "blocked", reason: "reason", turn: 1 } })).toThrow("terminal");
+    expect(() => validateAgentExecutionJournal({ ...journal, steering: Array.from({ length: 1025 }, () => "next") })).toThrow("Invalid");
+  });
+
+  it("records terminal decisions idempotently and only resumes non-completed work", () => {
+    const journal = createAgentExecutionJournal({ sessionId: "agent:run/work" });
+    const terminal = { outcome: "blocked" as const, reason: "Needs review", turn: 0 };
+    expect(recordAgentJournalTerminal(journal, terminal).terminal).toEqual(terminal);
+    expect(recordAgentJournalTerminal(journal, terminal).terminal).toEqual(terminal);
+    expect(() => recordAgentJournalTerminal(journal, { ...terminal, reason: "Changed" })).toThrow("different terminal");
+    expect(resumeAgentExecutionJournal(journal).terminal).toBeNull();
+    recordAgentJournalTerminal(journal, { outcome: "completed", reason: "Done", turn: 0 });
+    expect(() => resumeAgentExecutionJournal(journal)).toThrow("cannot resume");
   });
 });

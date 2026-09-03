@@ -25,7 +25,7 @@ describe("ScenarioPackageRegistry", () => {
   it("exposes no scenario definitions or scenario tools when no package is installed", async () => {
     const registry = new ScenarioPackageRegistry();
     expect(registry.definitions()).toEqual([]);
-    const runtime = new ExecutionToolDiscoveryRuntime(registry.toolSources(hostContext));
+    const runtime = new ExecutionToolDiscoveryRuntime(registry.toolSources(hostContext, { allowInProcessDevelopment: true }));
     await runtime.refresh();
     expect(runtime.snapshot().providers).toEqual([]);
     await runtime.close();
@@ -34,7 +34,7 @@ describe("ScenarioPackageRegistry", () => {
   it("exposes Web tools only after the Web package is explicitly installed", async () => {
     const registry = new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]);
     expect(registry.definitions().map((definition) => definition.kind)).toEqual(["web_blackbox"]);
-    const sources = registry.toolSources(hostContext);
+    const sources = registry.toolSources(hostContext, { allowInProcessDevelopment: true });
     expect(sources.map((source) => source.source)).toEqual(["scenario:web_blackbox@1"]);
     const tools = await sources[0].discover();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
@@ -63,7 +63,7 @@ describe("ScenarioPackageRegistry", () => {
       definition: { ...WEB_BLACKBOX_PACKAGE.definition, kind: "owner_fixture" },
       createToolSources(context: typeof hostContext) { received = context; return []; },
     };
-    new ScenarioPackageRegistry([fixturePackage]).toolSources(hostContext);
+    new ScenarioPackageRegistry([fixturePackage]).toolSources(hostContext, { allowInProcessDevelopment: true });
     expect(() => received!.artifacts.get({ packageId: "traceforge.other", packageVersion: "0.1.0", caseId: "case", artifactId: "artifact" }))
       .toThrow("cannot access another package owner");
     expect(() => received!.state.read({ packageId: fixturePackage.id, packageVersion: "0.2.0", caseId: "case", runId: "run", key: "state" }))

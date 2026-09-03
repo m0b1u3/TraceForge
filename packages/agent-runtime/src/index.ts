@@ -15,6 +15,129 @@ export interface AgentToolObservationPolicyResult {
   failureLimitReached: boolean;
 }
 
+export const AGENT_EXECUTION_JOURNAL_FORMAT = "traceforge-agent-execution-journal";
+export const AGENT_EXECUTION_JOURNAL_VERSION = 1;
+export const MAX_AGENT_JOURNAL_ENTRIES = 4096;
+export const MAX_AGENT_JOURNAL_STEERING = 1024;
+export const MAX_AGENT_JOURNAL_COMPLETED_INTENTS = 4096;
+
+export interface AgentJournalEntry {
+  turn: number;
+  kind: "model" | "tool" | "observer" | "system";
+  summary: string;
+  refs: string[];
+  receiptKey?: string;
+}
+
+export interface AgentJournalTerminal {
+  outcome: "completed" | "blocked" | "failed" | "waiting_approval" | "interrupted" | "budget_exhausted";
+  reason: string;
+  turn: number;
+}
+
+export interface AgentExecutionJournal {
+  format: typeof AGENT_EXECUTION_JOURNAL_FORMAT;
+  version: typeof AGENT_EXECUTION_JOURNAL_VERSION;
+  sessionId: string;
+  turn: number;
+  consecutiveFailures: number;
+  entries: AgentJournalEntry[];
+  steering: string[];
+  completedIntentIds: string[];
+  terminal: AgentJournalTerminal | null;
+}
+
+export function createAgentExecutionJournal(input: {
+  sessionId: string;
+  initialEntries?: AgentJournalEntry[];
+}): AgentExecutionJournal {
+  return validateAgentExecutionJournal({
+    format: AGENT_EXECUTION_JOURNAL_FORMAT,
+    version: AGENT_EXECUTION_JOURNAL_VERSION,
+    sessionId: input.sessionId,
+    turn: 0,
+    consecutiveFailures: 0,
+    entries: structuredClone(input.initialEntries ?? []),
+    steering: [],
+    completedIntentIds: [],
+    terminal: null,
+  });
+}
+
+export function migrateLegacyAgentExecutionJournal(input: {
+  sessionId: string;
+  turn: number;
+  consecutiveFailures?: number;
+  transcript: AgentJournalEntry[];
+  steering: string[];
+  completedInvocationIds: string[];
+}): AgentExecutionJournal {
+  return validateAgentExecutionJournal({
+    format: AGENT_EXECUTION_JOURNAL_FORMAT,
+    version: AGENT_EXECUTION_JOURNAL_VERSION,
+    sessionId: input.sessionId,
+    turn: input.turn,
+    consecutiveFailures: input.consecutiveFailures ?? 0,
+    entries: structuredClone(input.transcript),
+    steering: [...input.steering],
+    completedIntentIds: [...input.completedInvocationIds],
+    terminal: null,
+  });
+}
+
+export function validateAgentExecutionJournal(value: unknown): AgentExecutionJournal {
+  if (!value || typeof value !== "object") throw new Error("Invalid Agent Execution Journal");
+  const journal = value as AgentExecutionJournal;
+  const strings = (items: unknown): items is string[] => Array.isArray(items)
+    && items.every((item) => typeof item === "string" && item.length > 0 && Buffer.byteLength(item) <= 8192);
+  if (journal.format !== AGENT_EXECUTION_JOURNAL_FORMAT || journal.version !== AGENT_EXECUTION_JOURNAL_VERSION
+    || typeof journal.sessionId !== "string" || !journal.sessionId.trim() || Buffer.byteLength(journal.sessionId) > 1024
+    || !Number.isSafeInteger(journal.turn) || journal.turn < 0
+    || !Number.isSafeInteger(journal.consecutiveFailures) || journal.consecutiveFailures < 0
+    || !Array.isArray(journal.entries) || journal.entries.length > MAX_AGENT_JOURNAL_ENTRIES
+    || !Array.isArray(journal.steering) || journal.steering.length > MAX_AGENT_JOURNAL_STEERING
+    || !journal.steering.every((item) => typeof item === "string" && Buffer.byteLength(item) <= 64 * 1024)
+    || !strings(journal.completedIntentIds) || journal.completedIntentIds.length > MAX_AGENT_JOURNAL_COMPLETED_INTENTS
+    || new Set(journal.completedIntentIds).size !== journal.completedIntentIds.length) {
+    throw new Error("Invalid Agent Execution Journal");
+  }
+  for (const entry of journal.entries) {
+    if (!entry || !Number.isSafeInteger(entry.turn) || entry.turn < 0
+      || !["model", "tool", "observer", "system"].includes(entry.kind)
+      || typeof entry.summary !== "string" || Buffer.byteLength(entry.summary) > 64 * 1024
+      || !strings(entry.refs) || entry.refs.length > 1024
+      || (entry.receiptKey !== undefined && (entry.kind !== "tool" || typeof entry.receiptKey !== "string" || !entry.receiptKey.trim()))) {
+      throw new Error("Invalid Agent Execution Journal entry");
+    }
+  }
+  if (journal.terminal !== null && (!journal.terminal
+    || !["completed", "blocked", "failed", "waiting_approval", "interrupted", "budget_exhausted"].includes(journal.terminal.outcome)
+    || typeof journal.terminal.reason !== "string" || !journal.terminal.reason.trim() || Buffer.byteLength(journal.terminal.reason) > 64 * 1024
+    || !Number.isSafeInteger(journal.terminal.turn) || journal.terminal.turn < 0 || journal.terminal.turn > journal.turn)) {
+    throw new Error("Invalid Agent Execution Journal terminal state");
+  }
+  return journal;
+}
+
+export function recordAgentJournalTerminal(
+  journal: AgentExecutionJournal,
+  terminal: AgentJournalTerminal,
+): AgentExecutionJournal {
+  validateAgentExecutionJournal(journal);
+  if (journal.terminal && JSON.stringify(journal.terminal) !== JSON.stringify(terminal)) {
+    throw new Error("Agent Execution Journal already has a different terminal state");
+  }
+  journal.terminal = structuredClone(terminal);
+  return validateAgentExecutionJournal(journal);
+}
+
+export function resumeAgentExecutionJournal(journal: AgentExecutionJournal): AgentExecutionJournal {
+  validateAgentExecutionJournal(journal);
+  if (journal.terminal?.outcome === "completed") throw new Error("Completed Agent Execution Journal cannot resume");
+  journal.terminal = null;
+  return journal;
+}
+
 /**
  * Owns the model/observer/tool turn budget independently of worker leases and
  * control-plane polling. A WorkerHost supplies one domain turn at a time.

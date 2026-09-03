@@ -16,6 +16,7 @@ import { LoopGuardObserver } from "./observer.js";
 import { ToolInvocationRecoveryRequiredError } from "./tool-gateway.js";
 import { LeaseLostError, WorkerHost, type WorkerLifecycleEvent } from "./runtime.js";
 import { executionToolContractFingerprint } from "./tool-provider-contract.js";
+import { createAgentExecutionJournal, recordAgentJournalTerminal } from "@traceforge/agent-runtime";
 
 const worker: WorkerDescriptor = {
   id: "worker_1",
@@ -161,7 +162,8 @@ describe("WorkerHost", () => {
     continueObserver, checkpoints, new BoundedOutputDistiller());
     expect((await runtime.execute(current)).outcome).toBe("completed");
     expect(order).toEqual(["recover", "catalog", "model"]);
-    expect(checkpoints.document).toMatchObject({ turn: 1, pendingInvocation: null, completedInvocationIds: ["exact"] });
+    expect(checkpoints.document).toMatchObject({ version: 3, journal: { turn: 2, completedIntentIds: ["exact"],
+      terminal: { outcome: "completed" } }, pendingInvocation: null, pendingControl: { type: "complete" } });
   });
 
   it("executes only the saved input when durable ownership proves it never started", async () => {
@@ -227,15 +229,15 @@ describe("WorkerHost", () => {
 
     const result = await runtime.execute(assignment());
     expect(result.outcome).toBe("completed");
-    expect(control.checkpoints).toBe(2);
+    expect(control.checkpoints).toBe(3);
     expect(control.completed?.outputs[0].refs).toEqual(["evidence_1"]);
-    expect(checkpoints.document?.completedInvocationIds).toEqual(["call_1"]);
-    expect(checkpoints.document?.transcript.some((entry) => entry.summary.includes("raw-sha256="))).toBe(true);
+    expect(checkpoints.document?.journal?.completedIntentIds).toEqual(["call_1"]);
+    expect(checkpoints.document?.journal?.entries.some((entry) => entry.summary.includes("raw-sha256="))).toBe(true);
     const turnId = "worker:worker_1:run:run_1:work:work_1:lease:lease_1:attempt:1:turn:1";
     expect(lifecycle.filter((event) => event.type === "tool_started" || event.type === "tool_completed")
       .map((event) => [event.type, event.turnId])).toEqual([["tool_started", turnId], ["tool_completed", turnId]]);
     expect(lifecycle.filter((event) => event.type === "turn_progress").map((event) => event.phase)).toEqual([
-      "actionRequested", "checkpointed", "toolExecuted", "observationApplied", "checkpointed",
+      "actionRequested", "checkpointed", "toolExecuted", "observationApplied", "checkpointed", "checkpointed",
     ]);
     expect(lifecycle.find((event) => event.type === "turn_completed")).toMatchObject({ outcome: "continue" });
   });
@@ -279,7 +281,7 @@ describe("WorkerHost", () => {
     const result = await runtime.execute(assignment());
     expect(result.outcome).toBe("completed");
     expect(executions).toBe(1);
-    expect(control.checkpoints).toBe(3);
+    expect(control.checkpoints).toBe(4);
   });
 
   it("stops locally without writing failure after losing a lease", async () => {
@@ -319,7 +321,7 @@ describe("WorkerHost", () => {
     ]), { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("not used"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller());
     const result = await runtime.execute(assignment());
     expect(result.outcome).toBe("completed");
-    expect(control.checkpoints).toBe(1);
+    expect(control.checkpoints).toBe(2);
     expect(control.completed?.outputs[0].refs).toEqual(["scope_1"]);
   });
 
@@ -335,7 +337,7 @@ describe("WorkerHost", () => {
     const result = await runtime.execute(assignment());
     expect(result.outcome).toBe("waiting_approval");
     expect(control.approval).toMatchObject({ approvalId: "approval_1", actionKey: "effect_1:call_1" });
-    expect(checkpoints.document?.completedInvocationIds).toEqual([]);
+    expect(checkpoints.document?.journal?.completedIntentIds).toEqual([]);
   });
 
   it("blocks a resumed Work when its durable checkpoint cannot be restored", async () => {
@@ -357,5 +359,39 @@ describe("WorkerHost", () => {
     expect(result.outcome).toBe("blocked");
     expect(control.blocked).toMatch(/Checkpoint recovery failed.*missing checkpoint/);
     expect(control.failed).toBeUndefined();
+  });
+
+  it("resumes an explicitly re-leased blocked Journal without replaying the old block command", async () => {
+    const current = assignment(); current.leaseId = "new-lease"; current.work.leaseId = "new-lease";
+    current.work.latestCheckpoint = { id: "blocked", workId: current.work.id, leaseId: "old-lease", progressSummary: "Blocked",
+      payloadRef: "checkpoint://blocked.json", createdAt: worker.heartbeatAt };
+    const checkpoints = new MemoryCheckpoints(); const journal = createAgentExecutionJournal({ sessionId: "agent:run:run_1:work:work_1" });
+    recordAgentJournalTerminal(journal, { outcome: "blocked", reason: "Old block", turn: 0 });
+    checkpoints.document = { version: 3, caseId: "case_1", workKey: "effect_1", workerId: worker.id, runId: "run_1", workId: "work_1",
+      leaseId: "old-lease", savedAt: worker.heartbeatAt, journal, pendingInvocation: null,
+      pendingControl: { type: "block", leaseId: "old-lease", commandId: "block:old-lease:model", reason: "Old block" } };
+    const control = new FakeControl(current);
+    const runtime = new WorkerHost(worker, control, new SequenceModel([{ type: "complete", summary: "Done", outputs: [] }]),
+      { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("not used"); } }, continueObserver,
+      checkpoints, new BoundedOutputDistiller());
+    expect((await runtime.execute(current)).outcome).toBe("completed");
+    expect(control.blocked).toBeUndefined();
+  });
+
+  it("fails closed instead of replaying a completed terminal command under another lease", async () => {
+    const current = assignment(); current.leaseId = "new-lease"; current.work.leaseId = "new-lease";
+    current.work.latestCheckpoint = { id: "completed", workId: current.work.id, leaseId: "old-lease", progressSummary: "Complete",
+      payloadRef: "checkpoint://completed.json", createdAt: worker.heartbeatAt };
+    const checkpoints = new MemoryCheckpoints(); const journal = createAgentExecutionJournal({ sessionId: "agent:run:run_1:work:work_1" });
+    recordAgentJournalTerminal(journal, { outcome: "completed", reason: "Done", turn: 0 });
+    checkpoints.document = { version: 3, caseId: "case_1", workKey: "effect_1", workerId: worker.id, runId: "run_1", workId: "work_1",
+      leaseId: "old-lease", savedAt: worker.heartbeatAt, journal, pendingInvocation: null,
+      pendingControl: { type: "complete", leaseId: "old-lease", commandId: "complete:old-lease", summary: "Done", outputs: [] } };
+    const control = new FakeControl(current); let modelCalls = 0;
+    const runtime = new WorkerHost(worker, control, { async decide() { modelCalls++; throw new Error("not used"); } },
+      { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("not used"); } }, continueObserver,
+      checkpoints, new BoundedOutputDistiller());
+    expect((await runtime.execute(current)).outcome).toBe("blocked");
+    expect(modelCalls).toBe(0); expect(control.completed).toBeUndefined();
   });
 });

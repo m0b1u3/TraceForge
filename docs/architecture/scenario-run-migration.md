@@ -7,11 +7,11 @@
 
 - Core 只认识通用包绑定和 `migrate_run_package` / `run_package_migrated`。迁移事件记录新旧包绑定、定义版本、授权引用和原因；回放校验旧绑定与前向版本关系。
 - Scenario SDK 检查保留状态兼容性。包 ID 不变，包版本不同，schemaRevision 和 Definition.version 严格增加；Definition 除 version 外完全相同。
-- 输出 kind/schema version 清单必须相同，历史输出交由目标 Schema 重新校验，但不改写输出及证据引用。
-- 新旧包必须共享同一 `parseScope`、`authorizeResource` 和 `createToolSources` 函数引用。宿主不能自动证明两个不同 JS 实现语义等价，因此本批保守拒绝这种替换。
+- 生产声明式输出合同必须逐字段规范化后完全相同，历史输出交由目标固定解释器重新校验，但不改写输出及证据引用；仅 kind/version 相同但容量、引用或证据映射不同也拒绝。
+- 生产声明式 Scope Policy 必须逐字段规范化后完全相同。旧授权/输出回调只在显式开发迁移模式下保守比较函数引用；`createToolSources` 的旧同进程执行形式也仍按函数身份比较且生产默认禁止。
 - Server 负责当前授权、资源信任、执行占用、检查点验证、SQLite 原子提交及受保护管理路由；Core 不引入数据库、资源加载或具体安全场景。
 
-目标包必须包含唯一直接对应的 migration manifest step，以及宿主显式提供的不可变资源正文，例如：
+目标包必须包含唯一直接对应的 migration manifest step，以及不可变资源正文，例如：
 
 ```json
 {
@@ -22,18 +22,20 @@
 }
 ```
 
-正文绑定精确版本对，并校验资源 manifest 与内容摘要。路径只是声明，不会据此读任意文件或联网下载。
+正文绑定精确版本对，并校验资源 manifest 与内容摘要。官方数据描述包只从同一份当前受信材料的安全
+`package://` data 文件自动读取；手工旧包仍由宿主显式提供。两者都不会联网下载或把任意路径当作迁移内容。
 没有直接迁移步骤时拒绝，不自动寻找多跳路线；资源变更不等于自动执行新工具。
 
 ## 操作与授权
 
 可信宿主通过 `SecurityAgentFoundationOptions.scenarioRunMigration` 提供：
 
-- `resources`：显式安装的迁移声明正文。
-- `assertTrusted(binding, contractFingerprint)`：同步的当前信任校验；未配置或错误使用异步函数均拒绝。
+- `resources`：手工旧包显式安装的迁移声明正文；官方数据描述包无需重复配置。
+- `assertTrusted(binding, contractFingerprint)`：手工旧包的同步当前信任校验；官方数据描述包复用受检 Registry。
+  未配置（且不是官方描述包）或错误使用异步函数均拒绝。
 - `authorizer.authorize(request)`：独立的迁移业务授权，允许时返回 authorizationRef 和 expiresAt；默认拒绝。
 
-契约指纹覆盖绑定、Definition、输出标识和资源/迁移清单，不是可执行 JS 代码签名。宿主仍需独立审核所安装代码及其依赖；一个无条件放行回调不构成真实信任体系。
+契约指纹覆盖绑定、Definition、完整声明式授权/输出合同和资源/迁移清单。它不代替 Scenario Process 可执行文件及依赖的材料签名；宿主仍需独立审核实际安装内容。
 资源还必须通过既有生命周期/当前信任验证；本批支持可读取的本地上下文和迁移声明。外部上下文及其他可执行/二进制资产缺少专用迁移验证器时拒绝。
 
 管理通道提供：
@@ -66,7 +68,7 @@ Run 必须暂停。活动租约、正在运行/等待审批的 Work、待批记�
 
 - 单次预检/授权各有 10 秒等待截止；最多 256 个 Work、2 MiB Run 状态、16 MiB 检查点聚合和每包 128 个待验证资源。
 - 单迁移资源最多 64 KiB，全库最多 1,024 条/8 MiB；迁移审计最多 50,000 条、每条 64 KiB。新增写入使用既有物理存储准入，满额拒绝，不删账自动恢复。
-- 上述截止不能抢占同进程恶意 JS 的同步死循环；可信宿主回调不是隔离沙箱。
+- 生产 Package 授权/输出路径不再执行 Package JS 回调；宿主自身的受信管理授权器仍是部署代码，10 秒截止不能抢占其同步死循环。
 - 不支持改变阶段/Work/输出结构、任意 schema 转换、自动排空、多跳/降级、任意可执行包安装、混合资产验证、迁移历史归档/分区扩容。
 - 后续授权固定批次已移除按最新包解释 scope 的路径：迁移预检使用固定策略，并把绑定修订和 scope 一起纳入指纹。
   历史未绑定授权须先明确恢复；参见 [固定授权与兼容升级](pinned-scope-authorization.md)。

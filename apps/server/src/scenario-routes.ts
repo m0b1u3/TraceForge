@@ -16,6 +16,7 @@ import { SqliteScenarioEventStore, SqliteWorkerRegistry } from "./scenario-event
 import { SqliteScenarioAuthorizationService, AuthorizationRecoveryRequired } from "./scenario-authorization.js";
 import type { BlackboardChangeBus } from "@traceforge/cognitive-runtime";
 import {
+  parseScenarioScope,
   ScenarioPackageBindingError,
   ScenarioPackageRegistry,
   type ScenarioEvidencePort,
@@ -207,7 +208,7 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
         return reply.code(404).send({ error: `Unknown case ${body.caseId}` });
       }
       const scenarioPackage = packages.requireForScenario(body.scenarioKind,body.definitionVersion);
-      const parsedScope = scenarioPackage.authorizationPolicy.parseScope(body.scope);
+      const parsedScope = parseScenarioScope(scenarioPackage.authorizationPolicy,body.scope);
       const declaredActions = new Set(scenarioPackage.definition.authorizationActions);
       const unknownActions = [...parsedScope.allowedActions, ...parsedScope.deniedActions].filter((action) => !declaredActions.has(action));
       if (unknownActions.length) return reply.code(400).send({ error: `Authorization contains undeclared actions: ${[...new Set(unknownActions)].join(", ")}` });

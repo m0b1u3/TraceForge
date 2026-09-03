@@ -122,7 +122,7 @@ describe("Authorized partial Work continuation", () => {
     });
     expect(await first.run()).toMatchObject({ outcome: "failed", reason: "injected checkpoint transport failure" }); expect(calls).toBe(1);
     const request = c.input(); const saved = await c.store.load(request.checkpointRef);
-    expect(saved).toMatchObject({ turn: 0, completedInvocationIds: [], pendingInvocation: { invocation } });
+    expect(saved).toMatchObject({ version: 3, journal: { turn: 0, completedIntentIds: [] }, pendingInvocation: { invocation } });
     c.sqlite.close(); const fresh = database(c.path); databases.push(fresh);
     const resumed = executor(fresh, new JsonFileCheckpointStore(join(c.root, "checkpoints")), finish);
     resumed.c.bindings.recoverInterrupted();

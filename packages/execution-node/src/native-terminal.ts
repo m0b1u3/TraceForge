@@ -60,26 +60,31 @@ export function encodeNativeTerminalFrame(type: number, payload: Buffer = Buffer
   return frame;
 }
 
-export interface WindowsConptyLaunchSpec {
+export interface NativeTerminalLaunchSpec {
   helperExecutable: string;
   helperArgumentsPrefix?: string[];
   profileArguments?: string[];
   helperEnvironment: NodeJS.ProcessEnv;
-  mode: "unelevated" | "appcontainer";
+  modeArguments: string[];
+  commandSeparator?: string[];
   enforcement: ProcessEnforcementAttestation;
 }
 
-export class WindowsConptyProcessLauncher implements ProcessLauncher {
+export type WindowsConptyLaunchSpec = Omit<NativeTerminalLaunchSpec, "modeArguments"> & {
+  mode: "unelevated" | "appcontainer";
+};
+
+export class NativeTerminalProcessLauncher implements ProcessLauncher {
   private readonly watchdogOptions: ProcessWatchdogOptions;
   constructor(
-    private readonly resolveLaunch: (request: StartProcessRequest) => Promise<WindowsConptyLaunchSpec> | WindowsConptyLaunchSpec,
+    private readonly resolveLaunch: (request: StartProcessRequest) => Promise<NativeTerminalLaunchSpec> | NativeTerminalLaunchSpec,
     watchdogOptions: Partial<ProcessWatchdogOptions> = {},
   ) { this.watchdogOptions = processWatchdogOptions(watchdogOptions); }
 
   async launch(request: StartProcessRequest, identity?: ProcessLaunchIdentity): Promise<LaunchedProcess> {
-    if (!request.terminal) throw new Error("Windows ConPTY launcher requires a terminal request");
+    if (!request.terminal) throw new Error("Native terminal launcher requires a terminal request");
     if (request.permissions.network === "brokered") {
-      throw new Error("Windows ConPTY helper does not implement brokered network transport");
+      throw new Error("Native terminal helper does not implement brokered network transport");
     }
     validateDeadline(request.timeoutMs, "Execution timeout");
     const spec = await prepareProcessLaunch(() => this.resolveLaunch(request), this.watchdogOptions.startupTimeoutMs);
@@ -89,12 +94,13 @@ export class WindowsConptyProcessLauncher implements ProcessLauncher {
       ...(spec.helperArgumentsPrefix ?? []),
       "pty-run",
       "--execution-nonce", executionNonce,
-      "--mode", spec.mode,
+      ...spec.modeArguments,
       "--network", request.permissions.network === "deny" ? "deny" : "allow",
       "--cwd", request.workingDirectory,
       "--columns", String(request.terminal.columns),
       "--rows", String(request.terminal.rows),
       ...(spec.profileArguments ?? []),
+      ...(spec.commandSeparator ?? []),
       request.executable,
       ...request.arguments,
     ];
@@ -106,6 +112,20 @@ export class WindowsConptyProcessLauncher implements ProcessLauncher {
     });
     const process = await NativeTerminalManagedProcess.connect(helper, executionNonce, this.watchdogOptions, request.timeoutMs);
     return { process, enforcement: structuredClone(spec.enforcement) };
+  }
+}
+
+/** Backward-compatible Windows adapter over the platform-neutral framed terminal transport. */
+export class WindowsConptyProcessLauncher extends NativeTerminalProcessLauncher {
+  constructor(
+    resolveLaunch: (request: StartProcessRequest) => Promise<WindowsConptyLaunchSpec> | WindowsConptyLaunchSpec,
+    watchdogOptions: Partial<ProcessWatchdogOptions> = {},
+  ) {
+    super(async (request) => {
+      const spec = await resolveLaunch(request);
+      const { mode, ...rest } = spec;
+      return { ...rest, modeArguments: ["--mode", mode] };
+    }, watchdogOptions);
   }
 }
 
@@ -199,7 +219,7 @@ class NativeTerminalManagedProcess implements ManagedProcess {
       await this.terminate(signal === "kill");
       return;
     }
-    throw new Error(`Native Windows terminal does not support signal ${signal}`);
+    throw new Error(`Native terminal does not support signal ${signal}`);
   }
 
   async terminate(force: boolean): Promise<void> {

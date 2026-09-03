@@ -5,4 +5,6 @@ export * from "./network-broker.js";
 export * from "./native-terminal.js";
 export * from "./sandbox-policy.js";
 export * from "./windows-helper-contract.js";
+export * from "./linux-helper-contract.js";
+export * from "./native-helper-release.js";
 export type { ProcessWatchdogOptions } from "./process-watchdog.js";

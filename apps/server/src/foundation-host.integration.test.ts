@@ -19,7 +19,7 @@ describe("Production foundation host composition", () => {
     expect(h.calls()).toBe(1); expect(h.requests).toHaveLength(2);
     expect(h.requests[1]!.transcript.some((t: { kind: string }) => t.kind === "tool")).toBe(true);
     expect((await h.request("/api/scenarios/runs/run/model-calls")).every((c: { status: string }) => c.status === "completed")).toBe(true);
-    expect(h.sqlite.prepare("SELECT count(*) AS n FROM worker_checkpoints").get()).toMatchObject({ n: 2 });
+    expect(h.sqlite.prepare("SELECT count(*) AS n FROM worker_checkpoints").get()).toMatchObject({ n: 3 });
   });
   it("isolates identical Work names across Runs and preserves both model histories", async () => {
     const h = await host(); await h.start("first-run");

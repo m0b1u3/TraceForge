@@ -1,5 +1,7 @@
 # Native execution cleanup boundary
 
+Linux helper implementation, local IPC reliability and acceptance gaps are documented separately in [local-native-execution-node.md](local-native-execution-node.md). The Linux Rust helper and fail-closed packaging path now exist; each supported platform still requires its own native audit and acceptance report before production use.
+
 ## Implemented contract
 
 Windows helper protocol 4 requires `jobEmptyBarrier: true` and `atomicJobAssignment: true`. Protocol 2/3 binaries are rejected by the existing startup probe; rebuild the helper before deploying this controller. Version 4 also retains the control channel after target input EOF.
@@ -17,6 +19,8 @@ The ConPTY normal completion sequence is:
 5. Emit one completion frame and exit with the target's exit code.
 
 The `0x83` completion payload is a signed 32-bit big-endian exit code followed by the 64 ASCII hex bytes supplied in `--execution-nonce`. LocalExecutionNode now generates and journals the random 256-bit launch identity before dispatch, and passes it to the ConPTY launcher as this nonce. Standalone launcher callers without that context still receive a random live-only nonce. The controller accepts completion only after the helper closes with a matching code, no signal/error, and no partial/trailing frame. A termination ACK still means only that the request was accepted. Callback replay registers errors and resource limits before exit so an already-buffered failure cannot become a successful runtime observation.
+
+Linux helper protocol 2 now implements the same platform-neutral framed terminal transport over a real `openpty` session. The target becomes the session leader with a controlling terminal before entering the existing isolated filesystem and seccomp path. Input, resize, close-input and termination frames receive bounded acknowledgements; Ctrl-C travels as terminal input and is interpreted by the kernel terminal discipline. Output and resource-limit frames precede the nonce-bound completion frame. The helper still completes only after cgroup supervision reports the complete owned tree empty. This is production wiring, but its three new native PTY cases remain pending on a qualified Linux host; the earlier 16-case protocol-1 record cannot prove protocol 2.
 
 ## Host-side deadlines
 
@@ -36,11 +40,19 @@ A watchdog failure reports an error first, attempts to kill only the owned child
 
 ## Durable identity and recovery
 
-Execution Node protocol 1.6 records schema-2 observations with node ID, fresh node generation, launch identity, request ID and request fingerprint. The original invocation attribution and lease remain fixed. Claim persistence precedes launch; settlement cannot replace provenance. Schema-1 observations remain readable and fenced, but cannot be promoted into schema-2 proof by backfilling fields.
+Execution Node protocol 1.8 records schema-2 observations with node ID, fresh node generation, launch identity, request ID and request fingerprint. The original invocation attribution and lease remain fixed. Claim persistence precedes launch; settlement cannot replace provenance. Schema-1 observations remain readable and fenced, but cannot be promoted into schema-2 proof by backfilling fields.
 
 The process tool drains terminal event pages, including an already-terminal start response. Event loss, a stalled/regressing cursor, failed transport or null exit code throws into Gateway uncertainty; it does not become an ordinary completed failure receipt. A genuine nonzero process exit remains a normal failed result. This distinction prevents watchdog failure from prematurely releasing invocation protection.
 
 The general recovery control and deployment-pinned Ed25519 evidence verifier are described in [execution-recovery.md](execution-recovery.md). They are wired at the foundation composition boundary, with authorization and trust absent by default. Neither the helper nor the controller signs local observations into recovery proof. Process-attestation delegation requires a deployment-owned platform acceptance reference and an explicit node allowlist; the configuration reference itself is not an automated platform certification.
+
+### Local control-operation crash boundary
+
+stdin writes, terminal resize, signals, termination and adoption each carry a stable caller-generated `operationId`. The node-local SQLite journal durably claims the complete operation identity before the managed-process effect and stores the response after that effect. A new local Execution Node host with the same node identity can therefore replay a completed response even though it has no resident copy of the old process. A claim-only entry is deliberately not retried: it reports an unconfirmed outcome and requires reconciliation, because a crash cannot prove whether the external effect occurred.
+
+The foundation gate now exercises all five operations through the authenticated local pipe with a separate real Node host process and real WAL-backed SQLite. It sends `SIGKILL` at both durable boundaries: immediately after claim but before the deterministic managed-process adapter, and after completion is committed but before the RPC response is written. After each crash a fresh host reopens the same database. The first boundary preserves zero observed effects and stays unconfirmed; the second returns the committed response and preserves exactly one observed effect, including adoption-token rotation. The test adapter is intentionally not a native sandbox and does not count as Linux or Windows isolation acceptance; it establishes IPC, journal and restart semantics independently of a scenario or security tool.
+
+Confirmed operation responses have a 24-hour default hot retention window and may then be gzip archived in bounded batches. Identity, observation digest and exact response replay remain available; claim-only records never enter compaction. Active records, total records, reserved bytes, individual response size and physical SQLite/WAL admission are bounded. The health summary exposes only aggregate capacity. Two additional real-host `SIGKILL` windows stop archival before transaction commit and after commit but before the caller continues; a fresh connection observes either the complete hot response or the complete digest-checked archive and passes SQLite integrity checking.
 
 ## What this does not establish
 
@@ -52,10 +64,13 @@ The general recovery control and deployment-pinned Ed25519 evidence verifier are
 
 ## Verification
 
-- `pnpm test:native-cleanup`: six platform-independent Rust state-machine tests. On Windows it also runs three native tests, including a root process that exits while its child remains in the job and verification of stdio job membership before resume. The two ignored Rust cases are subprocess fixtures, not skipped acceptance tests.
+- `pnpm test:native-cleanup`: runs both native helper crates. The Windows crate retains six platform-independent state-machine tests and its Windows-only native cases; the Linux crate has nine parser/cleanup/configuration tests. Platform-independent tests do not replace either OS's native acceptance.
 - `cargo check --locked --tests --target x86_64-pc-windows-gnu --manifest-path packages/windows-sandbox-helper/Cargo.toml`: Windows source/type checking from a configured cross host; does not link or run Windows code.
+- `pnpm check:linux-sandbox`: checks the complete Linux-only source and test graph for `x86_64-unknown-linux-gnu`; on non-Linux it does not link or exercise kernel isolation.
 - `pnpm test:foundation`: includes watchdog timer/listener tests, native-terminal transport faults, real blocked stdio writes/held output pipes, protocol probes, and failure persistence across SQLite reopen. The transport fixtures are real Node subprocesses, not Windows isolation tests.
+- `pnpm test:foundation:execution-nodes`: additionally runs the five-operation, two-boundary local host `SIGKILL` matrix, the two archival transaction crash boundaries, and reopens the durable operation journal from a new host generation. The current suite is 7 files / 51 tests.
 - `pnpm build:windows-sandbox`: Windows-only; runs native Rust tests before release build, copy, and probe. Failure prevents bundling.
+- `pnpm build:linux-sandbox`: x64-Linux-only; requires an explicitly delegated cgroup v2 root, runs Rust tests, builds and bundles the helper, then exercises its real isolation probe. Linux desktop release construction and verification invoke the same fail-closed gate.
 
 Remaining acceptance requires a real Windows host: restricted-token and AppContainer modes, both stdio and ConPTY, descendants retaining pipes, explicit termination, resource limits, controller/helper loss, profile-cleanup errors, and inherited-handle/broker boundaries. Durable identity and verification plumbing now exist; the actual native trusted attestor, independent cleanup-report channel and residual-profile recovery remain unimplemented. A deployment may only delegate process assertions after its attestor and platform boundary have been accepted.
 

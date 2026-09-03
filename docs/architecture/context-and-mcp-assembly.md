@@ -8,9 +8,10 @@
 没有该声明的资源（例如迁移脚本）不会自动暴露。Skill 是有版本的指令资源，可附独立输入/输出契约，
 通过准备/评估回执检查机械完成条件；不是独立脚本执行器，没有自动执行或额外授权。
 
-可信 Host 通过 `SecurityAgentFoundationOptions.contextResourceContents` 安装文本：精确匹配 Package
-id/version/schemaRevision 与资源 digest，正文及元数据指纹不可原位替换。`locator` 仅保留为包元数据，
-不触发文件读取、URL 抓取或相对路径解析。缺失内容不尝试其他版本或其他来源。
+由官方 `scenario.json` 加载的 Package 会从同一份当前受信审核材料自动安装本地文本；加载器只接受安全的
+`package://` 路径，并复核 data 角色、字节数、SHA-256、稳定文件身份和严格 UTF-8。手工装配的旧 Package
+仍可由可信 Host 通过 `SecurityAgentFoundationOptions.contextResourceContents` 显式提供正文。两条路径都精确匹配
+Package id/version/schemaRevision、资源 digest 和元数据指纹，不原位替换；缺失内容不尝试其他版本、URL 或其他来源。
 
 Worker 的 Work/能力必须明确请求 `context.catalog` / `context.search` / `context.read`：
 
@@ -159,7 +160,8 @@ Observer 伴随评估最多 4096 条、决策 JSON 64 KiB。写入均接物理�
 
 ## MCP 执行链
 
-Host 显式配置 `mcpServers`；`createFoundationMcpSource` 将其接到现有 Discovery、Gateway、Execution Node。
+Host 显式配置 `mcpServers`；每份配置必须声明单调 `reviewVersion` 和允许使用它的精确
+`ScenarioPackageBinding[]`。`createFoundationMcpSource` 将其接到现有 Discovery、Gateway、Execution Node。
 没有 Execution Node 时组合即拒绝。节点返回的 sandbox、文件系统/资源限制及权限指纹必须匹配；
 MCP 不接 `packages/extension` 的开发 stdio 客户端，不提供 unsandboxed 开关，不修改原生信任默认值。
 
@@ -173,7 +175,8 @@ MCP 不接 `packages/extension` 的开发 stdio 客户端，不提供 unsandboxe
   annotations/instructions 不影响审批、不注入系统提示。Provider 身份/版本握手是协议一致性检查，不是独立签名证明。
 - 生产适配必须提供 `validateInput` 和 `authorizeInput`：一个校验输入，另一个根据 Scope 限制实际目标/资源。
   仅允许工具名或仅校验 JSON Schema 不足以授权目标；节点权限必须限定为部署资产与明确授权资源，不得给进程宽泛宿主访问权。
-- 精确 Run Package 的动作/资源策略与 Work 执行权在进程启动前和 tools/call 前重复检查。高风险操作仍进入已有审批流程。
+- 精确 Run Package 必须同时出现在该 MCP Profile 的 Package allowlist；仅仅拥有同名能力不能借用另一个 Package 的工具连接。
+  动作/资源策略与 Work 执行权在进程启动前和 tools/call 前重复检查。高风险操作仍进入已有审批流程。
   远端工具映射、动作、进程配置和服务器身份参与工具版本指纹；输入校验器/授权函数变更仍要求部署方递增审核版本。
 - 每次发现和每次调用各自使用独立进程，调用进程重新握手/核对 Schema；以本次 Case/Run/Work/租约归属启动，
   不跨 Run 复用 MCP 会话。进程内部不接收 Host 授权 envelope，不协商模型 sampling、roots 或 Host 反向能力。
@@ -187,6 +190,48 @@ MCP 不接 `packages/extension` 的开发 stdio 客户端，不提供 unsandboxe
 通用 Discovery、Execution Node RPC 和 Provider 请求已有独立截止；用户停止/执行权变化已接入 Worker 和 Gateway。
 不配合取消的任意第三方工具仍不能保证真正停止，未知副作用必须保留恢复围栏，不能把 Host 超时当清理证明。
 需要 Host Broker 才能完成的外部网络/秘密访问尚未通过标准 MCP 反向调用开放，不能据此放宽沙箱来“跑通”。
+
+## 统一扩展装配身份与运行期撤销（2026-09-02）
+
+`ExtensionAssemblyControl` 把当前 Host 选择的 Package、Skill、Knowledge、MCP Tools、MCP Resources/Prompts
+Profile 和 Package 进程 Provider 规范化为 `traceforge.extension-assembly.v1` 依赖闭包。每个单元固定精确 Package
+版本、内容或契约摘要及依赖；规范化清单不保存启动路径、环境值、租约、幂等键或秘密。清单摘要、不可变快照和单调
+activation generation 落入 SQLite；相同清单重启复用同一 generation，切换事务中强杀只会看到旧活动代或完整新代。
+
+MCP Tool Profile 摘要覆盖服务器身份/版本、审核版本、Package allowlist、进程权限与资源、工具映射和审核后的 Tool
+Spec。MCP Context Profile 继续固定外部资料入口。相同 source/reviewVersion 不得更换身份或扩大 Package；低审核版本
+默认拒绝。只有受信宿主同步证明这是整代 Deployment rollback 时，才可记录不可变 rollback 审计并重新选择已有旧 Profile。
+可信部署清单新增必填 `extension_assembly` 组件，使宿主 inventory 必须把整套装配摘要与其他发布材料一起核对；回滚仍要求
+紧邻上一发布、完整 preflight 和独立授权，不提供单个 Profile 的静默降级。
+
+`POST /api/foundation/extension-assembly/profiles/revoke` 是可信管理通道上的精确 Profile 撤销，不是模型工具，默认拒绝。
+命令绑定 kind/source/profileDigest/actor/reason，逐次授权，持久记录不可修改或删除，重放仍重新授权。MCP Tools 在发现、
+准入、输入授权和派发前检查；MCP Resources/Prompts 在读取、远端发送和响应接收后检查。撤销后新进程不再启动，已发出的
+外部副作用不能假装撤回，返回内容也不会缓存或交给模型；重启后撤销继续有效。Assembly 状态会显示 unavailable，但不会
+删除历史回执、快照或证据。
+
+这些门禁不会把 Profile 签名者等同于 Package 签名者，也不会把声明当成进程隔离。Package 代码仍需现有 Ed25519 材料审核与
+同步 assembly attestation，进程仍只能通过本机 Execution Node 原生沙箱。Managed Tool Provider 自身已有签名安装、兼容性检查、
+drain/disable/quarantine/rollback 和崩溃恢复控制面；其签名 manifest 身份、签名者、当前生命周期状态和失败原因现在也规范化为
+`managed_provider` 单元。安装或控制命令成功后同步生成新 Assembly generation；垃圾回收等直接存储变化最迟在下次读取装配状态时
+对账。`packageRoot`、安装/更新时间和可执行文件正文不进入清单，实际文件仍由 Provider 控制面在安装、启用和重启恢复时重新量取。
+
+Package Process 单元同时摘要 Package 内签名 runtime manifest 与 Host 选择的 executable/arguments/working directory/environment、
+归属、权限、资源和沙箱期望；原始启动路径、环境及可能的秘密只参与摘要，不进入 Assembly 清单或接口。精确 Package 版本第一次
+绑定后写入不可变 `extension_assembly_process_profiles`，同版本偷换启动材料会在进程启动前拒绝；合法变更应发布新的 Package 版本并
+走整代可信部署。不可用/已撤销 Package 可以以缺少启动材料的恢复状态被列出，但不能执行。
+
+Assembly generation 的运行历史保留活动代和最近 32 个热代。更老的完整 activation 与去重 snapshot 只能通过
+`POST /api/foundation/extension-assembly/history/archive` 由可信宿主逐次授权后成批归档；命令固定截止 generation、操作者和原因，
+重放仍重新授权，换参数复用命令 ID 会拒绝。归档正文采用规范 JSON 和有界 gzip，固定原文长度、正文摘要、代次索引和不可变审计，
+`GET /api/foundation/extension-assembly/history?generation=...` 解压后重新核对长度、规范编码、正文摘要、activation 和 snapshot 摘要，
+不能用一条索引指向另一份内容。只有归档与索引先在同一 SQLite 事务完整写入后，才删除相应热 activation 和不再被热代引用的 snapshot；
+活动指针、当前清单及最近恢复窗口不改变，普通 SQL 更新/删除仍由不可变触发器拒绝。
+
+这里的“归档”是同库内的受控压缩历史，不是独立冷存储、备份或安全擦除；它降低热表行数和反序列化负担，但不会承诺 SQLite 文件立即
+缩小。单份归档最多 16 MiB 原文/4 MiB 压缩体、最多 1,024 份，并继续经过物理空间准入。Provider 生命周期与 Assembly 同步另有
+26 个真实 `SIGKILL` 窗口覆盖：无论进程死在 Provider 状态提交还是装配同步附近，新宿主都会按持久 Provider inventory 对账到一个
+完整 Assembly generation，不把“Provider 已变、装配仍旧”的中间观察永久保留为可用状态。
 
 ## 验证边界与后续批次
 

@@ -49,6 +49,7 @@ Manifest 只允许有界、严格 Schema。组件用 `kind + id + version + sha2
 - `skill`
 - `knowledge_resource`
 - `mcp_provider`
+- `extension_assembly`
 - `model_configuration`
 - `capacity_policy`
 - `recovery_identity`

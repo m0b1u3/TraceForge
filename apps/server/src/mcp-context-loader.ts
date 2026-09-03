@@ -15,6 +15,7 @@ export interface FoundationMcpContextServer {
 }
 export interface PackageContextRemoteLoader {
   profileDigest: `sha256:${string}`;
+  assertAvailable(): void;
   read(resource: ScenarioPackageResource, context: ToolExecutionContext, authorize: () => void): Promise<string>;
   close(): Promise<void>;
 }
@@ -24,22 +25,25 @@ export function mcpContextProfileDigest(config: FoundationMcpContextServer): `sh
     serverVersion: config.serverVersion, reviewVersion: config.reviewVersion, process })}`;
 }
 
-export function createMcpContextLoader(config: FoundationMcpContextServer, node: ExecutionNode | undefined, capacity?:ProcessExecutionCapacity): PackageContextRemoteLoader {
+export function createMcpContextLoader(config: FoundationMcpContextServer, node: ExecutionNode | undefined,
+  capacity?:ProcessExecutionCapacity, assertProfileAvailable: () => void = () => undefined): PackageContextRemoteLoader {
   if (!node) throw new Error("MCP context requires a controlled Execution Node");
   if (!config.source.trim() || !config.serverName.trim() || !config.serverVersion.trim()
     || !Number.isSafeInteger(config.reviewVersion) || config.reviewVersion < 1) throw new Error("Invalid MCP context profile");
   const { diagnosticWriter, ...serializable } = config.process;
   const process = { ...structuredClone(serializable), diagnosticWriter };
   const profileDigest = mcpContextProfileDigest(config);
+  assertProfileAvailable();
   const source = config.source, serverName = config.serverName, serverVersion = config.serverVersion;
   const active = new Set<ExecutionNodeToolProviderClient>(); let closed = false;
   const closing=new AbortController();
   return {
     profileDigest,
+    assertAvailable: assertProfileAvailable,
     async read(resource, context, authorize) {
       const external = resource.context?.external;
       if (closed || !external || external.source !== source || external.profileDigest !== profileDigest) throw new Error("External context profile unavailable");
-      authorize(); context.signal?.throwIfAborted();
+      assertProfileAvailable(); authorize(); context.signal?.throwIfAborted();
       const tool: ExecutionToolSpec = { name: "context.remote.read", source, version: profileDigest, priority: 100,
         description: "Host-pinned external text", inputSchema: { type: "object", additionalProperties: false },
         providedCapabilities: [], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 2000 };
@@ -57,9 +61,9 @@ export function createMcpContextLoader(config: FoundationMcpContextServer, node:
       const abort = () => { void client.close().catch(() => undefined); };
       context.signal?.addEventListener("abort", abort, { once: true });
       try {
-        await client.listTools(context.signal); authorize(); context.signal?.throwIfAborted();
+        await client.listTools(context.signal); assertProfileAvailable(); authorize(); context.signal?.throwIfAborted();
         const result = await client.callTool(tool.name, {}, context);
-        authorize(); context.signal?.throwIfAborted();
+        assertProfileAvailable(); authorize(); context.signal?.throwIfAborted();
         if (result.status !== "succeeded" || `sha256:${createHash("sha256").update(result.raw).digest("hex")}` !== resource.digest) throw new Error("External context content changed");
         return result.raw;
       } finally {

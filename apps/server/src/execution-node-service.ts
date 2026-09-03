@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import {
   BrokeredHttpGateway,
   EXECUTION_PROTOCOL_VERSION,
@@ -10,14 +8,15 @@ import {
   ExecutionNodeRpcServer,
   ExecutionRpcDispatcher,
   LocalExecutionNode,
+  NativeTerminalProcessLauncher,
   NodeSpawnProcessLauncher,
   WindowsConptyProcessLauncher,
   compileLinuxStdioSandboxLaunch,
+  compileLinuxPtySandboxLaunch,
   compileWindowsConptySandboxLaunch,
   compileWindowsStdioSandboxLaunch,
   createExecutionRpcAuthToken,
   defaultExecutionRpcPipe,
-  parseWindowsSandboxHelperProbe,
   type ExecutionNode,
   type ProcessLauncher,
   type ProcessLaunchIdentity,
@@ -26,37 +25,109 @@ import {
 import type { ScenarioAuthorizationPort } from "@traceforge/scenario-sdk";
 import type Database from "better-sqlite3";
 import { SqliteProcessExecutionJournal } from "./execution-process-journal.js";
+import {
+  SqliteProcessOperationJournal,
+  type ProcessOperationJournalUsage,
+} from "./execution-process-operation-journal.js";
+import { preflightLocalExecutionNode, refreshLocalExecutionNodeHealth, type LinuxSandboxRuntime, type LocalExecutionNodeHealth } from "./local-execution-node-lifecycle.js";
 
 export interface LocalExecutionNodeService {
   client: ExecutionNode;
-  processReady: boolean;
+  readonly processReady: boolean;
+  health(): Promise<LocalExecutionNodeServiceHealth>;
   close(): Promise<void>;
 }
 
-const execFileAsync = promisify(execFile);
+export interface LocalExecutionNodeServiceHealth extends LocalExecutionNodeHealth {
+  operationJournal: {
+    state: "ready" | "capacity_exhausted";
+    records: number;
+    activeRecords: number;
+    archivedRecords: number;
+    uncertainRecords: number;
+    reservedBytes: number;
+    maximumRecords: number;
+    maximumActiveRecords: number;
+    maximumBytes: number;
+  };
+}
+
+export function processOperationJournalHealth(usage: ProcessOperationJournalUsage): LocalExecutionNodeServiceHealth["operationJournal"] {
+  const exhausted = usage.records >= usage.limits.maximumRecords
+    || usage.activeRecords >= usage.limits.maximumActiveRecords
+    || usage.reservedBytes + usage.limits.maximumRecordBytes > usage.limits.maximumBytes;
+  return {
+    state: exhausted ? "capacity_exhausted" : "ready",
+    records: usage.records,
+    activeRecords: usage.activeRecords,
+    archivedRecords: usage.archivedRecords,
+    uncertainRecords: usage.uncertainRecords,
+    reservedBytes: usage.reservedBytes,
+    maximumRecords: usage.limits.maximumRecords,
+    maximumActiveRecords: usage.limits.maximumActiveRecords,
+    maximumBytes: usage.limits.maximumBytes,
+  };
+}
 
 class PlatformSandboxLauncher implements ProcessLauncher {
   private readonly stdio: NodeSpawnProcessLauncher;
-  private readonly conpty: WindowsConptyProcessLauncher | null;
+  private readonly terminal: NativeTerminalProcessLauncher | WindowsConptyProcessLauncher;
 
-  constructor(backendExecutable: string) {
+  constructor(
+    backendExecutable: string,
+    backendMeasurement: string,
+    linuxRuntime?: LinuxSandboxRuntime,
+  ) {
     if (process.platform === "win32") {
-      const options = { windowsHelperPath: backendExecutable, pathExists: existsSync };
-      this.stdio = new NodeSpawnProcessLauncher((request) => compileWindowsStdioSandboxLaunch(request, options));
-      this.conpty = new WindowsConptyProcessLauncher((request) => compileWindowsConptySandboxLaunch(request, options));
+      const options = { windowsHelperPath: backendExecutable, backendMeasurement, pathExists: existsSync };
+      const assertMeasurement = () => {
+        const currentMeasurement = createHash("sha256").update(readFileSync(backendExecutable)).digest("hex");
+        if (currentMeasurement !== backendMeasurement) {
+          throw new Error("TraceForge Windows sandbox helper changed after startup; execution denied");
+        }
+      };
+      this.stdio = new NodeSpawnProcessLauncher((request) => {
+        assertMeasurement();
+        return compileWindowsStdioSandboxLaunch(request, options);
+      });
+      this.terminal = new WindowsConptyProcessLauncher((request) => {
+        assertMeasurement();
+        return compileWindowsConptySandboxLaunch(request, options);
+      });
       return;
     }
-    this.stdio = new NodeSpawnProcessLauncher((request) => compileLinuxStdioSandboxLaunch(request, {
-      bubblewrapPath: backendExecutable,
-      pathExists: existsSync,
-    }));
-    this.conpty = null;
+    if (!linuxRuntime) throw new Error("TraceForge Linux sandbox runtime is unavailable");
+    this.stdio = new NodeSpawnProcessLauncher(async (request) => {
+      const currentMeasurement = createHash("sha256").update(await readFile(backendExecutable)).digest("hex");
+      if (currentMeasurement !== backendMeasurement) {
+        throw new Error("TraceForge Linux sandbox helper changed after startup; execution denied");
+      }
+      return compileLinuxStdioSandboxLaunch(request, {
+        linuxHelperPath: backendExecutable,
+        linuxCgroupRoot: linuxRuntime.cgroupRoot,
+        linuxScratchRoot: linuxRuntime.scratchRoot,
+        backendMeasurement,
+        pathExists: existsSync,
+      });
+    });
+    this.terminal = new NativeTerminalProcessLauncher(async (request) => {
+      const currentMeasurement = createHash("sha256").update(await readFile(backendExecutable)).digest("hex");
+      if (currentMeasurement !== backendMeasurement) {
+        throw new Error("TraceForge Linux sandbox helper changed after startup; execution denied");
+      }
+      return compileLinuxPtySandboxLaunch(request, {
+        linuxHelperPath: backendExecutable,
+        linuxCgroupRoot: linuxRuntime.cgroupRoot,
+        linuxScratchRoot: linuxRuntime.scratchRoot,
+        backendMeasurement,
+        pathExists: existsSync,
+      });
+    });
   }
 
   launch(request: StartProcessRequest, identity?: ProcessLaunchIdentity) {
     if (request.terminal) {
-      if (!this.conpty) throw new Error("This Execution Node does not provide a native PTY backend");
-      return this.conpty.launch(request, identity);
+      return this.terminal.launch(request, identity);
     }
     return this.stdio.launch(request);
   }
@@ -68,47 +139,15 @@ class UnavailableProcessLauncher implements ProcessLauncher {
   }
 }
 
-function resolveSandboxBackend(projectRoot: string): string | null {
-  if (process.platform === "win32") {
-    const configured = process.env.TRACEFORGE_WINDOWS_SANDBOX_HELPER?.trim();
-    if (configured) {
-      const explicit = resolve(configured);
-      return existsSync(explicit) ? explicit : null;
-    }
-    const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-    const helper = [sourceRoot, projectRoot]
-      .map((root) => resolve(root, "packages/execution-node/native/win32-x64/traceforge-windows-sandbox.exe"))
-      .find(existsSync);
-    return helper ?? null;
-  }
-  return ["/usr/bin/bwrap", "/bin/bwrap"].find(existsSync) ?? null;
-}
-
-async function probeSandboxBackend(executable: string): Promise<boolean> {
-  try {
-    if (process.platform === "win32") {
-      const { stdout } = await execFileAsync(executable, ["probe"], { timeout: 5_000, windowsHide: true });
-      parseWindowsSandboxHelperProbe(stdout);
-      return true;
-    }
-    await execFileAsync(executable, ["--version"], { timeout: 5_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function startLocalExecutionNodeService(
   projectRoot: string,
   authorization: ScenarioAuthorizationPort,
   sqlite: Database.Database,
 ): Promise<LocalExecutionNodeService> {
-  const platform = process.platform === "win32" ? "windows" as const
-    : process.platform === "darwin" ? "darwin" as const : "linux" as const;
-  const backendExecutable = resolveSandboxBackend(projectRoot);
-  const sandboxBackendReady = Boolean(backendExecutable && await probeSandboxBackend(backendExecutable));
-  const processReady = platform === "windows" && sandboxBackendReady;
-  const backend = platform === "windows" ? "traceforge-windows-native" : "bubblewrap";
+  const preflight = await preflightLocalExecutionNode({ projectRoot });
+  const platform = preflight.platform, backendExecutable = preflight.executablePath;
+  const linuxRuntime = preflight.linuxRuntime, backendMeasurement = preflight.helper?.measurement ?? null;
+  const processReady = preflight.processReady, backend = preflight.backend ?? "traceforge-linux-native";
   const httpBroker = new BrokeredHttpGateway({
     authorizer: {
       authorize(input) {
@@ -128,20 +167,23 @@ export async function startLocalExecutionNodeService(
     },
   });
   const launcher = processReady && backendExecutable
-    ? new PlatformSandboxLauncher(backendExecutable)
+    ? new PlatformSandboxLauncher(backendExecutable, backendMeasurement!, linuxRuntime ?? undefined)
     : new UnavailableProcessLauncher();
+  const operationJournal = new SqliteProcessOperationJournal(sqlite);
   const node = new LocalExecutionNode(launcher, {
     processJournal: new SqliteProcessExecutionJournal(sqlite),
+    operationJournal,
     platform,
     sandboxBackends: processReady ? [backend] : [],
+    sandboxMeasurements: processReady && backendMeasurement ? { [backend]: backendMeasurement } : undefined,
     httpBroker,
     capabilities: {
       process: {
         spawn: processReady,
         stdio: processReady,
-        tty: processReady && platform === "windows",
+        tty: processReady,
         adoption: processReady,
-        resourceLimits: processReady && platform === "windows",
+        resourceLimits: processReady,
         signals: processReady ? ["interrupt", "terminate", "kill"] : [],
       },
     },
@@ -161,12 +203,39 @@ export async function startLocalExecutionNodeService(
     await server.close();
     throw error;
   }
+  let health = await refreshLocalExecutionNodeHealth(preflight);
+  const serviceHealth = (): LocalExecutionNodeServiceHealth => {
+    const operationJournalStatus = processOperationJournalHealth(operationJournal.usage());
+    if (health.state === "ready" && operationJournalStatus.state === "capacity_exhausted") {
+      return { ...health, state: "degraded", processReady: false, terminalReady: false,
+        reasonCode: "operation_journal_capacity_exhausted",
+        recoveryHint: "Preserve uncertain operations and archive confirmed local operation history before starting more process controls.",
+        operationJournal: operationJournalStatus };
+    }
+    return { ...health, operationJournal: operationJournalStatus };
+  };
   return {
     client,
-    processReady,
+    get processReady() { return serviceHealth().processReady; },
+    async health() {
+      health = await refreshLocalExecutionNodeHealth(preflight);
+      if (health.state === "ready") {
+        try {
+          await client.handshake({ clientId: "traceforge-security-agent-health", protocol: EXECUTION_PROTOCOL_VERSION,
+            requiredCapabilities: ["network.brokered", "http.request", "filesystem.read", "filesystem.write"] });
+        } catch {
+          health = { ...health, state: "degraded", processReady: false, terminalReady: false,
+            reasonCode: "local_rpc_unhealthy", recoveryHint: "Restart the local TraceForge host; no remote node is involved." };
+        }
+      }
+      return structuredClone(serviceHealth());
+    },
     async close() {
       client.disconnect();
       await server.close();
+      await node.shutdown();
+      health = { ...health, state: "stopped", processReady: false, terminalReady: false, checkedAt: new Date().toISOString(),
+        reasonCode: "service_stopped", recoveryHint: null };
     },
   };
 }
