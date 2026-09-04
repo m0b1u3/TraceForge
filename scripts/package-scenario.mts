@@ -1,5 +1,5 @@
 import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { canonicalJson } from "../packages/orchestration-core/src/index.js";
 import { parseScenarioPackageDescriptor } from "../packages/scenario-sdk/src/index.js";
@@ -11,7 +11,11 @@ if(existsSync(output))throw new Error("Scenario package output must not already 
 const descriptorBytes=readFileSync(join(source,"scenario.json"));
 const descriptor=parseScenarioPackageDescriptor(JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(descriptorBytes)));
 const entry=descriptor.runtime!.entrypoint.slice("package://".length);
-const paths=["scenario.json",entry,...(descriptor.resourceManifest?.resources??[]).filter(item=>!item.context?.external)
+const runtimeDirectory=join(source,dirname(entry));
+const runtimeFiles=readdirSync(runtimeDirectory,{withFileTypes:true})
+  .filter(item=>item.isFile()&&item.name.endsWith(".mjs")).map(item=>`${dirname(entry)}/${item.name}`).sort();
+if(!runtimeFiles.includes(entry))throw new Error("Scenario runtime entry is missing from generated modules");
+const paths=["scenario.json",...runtimeFiles,...(descriptor.resourceManifest?.resources??[]).filter(item=>!item.context?.external)
   .map(item=>item.locator.slice("package://".length))];
 if(new Set(paths).size!==paths.length||paths.length>128)throw new Error("Scenario package material list is invalid");
 const files:ScenarioMaterialManifest["files"]=paths.map(path=>{

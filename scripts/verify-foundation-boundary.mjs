@@ -4,6 +4,177 @@ import { resolve, relative } from "node:path";
 const projectRoot = resolve(import.meta.dirname, "..");
 const violations = [];
 
+const serverCompositionSource = readFileSync(resolve(projectRoot, "apps/server/src/main.ts"), "utf8");
+const applicationRoutesSource = readFileSync(resolve(projectRoot, "apps/server/src/routes.ts"), "utf8");
+if (/\b(?:McpManager|loadMcpConfig|connectAll)\b/.test(serverCompositionSource)
+  || /\/api\/mcp\/tools/.test(applicationRoutesSource)) {
+  violations.push("Server composition must not launch MCP directly or expose the retired MCP bypass API");
+}
+if (/reveal-key|revealApiKey/.test(applicationRoutesSource)) {
+  violations.push("Application routes must never reveal persisted model credentials");
+}
+const webScenarioRoot = resolve(projectRoot, "scenarios/web-blackbox/src");
+for (const retired of ["package.ts", "tools.ts", "ports.ts"]) {
+  try { if (statSync(resolve(webScenarioRoot, retired)).isFile()) violations.push(`Web Scenario must not restore retired in-process ${retired}`); }
+  catch { /* expected: the descriptor/process package is the sole production implementation */ }
+}
+const webScenarioProduction = sourceFiles("scenarios/web-blackbox/src")
+  .filter((path) => !/(?:\.test|\.integration\.test)\.[cm]?[jt]sx?$/.test(path))
+  .map((path) => readFileSync(path, "utf8")).join("\n");
+if (/from\s+["']playwright["']|\bcreateToolSources\b|\bScenarioBrowserObserveTool\b/.test(webScenarioProduction)) {
+  violations.push("Web Scenario production source must remain descriptor/process-only without direct browser or in-process tool factories");
+}
+const webRuntimeSources = sourceFiles("scenarios/web-blackbox/runtime-src");
+const webRuntimeOutputs = sourceFiles("scenarios/web-blackbox/runtime");
+const webRuntimeBuildSource = readFileSync(resolve(projectRoot, "scripts/verify-scenario-runtime-build.mjs"), "utf8");
+const scenarioPackageBuildSource = readFileSync(resolve(projectRoot, "scripts/package-scenario.mts"), "utf8");
+const serverRunContextPolicySource = readFileSync(resolve(projectRoot, "apps/server/src/run-context-policy.ts"), "utf8");
+const cognitiveLineageSource = readFileSync(resolve(projectRoot, "packages/cognitive-runtime/src/lineage.ts"), "utf8");
+const serverPlannerAdapterSource = readFileSync(resolve(projectRoot, "apps/server/src/run-planner.ts"), "utf8");
+const serverObserverAdapterSource = readFileSync(resolve(projectRoot, "apps/server/src/run-observer.ts"), "utf8");
+const cognitivePlanningSource = readFileSync(resolve(projectRoot, "packages/cognitive-runtime/src/run-planning.ts"), "utf8");
+const cognitiveObservationSource = readFileSync(resolve(projectRoot, "packages/cognitive-runtime/src/run-observation.ts"), "utf8");
+const cognitiveWorkerModelSource = readFileSync(resolve(projectRoot, "packages/cognitive-runtime/src/structured-worker-model.ts"), "utf8");
+const browserRuntimeSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/index.ts"), "utf8");
+const browserControllerSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/execution-node-controller.ts"), "utf8");
+const chromiumCdpAdapterSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/chromium-cdp-adapter.ts"), "utf8");
+const browserControllerProcessSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/controller-process-runtime.ts"), "utf8");
+const chromiumPipeTransportSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/chromium-pipe-transport.ts"), "utf8");
+const browserRuntimeReleaseSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/browser-runtime-release.ts"), "utf8");
+const browserRuntimeTreeSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/browser-runtime-tree.ts"), "utf8");
+const browserRuntimeReleaseBuilderSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/browser-runtime-release-builder.ts"), "utf8");
+const browserRuntimeSourceLockSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/browser-runtime-source-lock.ts"), "utf8");
+const browserRuntimeArchiveSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/browser-runtime-archive.ts"), "utf8");
+const browserRuntimeSourceReviewSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/browser-runtime-source-review.ts"), "utf8");
+const browserRuntimeBuildAttestationSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/browser-runtime-build-attestation.ts"), "utf8");
+const chromiumControllerBootstrapSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/chromium-controller-bootstrap.ts"), "utf8");
+const chromiumPageRuntimeSource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/chromium-page-runtime.ts"), "utf8");
+const browserControllerEntrySource = readFileSync(resolve(projectRoot, "packages/browser-runtime/src/node-controller-entry.ts"), "utf8");
+const browserControllerBundleVerificationSource = readFileSync(resolve(projectRoot, "scripts/verify-browser-controller-build.mjs"), "utf8");
+const embeddedWorkersSource = readFileSync(resolve(projectRoot, "apps/server/src/embedded-workers.ts"), "utf8");
+if (webRuntimeSources.length < 5 || webRuntimeOutputs.length !== webRuntimeSources.length
+  || !webRuntimeSources.some((path) => path.endsWith("/main.mts"))
+  || !webRuntimeBuildSource.includes("build is not reproducible")
+  || !scenarioPackageBuildSource.includes('role:path===entry?"entry"')
+  || !scenarioPackageBuildSource.includes('"dependency"')) {
+  violations.push("Web Scenario runtime must remain modular TypeScript with reproducible generated modules included in signed material");
+}
+try {
+  if (statSync(resolve(projectRoot, "apps/server/src/run-context-assembly.ts")).isFile()) {
+    violations.push("Generic Run context assembly must not return to the Server package");
+  }
+} catch { /* expected: assembly is owned by cognitive-runtime */ }
+if (!/projectRunContextLineage/.test(cognitiveLineageSource)
+  || !/assembleRunContext/.test(cognitiveLineageSource)
+  || !/projectRunContextLineage/.test(serverRunContextPolicySource)) {
+  violations.push("Cognitive context projection and assembly must remain in the reusable Cognitive Runtime");
+}
+if (!/export class RunPlannerSupervisor/.test(cognitivePlanningSource)
+  || !/export class StructuredRunPlannerModel/.test(cognitivePlanningSource)
+  || !/export class RunObserverSupervisor/.test(cognitiveObservationSource)
+  || !/export class StructuredRunObserverModel/.test(cognitiveObservationSource)
+  || /better-sqlite3|fastify/.test(`${cognitivePlanningSource}\n${cognitiveObservationSource}`)
+  || /class RunPlannerSupervisor|class StructuredRunPlannerModel|CognitiveLoopScheduler|You are the strategic Planner/.test(serverPlannerAdapterSource)
+  || /class RunObserverSupervisor|class StructuredRunObserverModel|CognitiveLoopScheduler|You are the independent Run Observer/.test(serverObserverAdapterSource)) {
+  violations.push("Planner and Observer decision/model supervision must remain package-owned while Server files stay transport/persistence adapters");
+}
+try {
+  if (statSync(resolve(projectRoot, "apps/server/src/structured-worker-model.ts")).isFile()) {
+    violations.push("Structured Worker cognition must not return to the Server package");
+  }
+} catch { /* expected: Worker model is owned by cognitive-runtime */ }
+if (!/export class StructuredWorkerModel/.test(cognitiveWorkerModelSource)
+  || !/parseStructuredWorkerDecision/.test(cognitiveWorkerModelSource)
+  || /better-sqlite3|fastify/.test(cognitiveWorkerModelSource)
+  || !/StructuredWorkerModel\s*}\s*from\s*"@traceforge\/cognitive-runtime"/.test(embeddedWorkersSource)) {
+  violations.push("Structured Worker prompt, decision and model supervision must remain in Cognitive Runtime with Server using the package export");
+}
+if (!/export class BrokeredBrowserRuntime/.test(browserRuntimeSource)
+  || !/processPermissions\.network = "deny"/.test(browserRuntimeSource)
+  || !/hostPermissions\.network = "brokered"/.test(browserRuntimeSource)
+  || !/requestInterception: "before_network"/.test(browserRuntimeSource)
+  || !/serviceWorkers: "disabled"/.test(browserRuntimeSource)
+  || !/websocket_streaming_unavailable/.test(browserRuntimeSource)
+  || !/executionNode\.requestHttp/.test(browserRuntimeSource)
+  || !/class ExecutionNodeBrowserController/.test(browserControllerSource)
+  || !/waitProcessEvents/.test(browserControllerSource)
+  || !/writeProcessInput/.test(browserControllerSource)
+  || !/measured identity does not match/.test(browserControllerSource)
+  || !/event stream lost protocol bytes/.test(browserControllerSource)
+  || !/Target\.setAutoAttach/.test(chromiumCdpAdapterSource)
+  || !/waitForDebuggerOnStart:\s*true/.test(chromiumCdpAdapterSource)
+  || !/Browser\.setDownloadBehavior/.test(chromiumCdpAdapterSource)
+  || !/Fetch\.fulfillRequest/.test(chromiumCdpAdapterSource)
+  || !/Target\.closeTarget/.test(chromiumCdpAdapterSource)
+  || !/class BrowserControllerProcessRuntime/.test(browserControllerProcessSource)
+  || !/request_result/.test(browserControllerProcessSource)
+  || !/class ChromiumPipeTransport/.test(chromiumPipeTransportSource)
+  || !/--remote-debugging-pipe/.test(chromiumPipeTransportSource)
+  || !/stdio:\s*\["ignore",\s*"ignore",\s*"pipe",\s*"pipe",\s*"pipe"\]/.test(chromiumPipeTransportSource)
+  || !/browserSha256/.test(chromiumPipeTransportSource)
+  || !/Browser\.getVersion/.test(chromiumPipeTransportSource)
+  || !/--no-sandbox/.test(chromiumPipeTransportSource)
+  || !/--proxy-server/.test(chromiumPipeTransportSource)
+  || !/BROWSER_RUNTIME_RELEASE_PROFILE/.test(browserRuntimeReleaseSource)
+  || !/verifyInstalledBrowserRuntimeRelease/.test(browserRuntimeReleaseSource)
+  || !/controllerSha256/.test(browserRuntimeReleaseSource)
+  || !/browserSha256/.test(browserRuntimeReleaseSource)
+  || !/measureBrowserRuntimeTree/.test(browserRuntimeReleaseSource)
+  || !/stableFileSha256/.test(browserRuntimeTreeSource)
+  || !/contains an absolute symbolic link/.test(browserRuntimeTreeSource)
+  || !/tree entry limit exceeded/.test(browserRuntimeTreeSource)
+  || !/assembleBrowserRuntimeRelease/.test(browserRuntimeReleaseBuilderSource)
+  || !/extractBrowserRuntimeSourceArchive/.test(browserRuntimeReleaseBuilderSource)
+  || !/release destination already exists/.test(browserRuntimeReleaseBuilderSource)
+  || !/BROWSER_RUNTIME_SOURCE_LOCK_PROFILE/.test(browserRuntimeSourceLockSource)
+  || !/securityReviewRef/.test(browserRuntimeSourceLockSource)
+  || !/licenseReviewRef/.test(browserRuntimeSourceLockSource)
+  || !/buildAttestationSha256/.test(browserRuntimeSourceLockSource)
+  || !/verifyBrowserRuntimeSourceArchiveHandle/.test(browserRuntimeSourceLockSource)
+  || !/BROWSER_RUNTIME_SOURCE_REVIEW_PROFILE/.test(browserRuntimeSourceReviewSource)
+  || !/BROWSER_RUNTIME_SOURCE_AUTHORITY_PROFILE/.test(browserRuntimeSourceReviewSource)
+  || !/asymmetricKeyType !== "ed25519"/.test(browserRuntimeSourceReviewSource)
+  || !/source review or authority is not currently valid/.test(browserRuntimeSourceReviewSource)
+  || !/source review signature verification failed/.test(browserRuntimeSourceReviewSource)
+  || !/BROWSER_RUNTIME_BUILD_ATTESTATION_PROFILE/.test(browserRuntimeBuildAttestationSource)
+  || !/chromium\.googlesource\.com\/chromium\/src\.git/.test(browserRuntimeBuildAttestationSource)
+  || !/requires at least two bounded reproductions/.test(browserRuntimeBuildAttestationSource)
+  || !/buildEnvironmentSha256/.test(browserRuntimeBuildAttestationSource)
+  || !/platform signature does not match/.test(browserRuntimeBuildAttestationSource)
+  || !/lock\.buildAttestationSha256 !== attestationSha256/.test(browserRuntimeBuildAttestationSource)
+  || !/browser tree does not match its build attestation/.test(browserRuntimeReleaseBuilderSource)
+  || !/archive contains an encrypted entry/.test(browserRuntimeArchiveSource)
+  || !/archive path escapes its extraction root/.test(browserRuntimeArchiveSource)
+  || !/places content below a symbolic link/.test(browserRuntimeArchiveSource)
+  || !/startChromiumController/.test(chromiumControllerBootstrapSource)
+  || !/ChromiumPipeTransport\.launch/.test(chromiumControllerBootstrapSource)
+  || !/class ChromiumPageRuntime/.test(chromiumPageRuntimeSource)
+  || !/Accessibility\.getFullAXTree/.test(chromiumPageRuntimeSource)
+  || !/Page\.captureScreenshot/.test(chromiumPageRuntimeSource)
+  || !/backendNodeId/.test(chromiumPageRuntimeSource)
+  || !/sensitiveValues:\s*"omitted"/.test(chromiumPageRuntimeSource)
+  || !/DOM\.getBoxModel/.test(chromiumPageRuntimeSource)
+  || !/Input\.insertText/.test(chromiumPageRuntimeSource)
+  || !/was not issued by the latest DOM observation/.test(chromiumPageRuntimeSource)
+  || !/beginTakeover/.test(chromiumPageRuntimeSource)
+  || !/observeManual/.test(chromiumPageRuntimeSource)
+  || !/stale control generation/.test(chromiumPageRuntimeSource)
+  || !/runChromiumControllerProcess/.test(browserControllerEntrySource)
+  || !/readBoundedJson\(input\.releaseManifestPath,[^\n]+"release manifest"\)/.test(browserControllerEntrySource)
+  || !/readBoundedJson\(input\.sourceLockPath,[^\n]+"source lock"\)/.test(browserControllerEntrySource)
+  || !/readBoundedJson\(input\.sourceReviewPath,[^\n]+"source review"\)/.test(browserControllerEntrySource)
+  || !/readBoundedJson\(input\.sourceAuthorityPath,[^\n]+"source authority"\)/.test(browserControllerEntrySource)
+  || !/readBoundedJson\(input\.buildAttestationPath,[^\n]+"build attestation"\)/.test(browserControllerEntrySource)
+  || !/build is not reproducible/.test(browserControllerBundleVerificationSource)
+  || !/retained an unreviewed local runtime dependency/.test(browserControllerBundleVerificationSource)
+  || !/command === "observe"/.test(browserControllerProcessSource)
+  || !/command === "begin_takeover"/.test(browserControllerProcessSource)
+  || !/command === "manual_observe"/.test(browserControllerProcessSource)
+  || /from\s+["'][^"']*(?:apps|scenarios)\//.test(
+    `${browserRuntimeSource}\n${browserControllerSource}\n${chromiumCdpAdapterSource}\n${browserControllerProcessSource}\n${chromiumPipeTransportSource}\n${browserRuntimeReleaseSource}\n${browserRuntimeTreeSource}\n${browserRuntimeReleaseBuilderSource}\n${browserRuntimeSourceLockSource}\n${browserRuntimeSourceReviewSource}\n${browserRuntimeBuildAttestationSource}\n${browserRuntimeArchiveSource}\n${chromiumControllerBootstrapSource}\n${chromiumPageRuntimeSource}\n${browserControllerEntrySource}`)) {
+  violations.push("Browser Runtime must retain OS-denied browser networking, pre-network interception and host-side brokered requests without Scenario coupling");
+}
+
 function sourceFiles(root) {
   const absolute = resolve(projectRoot, root);
   return readdirSync(absolute).flatMap((entry) => {
@@ -226,6 +397,10 @@ const linuxHelperContractSource = readFileSync(resolve(projectRoot, "packages/ex
 const linuxHelperNativeSource = readFileSync(resolve(projectRoot, "packages/linux-sandbox-helper/src/linux.rs"), "utf8");
 const linuxHelperBuildSource = readFileSync(resolve(projectRoot, "scripts/build-linux-sandbox-helper.mts"), "utf8");
 const linuxHelperAcceptanceSource = readFileSync(resolve(projectRoot, "scripts/verify-linux-sandbox-native.mjs"), "utf8");
+const linuxDeploymentVerificationSource = readFileSync(resolve(projectRoot, "scripts/verify-linux-deployment-assets.mjs"), "utf8");
+const linuxDesktopLauncherSource = readFileSync(resolve(projectRoot, "packages/linux-sandbox-helper/packaging/traceforge-sandboxed"), "utf8");
+const linuxDesktopInstallSource = readFileSync(resolve(projectRoot, "packages/linux-sandbox-helper/packaging/deb-after-install.sh"), "utf8");
+const desktopPackage = JSON.parse(readFileSync(resolve(projectRoot, "apps/desktop/package.json"), "utf8"));
 const nativeHelperReleaseSource = readFileSync(resolve(projectRoot, "packages/execution-node/src/native-helper-release.ts"), "utf8");
 const localExecutionLifecycleSource = readFileSync(resolve(projectRoot, "apps/server/src/local-execution-node-lifecycle.ts"), "utf8");
 const desktopMainSource = readFileSync(resolve(projectRoot, "apps/desktop/src/main.ts"), "utf8");
@@ -287,6 +462,19 @@ if (!/pub fn recover/.test(linuxHelperNativeSource)
   || !/execution-host-kill-chain-and-restart-recovery/.test(linuxHelperAcceptanceSource)
   || !/verify-linux-sandbox-native/.test(linuxHelperBuildSource)) {
   violations.push("Linux native release must retain crash-residue recovery and helper-kill acceptance gates");
+}
+if (JSON.stringify(desktopPackage.build?.linux?.target) !== JSON.stringify(["deb"])
+  || desktopPackage.build?.linux?.desktop?.entry?.Exec !== "/usr/bin/traceforge %U"
+  || !/systemd-run --user --scope/.test(linuxDesktopLauncherSource)
+  || !/Delegate=yes/.test(linuxDesktopLauncherSource)
+  || !/\+cpu \+io \+memory \+pids/.test(linuxDesktopLauncherSource)
+  || !/apparmor_parser -r/.test(linuxDesktopInstallSource)
+  || !/rollback/.test(linuxDesktopInstallSource)
+  || !/linux_deployment_not_installed/.test(localExecutionLifecycleSource)
+  || !/portable_or_direct_launch/.test(desktopMainSource)
+  || !/dpkg-deb/.test(desktopReleaseVerificationSource)
+  || !/DEB-only/.test(linuxDeploymentVerificationSource)) {
+  violations.push("Linux Desktop process readiness must require the DEB-installed AppArmor and delegated systemd user-scope deployment");
 }
 if (!/interface ExecutionRpcAddress \{ kind: "pipe"; path: string \}/.test(executionRpcSource)
   || /node:tls|mutual_tls|kind:\s*"tls"/.test(executionRpcSource)

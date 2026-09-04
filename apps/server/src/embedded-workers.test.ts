@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ScenarioKernel } from "@traceforge/orchestration-core";
-import { WEB_BLACKBOX_SCENARIO } from "@traceforge/scenario-web-blackbox";
+import { WEB_BLACKBOX_SCENARIO } from "./test-fixtures/web-blackbox-descriptor.js";
 import { desiredWorkerCount } from "./embedded-workers.js";
 
 describe("Scenario Profile Worker topology", () => {

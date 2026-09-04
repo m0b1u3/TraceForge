@@ -40,6 +40,23 @@ describe("local Execution Node lifecycle", () => {
       .resolves.toMatchObject({ state: "unavailable", reasonCode: "platform_not_supported" });
   });
 
+  it("keeps process execution unavailable for portable or direct Linux desktop launches", async () => {
+    const status = await preflightLocalExecutionNode({
+      projectRoot: "/unused",
+      platform: "linux",
+      architecture: "x64",
+      env: { TRACEFORGE_LINUX_DEPLOYMENT_STATUS: "portable_or_direct_launch" },
+      now: () => "2026-09-03T00:00:00.000Z",
+    });
+    expect(status).toMatchObject({
+      state: "unavailable",
+      processReady: false,
+      terminalReady: false,
+      reasonCode: "linux_deployment_not_installed",
+    });
+    expect(status.recoveryHint).toMatch(/supported DEB build/);
+  });
+
   it("detects helper replacement without rerunning destructive recovery", async () => {
     const f = fixture(); const preflight = await preflightLocalExecutionNode({ projectRoot: f.root, platform: "linux", architecture: "x64", env: f.env, execute: f.execute });
     writeFileSync(f.helper, "replaced-helper");

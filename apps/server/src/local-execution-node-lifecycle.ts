@@ -79,6 +79,11 @@ export async function preflightLocalExecutionNode(options: PreflightOptions): Pr
   }
   if (architecture !== "x64") return unavailable(platform, architecture, checkedAt, "architecture_not_supported", "Use an accepted x64 native helper build for this host.");
 
+  if (hostPlatform === "linux" && env.TRACEFORGE_LINUX_DEPLOYMENT_STATUS === "portable_or_direct_launch") {
+    return unavailable(platform, architecture, checkedAt, "linux_deployment_not_installed",
+      "Install and launch the supported DEB build so systemd delegation and AppArmor policy can be proven.");
+  }
+
   const windows = hostPlatform === "win32";
   const nativePlatform: "windows" | "linux" = windows ? "windows" : "linux";
   const backend = windows ? "traceforge-windows-native" as const : "traceforge-linux-native" as const;

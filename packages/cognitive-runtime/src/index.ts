@@ -7,6 +7,10 @@ export * from "./evaluation.js";
 export * from "./wakeup.js";
 export * from "./loop.js";
 export * from "./compaction.js";
+export * from "./lineage.js";
+export * from "./run-planning.js";
+export * from "./run-observation.js";
+export * from "./structured-worker-model.js";
 
 export interface CognitiveContextBudget {
   maximumGraphNodes: number;

@@ -14,7 +14,7 @@ Helper 的 `probe` 会实际运行一次同样的 namespace/cgroup/seccomp 隔�
 
 Linux/Windows helper 构建成功后还会原子生成 `traceforge-native-helper-release-v1` 清单，把平台、架构、后端、helper 协议、文件名和 SHA-256 绑定为一个安装单元。桌面发布包强制携带该清单；出包校验和每次应用启动使用同一份合同重新读取 helper 字节，缺清单、跨平台清单、未知字段、协议不匹配或摘要漂移都会关闭进程执行。开发态显式 helper 仍可不带发布清单，但必须通过相同原生 probe，不能由配置自报为可信。
 
-Ubuntu 24.04 默认用 AppArmor 限制非特权 user namespace。仓库提供只附着到 `/usr/lib/traceforge/traceforge-linux-sandbox` 的 `flags=(unconfined) { userns, }` Profile；helper 二进制必须由 root 持有，不能通过全局关闭 `kernel.apparmor_restrict_unprivileged_userns` 绕过。systemd 服务必须使用专用非 root 账号与 `Delegate=yes`，启动器把自身移入 `supervisor` 子 cgroup 后在空的服务 cgroup 上启用 cpu/io/memory/pids controller，再把该服务 cgroup 交给 helper。
+Ubuntu 24.04 默认用 AppArmor 限制非特权 user namespace。仓库提供只附着到 `/usr/lib/traceforge/traceforge-linux-sandbox` 的 `flags=(unconfined) { userns, }` Profile；helper 二进制必须由 root 持有，不能通过全局关闭 `kernel.apparmor_restrict_unprivileged_userns` 绕过。Linux Desktop 是单用户本机应用：DEB 安装器装入固定 helper/manifest、Profile 和启动器，登录用户由 `systemd-run --user --scope` 进入 `Delegate=yes` 的瞬态 scope。启动器把自身移入 `supervisor` 子 cgroup 后在空的 scope 根上启用 cpu/io/memory/pids controller，再把该 scope 根交给 helper；不创建远程节点、系统守护进程或产品级多用户账号。直接启动二进制或便携包因为没有这条部署证明，进程能力保持 unavailable。
 
 每个执行现在用同一个不可预测运行 ID 关联 `traceforge-execution-*` cgroup 与 `run-execution-*` scratch。Execution Node 首次 probe 前独占调用 `recover`：只枚举这两个受控前缀，杀净仍存活的所属进程、等待空树、删除 cgroup 与 scratch；任何计数、清理或截止失败都会让 Linux 进程能力保持关闭。正常运行仍由 RAII 清理，恢复命令只处理 helper/宿主强杀留下的资源。
 

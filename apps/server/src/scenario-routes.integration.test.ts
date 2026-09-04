@@ -5,7 +5,7 @@ import {
   DurableScenarioRuntime,
   ScenarioDefinitionRegistry,
 } from "@traceforge/orchestration-core";
-import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "@traceforge/scenario-web-blackbox";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "./test-fixtures/web-blackbox-descriptor.js";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteScenarioEventStore, SqliteWorkerRegistry } from "./scenario-event-store.js";
 import { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
@@ -13,12 +13,13 @@ import { ScenarioEvidenceGraphAdapter } from "./scenario-evidence-store.js";
 import { registerScenarioRunRecoveryRoutes, ScenarioRunRecoveryService } from "./scenario-run-recovery.js";
 import { registerScenarioRoutes } from "./scenario-routes.js";
 import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
-import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
+import { webBlackboxControlPlanePackage } from "./test-fixtures/web-blackbox-control-plane-package.js";
 
 const databases: Database.Database[] = [];
 const recoveries = new WeakMap<object, ScenarioRunRecoveryService>();
 
 async function setup(autoScheduleIntervalMs?: number) {
+  const webPackage = webBlackboxControlPlanePackage();
   const app = Fastify();
   const db = createDb(":memory:");
   const sqlite = getSqliteClient(db);
@@ -28,7 +29,7 @@ async function setup(autoScheduleIntervalMs?: number) {
   const ids = ["lease_1", "lease_2"];
   registerScenarioRoutes(app, sqlite, {
     definitions: new ScenarioDefinitionRegistry([WEB_BLACKBOX_SCENARIO]),
-    packages: new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]),
+    packages: new ScenarioPackageRegistry([webPackage]),
     evidence: new ScenarioEvidenceGraphAdapter(new SqliteEvidenceGraphStore(sqlite)),
     now: () => "2026-08-24T08:00:10.000Z",
     createId: () => ids.shift()!,
@@ -175,7 +176,7 @@ describe("scenario control-plane routes", () => {
     expect(started.statusCode).toBe(201);
     expect(started.json().state.revision).toBe(1);
     expect(started.json().state.scenarioPackage).toEqual({
-      id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1,
+      id: "traceforge.web-blackbox", version: "0.3.0", schemaRevision: 1,
     });
     const replayed = await app.inject({ method: "POST", url: "/api/scenarios/runs", payload: startPayload });
     expect(replayed.statusCode).toBe(200);
@@ -183,7 +184,7 @@ describe("scenario control-plane routes", () => {
 
     const bindingList = await app.inject({ method: "GET", url: "/api/scenarios/runs?caseId=case_1" });
     expect(bindingList.json()[0]).toMatchObject({
-      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 },
+      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.3.0", schemaRevision: 1 },
       packageAvailability: "available",
       packageDiagnostic: null,
     });
@@ -306,14 +307,14 @@ describe("scenario control-plane routes", () => {
       expect.objectContaining({ id: "output_inventory", schemaVersion: 1 }),
     ]));
     expect(completed.json().evidenceRefs).toEqual(expect.arrayContaining([
-      "knowledge-node:scenario-output:run_1:output_scope",
-      "knowledge-node:scenario-output:run_1:output_inventory",
+      "knowledge-node:output_scope",
+      "knowledge-node:output_inventory",
     ]));
     expect(databases.at(-1)!.prepare(`
       SELECT id, kind, run_id FROM evidence_graph_nodes WHERE run_id = 'run_1' ORDER BY id
     `).all()).toEqual([
-      { id: "scenario-output:run_1:output_inventory", kind: "fact", run_id: "run_1" },
-      { id: "scenario-output:run_1:output_scope", kind: "fact", run_id: "run_1" },
+      { id: "output_inventory", kind: "fact", run_id: "run_1" },
+      { id: "output_scope", kind: "fact", run_id: "run_1" },
     ]);
 
     const advanced = await app.inject({

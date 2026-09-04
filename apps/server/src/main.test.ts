@@ -13,6 +13,12 @@ describe("server listen configuration", () => {
     expect(source).not.toMatch(/scenario-web-blackbox|WEB_BLACKBOX|web_blackbox/);
     expect(source).toContain("loadScenarioHostConfiguration");
   });
+  it("does not restore the legacy MCP launcher or plaintext-key reveal route",()=>{
+    const main=readFileSync(new URL("./main.ts",import.meta.url),"utf8");
+    const routes=readFileSync(new URL("./routes.ts",import.meta.url),"utf8");
+    expect(main).not.toMatch(/McpManager|loadMcpConfig|connectAll/);
+    expect(routes).not.toMatch(/reveal-key|revealApiKey|\/api\/mcp\/tools/);
+  });
   it("boots an isolated restore before model/MCP configuration or execution node startup", async () => {
     const root = mkdtempSync("/private/tmp/traceforge-main-restore-");
     const sqlite = getSqliteClient(createDb(join(root, "source.sqlite")));
@@ -90,6 +96,8 @@ describe("server listen configuration", () => {
       expect((await app.inject({url:"/api/cases",headers:management.headers()})).statusCode).toBe(200);
       expect((await app.inject({url:"/api/scenarios/definitions",headers:management.headers()})).statusCode).toBe(200);
       expect((await app.inject({url:"/api/execution/identities?caseId=missing",headers:management.headers()})).statusCode).toBe(404);
+      expect((await app.inject({url:"/api/mcp/tools",headers:management.headers()})).statusCode).toBe(404);
+      expect((await app.inject({method:"POST",url:"/api/config/llm/reveal-key",headers:management.headers()})).statusCode).toBe(404);
     } finally { await app.close(); }
   });
 

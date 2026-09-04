@@ -1,4 +1,6 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { LlmConfigSchema, type LlmConfig, type LlmEndpointConfig, createProvider, type LlmProvider } from "@traceforge/llm";
 import { ProviderHolder } from "./provider-holder.js";
 
@@ -23,18 +25,27 @@ export interface LlmConfigView extends Omit<LlmConfig, "apiKey" | "alternativeRo
   alternativeRoutes: Array<Omit<AlternativeRoute, "apiKey"> & { apiKeyMasked: string }>;
 }
 
+export interface LlmSecretBundle {
+  primary?: string;
+  alternativeRoutes: Record<string, string>;
+}
+
+/** Secret persistence belongs to the trusted embedding host, never the HTTP/UI layer. */
+export interface LlmSecretStore {
+  load(): LlmSecretBundle;
+  save(secrets: LlmSecretBundle): void;
+}
+
 export interface LlmConfigServiceDeps {
+  secretStore: LlmSecretStore;
   createProvider?: (config: LlmEndpointConfig) => LlmProvider;
 }
 
 function validateApiKeyValue(value: string): void {
-  if (/[\r\n]/.test(value)) throw new Error("invalid apiKey: line breaks are not allowed");
+  if (/\r|\n/.test(value)) throw new Error("invalid apiKey: line breaks are not allowed");
 }
 
-function maskKey(key: string): string {
-  if (!key) return "";
-  return "••••••••";
-}
+function maskKey(key: string): string { return key ? "••••••••" : ""; }
 
 function configView(config: LlmConfig): LlmConfigView {
   const { apiKey, alternativeRoutes, ...safe } = config;
@@ -45,6 +56,11 @@ function configView(config: LlmConfig): LlmConfigView {
   };
 }
 
+function withoutSecrets(config: LlmConfig): LlmConfig {
+  const { apiKey: _primary, alternativeRoutes, ...metadata } = config;
+  return { ...metadata, alternativeRoutes: (alternativeRoutes ?? []).map(({ apiKey: _secret, ...route }) => route) };
+}
+
 export class LlmConfigService {
   private holder: ProviderHolder;
   private readonly currentProviders = new Map<string, LlmProvider>();
@@ -53,7 +69,7 @@ export class LlmConfigService {
   private resourcePolicy: NonNullable<LlmConfig["resourcePolicy"]> = {};
   private createProvider: (config: LlmEndpointConfig) => LlmProvider;
 
-  constructor(private configPath: string, private deps: LlmConfigServiceDeps = {}) {
+  constructor(private configPath: string, private deps: LlmConfigServiceDeps) {
     this.createProvider = deps.createProvider ?? createProvider;
     this.holder = new ProviderHolder(() => {
       const provider = this.currentProviders.get("primary");
@@ -62,13 +78,7 @@ export class LlmConfigService {
     });
   }
 
-  load(): LlmConfigView {
-    return configView(this.parseConfig());
-  }
-
-  revealApiKey(): string {
-    return this.parseConfig().apiKey ?? "";
-  }
+  load(): LlmConfigView { return configView(this.parseConfig()); }
 
   initializeFromConfig(): LlmConfigView {
     const config = this.parseConfig();
@@ -98,64 +108,42 @@ export class LlmConfigService {
     };
     const parsed = LlmConfigSchema.safeParse(config);
     if (!parsed.success) throw new Error(`invalid LLM config: ${parsed.error.message}`);
-    return config;
+    return parsed.data;
   }
 
   reload(dto: LlmConfigDto): LlmConfigView {
     const config = this.buildConfig(dto);
-    writeFileSync(this.configPath, JSON.stringify(config, null, 2));
     this.applyConfig(config);
+    this.deps.secretStore.save(this.extractSecrets(config));
+    this.writeMetadata(withoutSecrets(config));
     return configView(config);
   }
 
   async test(dto: LlmConfigDto): Promise<{ ok: boolean; message?: string; error?: string }> {
     try {
-      const config = this.buildConfig(dto);
-      const provider = this.createProvider(config);
+      const provider = this.createProvider(this.buildConfig(dto));
       const result = await provider.extractJson({
         system: "You are a connectivity tester. Reply only with a JSON object {\"ok\": true}.",
         user: "ping",
-        schema: {
-          type: "object",
-          properties: { ok: { type: "boolean" } },
-          required: ["ok"],
-        },
+        schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
       });
-      if ((result as { ok?: boolean }).ok === true) {
-        return { ok: true, message: "Connection successful" };
-      }
-      return { ok: false, error: "Connection failed: provider did not confirm" };
-    } catch (err) {
-      return { ok: false, error: (err as Error).message };
-    }
+      return (result as { ok?: boolean }).ok === true
+        ? { ok: true, message: "Connection successful" }
+        : { ok: false, error: "Connection failed: provider did not confirm" };
+    } catch (err) { return { ok: false, error: (err as Error).message }; }
   }
 
-  getProvider(): LlmProvider {
-    return this.holder;
-  }
-
+  getProvider(): LlmProvider { return this.holder; }
   getModelRoutes(): ReadonlyMap<string, LlmProvider> {
-    return new Map(this.configuredRouteIds.map((routeId) => [
-      routeId,
-      new ProviderHolder(() => {
-        const provider = this.currentProviders.get(routeId);
-        if (!provider) throw new Error(`LLM route ${routeId} is not initialized`);
-        return provider;
-      }),
-    ]));
+    return new Map(this.configuredRouteIds.map((routeId) => [routeId, new ProviderHolder(() => {
+      const provider = this.currentProviders.get(routeId);
+      if (!provider) throw new Error(`LLM route ${routeId} is not initialized`);
+      return provider;
+    })]));
   }
-
-  getRolePolicies(): NonNullable<LlmConfig["rolePolicies"]> {
-    return this.rolePolicies;
-  }
-
-  getResourcePolicy(): NonNullable<LlmConfig["resourcePolicy"]> {
-    return this.resourcePolicy;
-  }
-
-  hasProvider(): boolean {
-    return this.currentProviders.has("primary");
-  }
+  getRolePolicies(): NonNullable<LlmConfig["rolePolicies"]> { return this.rolePolicies; }
+  getResourcePolicy(): NonNullable<LlmConfig["resourcePolicy"]> { return this.resourcePolicy; }
+  hasProvider(): boolean { return this.currentProviders.has("primary"); }
 
   private applyConfig(config: LlmConfig): void {
     const providers = new Map<string, LlmProvider>();
@@ -169,22 +157,53 @@ export class LlmConfigService {
   }
 
   private parseConfig(): LlmConfig {
-    let raw: string;
-    try {
-      raw = readFileSync(this.configPath, "utf8");
-    } catch {
-      throw new Error("LLM config not found");
+    let value: unknown;
+    try { value = JSON.parse(readFileSync(this.configPath, "utf8")); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("LLM config not found");
+      throw error;
     }
-    const parsed = LlmConfigSchema.safeParse(JSON.parse(raw));
+    const parsed = LlmConfigSchema.safeParse(value);
     if (!parsed.success) throw new Error(`invalid LLM config: ${parsed.error.message}`);
-    return parsed.data;
+    const loaded = this.deps.secretStore.load();
+    const stored = { primary: loaded.primary, alternativeRoutes: { ...(loaded.alternativeRoutes ?? {}) } };
+    const legacy = this.extractSecrets(parsed.data);
+    const migrated = Boolean(legacy.primary || Object.keys(legacy.alternativeRoutes).length);
+    const secrets: LlmSecretBundle = {
+      primary: legacy.primary ?? stored.primary,
+      alternativeRoutes: { ...stored.alternativeRoutes, ...legacy.alternativeRoutes },
+    };
+    if (migrated) {
+      this.deps.secretStore.save(secrets);
+      this.writeMetadata(withoutSecrets(parsed.data));
+    }
+    const combined = {
+      ...parsed.data,
+      apiKey: secrets.primary,
+      alternativeRoutes: (parsed.data.alternativeRoutes ?? []).map((route) => ({ ...route, apiKey: secrets.alternativeRoutes[route.id] })),
+    };
+    const validated = LlmConfigSchema.safeParse(combined);
+    if (!validated.success) throw new Error(`invalid LLM config: ${validated.error.message}`);
+    return validated.data;
+  }
+
+  private extractSecrets(config: LlmConfig): LlmSecretBundle {
+    return {
+      primary: config.apiKey,
+      alternativeRoutes: Object.fromEntries((config.alternativeRoutes ?? [])
+        .filter((route) => Boolean(route.apiKey)).map((route) => [route.id, route.apiKey!])),
+    };
+  }
+
+  private writeMetadata(config: LlmConfig): void {
+    mkdirSync(dirname(this.configPath), { recursive: true });
+    const temporary = `${this.configPath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+    writeFileSync(temporary, JSON.stringify(config, null, 2), { mode: 0o600, flag: "wx" });
+    renameSync(temporary, this.configPath);
   }
 
   private readConfig(): LlmConfig | null {
-    try {
-      return this.parseConfig();
-    } catch {
-      return null;
-    }
+    try { return this.parseConfig(); }
+    catch { return null; }
   }
 }

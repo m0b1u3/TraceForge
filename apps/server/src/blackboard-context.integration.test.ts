@@ -5,7 +5,7 @@ import {
   DurableScenarioRuntime,
   ScenarioDefinitionRegistry,
 } from "@traceforge/orchestration-core";
-import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "@traceforge/scenario-web-blackbox";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "./test-fixtures/web-blackbox-descriptor.js";
 import type { WorkerModelRequest } from "@traceforge/worker-runtime";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";

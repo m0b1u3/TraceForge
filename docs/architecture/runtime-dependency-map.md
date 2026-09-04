@@ -1,12 +1,12 @@
 # Runtime 依赖图与提取边界
 
-本文记录 2026-08-29 当前底座源码的实际依赖方向，用于指导 Runtime 从 `apps/server` 逐片提取。它描述的是
+本文最初记录 2026-08-29 的底座依赖方向，并在 2026-09-04 按当前源码继续校准，用于指导 Runtime 从 `apps/server` 逐片提取。它描述的是
 代码事实和允许的方向，不是按目录名称推测职责。
 
 ## 当前依赖事实
 
-`apps/server/src` 当前有 102 个非测试 TypeScript 文件。其中 17 个直接依赖 Fastify，50 个直接依赖
-SQLite/Drizzle 或 Server 数据库模块，8 个依赖通用 Scenario SDK。产品入口 `main.ts` 可以选择安装具体
+当前 `apps/server/src` 有 166 个非测试 TypeScript 文件；按直接 import 粗查，46 个仍直接依赖 Fastify，107 个直接依赖
+SQLite/Drizzle 或 Server 数据库模块。数量增长主要来自后续持久化治理与控制面切片，也说明不能按文件名机械搬迁。产品入口 `main.ts` 可以选择安装具体
 Scenario Package，但 packages 与通用 Server 生产模块由 `verify:foundation` 禁止反向依赖应用或具体场景。
 
 workspace 包依赖当前无环。原 `llm → extension → reasoning-core → llm` 循环已经拆除：模型 Provider Contract
@@ -43,7 +43,7 @@ flowchart TD
 | Transport | `*-routes.ts`, 各模块的 `register*Routes` | `apps/server` | 与 Runtime 类拆开，不移入 packages |
 | Persistence Adapter | `stores/*`, `db/*`, `Sqlite*Store` | `apps/server` | 实现 packages 定义的端口 |
 | Model Runtime | Admission、预算、重试、熔断、调用审计 | `packages/model-runtime` | Admission 与 Execution 主体已提取 |
-| Cognitive Runtime | Planner、Observer、Worker loop、上下文蒸馏 | `packages/cognitive-runtime` | 上下文、快照、评估、唤醒与循环调度已提取 |
+| Cognitive Runtime | Planner、Observer、Worker model、上下文蒸馏 | `packages/cognitive-runtime` | 三类认知角色的模型决策监督、上下文、快照、评估、唤醒与循环调度已提取 |
 | Scenario Runtime | Run/Work/Lease/Recovery、调度协调 | 后续 reusable package | 在 Event Store 端口稳定后提取 |
 | Execution/Tool/Evidence | 已有对应 packages | 现有 packages | 只修正反向依赖，不制造重复包 |
 
@@ -102,6 +102,69 @@ flowchart TD
 - Planner 和 Observer 删除重复的 timer/running/activeTick/wakeRequested 状态机，继续公开原有 start/wake/stop 行为；
 - Run 枚举、评估策略、Prompt、决策 Schema 和决策应用仍由注入的 tick 负责，Runtime 不解释 Scenario；
 - 无 Server harness 验证 wake 风暴只追加一轮、tick 不重叠、stop 等待在途工作且不重启，以及 tick/轮询错误退避。
+
+第六个 Cognitive Runtime 切片下沉了上下文血缘投影与角色装配：
+
+- `projectRunContextLineage` 只接收已验证的来源/派生事实，在无 SQLite/Fastify 的 package 内完成失效来源、重试后代、指令、输出和证据图依赖的保守遮蔽；
+- `assembleRunContext` 也进入 package，固定“先授权投影、再压缩”的顺序；Planner/Observer 不再从 Server 私有装配模块取通用规则；
+- Server 的 `RunContextPolicy` 只保留 Tool Receipt、Package Context、Snapshot 与 `context_derivations` 的 SQLite 读取/写入和事实指纹计算；
+- package 独立测试与原 18 项跨角色/重启/压缩集成测试通过，证明下沉未改变持久化语义。
+
+第七个 Cognitive Runtime 切片完整下沉了 Planner/Observer 决策与监督：
+
+- package 现在拥有两类结构化决策合同、提示词/模型请求构造、快照评估生命周期、上下文授权复检、决策合法性校验、语义去重、循环调度、并发冲突重试和幂等命令应用；
+- Runtime 只依赖通用 Run/Definition/Evidence/Model/Context/Event/Store 端口，不依赖 Fastify、SQLite、LLM 实现或具体 Scenario；
+- `apps/server/src/run-planner.ts` 从 470 行降为 83 行，`run-observer.ts` 从 392 行降为 94 行，只保留 SQLite row/事务映射和 Fastify 查询路由；产品 Composition 直接从 package 装配 Supervisor/Model；
+- 无 Server 测试验证 Planner/Observer 能用纯内存模型端口构造并解析评估，既有 26 项 SQLite、协作快照、并发、幂等与跨角色血缘集成测试继续通过。
+
+第八个 Cognitive Runtime 切片下沉了 Structured Worker Model：
+
+- Worker 提示词、三类结构化决策合同、上下文裁剪/压缩、认知快照、模型路由、取消检查、排队后授权复检和决策来源记录全部进入 package；
+- 模型只通过最小 JSON Model Port 或受治理 Model Runtime 工作，不依赖完整 `LlmProvider`、Fastify、SQLite、Server 配置或具体 Scenario；
+- `apps/server/src/structured-worker-model.ts` 已删除，Embedded Worker 和测试直接装配 package 导出；Server 的 `PackageContextPolicy` 与 SQLite Snapshot 继续作为端口实现；
+- 22 项 Worker/快照/压缩/评估定向短回归通过，随后三类认知角色联合短回归 9 文件/48 项通过。WorkerHost 的租约、工具副作用、Checkpoint 和控制面结果提交没有迁入认知模型层，避免模型获得执行所有权。
+
+至此整改计划点名的 Planner、Observer、Structured Worker、Model Execution、Context Policy/Assembly 通用逻辑均已从 Server 下沉；Server 保留 SQLite/Fastify Adapter、宿主事实采集和 Composition。更广泛的 Hypothesis/Artifact/Execution 控制面仍按实际稳定端口逐片治理，不以目录数量冒充完成度。
+
+## 已完成切片：Brokered Browser Runtime 核心
+
+`@traceforge/browser-runtime` 已建立在 `execution-node` 和 `orchestration-core` 之上，不依赖 Server、应用或具体 Scenario：
+
+- Browser Process 只能由本机 Execution Node 以 `network=deny` 的 OS 沙箱启动；调用者的宿主网络权限另存为
+  `brokered`，浏览器进程拿不到宿主代发通道；
+- Controller 先通过 pipe、联网前暂停、Service Worker 禁用、下载与 WebSocket 拦截证明，Runtime 验证后才开放请求回调；
+- Host 侧 Execution Node Controller 已实现有界长度帧、审核身份/版本/SHA-256 对照、handshake-before-activation、
+  稳定写操作 ID、事件丢失/截断/进程退出失败关闭，以及旧 generation 迟到响应隔离；
+- 进程侧 Controller Runtime 与 Chromium CDP 策略 Adapter 已实现协议闭环：Target auto-attach、脚本释放前 Fetch 拦截、
+  popup/iframe/worker 接管、Service Worker 关闭、磁盘下载禁止、正文原始字节保留、Broker 响应注入和异常退出；
+- Chromium transport 已实现真实 `--remote-debugging-pipe` FD 3/4、NUL 分帧、消息/缓冲/命令/时间上限、固定参数与环境白名单、
+  浏览器文件摘要和运行版本复核，以及失联强杀；Build Attestation 固定官方 Chromium commit、`depot_tools`/依赖/GN/配方摘要、SBOM/NOTICE、
+  安全/许可证评估、平台签名身份和至少两次独立同树构建。v3 严格发布链以 Source Lock 固定 Attestation 摘要、来源/版本/revision、平台/架构、
+  归档大小与摘要及布局；离线 Ed25519 Source Review 再将精确 Lock 绑定到外部 Authority 的 source 范围、有效期与撤销状态。经过同一文件句柄前后校验与
+  防逃逸有界解压后，原子生成 Controller、完整 Browser tree、Source Lock、Source Review、Build Attestation 和 release manifest。启动器再次复核外部
+  Authority、签名评审、Attestation、Source Lock、来源溯源、Controller/Browser 文件、完整树、版本、摘要、平台和架构后，才能装配正式 Runtime；
+- navigation、redirect、popup、iframe、fetch/XHR 和 download 每次分别复检所有权与授权，再调用
+  `ExecutionNode.requestHttp`；HTTP 重定向不自动跟随，下一跳必须重新授权；
+- WebSocket 在有界流式 Broker 完成前明确阻断，下载必须形成 Artifact 引用；Session 失效、预算耗尽或授权过期会冻结并终止进程；
+- Snapshot 仅保留 origin、URL 摘要、授权/Network Receipt/Artifact 引用，不复制正文或完整敏感 URL。
+- 页面层使用 Accessibility Tree 生成去 value 的有界 DOM Artifact，以 generation/page/document/backend node 签发稳定元素引用；截图限制
+  PNG、视口尺寸、像素和字节。navigation/click/editable-only fill/固定键动作不执行任意 JavaScript，Host 对 Controller 输出二次验真后才写 Artifact；
+- 人工接管使用独立 takeover ID 和 manual 通道，但仍走同一 Browser Controller、元素签发、资源上限、所有权复检和网络 Broker；接管/恢复双换代，
+  Agent 与人工旧引用均失效，快照只记录 Artifact、动作来源/输入摘要和有界控制转换；
+- Controller 的严格参数/stdio 入口已可确定性打成单文件 Node 22 ESM bundle，构建检查禁止遗留相对运行依赖或 workspace package 引用。
+
+该切片已完成底座合同、状态机、Host/进程控制传输、CDP 策略适配、真实 pipe transport、来源锁/离线评审签名/安全解压/v3 整树发布与本机启动门禁和安全失败语义。
+受支持 Chromium 的实际自构建、安全/许可证审核材料、各平台真实锁定产物、应用人机界面及 Linux/Windows 原生平台断网证明仍未完成，
+所以生产 Composition 继续关闭 Browser Provider。完整边界见 [Brokered Browser Runtime 安全边界](brokered-browser-runtime.md)。
+
+## Web Scenario 可复现构建边界
+
+原 `runtime/main.mjs` 的 RPC、合同、输入校验、HTTP/Session/Traffic、Surface/HTML 发现和入口混在 309 行手写文件中。当前已拆为 `runtime-src` 下 6 个 TypeScript 模块，独立 `tsconfig.runtime.json` 生成 `runtime/*.mjs`：
+
+- 构建检查要求源码与产物一一对应、所有相对模块从入口可达、无 Server/node_modules/build 路径引用，并在临时目录二次编译后逐字节比较；
+- 场景离线打包器按稳定排序收集全部生成 `.mjs`，入口标为 `entry`，其余标为 `dependency`，一起进入原有 material digest 与 Ed25519 review；
+- Server 的真实 Web Package 装配测试也复制并审核完整运行模块集合，不再只签 `main.mjs` 后漏掉依赖；
+- 这只改变 Web Scenario 自己的工程结构，所有 URL/Session/Surface 语义仍留在 Scenario，未进入 Cognitive/Core。
 
 ## 已完成切片：Provider-to-Host Capability Broker
 

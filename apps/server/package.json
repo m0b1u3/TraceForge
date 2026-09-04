@@ -29,11 +29,9 @@
     "better-sqlite3": "^11.0.0",
     "drizzle-orm": "^0.38.0",
     "fastify": "^5.0.0",
-    "playwright": "^1.50.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "@traceforge/scenario-web-blackbox": "workspace:*",
     "@types/better-sqlite3": "^7.6.0",
     "tsx": "^4.22.4"
   }

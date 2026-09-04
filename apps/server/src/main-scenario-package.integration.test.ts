@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,11 +19,14 @@ describe("application Scenario package assembly",()=>{
     const packageRoot=join(root,"package"),configRoot=join(root,"config");mkdirSync(join(packageRoot,"runtime"),{recursive:true});
     mkdirSync(join(packageRoot,"skills"));mkdirSync(join(packageRoot,"knowledge"));mkdirSync(configRoot);
     const sourceRoot=join(process.cwd(),"scenarios/web-blackbox");
-    const paths=["scenario.json","runtime/main.mjs","skills/http-observation.md","knowledge/verification-criteria.md"];
+    const runtimePaths=readdirSync(join(sourceRoot,"runtime")).filter(name=>name.endsWith(".mjs")).sort().map(name=>`runtime/${name}`);
+    const paths=["scenario.json",...runtimePaths,"skills/http-observation.md","knowledge/verification-criteria.md"];
     for(const path of paths)writeFileSync(join(packageRoot,path),readFileSync(join(sourceRoot,path)));
     const descriptorBody=readFileSync(join(packageRoot,"scenario.json")),descriptor=parseScenarioPackageDescriptor(JSON.parse(descriptorBody.toString("utf8")));
     const manifest:ScenarioMaterialManifest={format:"traceforge.scenario-material.v1",package:{id:descriptor.id,version:descriptor.version,schemaRevision:descriptor.schemaRevision},
-      entry:"runtime/main.mjs",files:paths.map(path=>{const bytes=readFileSync(join(packageRoot,path));return {path,role:path==="runtime/main.mjs"?"entry" as const:"data" as const,size:bytes.length,digest:digest(bytes)};})};
+      entry:"runtime/main.mjs",files:paths.map(path=>{const bytes=readFileSync(join(packageRoot,path));return {path,
+        role:path==="runtime/main.mjs"?"entry" as const:path.startsWith("runtime/")?"dependency" as const:"data" as const,
+        size:bytes.length,digest:digest(bytes)};})};
     const keys=generateKeyPairSync("ed25519"),privateKey=keys.privateKey.export({type:"pkcs8",format:"pem"}).toString(),publicKey=keys.publicKey.export({type:"spki",format:"pem"}).toString();
     const review=signScenarioPackageReview({format:"traceforge.scenario-review.v1",package:manifest.package,materialDigest:scenarioMaterialDigest(manifest),
       contractDigest:scenarioPackageContractDigest(descriptor),assemblyRef:"integration",keyId:"integration-reviewer",reviewRef:"integration-review",

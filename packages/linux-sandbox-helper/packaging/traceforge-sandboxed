@@ -1,0 +1,66 @@
+#!/bin/sh
+set -eu
+
+readonly app_executable="/opt/TraceForge/traceforge-desktop"
+readonly helper_executable="/usr/lib/traceforge/traceforge-linux-sandbox"
+readonly helper_manifest="/usr/lib/traceforge/release.json"
+readonly required_controllers="cpu io memory pids"
+
+fail() {
+  printf '%s\n' "TraceForge Linux sandbox startup failed: $*" >&2
+  exit 1
+}
+
+prepare_delegation() {
+  [ -x "$app_executable" ] || fail "desktop executable is missing"
+  [ -x "$helper_executable" ] || fail "native helper is missing"
+  [ -f "$helper_manifest" ] || fail "native helper release manifest is missing"
+
+  cgroup_relative=$(awk -F: '$1 == "0" { print $3; exit }' /proc/self/cgroup)
+  [ -n "$cgroup_relative" ] || fail "unified cgroup v2 membership is unavailable"
+  cgroup_root="/sys/fs/cgroup$cgroup_relative"
+  [ -f "$cgroup_root/cgroup.controllers" ] || fail "the systemd scope is not a delegated cgroup v2 root"
+
+  for controller in $required_controllers; do
+    grep -qw "$controller" "$cgroup_root/cgroup.controllers" \
+      || fail "required cgroup controller is unavailable: $controller"
+  done
+
+  supervisor="$cgroup_root/supervisor"
+  mkdir "$supervisor" 2>/dev/null || fail "cannot create the supervisor cgroup"
+  printf '%s\n' "$$" > "$supervisor/cgroup.procs" \
+    || fail "cannot isolate the desktop supervisor from the delegated root"
+  printf '%s\n' "+cpu +io +memory +pids" > "$cgroup_root/cgroup.subtree_control" \
+    || fail "cannot enable required cgroup controllers"
+
+  state_root=${XDG_STATE_HOME:-"${HOME:?HOME is required}/.local/state"}
+  scratch_root="$state_root/traceforge/linux-sandbox"
+  old_umask=$(umask)
+  umask 077
+  mkdir -p "$scratch_root"
+  chmod 0700 "$scratch_root"
+  umask "$old_umask"
+
+  export TRACEFORGE_LINUX_DEPLOYMENT_MODE="systemd-user-delegated-v1"
+  export TRACEFORGE_LINUX_SANDBOX_HELPER="$helper_executable"
+  export TRACEFORGE_NATIVE_HELPER_RELEASE_MANIFEST="$helper_manifest"
+  export TRACEFORGE_REQUIRE_NATIVE_HELPER_RELEASE_MANIFEST="1"
+  export TRACEFORGE_LINUX_CGROUP_ROOT="$cgroup_root"
+  export TRACEFORGE_LINUX_SANDBOX_SCRATCH_ROOT="$scratch_root"
+  exec "$app_executable" "$@"
+}
+
+if [ "${1:-}" = "--traceforge-delegated-stage" ]; then
+  shift
+  prepare_delegation "$@"
+fi
+
+command -v systemd-run >/dev/null 2>&1 || fail "systemd-run is required"
+systemctl --user show-environment >/dev/null 2>&1 \
+  || fail "a running systemd user manager is required"
+
+exec systemd-run --user --scope --quiet --collect \
+  --unit="traceforge-desktop-$$.scope" \
+  --property=Delegate=yes \
+  --property=KillMode=mixed \
+  -- "$0" --traceforge-delegated-stage "$@"

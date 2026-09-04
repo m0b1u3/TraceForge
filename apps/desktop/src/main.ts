@@ -1,9 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from "electron";
 import { autoUpdater } from "electron-updater";
 import { dirname, join, resolve } from "node:path";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
-import { buildServer } from "@traceforge/server";
+import { buildServer, foundationHostControl, type LlmSecretBundle, type LlmSecretStore } from "@traceforge/server";
 import { ensureDesktopData, resolveDesktopPaths } from "./desktop-paths.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +44,28 @@ function configureUpdates(): void {
   ipcMain.handle("updates:install", () => { autoUpdater.quitAndInstall(false, true); return true; });
 }
 
+function desktopLlmSecretStore(path: string): LlmSecretStore {
+  const requireEncryption = () => {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error("Operating-system secret encryption is unavailable");
+    if (process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text") {
+      throw new Error("A Linux secret store such as Secret Service/KWallet is required for model credentials");
+    }
+  };
+  return {
+    load() {
+      if (!existsSync(path)) return { alternativeRoutes: {} };
+      requireEncryption();
+      return JSON.parse(safeStorage.decryptString(readFileSync(path))) as LlmSecretBundle;
+    },
+    save(secrets) {
+      requireEncryption();
+      const temporary = `${path}.${process.pid}.tmp`;
+      writeFileSync(temporary, safeStorage.encryptString(JSON.stringify(secrets)), { mode: 0o600 });
+      renameSync(temporary, path);
+    },
+  };
+}
+
 async function start(): Promise<void> {
   if (process.platform === "win32" && app.isPackaged) {
     const helperRoot = join(process.resourcesPath, "native", "win32-x64");
@@ -52,18 +75,43 @@ async function start(): Promise<void> {
   }
   const paths = resolveDesktopPaths(app.getPath("userData"));
   if (process.platform === "linux" && app.isPackaged) {
-    const helperRoot = join(process.resourcesPath, "native", "linux-x64");
-    process.env.TRACEFORGE_LINUX_SANDBOX_HELPER = join(helperRoot, "traceforge-linux-sandbox");
-    process.env.TRACEFORGE_NATIVE_HELPER_RELEASE_MANIFEST = join(helperRoot, "release.json");
-    process.env.TRACEFORGE_REQUIRE_NATIVE_HELPER_RELEASE_MANIFEST = "1";
-    process.env.TRACEFORGE_LINUX_SANDBOX_SCRATCH_ROOT = join(paths.root, "data", "linux-sandbox");
+    // Linux process readiness is granted only by the DEB-installed systemd
+    // launcher. Portable/direct launches intentionally leave the capability
+    // unavailable instead of treating a bundled helper as deployment proof.
+    const deploymentMode = process.env.TRACEFORGE_LINUX_DEPLOYMENT_MODE?.trim();
+    if (deploymentMode === "systemd-user-delegated-v1") {
+      process.env.TRACEFORGE_LINUX_SANDBOX_HELPER = "/usr/lib/traceforge/traceforge-linux-sandbox";
+      process.env.TRACEFORGE_NATIVE_HELPER_RELEASE_MANIFEST = "/usr/lib/traceforge/release.json";
+      process.env.TRACEFORGE_REQUIRE_NATIVE_HELPER_RELEASE_MANIFEST = "1";
+      delete process.env.TRACEFORGE_LINUX_DEPLOYMENT_STATUS;
+    } else {
+      delete process.env.TRACEFORGE_LINUX_SANDBOX_HELPER;
+      delete process.env.TRACEFORGE_NATIVE_HELPER_RELEASE_MANIFEST;
+      delete process.env.TRACEFORGE_LINUX_CGROUP_ROOT;
+      delete process.env.TRACEFORGE_LINUX_SANDBOX_SCRATCH_ROOT;
+      process.env.TRACEFORGE_REQUIRE_NATIVE_HELPER_RELEASE_MANIFEST = "1";
+      process.env.TRACEFORGE_LINUX_DEPLOYMENT_STATUS = "portable_or_direct_launch";
+    }
   }
   ensureDesktopData(paths);
   const webRoot = app.isPackaged ? join(process.resourcesPath, "web") : resolve(moduleDirectory, "../../web/dist");
-  server = await buildServer(paths.database, paths.mcpConfig, paths.llmConfig, paths.root, webRoot);
+  server = await buildServer(paths.database, paths.mcpConfig, paths.llmConfig, paths.root, webRoot, {
+    llmSecretStore: desktopLlmSecretStore(paths.llmSecrets),
+  });
   await server.listen({ host: "127.0.0.1", port: 0 });
   const address = server.server.address();
   if (!address || typeof address === "string") throw new Error("desktop server did not bind a TCP port");
+  const managementChannel = foundationHostControl(server).management();
+  const localOrigin = `http://127.0.0.1:${address.port}`;
+  session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ["<all_urls>"] }, (details, callback) => {
+    const requestUrl = new URL(details.url);
+    const localApi = requestUrl.origin === localOrigin && requestUrl.pathname.startsWith("/api/");
+    const localWebSocket = requestUrl.protocol === "ws:" && requestUrl.hostname === "127.0.0.1"
+      && requestUrl.port === String(address.port) && requestUrl.pathname === "/ws";
+    callback({ requestHeaders: localApi || localWebSocket
+      ? { ...details.requestHeaders, Authorization: managementChannel.headers().authorization }
+      : details.requestHeaders });
+  });
 
   mainWindow = new BrowserWindow({
     width: 1440, height: 920, minWidth: 1024, minHeight: 700,
@@ -78,7 +126,6 @@ async function start(): Promise<void> {
     return { action: "deny" };
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    const localOrigin = `http://127.0.0.1:${address.port}`;
     if (!url.startsWith(localOrigin)) { event.preventDefault(); if (/^https?:\/\//i.test(url)) void shell.openExternal(url); }
   });
   mainWindow.once("ready-to-show", () => mainWindow?.show());

@@ -19,7 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { revealLlmApiKey, type LlmConfigInput, type LlmConfig } from "../api.js";
+import { type LlmConfigInput, type LlmConfig } from "../api.js";
 import { useShallow } from "zustand/react/shallow";
 import { useAppTheme } from "../hooks/useAppTheme.js";
 
@@ -146,7 +146,6 @@ export function SettingsModal({
   const [outputPricePerMillion, setOutputPricePerMillion] = useState("");
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
-  const [revealingApiKey, setRevealingApiKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<{
@@ -160,7 +159,6 @@ export function SettingsModal({
     if (settingsModalOpen_) {
       if (!initialConfig) void loadLlmConfig();
       setShowApiKey(false);
-      setRevealingApiKey(false);
       setTestStatus({ status: "idle" });
       setFormError(null);
       setActiveSection("model");
@@ -175,7 +173,6 @@ export function SettingsModal({
     setApiKey(llmConfig.apiKeyMasked ?? "");
     setApiKeyDirty(false);
     setShowApiKey(false);
-    setRevealingApiKey(false);
     setBaseUrl(llmConfig.baseUrl ?? "");
     setJsonMode(llmConfig.jsonMode ?? "default");
     setContextWindowTokens(
@@ -210,36 +207,17 @@ export function SettingsModal({
   const requestClose = () => {
     if (isDirty && !globalThis.confirm("Discard unsaved settings changes?")) return;
     setShowApiKey(false);
-    setRevealingApiKey(false);
     setApiKey(llmConfig?.apiKeyMasked ?? "");
     setSettingsModalOpen(false);
   };
 
-  const toggleApiKeyVisibility = async () => {
-    if (revealingApiKey) return;
+  const toggleApiKeyVisibility = () => {
     if (showApiKey) {
       setShowApiKey(false);
       if (!apiKeyDirty) setApiKey(llmConfig?.apiKeyMasked ?? "");
       return;
     }
-    if (apiKeyDirty) {
-      setShowApiKey(true);
-      return;
-    }
-    if (!llmConfig?.apiKeyMasked) return;
-    setRevealingApiKey(true);
-    setFormError(null);
-    try {
-      const storedApiKey = await revealLlmApiKey();
-      setApiKey(storedApiKey);
-      setShowApiKey(true);
-    } catch (error) {
-      setFormError((error as Error).message);
-      setApiKey(llmConfig.apiKeyMasked);
-      setShowApiKey(false);
-    } finally {
-      setRevealingApiKey(false);
-    }
+    if (apiKeyDirty) setShowApiKey(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -367,16 +345,16 @@ export function SettingsModal({
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => void toggleApiKeyVisibility()}
-                  disabled={revealingApiKey || (!apiKeyDirty && !llmConfig?.apiKeyMasked)}
-                  aria-label={revealingApiKey ? "Revealing API key" : showApiKey ? "Hide API key" : "Show API key"}
-                  title={revealingApiKey ? "Revealing API key" : showApiKey ? "Hide API key" : "Show API key"}
+                  onClick={toggleApiKeyVisibility}
+                  disabled={!apiKeyDirty}
+                  aria-label={showApiKey ? "Hide newly entered API key" : "Show newly entered API key"}
+                  title={showApiKey ? "Hide newly entered API key" : "Show newly entered API key"}
                 >
-                  {revealingApiKey ? <CircleNotch size={15} className="tf-spin" /> : showApiKey ? <EyeSlash size={15} /> : <Eye size={15} />}
+                  {showApiKey ? <EyeSlash size={15} /> : <Eye size={15} />}
                 </Button>
               </div>
               {llmConfig?.apiKeyMasked && !apiKeyDirty && (
-                <div className="settings-key-status" role="status"><CheckCircle size={14} weight="fill" />{showApiKey ? "Visible until hidden or Settings closes." : "Stored securely. Reveal it or focus the field to replace it."}</div>
+                <div className="settings-key-status" role="status"><CheckCircle size={14} weight="fill" />Stored securely. Enter a replacement key to change it.</div>
               )}
             </div>
 

@@ -1,20 +1,19 @@
 import type Database from "better-sqlite3";
-import type { EvidenceGraphState } from "@traceforge/evidence-graph";
-import type { ScenarioEvent, ScenarioRunState } from "@traceforge/orchestration-core";
+import type { ScenarioRunState } from "@traceforge/orchestration-core";
 import { toolInvocationInputFingerprint, type WorkerModelRequest } from "@traceforge/worker-runtime";
-import type { CognitiveSnapshotRecord } from "@traceforge/cognitive-runtime";
+import {
+  CONTEXT_WITHHELD_TEXT,
+  projectRunContextLineage,
+  type CognitiveContextRole,
+  type CognitiveSnapshotRecord,
+  type ContextLineageDerivation,
+  type ContextLineageManifest,
+  type ContextLineageSource,
+  type RunContextInput,
+} from "@traceforge/cognitive-runtime";
 import { PackageContextDiscoverySource } from "./package-context-resources.js";
 import { SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 import type { SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
-
-type Role = "planner" | "observer" | "worker";
-interface Source { key: string; workId: string; fingerprint: string; refs: string[]; valid: boolean }
-interface Derivation { target_kind: "work" | "directive"; target_id: string; snapshot_id: string; sources_json: string }
-export interface RunContextInput { run: ScenarioRunState; graph: EvidenceGraphState; recentEvents: ScenarioEvent[] }
-export interface ContextLineageManifest {
-  version: 1; role: Role; fingerprint: string; sources: Source[]; parents: string[];
-  withheldWorkIds: string[]; withheldDirectiveIds: string[]; withheldNodeIds: string[]; omittedEvents: number;
-}
 
 /** Conservative structural provenance; never edits durable Run or Evidence Graph state. */
 export class RunContextPolicy {
@@ -36,13 +35,13 @@ export class RunContextPolicy {
         BEGIN SELECT RAISE(ABORT,'Context derivation is immutable'); END;`);
   }
 
-  private async lineage(run: ScenarioRunState, role: Role, readerWorkId?: string) {
+  private async lineage(run: ScenarioRunState, role: CognitiveContextRole, readerWorkId?: string) {
     const rows = this.sqlite.prepare(`SELECT idempotency_key,work_id,case_id FROM tool_invocation_bindings
       WHERE run_id=? AND tool_source=? ORDER BY idempotency_key LIMIT 257`).all(run.id, this.resources.source) as Array<{ idempotency_key: string; work_id: string; case_id: string }>;
     const derived = this.sqlite.prepare("SELECT target_kind,target_id,snapshot_id,sources_json,case_id FROM context_derivations WHERE run_id=? ORDER BY target_kind,target_id,snapshot_id LIMIT 513")
-      .all(run.id) as Array<Derivation & { case_id: string }>;
+      .all(run.id) as Array<ContextLineageDerivation & { case_id: string }>;
     if (rows.length > 256 || derived.length > 512 || run.workItems.length > 512 || run.outputs.length > 512 || run.directives.length > 512) throw new Error("Run context lineage budget exceeded");
-    const receipts = new SqliteToolReceiptStore(this.sqlite), sources: Source[] = [];
+    const receipts = new SqliteToolReceiptStore(this.sqlite), sources: ContextLineageSource[] = [];
     const selections = new Map<string, ReturnType<PackageContextDiscoverySource["selectionForReader"]> | null>();
     for (const row of rows) {
       if (row.case_id !== run.caseId) throw new Error("Context receipt Case mismatch");
@@ -72,57 +71,11 @@ export class RunContextPolicy {
     return { sources, derived, fingerprint };
   }
 
-  async fingerprint(run: ScenarioRunState, role: Role, readerWorkId?: string): Promise<string> { return (await this.lineage(run, role, readerWorkId)).fingerprint; }
+  async fingerprint(run: ScenarioRunState, role: CognitiveContextRole, readerWorkId?: string): Promise<string> { return (await this.lineage(run, role, readerWorkId)).fingerprint; }
 
-  async prepare(input: RunContextInput, role: Role, readerWorkId?: string) {
-    if (input.graph.caseId !== input.run.caseId || input.graph.nodes.length > 2048 || input.graph.edges.length > 4096 || input.recentEvents.length > 4096) throw new Error("Invalid Run context bounds or Case");
+  async prepare(input: RunContextInput, role: CognitiveContextRole, readerWorkId?: string) {
     const { sources, derived, fingerprint } = await this.lineage(input.run, role, readerWorkId);
-    const valid = new Set(sources.filter((s) => s.valid).map((s) => s.key));
-    const bad = sources.filter((s) => !s.valid);
-    const workIds = new Set(bad.map((s) => s.workId)), directiveIds = new Set<string>();
-    for (const row of derived) {
-      const keys = JSON.parse(row.sources_json) as string[];
-      if (!Array.isArray(keys) || keys.length > 256) throw new Error("Invalid context derivation");
-      if (keys.some((key) => !valid.has(key))) (row.target_kind === "work" ? workIds : directiveIds).add(row.target_id);
-    }
-    // Retry descendants inherit the source Work's contextual dependencies.
-    for (let n = 0; n < input.run.workItems.length; n++) {
-      let changed = false;
-      for (const work of input.run.workItems) if (work.retryOf && workIds.has(work.retryOf) && !workIds.has(work.id)) { workIds.add(work.id); changed = true; }
-      if (!changed) break;
-    }
-    if (bad.length) for (const directive of input.run.directives) {
-      if (!derived.some((d) => d.target_kind === "directive" && d.target_id === directive.id)) directiveIds.add(directive.id);
-    }
-    const tainted = new Set([...bad.flatMap((s) => [s.key, ...s.refs]), ...workIds, ...directiveIds,
-      ...input.run.outputs.filter((o) => workIds.has(o.producedByWorkId)).flatMap((o) => [o.id, ...o.refs])]);
-    const nodeIds = new Set<string>();
-    const visibleNodes = input.graph.nodes.filter((node) => node.caseId === input.run.caseId && (node.runId === null || node.runId === input.run.id));
-    for (const node of visibleNodes) if (node.source && tainted.has(node.source.ref)) nodeIds.add(node.id);
-    for (let n = 0; n < visibleNodes.length; n++) {
-      let changed = false;
-      for (const edge of input.graph.edges) {
-        const reverse = ["derived_from", "depends_on"].includes(edge.relation);
-        const source = reverse ? edge.targetId : edge.sourceId, target = reverse ? edge.sourceId : edge.targetId;
-        if (nodeIds.has(source) && !nodeIds.has(target)) { nodeIds.add(target); changed = true; }
-      }
-      if (!changed) break;
-    }
-    const request = structuredClone(input);
-    request.run.workItems = request.run.workItems.map((work) => workIds.has(work.id) ? {
-      ...work, title: omitted, objective: omitted, resultSummary: null, error: null, latestCheckpoint: null,
-      pendingApproval: null, approvalHistory: [],
-    } : work);
-    request.run.outputs = request.run.outputs.map((output) => workIds.has(output.producedByWorkId) ? { ...output, summary: omitted } : output);
-    request.run.directives = request.run.directives.filter((d) => !directiveIds.has(d.id));
-    request.graph.nodes = visibleNodes.map((node) => nodeIds.has(node.id) ? { ...structuredClone(node), title: omitted, summary: omitted, properties: {}, source: null } : structuredClone(node));
-    const visibleIds = new Set(request.graph.nodes.map((n) => n.id));
-    request.graph.edges = request.graph.edges.filter((e) => visibleIds.has(e.sourceId) && visibleIds.has(e.targetId))
-      .map((edge) => nodeIds.has(edge.sourceId) || nodeIds.has(edge.targetId) ? { ...edge, rationale: omitted } : edge);
-    if (bad.length || workIds.size || directiveIds.size) request.recentEvents = [];
-    const manifest: ContextLineageManifest = { version: 1, role, fingerprint, sources, parents: [...new Set(derived.map((d) => d.snapshot_id))],
-      withheldWorkIds: [...workIds], withheldDirectiveIds: [...directiveIds], withheldNodeIds: [...nodeIds], omittedEvents: input.recentEvents.length - request.recentEvents.length };
-    return { ...request, manifest: { contextLineage: manifest } };
+    return projectRunContextLineage(input, { role, sources, derived, fingerprint });
   }
 
   async projectWorker(input: WorkerModelRequest) {
@@ -139,7 +92,7 @@ export class RunContextPolicy {
     if (inheritedInvalid) {
       const work = projected.run.workItems.find((w) => w.id === input.assignment.work.id)!;
       request.assignment.work = { ...request.assignment.work, title: work.title, objective: work.objective, resultSummary: null, error: null, latestCheckpoint: null, pendingApproval: null, approvalHistory: [] };
-      request.transcript = []; request.steering = [omitted];
+      request.transcript = []; request.steering = [CONTEXT_WITHHELD_TEXT];
     } else if (m.withheldDirectiveIds.length) {
       request.steering = []; request.transcript = request.transcript.filter((t) => t.kind === "tool");
     }
@@ -178,5 +131,3 @@ export class RunContextPolicy {
     if (manifest?.sources.length || this.sqlite.prepare("SELECT 1 FROM tool_invocation_bindings WHERE run_id=? AND tool_source=? LIMIT 1").get(snapshot.runId, this.resources.source)) throw new Error("Resource-derived snapshot requires current context projection");
   }
 }
-
-const omitted = "Context-derived text withheld: source authorization or lifecycle is no longer current. Reassess from available evidence; original retained for audit.";

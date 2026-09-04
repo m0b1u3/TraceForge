@@ -1,13 +1,5 @@
 import type { Case, CaseSummary, ScenarioAgentEvent } from "@traceforge/shared";
 
-export interface McpToolInfo {
-  serverName: string;
-  toolName: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean };
-}
-
 export interface LlmConfig {
   provider: "anthropic" | "openai";
   model: string;
@@ -383,13 +375,4 @@ export async function testLlmConfig(input: LlmConfigInput): Promise<{ ok: boolea
   return (await ensureOk(await fetch("/api/config/llm/test", {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
   }), "Test LLM config")).json();
-}
-
-export async function revealLlmApiKey(): Promise<string> {
-  const response = await ensureOk(await fetch("/api/config/llm/reveal-key", { method: "POST" }), "Reveal LLM API key");
-  return ((await response.json()) as { apiKey: string }).apiKey;
-}
-
-export async function listMcpTools(): Promise<McpToolInfo[]> {
-  return (await ensureOk(await fetch("/api/mcp/tools"), "Load MCP tools")).json();
 }

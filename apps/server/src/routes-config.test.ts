@@ -4,7 +4,8 @@ import { createDb } from "./db/client.js";
 import { EventBus } from "./event-bus.js";
 import { registerRoutes } from "./routes.js";
 import { LlmConfigService } from "./llm-config-service.js";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import type { LlmSecretBundle } from "./llm-config-service.js";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,9 +19,13 @@ beforeEach(async () => {
   app = Fastify();
   const db = createDb(":memory:");
   const bus = new EventBus();
-  llmService = new LlmConfigService(join(tmp, "llm.json"));
+  let secrets: LlmSecretBundle = { alternativeRoutes: {} };
+  llmService = new LlmConfigService(join(tmp, "llm.json"), { secretStore: {
+    load: () => structuredClone(secrets),
+    save: (value) => { secrets = structuredClone(value); },
+  } });
   llmService.initializeFromConfig();
-  registerRoutes(app, db, bus, llmService.getProvider(), undefined, llmService);
+  registerRoutes(app, db, bus, llmService.getProvider(), llmService);
   await app.ready();
 });
 
@@ -34,13 +39,10 @@ describe("config routes", () => {
     expect(body.apiKeyMasked).toContain("•");
   });
 
-  it("POST /api/config/llm/reveal-key returns the stored key without caching it", async () => {
+  it("does not expose a route that reveals the stored key", async () => {
     const res = await app.inject({ method: "POST", url: "/api/config/llm/reveal-key" });
-
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ apiKey: "sk-old" });
-    expect(res.headers["cache-control"]).toBe("no-store");
-    expect(res.headers.pragma).toBe("no-cache");
+    expect(res.statusCode).toBe(404);
+    expect(res.body).not.toContain("sk-old");
   });
 
   it("POST /api/config/llm updates config and env", async () => {
@@ -52,6 +54,7 @@ describe("config routes", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().provider).toBe("anthropic");
     expect(res.json()).not.toHaveProperty("apiKey");
+    expect(readFileSync(join(tmp, "llm.json"), "utf8")).not.toContain("sk-new");
   });
 
   it("POST /api/config/llm/test returns 400 when model is missing", async () => {

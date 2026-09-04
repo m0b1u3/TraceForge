@@ -46,6 +46,12 @@ if (platform === "win32") {
   parseWindowsSandboxHelperProbe(result.stdout);
 }
 if (platform === "linux") {
+  if (!artifactName.endsWith(".deb")) throw new Error("The supported Linux Desktop artifact must be a DEB package");
+  const deploymentCheck = spawnSync(process.execPath, [resolve("scripts/verify-linux-deployment-assets.mjs")], {
+    cwd: resolve("."), encoding: "utf8",
+  });
+  if (deploymentCheck.error) throw deploymentCheck.error;
+  if (deploymentCheck.status !== 0) throw new Error(`Linux deployment asset verification failed: ${deploymentCheck.stderr.trim()}`);
   const helper = resolve(releaseDirectory, "linux-unpacked/resources/native/linux-x64/traceforge-linux-sandbox");
   if (!existsSync(helper) || statSync(helper).size === 0) throw new Error("Linux desktop release is missing the sandbox helper");
   if ((statSync(helper).mode & 0o111) === 0) throw new Error("Packaged Linux sandbox helper is not executable");
@@ -60,6 +66,35 @@ if (platform === "linux") {
     parseLinuxSandboxHelperProbe(result.stdout);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
+  }
+
+  const controlRoot = mkdtempSync(join(tmpdir(), "traceforge-deb-control-"));
+  try {
+    const control = spawnSync("dpkg-deb", ["--control", artifactPath, controlRoot], { encoding: "utf8" });
+    if (control.error) throw control.error;
+    if (control.status !== 0) throw new Error(`cannot inspect Linux DEB control archive: ${control.stderr.trim()}`);
+    for (const script of ["postinst", "postrm"]) {
+      const path = resolve(controlRoot, script);
+      if (!existsSync(path) || (statSync(path).mode & 0o111) === 0) throw new Error(`Linux DEB is missing executable ${script}`);
+      const syntax = spawnSync("sh", ["-n", path], { encoding: "utf8" });
+      if (syntax.error) throw syntax.error;
+      if (syntax.status !== 0) throw new Error(`Linux DEB ${script} syntax failed: ${syntax.stderr.trim()}`);
+    }
+    const postinstall = readFileSync(resolve(controlRoot, "postinst"), "utf8");
+    const postremove = readFileSync(resolve(controlRoot, "postrm"), "utf8");
+    if (!postinstall.includes("apparmor_parser -r") || !postinstall.includes("/usr/lib/traceforge")
+      || !postremove.includes("apparmor_parser -R")) {
+      throw new Error("Linux DEB lifecycle scripts do not contain the reviewed native policy installation boundary");
+    }
+    const contents = spawnSync("dpkg-deb", ["--contents", artifactPath], { encoding: "utf8" });
+    if (contents.error) throw contents.error;
+    if (contents.status !== 0 || !contents.stdout.includes("resources/native/linux-x64/traceforge-linux-sandbox")
+      || !contents.stdout.includes("resources/linux-deployment/traceforge-sandboxed")
+      || !contents.stdout.includes("resources/linux-deployment/apparmor/usr.lib.traceforge.traceforge-linux-sandbox")) {
+      throw new Error("Linux DEB does not contain the complete native helper and deployment asset set");
+    }
+  } finally {
+    rmSync(controlRoot, { recursive: true, force: true });
   }
 }
 console.log(`Verified ${basename(artifactPath)} (${statSync(artifactPath).size} bytes), version ${version}, sha512 and update metadata.`);

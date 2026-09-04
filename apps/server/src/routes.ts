@@ -4,7 +4,6 @@ import { getSqliteClient } from "./db/client.js";
 import { CaseStore } from "./stores/case-store.js";
 import type { EventBus } from "./event-bus.js";
 import type { LlmProvider } from "@traceforge/llm";
-import type { McpManager } from "@traceforge/extension";
 import type { CaseSummary } from "@traceforge/shared";
 import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
 
@@ -18,7 +17,6 @@ export function registerRoutes(
   db: Db,
   bus: EventBus,
   _provider?: LlmProvider,
-  mcp?: McpManager,
   llmService?: LlmConfigService,
   _projectRoot?: string,
 ): void {
@@ -85,11 +83,6 @@ export function registerRoutes(
 
   if (llmService) {
     app.get("/api/config/llm", async () => llmService.load());
-    app.post("/api/config/llm/reveal-key", async (_request, reply) => {
-      reply.header("cache-control", "no-store");
-      reply.header("pragma", "no-cache");
-      return { apiKey: llmService.revealApiKey() };
-    });
     app.post("/api/config/llm", async (request, reply) => {
       const body = request.body as LlmConfigDto;
       if (!body.provider || !body.model) return reply.code(400).send({ error: "provider and model are required" });
@@ -102,6 +95,4 @@ export function registerRoutes(
       return llmService.test(body);
     });
   }
-
-  app.get("/api/mcp/tools", async () => mcp?.listTools() ?? []);
 }

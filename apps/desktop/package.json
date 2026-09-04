@@ -13,7 +13,7 @@
     "dist": "pnpm build && electron-builder",
     "dist:win": "pnpm build && electron-builder --win nsis --publish never",
     "dist:mac": "pnpm build && electron-builder --mac dmg zip --publish never",
-    "dist:linux": "pnpm build && electron-builder --linux AppImage deb --publish never"
+    "dist:linux": "pnpm build && electron-builder --linux deb --publish never"
   },
   "dependencies": {
     "@traceforge/server": "workspace:*",
@@ -44,11 +44,23 @@
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true },
     "mac": { "target": ["dmg", "zip"], "category": "public.app-category.developer-tools", "hardenedRuntime": true, "gatekeeperAssess": false, "notarize": true },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": ["deb"],
       "category": "Development",
+      "executableName": "traceforge-desktop",
+      "desktop": { "entry": { "Exec": "/usr/bin/traceforge %U" } },
       "extraResources": [
-        { "from": "../../packages/execution-node/native", "to": "native", "filter": ["linux-x64/**/*"] }
+        { "from": "../../packages/execution-node/native", "to": "native", "filter": ["linux-x64/**/*"] },
+        {
+          "from": "../../packages/linux-sandbox-helper/packaging",
+          "to": "linux-deployment",
+          "filter": ["traceforge-sandboxed", "apparmor/usr.lib.traceforge.traceforge-linux-sandbox"]
+        }
       ]
+    },
+    "deb": {
+      "depends": ["apparmor", "libsecret-1-0", "systemd", "xdg-utils"],
+      "afterInstall": "../../packages/linux-sandbox-helper/packaging/deb-after-install.sh",
+      "afterRemove": "../../packages/linux-sandbox-helper/packaging/deb-after-remove.sh"
     },
     "publish": { "provider": "github", "owner": "m0b1u3", "repo": "TraceForge", "releaseType": "release" }
   }

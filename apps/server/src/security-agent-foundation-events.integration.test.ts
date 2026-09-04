@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { LlmProvider } from "@traceforge/llm";
-import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_HOST_CAPABILITIES } from "@traceforge/scenario-web-blackbox";
+import { WEB_BLACKBOX_CAPABILITIES } from "./test-fixtures/web-blackbox-descriptor.js";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { registerSecurityAgentFoundation } from "./security-agent-foundation.js";
-import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
+import { webBlackboxControlPlanePackage } from "./test-fixtures/web-blackbox-control-plane-package.js";
 import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
 import { foundationHostControl } from "./foundation-host-control.js";
 
@@ -25,11 +25,9 @@ describe("security agent foundation protocol events", () => {
     sqlite.prepare("INSERT INTO cases (id, name, status, scope_rules_json, created_at) VALUES (?, ?, ?, ?, ?)")
       .run("case_1", "Authorized assessment", "active", "{}", "2026-08-25T08:00:00.000Z");
     registerSecurityAgentFoundation(app, sqlite, unavailableProvider, root, () => false, {
-      scenarioPackageRegistry: new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]),
-      scenarioHostCapabilities: {
-        [WEB_BLACKBOX_HOST_CAPABILITIES.sessions]: {},
-        [WEB_BLACKBOX_HOST_CAPABILITIES.traffic]: {},
-      },
+      scenarioPackageRegistry: new ScenarioPackageRegistry([webBlackboxControlPlanePackage()]),
+      allowInProcessScenarioDevelopment: true,
+      allowLegacyScenarioContractDevelopment: true,
       scenarioPackageTrust:{allowUnreviewedDevelopmentPackages:true},
       autoScheduleIntervalMs: 60_000,
     });

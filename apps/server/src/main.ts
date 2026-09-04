@@ -8,15 +8,15 @@ import { existsSync } from "node:fs";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { EventBus } from "./event-bus.js";
 import { registerRoutes } from "./routes.js";
-import { McpManager, loadMcpConfig } from "@traceforge/extension";
-import { LlmConfigService } from "./llm-config-service.js";
+import { LlmConfigService, type LlmSecretBundle, type LlmSecretStore } from "./llm-config-service.js";
 import { registerSecurityAgentFoundation, type SecurityAgentFoundationOptions } from "./security-agent-foundation.js";
 import { startLocalExecutionNodeService } from "./execution-node-service.js";
 import { loadToolProviderTrustRoots } from "./tool-provider-control-plane.js";
 import type { ScenarioAuthorizationPort } from "@traceforge/scenario-sdk";
 import { readFoundationRestoreFence } from "./db/foundation-restore-fence.js";
 import { registerFoundationInspectionRoutes } from "./foundation-backup.js";
-import { registerFoundationHostControl } from "./foundation-host-control.js";
+import { foundationHostControl, registerFoundationHostControl } from "./foundation-host-control.js";
+import { loadOrCreateVaultKey, SqliteEncryptedSecretVault } from "./execution-session-gateway.js";
 import { resolveFoundationActiveDatabase } from "./foundation-recovery-activation.js";
 import { resolveFoundationDeployment } from "./foundation-deployment.js";
 import { loadScenarioHostConfiguration } from "./scenario-host-configuration.js";
@@ -53,11 +53,12 @@ export function resolveListenConfig(env: NodeJS.ProcessEnv = process.env): { hos
 
 export async function buildServer(
   dbPath = DEFAULT_DB_PATH,
-  mcpConfigPath = DEFAULT_MCP_CONFIG_PATH,
+  _mcpConfigPath = DEFAULT_MCP_CONFIG_PATH,
   llmConfigPath = DEFAULT_LLM_CONFIG_PATH,
   projectRoot = PROJECT_ROOT,
   webRoot?: string,
-  hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"|"deployment"> = {},
+  hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"|"deployment">
+    & { llmSecretStore?: LlmSecretStore } = {},
 ) {
   const app = Fastify({ logger: true });
   await app.register(cors, {
@@ -76,9 +77,10 @@ export async function buildServer(
     });
   }
 
-  const selected=resolveFoundationActiveDatabase(dbPath,hostOptions.recoveryActivation);
+  const { llmSecretStore: suppliedLlmSecretStore, ...foundationHostOptions } = hostOptions;
+  const selected=resolveFoundationActiveDatabase(dbPath,foundationHostOptions.recoveryActivation);
   const deploymentContext={databasePath:selected.path,activeCandidate:selected.candidate};
-  const effectiveHostOptions={...hostOptions,deployment:hostOptions.deployment?{...hostOptions.deployment,startupContext:deploymentContext}:undefined};
+  const effectiveHostOptions={...foundationHostOptions,deployment:foundationHostOptions.deployment?{...foundationHostOptions.deployment,startupContext:deploymentContext}:undefined};
   // Fail closed before opening/migrating the active database or connecting MCP/model/execution dependencies.
   const deployment=resolveFoundationDeployment(effectiveHostOptions.deployment,deploymentContext);
   const db = createDb(selected.path,{activeCandidate:selected.candidate});
@@ -94,14 +96,25 @@ export async function buildServer(
   }
   const bus = new EventBus();
 
-  const mcp = new McpManager();
-  const configs = loadMcpConfig(mcpConfigPath);
-  if (configs.length === 0) {
-    app.log.warn(`MCP config loaded no servers from ${mcpConfigPath}`);
+  if (existsSync(_mcpConfigPath)) {
+    app.log.warn({ configPath: _mcpConfigPath }, "Legacy MCP config is ignored; install MCP through the governed Provider/Profile path");
   }
-  await mcp.connectAll(configs);
 
-  const llmService = new LlmConfigService(llmConfigPath);
+  let llmVault: SqliteEncryptedSecretVault | undefined;
+  const vault = () => llmVault ??= new SqliteEncryptedSecretVault(sqlite, loadOrCreateVaultKey(projectRoot));
+  const llmSecretStore: LlmSecretStore = suppliedLlmSecretStore ?? {
+    load() {
+      let stored: LlmSecretBundle = { alternativeRoutes: {} };
+      try { stored = vault().get<LlmSecretBundle>("llm-config-secrets:v1"); }
+      catch (error) {
+        if (!(error instanceof Error) || !error.message.includes("is unavailable")) throw error;
+      }
+      const environmentKey = process.env.TRACEFORGE_LLM_API_KEY?.trim();
+      return environmentKey ? { ...stored, primary: environmentKey } : stored;
+    },
+    save(secrets) { vault().put("llm-config-secrets:v1", secrets); },
+  };
+  const llmService = new LlmConfigService(llmConfigPath, { secretStore: llmSecretStore });
   let llmConfigured = false;
   try {
     llmService.initializeFromConfig();
@@ -139,14 +152,14 @@ export async function buildServer(
     toolProviderTrustRoots: loadToolProviderTrustRoots(resolve(projectRoot, "config/tool-provider-trust-roots.json")),
   });
   // Register application APIs after the host transport fence. No unguarded legacy API back door.
-  registerRoutes(app, db, bus, provider, mcp, llmService, projectRoot);
+  registerRoutes(app, db, bus, provider, llmService, projectRoot);
 
   app.get("/api/health", async () => {
     const executionNode = await executionNodeService.health();
     return {
       status: "ok",
       llmConfigured,
-      mcpTools: mcp.listTools().length,
+      mcpTools: 0,
       executionNodeReady: executionNode.state !== "stopped",
       executionProcessReady: executionNode.processReady,
       executionNode,
@@ -160,11 +173,14 @@ export async function buildServer(
   });
 
   app.addHook("onClose", async () => {
-    await Promise.all([mcp.closeAll(), executionNodeService.close()]);
+    await executionNodeService.close();
   });
 
   return app;
 }
+
+export { foundationHostControl };
+export type { LlmSecretBundle, LlmSecretStore };
 
 // 直接运行时启动（用 pathToFileURL 规范化，跨平台可靠：Windows 下 argv[1] 是反斜杠路径，
 // 直接拼 file:// 永不等于 import.meta.url，会导致 listen 不执行、进程空跑退出）

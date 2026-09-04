@@ -9,6 +9,7 @@
     "@traceforge/evidence-graph": "workspace:*",
     "@traceforge/orchestration-core": "workspace:*",
     "@traceforge/shared": "workspace:*",
-    "@traceforge/worker-runtime": "workspace:*"
+    "@traceforge/worker-runtime": "workspace:*",
+    "zod": "^3.24.0"
   }
 }

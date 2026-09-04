@@ -4,16 +4,16 @@ import {
   DurableScenarioRuntime,
   ScenarioDefinitionRegistry,
 } from "@traceforge/orchestration-core";
-import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "@traceforge/scenario-web-blackbox";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "./test-fixtures/web-blackbox-descriptor.js";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
 import { SqliteScenarioEventStore } from "./scenario-event-store.js";
 import {
   RunObserverSupervisor,
-  SqliteRunObserverStore,
   type RunObserverDecision,
   type RunObserverModel,
-} from "./run-observer.js";
+} from "@traceforge/cognitive-runtime";
+import { SqliteRunObserverStore } from "./run-observer.js";
 
 const open: Database.Database[] = [];
 const at = "2026-08-25T08:00:00.000Z";

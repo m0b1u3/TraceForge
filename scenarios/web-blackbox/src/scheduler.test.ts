@@ -6,7 +6,7 @@ import {
   type ScenarioWorkItem,
   type WorkerDescriptor,
 } from "@traceforge/orchestration-core";
-import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "./index.js";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "../test-fixtures/descriptor.js";
 
 const now = "2026-08-24T08:00:10.000Z";
 

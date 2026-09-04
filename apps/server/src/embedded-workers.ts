@@ -32,7 +32,7 @@ import {
   type ToolProviderRecoverySnapshot,
   type WorkerModelContextPolicy,
 } from "@traceforge/worker-runtime";
-import { StructuredWorkerModel } from "./structured-worker-model.js";
+import { StructuredWorkerModel } from "@traceforge/cognitive-runtime";
 import { ExecutionNodeProcessTool, SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 import { EvidenceGraphMutateTool, EvidenceGraphSnapshotTool } from "./evidence-graph-tools.js";
 import type { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LlmProvider } from "@traceforge/llm";
 import type { WorkerModelRequest } from "@traceforge/worker-runtime";
-import { StructuredWorkerModel } from "./structured-worker-model.js";
+import { StructuredWorkerModel } from "@traceforge/cognitive-runtime";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
 import { SqliteScenarioAgentEventStream } from "./scenario-agent-event-stream.js";
@@ -42,7 +42,7 @@ function provider(result: unknown): LlmProvider {
 describe("StructuredWorkerModel", () => {
   it("refuses a stale prepared projection before calling the provider", async () => {
     let checks = 0; let calls = 0;
-    const model = new StructuredWorkerModel({ async extractJson() { calls++; return { type: "complete", summary: "Done", outputs: [] }; }, async runTools() { throw new Error("unused"); } },
+    const model = new StructuredWorkerModel({ async extractJson() { calls++; return { type: "complete", summary: "Done", outputs: [] }; } },
       undefined, undefined, undefined, undefined, { async prepare(value) {
         checks++; return { request: { ...value, steering: checks === 1 ? ["original"] : ["withdrawn"] }, manifest: {} };
       } });

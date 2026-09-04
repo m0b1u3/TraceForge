@@ -5,7 +5,7 @@ import {
   RevisionConflictError,
   ScenarioDefinitionRegistry,
 } from "@traceforge/orchestration-core";
-import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "@traceforge/scenario-web-blackbox";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "./test-fixtures/web-blackbox-descriptor.js";
 import type Database from "better-sqlite3";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteScenarioEventStore, SqliteWorkerRegistry } from "./scenario-event-store.js";

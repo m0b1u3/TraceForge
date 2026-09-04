@@ -5,14 +5,14 @@ import {
   DurableScenarioRuntime,
   ScenarioDefinitionRegistry,
 } from "@traceforge/orchestration-core";
-import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "@traceforge/scenario-web-blackbox";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "./test-fixtures/web-blackbox-descriptor.js";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
 import { SqliteRunObserverStore } from "./run-observer.js";
 import { SqliteRunPlannerStore } from "./run-planner.js";
 import { registerScenarioRoutes } from "./scenario-routes.js";
 import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
-import { WEB_BLACKBOX_PACKAGE } from "@traceforge/scenario-web-blackbox";
+import { webBlackboxControlPlanePackage } from "./test-fixtures/web-blackbox-control-plane-package.js";
 import {
   registerScenarioCollaborationRoutes,
   ScenarioCollaborationSnapshotService,
@@ -28,6 +28,7 @@ afterEach(() => {
 });
 
 async function setup() {
+  const webPackage = webBlackboxControlPlanePackage();
   const app = Fastify();
   const db = createDb(":memory:");
   const sqlite = getSqliteClient(db);
@@ -36,7 +37,7 @@ async function setup() {
     .run("case_1", "Authorized assessment", "active", "{}", "2026-08-25T08:00:00.000Z");
   registerScenarioRoutes(app, sqlite, {
     definitions: new ScenarioDefinitionRegistry([WEB_BLACKBOX_SCENARIO]),
-    packages: new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]),
+    packages: new ScenarioPackageRegistry([webPackage]),
     now: () => now,
     createId: () => "lease_1",
     controlPlane: { leaseDurationMs: 60_000, heartbeatTimeoutMs: 30_000, concurrencyRetries: 3 },

@@ -1,6 +1,6 @@
 # TraceForge 当前开发进度与生产化计划
 
-更新日期：2026-09-03
+更新日期：2026-09-04
 
 当前排期调整（2026-08-31，用户要求）：跳过实际 24/72 小时超长长稳测试，状态记为“暂缓、未执行”，不再作为后续底座开发的前置阻塞。
 保留测试入口、已有短时结果及长期稳定性风险，不安排自动或后台长跑，也不将跳过等同于验收通过。
@@ -8,6 +8,9 @@
 
 追加排期调整（2026-08-31，用户要求）：真实模型联调也先跳过，状态记为“暂缓、未执行”，待用户后续提供模型配置再恢复。
 保留验收入口及 `not_run / modelApiCalls=0` 的实际结果，不作为后续通用底座开发的前置阻塞，不以离线回归替代真实模型验收。
+
+整改优先级调整（2026-09-03，用户要求）：以 [TraceForge 继续开发前整改计划](remediation-plan-2026-09-03.md) 作为后续任务基线。
+三个 P0 已在同一批次完成：Desktop 本机控制通道和 LLM Secret Store 已接线，旧 MCP 直接启动/路由已拆除，Web 0.1 同进程/direct Browser 实现已删除。Linux 本机部署的仓库实现也已闭环：正式 Linux Desktop 收窄为 DEB，安装 AppArmor 与固定 helper/manifest，并由瞬态 systemd user scope 提供本机 cgroup delegation；便携/直接启动明确关闭进程能力。协议 2/19 类真机终验等待可用 Linux x64。Web Scenario 的手写运行物已完成 6 个 TypeScript 模块与可复现签名构建；Cognitive Runtime 已承接 Planner、Observer、Structured Worker 的完整模型决策监督和上下文治理。Brokered Browser 的无场景 Core、Host/Controller 协议、Chromium CDP 策略、真实 pipe transport、页面观察/动作、人工接管恢复、可复现 Controller bundle、真实 macOS Chrome 集成、Build Attestation、Source Lock、离线评审签名、安全解压和 v3 整树发行安装门禁均已实现；当前只继续执行官方 Chromium 固定源码的真实双构建、SBOM/NOTICE、安全/许可证材料、各平台锁定产物和可用真机上的原生隔离证明。生产 Browser 在这些验收完成前保持关闭。随后才用最小 Code Audit Scenario 验证底座通用性。Foundation 整改与 Scenario 整改分别归档，不把 Web 语义写回 Core。
 
 ## 1. 项目目标
 
@@ -57,10 +60,11 @@ Security Agent Runtime，并进入底座生产化阶段；Core、Agent Runtime�
 | Provider-to-Host 反向能力 Broker | 底座主链已实现：Core、双向 RPC、持久化授权、可选 Host Registry 和中性真实子进程验收通过；具体能力 Adapter 冻结到场景阶段 |
 | Tool Provider 恢复与隔离 | 主链、七类记录逻辑容量、v2 精确续跑、受控归档/回读已实现；物理空间准入、WAL 维护、授权快照迁移/清理与连续组合验收入口已交付；真实 24/72 小时长稳、全卷容量、永久键扩展和平台发布验收仍未完成 |
 | 受控执行来源外部占用 | 默认 Managed Provider、内置进程、MCP 和显式注册的自定义来源/Scenario Process 共享配额与重启围栏；生产 Scenario 工具工厂和授权/输出回调均在调用前拒绝，开发兼容须分别显式 opt-in；原生可信签发仍关闭 |
-| 单用户宿主管理/Worker 通道 | 生产默认能力票据门禁、Worker/定义/租约绑定、撤销/轮换/重启失效已实现；旧匿名 API 不兼容，桌面本机受信桥接仍未完成；不是多用户账号系统、远程管理系统或同进程 JS 沙箱 |
+| 单用户宿主管理/Worker 通道 | 生产默认能力票据门禁、Worker/定义/租约绑定、撤销/轮换/重启失效及 Desktop Main 的精确 loopback API/WS 注入已实现；旧匿名 API 不兼容，打包后 Electron 人工冒烟尚未执行；不是多用户账号系统、远程管理系统或同进程 JS 沙箱 |
 | 上下文资源包迁移 | context-only 完整资源清单的 Ed25519 导出/导入、原子发布、授权审计与持续信任校验已接生产宿主；目标须已有匹配契约，混合资产/可执行 Scenario 迁移未实现 |
 | Linux 可证明沙箱后端 | 原生 Rust Helper、构建/发布门禁、严格探测/measurement/enforcement Contract、stdio 与 framed PTY 生产路径已完成；Ubuntu 24.04 x64 的协议 1/16 类历史验收保留，当前协议 2/19 类矩阵尚待 Linux 实机重跑。其他 Linux 平台矩阵、独立可信报告签发与正式安全审计仍未完成，失败时无普通进程回退 |
-| Brokered Browser、多节点调度、统一运维控制台 | 未实现；远程 Execution Node 与多节点调度均已排除出当前产品范围，不作为底座缺口或后续优先级 |
+| Brokered Browser Runtime | 通用 Core、Host/进程双向控制协议、Chromium CDP 策略、真实 FD 3/4 pipe、DOM/截图 Artifact、稳定引用、有界动作、人工接管恢复、可复现 Controller bundle、macOS arm64 Chrome 152 真实全链、官方源码 Build Attestation、Source Lock、离线 Ed25519 评审权威、安全解压和 v3 完整安装树门禁已实现；仍缺实际 Chromium 双构建、真实 SBOM/NOTICE 与评估、各平台锁定产物及 Linux/Windows 原生“不走 Broker 无法联网”证明，生产能力继续关闭 |
+| 多节点调度、统一运维控制台 | 远程 Execution Node 与多节点调度已排除出当前产品范围；统一运维 UI 不在当前底座开发范围 |
 
 目标依赖方向按六层约束，依赖只能向下指向 Contract，底层不得反向认识 Application：
 
@@ -96,7 +100,7 @@ Security Execution Runtime
 - `web_blackbox` 的新版数据描述、阶段、Worker 拓扑、声明式授权/输出、Skill、Knowledge 和进程工具位于
   `scenarios/web-blackbox`。独立 `scenario-sdk` 只暴露通用 Package、Authorization、Evidence、Capability Registry
   和 Governed Execution 装配端口；通用 Foundation 与产品入口均不知道 Web 场景常量。场景进程只能申请 Package 明确声明且宿主提供的通用授权、
-  Execution Node 受控 HTTP、Artifact、State、Evidence、Session 和 Traffic；旧同进程 Web 工厂只保留为历史测试/迁移代码，不再进入生产组合根。
+  Execution Node 受控 HTTP、Artifact、State、Evidence、Session 和 Traffic；旧同进程 Web 工厂、direct Browser 工具及其生产依赖已经删除，控制面回归只使用无网络测试 fixture。
 
 ### 3.2 统一证据图谱
 
@@ -210,9 +214,9 @@ replay 与关闭后的迟到响应隔离。Scenario Process 侧已经接入通�
 首个 Web 包已通过这些端口保存结构化探索状态、使用 Vault 内秘密句柄和 Cookie Jar，并关联脱敏流量、网络回执、工件和证据。Managed Provider 的文件或浏览器 Adapter 仍未注册，后续只有真实场景需要时才按
 最小能力装配，不能把场景能力变成全局默认。
 
-### 4.4 Web Browser 尚未进入可用执行链
+### 4.4 Browser Runtime 真实本机链已通过，等待正式发行物与原生隔离验收
 
-原生 HTTP 已经走 Broker，但 Browser Worker 目前仍因缺少强制代理后端而关闭。需要完成浏览器进程沙箱、CDP 控制通道、所有页面/弹窗/下载/Service Worker 流量强制代理、人工接管和会话恢复，才能禁止直连的同时投入黑盒场景。
+`@traceforge/browser-runtime` 已把 Browser Process 固定为 Execution Node 启动且 OS `network=deny`，并要求 Controller 在开放请求前证明 pipe、联网前暂停、Service Worker 禁用和下载/WebSocket 拦截。Host 侧 Controller 已通过 Execution Node stdin/stdout 实现有界长度帧、审核身份/版本/摘要握手、激活门禁、稳定控制操作 ID、事件丢失/截断/进程退出失败关闭和迟到响应隔离。navigation、redirect、popup、iframe、fetch/XHR 与 download 分别复检所有权和网络授权后，才由 Host 调用现有 HTTP Broker；WebSocket 在流式 Broker 完成前阻断。macOS arm64 Chrome 152 已真实跑通 pipe、302 redirect、popup、同进程 iframe、页面请求、下载、DOM/截图/动作、人工接管恢复、renderer crash 和 bundle 正常关闭，并据此修复 iframe 误分类与 shutdown 悬挂。v3 发布身份同时核对官方源码 Build Attestation、离线评审、Controller、Chromium 启动文件和完整安装树，原子装配拒绝覆盖已有目录且复制前后必须同摘要。当前缺口是实际完成固定 Chromium commit 的独立双构建、真实安全/许可证材料和各平台可再分发 release tree，并在 Linux/Windows 真机证明 Browser Process 无法绕过 Broker 联网；这些验收完成前 Browser Provider 仍关闭。
 
 ### 4.5 Web 黑盒的场景认知策略还不完整
 
@@ -228,9 +232,9 @@ replay 与关闭后的迟到响应隔离。Scenario Process 侧已经接入通�
 
 ### 4.7 `apps/server` 同时承担 API、组合根和大量 Runtime 实现
 
-当前 `apps/server` 不只是 Fastify Adapter：Planner/Observer、Hypothesis 与 Artifact 调度、认知上下文、
-Model Runtime/Admission、Evidence Store、Execution Session 和 Provider Control Plane 的大量实现都位于其中；
-而 `packages/reasoning-core` 相对较薄。这会迫使未来 Desktop、CLI 或分布式 Coordinator 依赖 Server 内部代码，
+当前 `apps/server` 仍不只是 Fastify Adapter：Planner/Observer 的通用决策监督、Model Runtime/Admission 和上下文血缘投影已迁入 packages，
+Structured Worker Model 也已迁入 Cognitive Runtime，但 Hypothesis 与 Artifact 调度、Evidence Store、Execution Session 和 Provider Control Plane 的大量实现仍位于其中；
+而 `packages/reasoning-core` 相对较薄。这会迫使未来 Desktop、CLI 或其他本机组合入口依赖 Server 内部代码，
 也让 Application、Runtime、Persistence Adapter 与 Transport 边界难以验证。
 
 这一问题不能通过按文件数量机械拆包解决。应先完成 Scenario Contract 和依赖方向，再按稳定职责逐步提取
@@ -260,7 +264,7 @@ URL、协议、漏洞类型、状态码、工具或策略硬编码回 Core/Found
 6. Linux 可证明执行后端的仓库实现已完成；协议 2/19 类 Linux 实机重跑与 Windows 双模式仍是外部发布门槛，证明缺失时能力继续关闭。
 7. ~~底座长期运行可靠性、Codex 通用 Runtime 机制吸收及仓库完成度审查。~~ 仓库主链已收口；真实模型、24/72 小时长稳和原生平台矩阵按既定口径保留为外部发布验收，不再继续堆叠没有真实调用路径的控制层。
 8. ~~**首个真实安全 Scenario Package 接入。**~~ Web 黑盒已从应用入口硬编码对象迁到审核目录中的 `scenario.json`、Scenario Process、Skill/Knowledge 与宿主 Profile 装配；缺省保持零场景。
-9. **当前阶段：Web 黑盒场景闭环。** 结构化 HTTP 探索、受控认证会话与脱敏流量历史已经落地；下一批完成业务流程/参数/身份关系建模和单任务因果验证。Browser 在 HTTP 主链证明不足以覆盖真实页面状态后再按完整安全门槛实现，不提供直连临时版。
+9. **当前阶段：Brokered Browser Runtime 正式发行门禁。** 通用 Core、Host/进程协议、Chromium CDP 策略、真实 pipe、页面能力、人工接管、可复现 Controller、macOS 真实 Chrome 全链、官方源码 Build Attestation 和整树身份/原子装配已经完成；下一整批在可用构建环境上执行固定 Chromium commit 的独立双构建并生成真实 SBOM/NOTICE、安全/许可证评估和平台签名产物。Linux/Windows 原生隔离证明仍等待可用真机，期间不引入远程执行节点；不提供 direct Browser 临时版，也不提前开发应用 UI 或 Web Scenario 适配。
 
 同一优先级内只允许并行处理依赖方向已经稳定、不会扩大场景耦合的工作；不得以“并行开发”为由
 绕过底座冻结边界。场景的端到端效果可以驱动 Package 自身演进，但不能直接变成底座领域规则。
@@ -1131,9 +1135,9 @@ Skills/知识资源/MCP 的通用装配，也未完成真实多日负载、实�
 
 ### P1：Linux 可证明执行后端
 
-当前状态：严格 Host Contract 和 Linux Rust helper 源码/装配/出包门禁已完成。底座只识别 TraceForge Linux native helper，
+当前状态：严格 Host Contract、Linux Rust helper、DEB 安装/卸载/升级回滚接线和 fail-closed Desktop 装配已完成。底座只识别 TraceForge Linux native helper，
 完整核对 namespace、cgroup v2、seccomp、`no_new_privileges`、文件/网络/资源与进程树屏障探测，并在宿主启动和每次执行之间固定 Helper
-SHA-256；替换或证明缺项均关闭执行。helper 已实现原子 cgroup 归属、独立 namespace、最小文件根、capability 清除、受控环境、
+SHA-256；替换或证明缺项均关闭执行。DEB 以固定 root-owned 路径安装 helper/manifest 和 AppArmor Profile，当前登录用户经瞬态 `Delegate=yes` systemd user scope 启动，不创建远程节点或系统 daemon。便携/直接启动明确关闭进程能力。helper 已实现原子 cgroup 归属、独立 namespace、最小文件根、capability 清除、受控环境、
 资源监督、进程树清空以及 stdio/framed PTY。Ubuntu 24.04 x64 已保留协议 1/16 类历史证明；当前协议 2/19 类矩阵、第二发行版/内核与正式安全审计尚未完成，因此仍不能签发当前版本的生产平台证明，也没有普通 `child_process.spawn()` 回退。
 
 开发内容：
@@ -1144,7 +1148,7 @@ SHA-256；替换或证明缺项均关闭执行。helper 已实现原子 cgroup �
   已完成；平台侧生成这些事实的 native 实现仍待验收。
 - ~~实现 Linux native helper 源码、framed PTY 与 Linux-only 打包/真实 probe 门禁。~~ 已完成；当前协议 2 的目标发行版构建产物、可复现性和 19 类实机矩阵待执行。
 - ~~使用独立 user/pid/mount/ipc/uts/network namespace、受控工作目录和最小 capability；不允许继承宿主敏感环境变量或凭据。~~ 已完成源码与契约，待实机对抗验收。
-- 明确 rootless user namespace + 受管 cgroup delegation 的安装边界、发行版配置与升级撤销；缺少某项强制属性时继续按能力关闭。
+- ~~明确 rootless user namespace + 受管 cgroup delegation 的安装边界、发行版配置与升级撤销；缺少某项强制属性时继续按能力关闭。~~ 仓库实现已完成；正式 Linux Desktop 为 DEB-only，实机安装/卸载/失败升级验收待执行。
 - 逃逸、资源耗尽、孤儿进程、helper/上层宿主崩溃与启动恢复已有协议 1 的 Ubuntu 实机覆盖；仍需在协议 2 重跑并补不受支持内核、第二发行版和 Windows 对应矩阵。
 
 验收条件：Linux 后端只能在所有声明约束均有可验证证明时返回成功；Provider 和工具无法绕过网络、
@@ -1154,7 +1158,7 @@ SHA-256；替换或证明缺项均关闭执行。helper 已实现原子 cgroup �
 ### P1：将 Runtime 从 `apps/server` 提取为可复用 packages
 
 当前状态：已开始逐片提取。实际依赖图记录在 `docs/architecture/runtime-dependency-map.md`；当前 Server 有
-102 个非测试生产文件，其中 17 个直接依赖 Fastify、50 个直接依赖 SQLite/Drizzle 或数据库模块。
+166 个非测试生产文件，按直接 import 粗查 46 个依赖 Fastify、107 个依赖 SQLite/Drizzle 或数据库模块。
 `@traceforge/model-runtime` 的 Admission 与 Execution slices 已落地，目标仍是让 Server 回到 Transport、Adapter、Persistence Wiring
 与 Composition Root，而不是简单追求目录变小。
 
@@ -1192,7 +1196,10 @@ Fastify、SQLite、LLM Provider 或具体 Scenario。第三片新增 `CognitiveE
 不再各自维护生命周期。第四片迁移 `BlackboardChangeBus`，新增 Cursor Port 与 `CognitiveWakeGate`，统一 durable/
 volatile 语义去重，Observer 删除自身的游标分支。第五片新增 `CognitiveLoopScheduler`，统一 wake 合并、
 单 tick 所有权、停止排空、正常轮询和错误退避；Planner 与 Observer 只注入 tick、下一轮询间隔和错误处理，
-不再各自维护定时器状态机。Run 枚举、评估、Prompt、决策 Schema 与应用策略仍留在调用方。
+不再各自维护定时器状态机。第六片新增 `projectRunContextLineage` 与 package-owned `assembleRunContext`，在无
+Fastify/SQLite 的 Runtime 中完成失效来源、重试后代、指令、输出和证据图的保守投影，并固定先投影后压缩；
+Server 只保留 Tool Receipt、Package Context、Snapshot 和 derivation SQLite Adapter，旧私有装配模块已删除。
+第七片把 Planner/Observer 的 Run 枚举、Prompt、决策 Schema、合法性校验、语义去重、模型快照监督、循环调度、并发重试与幂等命令应用整体迁入 package，并以 Event/Graph/Evaluation/Model/Context Ports 隔离宿主；Server 的两个文件只保留 SQLite Store 和 Fastify 查询路由，Composition 直接装配 package 类。第八片继续迁移 Structured Worker 的提示词、决策 Schema、上下文裁剪/压缩、模型快照、取消检查和授权复检；Server 原实现文件删除，Embedded Worker 直接消费 package。工具副作用、租约、Checkpoint 和结果提交仍归 WorkerHost。
 
 阶段 C：多宿主验收
 
@@ -1221,14 +1228,15 @@ volatile 语义去重，Observer 删除自身的游标分支。第五片新增 `
 - SQLite 查询与 Fastify request/reply 类型不得泄漏到 Runtime public API；Adapter 负责转换。
 - 提取完成后删除 Server 中的旧实现，不长期保留双写、双运行时或兼容代理层。
 
-### P1（场景后续门槛）：Web 黑盒包内的 Brokered Browser Execution
+### P1（当前底座里程碑）：Brokered Browser Execution
 
 开发内容：
 
-- 通过 Execution Node 启动浏览器进程并验证沙箱证明。
-- 建立强制 HTTP/SOCKS 代理后端，覆盖导航、重定向、弹窗、iframe、下载、WebSocket 和 Service Worker。
-- 浏览器 Session 与 Identity/Vault、Cookie、Traffic、Evidence Graph 和租约绑定。
-- 支持 DOM 快照、稳定元素引用、页面差异蒸馏、截图 Artifact 和人工接管后恢复。
+- ~~通过 Execution Node 启动浏览器进程并验证沙箱证明；逐请求 HTTP Broker、租约冻结、下载 Artifact 与有界审计。~~ Core 已完成，生产装配仍关闭。
+- ~~实现 Host/进程双向协议、可度量身份握手、CDP Target auto-attach、脚本释放前 Fetch 拦截、popup/iframe/worker 接管、Service Worker 关闭、磁盘下载禁止和断线/迟到响应隔离。~~ 已完成。
+- ~~实现真实 Chromium `--remote-debugging-pipe` FD 3/4 transport、固定参数/环境、浏览器摘要与运行版本复核，以及 Controller/Browser 双材料发布身份和启动装配合同。~~ 已完成；真实发行 bundle/Chromium 打包与平台集成验收仍待执行，WebSocket 在完成有界双向 Broker 前保持阻断。
+- 在通用宿主端把浏览器 Session 与授权身份、Artifact/Evidence 和租约绑定；Cookie、Traffic 与登录流程仍由后续 Web Scenario Adapter 负责。
+- ~~支持 DOM 快照、稳定元素引用、页面差异蒸馏、截图 Artifact 和人工接管后恢复。~~ 底座协议、Artifact 验真、动作围栏和人工通道已完成；应用人机界面留到应用阶段。
 - 不引入 Burp 依赖，也不提供直连回退。
 
 验收条件：浏览器无法绕过授权代理；身份撤销或租约过期立即冻结会话；人工接管后 Worker 能从持久化状态继续。
@@ -1676,12 +1684,21 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
 
 ## 6. 当前质量基线
 
+- 2026-09-04 Browser 真实集成/整树发行身份批次：macOS arm64 的 Chrome 152 真实跑通 pipe、navigation、302 redirect、popup、同进程 iframe、fetch/XHR、Artifact-backed download、DOM/截图/动作、人工接管恢复、renderer crash 通知，以及可复现单文件 Controller 的严格 manifest/stdio/正常退出链；页面全部由内存 Broker 注入，未访问外部目标。真实浏览器揭示并修复同进程 iframe 被误判普通 document、正常 shutdown 未销毁 stdin 导致 Controller 悬挂两项缺陷。发布清单升级为 v2，Controller 和浏览器启动文件之外还绑定完整安装树的文件内容、权限、目录与根内相对软链接；原子装配只写全新目标，复制前后摘要不一致即拒绝。Browser 短回归 12 文件/52 项、真实集成 1 文件/2 项、71,629 字节 bundle 可复现检查、16 packages/Server 编译和 304 个生产源码边界检查通过。开发机 Chrome 不是正式可再分发材料，本次真实运行不具备 Linux/Windows 原生 `network=deny` 证明，也没有运行真实模型、超长全量或 Linux 真机测试；生产 Browser 继续关闭，不接应用或 Scenario。
+- 2026-09-04 Browser 页面交互/人工接管批次：新增有界 Accessibility Tree DOM Artifact、视口 PNG Screenshot、DOM 差异摘要、`generation/page/document/backendNodeId` 元素引用和 navigation/click/editable-only fill/固定键动作；Controller 只接受最近 DOM 观察实际签发的元素，Host 二次核对 base64、长度、SHA-256、MIME、严格 DOM schema 和代次后才写 Artifact。人工接管使用独立 takeover ID 与 manual observe/act 通道，网络仍经相同 Broker；接管/恢复双换代，Agent/人工旧引用全部失效，Snapshot 有界记录 Artifact、动作来源/输入摘要和控制权转换。新增严格 CLI/stdio 入口，Controller 可确定性打成 64,196 字节的单文件 Node 22 ESM bundle，构建检查禁止残留相对/workspace 运行依赖。Browser 短回归 10 文件/48 项、可复现 bundle 检查、16 packages/Server 编译和 302 个生产源码边界检查通过。本批没有运行真实 Chromium、原生平台联网、真实模型、超长全量或 Linux 真机测试，也没有修改应用或 Scenario；生产 Browser 继续关闭。
+- 2026-09-04 Chromium pipe/发布身份批次：新增真实 `--remote-debugging-pipe` FD 3/4 transport，完成 NUL 分帧、单消息/总缓冲/在途命令/启动/命令/退出上限、失联强杀、stderr 原文扣留、固定安全参数与环境白名单，以及 Chromium 文件 SHA-256 和 `Browser.getVersion` 双核对；`--no-sandbox`、调试端口、代理、替换 profile 和未知环境均在启动前拒绝。严格发布清单同时绑定 Controller/Browser 文件名、版本、摘要、平台与架构，bootstrap 复核两个安装文件后只能走 pipe → CDP Adapter → Controller Process Runtime 的正式链。Browser 全链短回归 8 文件/37 项通过；Foundation 的 16 packages、Server 编译和 299 个生产源码边界检查通过。本批没有构建真实 Controller bundle/Chromium 发行物，也没有运行真实浏览器、原生平台联网、真实模型、超长全量或 Linux 真机测试；生产 Browser 继续关闭。
+- 2026-09-04 Browser Controller 进程/CDP 策略批次：新增进程侧版本化帧 Runtime 与 Chromium CDP Adapter，完成 handshake/activate/request-result/shutdown 闭环、Target auto-attach、`waitForDebuggerOnStart`、新 page/popup/iframe/worker 的 request-stage Fetch 拦截、Service Worker 释放前关闭、未知 target detach、全局磁盘下载 deny、POST 原始 base64 entries 保留、Host Broker 响应注入、拒绝 `BlockedByClient`、Artifact-backed 下载核对及错误/超时退出。Browser 全链短回归 5 文件/27 项通过；Foundation 的 16 packages、Server 编译和 296 个生产源码边界检查通过。本批没有运行真实 Chromium pipe、原生平台联网、真实模型、超长全量或 Linux 真机测试。
+- 2026-09-04 Brokered Browser Runtime Core/Host Controller 批次：新增 `@traceforge/browser-runtime`，完成 Browser Process OS 断网启动、pipe Controller 证明后激活、navigation/redirect/popup/iframe/fetch/XHR/download 逐请求所有权复检与授权、Execution Node HTTP Broker/Network Receipt、WebSocket 阻断、下载 Artifact、稳定 replay/未知结果围栏、租约/预算冻结、有界快照和失败清理。随后补齐 Host 侧 Execution Node Controller 的版本化长度帧、审核 Controller/Browser 版本与 SHA-256 对照、handshake-before-activation、稳定写操作 ID、并发/帧/缓冲上限、事件丢失/输出截断/资源超限/进程退出冻结及旧 generation 迟到响应隔离。Browser Core、Controller 与既有 HTTP Broker 联合短回归 3 文件/18 项通过；Foundation 的 16 packages、Server 编译和 294 个生产源码边界检查通过。本批没有沙箱内 Chromium/CDP 适配器、真实浏览器/原生平台联网测试、应用或 Scenario 接线，也没有运行真实模型、超长全量测试或 Linux 真机测试。
+- 2026-09-04 Structured Worker Model 下沉批次：Worker 提示词、结构化决策、上下文裁剪/压缩、认知快照、模型路由、取消检查、排队后授权复检和决策来源记录已迁入 `@traceforge/cognitive-runtime`；Server 原 146 行实现文件删除，Embedded Worker 直接消费 package。WorkerHost 的租约、工具副作用、Checkpoint 和结果提交没有移动。三类认知角色、协作快照、跨角色血缘、Structured/Embedded Worker、Compaction 与 Evaluation 联合短回归 9 文件/48 项通过；Foundation 的 15 packages、Server 编译和 292 个生产源码边界检查通过。本批未运行真实模型、超长全量测试或 Linux 真机测试。
+- 2026-09-03 Planner/Observer Runtime 下沉批次：`StructuredRunPlannerModel`、`StructuredRunObserverModel` 及两个 Supervisor 已迁入 `@traceforge/cognitive-runtime`；Server Adapter 分别由 470/392 行降至 83/94 行，只保留 SQLite Store/事务与 Fastify 查询路由。新增无 Server 的 2 项模型端口/决策合同测试通过；既有 Planner、Observer、协作快照和跨角色血缘 4 文件/26 项集成测试通过，合计 5 文件/28 项；Foundation 的 15 packages、Server 编译与 292 个生产源码边界检查通过。边界门禁禁止模型提示词、循环调度或 Supervisor 类回到 Server Adapter，并禁止 package 依赖 Fastify/SQLite。本批未运行真实模型、超长全量测试或 Linux 真机测试。
+- 2026-09-03 Runtime/场景构建整改第一批：Web Scenario 的运行源码已拆成 6 个 TypeScript 模块，独立构建会在临时目录二次编译并逐字节核对产物、入口依赖闭包及模块集合；离线 Ed25519 打包已确认 6 个运行模块全部进入同一签名材料清单。上下文血缘纯投影与 Planner/Observer 共用装配已迁入 `@traceforge/cognitive-runtime`，Server 私有装配文件删除，SQLite receipt/snapshot/resource 读取仍作为 Adapter 留在 Server。4 个针对性文件共 24 项跨进程/装配/血缘测试在允许本机 socket 的环境全部通过，Web Scenario 与 Cognitive/Server 编译、290 源码边界和 15 packages Foundation 构建通过。本批没有运行真实模型、超长全量测试或 Linux 真机测试，也不据此宣称 Planner/Observer 已全部下沉。
+- 2026-09-03 Linux Desktop 部署仓库批次：`verify:linux-deployment-assets` 通过，确认 DEB-only、脚本语法/权限、固定 helper/manifest、AppArmor 生命周期、systemd user-scope delegation、controller 与升级回滚接线；Linux 发布校验已增加真实 DEB control archive、`postinst/postrm` 和部署资产检查，待真机构建时执行；`local-execution-node-lifecycle` 4 项通过，Server 与 Desktop TypeScript 编译通过。当前 macOS 不能执行 DEB 安装、真实 cgroup/AppArmor、startup recovery/native probe 或协议 2/19 类矩阵，因此这些仍明确记为待 Linux x64 真机验收。
 - 2026-09-02 本机 Execution Node 发布/健康/关闭生命周期批次后，全工作区 19 个项目构建通过。
 - `verify:foundation` 检查 290 个通用生产源码文件，15 个通用 packages 与通用 Server 独立编译通过；门禁内共 113 个测试文件、1,600 项测试调用通过：主门禁 90/1,449（206.07 秒），本机 Execution Node/Linux helper 发布、生命周期、长期逐操作账本、统一扩展装配与崩溃终验 8/61（8.69 秒），Agent/Deployment/Artifact/State/Scenario Process/数据包加载及 Session 安全终验 15/90（9.31 秒）。Execution Node 故障文件固定串行执行；10 项控制操作强杀、2 项操作归档事务强杀、1 项装配活动指针强杀和 26 项 Provider/Assembly 生命周期强杀均未跳过。门禁不再包含远程 TLS、远程节点证明、远程派发围栏或跨主机夹具；继续固定本机 pipe-only RPC、逐操作账本与透明归档、容量健康、真实宿主 SIGKILL、Linux framed PTY 合同、helper 发布身份、结构化启动预检、运行中摘要健康、全进程树有界关闭、Linux fail-closed、统一扩展身份、MCP 精确 Package 绑定/撤销/显式回退、Scenario Process Profile、生产同进程工具及授权/输出回调拒绝、声明式合同容量/字段/显式词法前缀门禁、签名纯数据 Package 加载、严格 UTF-8、安全材料路径、本地 Skill/Knowledge/迁移正文自动装配及入口/资源材料绑定、通用 Scenario HTTP/Session/Traffic 桥接、身份/租约/URL 范围复检与秘密脱敏、Managed Provider 状态对账、Assembly 有界压缩历史、OS-backed 启动、SQLite 监督账本、Package Capability Broker、宿主归属注入、Agent Journal、SDK/Core 边界和 workspace 无循环依赖。
 - 新增回归明确验证新数据库不存在 `remote_execution_%` 表；生产边界同时扫描 Execution Node Service 与 Foundation 组合根，禁止恢复远程 trust、远程配置或远程对账入口。旧数据库中的历史远程表无人读取且不自动删除。
-- 最近一次完整 `test:fast` 基线仍是 241 个测试文件、2,015 项测试；本轮按此前“跳过超长测试”的决定没有重复执行整套快速回归，以完整 `verify:foundation` 113 文件/1,600 项、Server/Web Scenario 编译和 290 源码边界检查作为底座回归，并以 `test:scenario:web` 5 文件/27 项验证零配置、宿主配置、签名主服务装配、独立进程授权/HTTP、结构化同源探索、受控身份/Session/秘密正文/短期值捕获、脱敏 Traffic、逐步 CAS 状态、工件/证据关联、跨进程续跑和组合根无 Web import。另有 5 文件/47 项针对性回归覆盖 Session 加密与冻结、Scope 身份过滤、秘密 URL 边界和旧 Web Adapter 兼容。离线场景打包命令前批已用真实临时 Ed25519 密钥、全新输出目录和 sidecar 成功执行。前一本机生命周期批次的 Linux Rust 9 项、Linux x64 交叉检查和全工作区 19 项目构建基线继续有效；真实模型、协议 2 Linux 实机重跑和 24/72 小时长稳仍按用户要求或平台条件暂缓。
+- 最近一次完整 `test:fast` 基线仍是 241 个测试文件、2,015 项测试；本轮按此前“跳过超长测试”的决定没有重复执行整套快速回归，以完整 `verify:foundation` 113 文件/1,600 项、Server/Web Scenario 编译和 290 源码边界检查作为底座回归，并以 `test:scenario:web` 5 文件/28 项验证零配置、宿主配置、签名主服务装配、独立进程授权/HTTP、结构化同源探索、受控身份/Session/秘密正文/短期值捕获、脱敏 Traffic、逐步 CAS 状态、工件/证据关联、跨进程续跑和组合根无 Web import。另有 5 文件/47 项针对性回归覆盖 Session 加密与冻结、Scope 身份过滤、秘密 URL 边界和旧 Web Adapter 兼容。离线场景打包命令本轮已用真实临时 Ed25519 密钥、全新输出目录和 sidecar 成功执行，并确认全部 6 个运行模块进入签名材料。前一本机生命周期批次的 Linux Rust 9 项、Linux x64 交叉检查和全工作区 19 项目构建基线继续有效；真实模型、协议 2 Linux 实机重跑和 24/72 小时长稳仍按用户要求或平台条件暂缓。
 - 前批 44 项多来源占用/清理证明/服务归属/强杀恢复回归通过；前批 37 项签名资源包迁移/撤销/请求快照/HTTP/强杀恢复回归通过；前批 31 项外部占用/派发屏障/授权释放/GC/重启回归通过；前批 32 项审计 codec/游标/原子补记/源引用/取消故障隔离/崩溃恢复回归通过；前批 22 项取消/身份/截止/清理回归保留；前批 29 项跨角色来源/有界压缩回归保留；前批 48 项 Skill/外部上下文/资源退役回归保留；前批资源搜索/投影 31 项、资源/MCP 47 项仍包含在回归中。此前模型验收器 14 项离线测试不能代替真实模型验收；前轮完整宿主/HTTP/模型截止/续跑调度 33 项与物理存储/受控维护/连续可靠性 44 项测试通过；此前独立 120.826 秒组合运行通过，74 次强杀及两次新宿主回读、常驻进程 234 轮。此前归档 30 项、精确恢复/授权续跑 47 项、统一容量 32 项与执行历史/取消 26 项也通过完整回归。完整快速回归与全工作区构建使用
-  `env pnpm_config_verify_deps_before_run=false pnpm ...`。本轮新增 workspace package 后执行一次受供应链校验的 `pnpm install`，锁文件只增加 `@traceforge/agent-runtime` workspace link，未修改 `.npmrc` 或外部依赖版本。
+  `env pnpm_config_verify_deps_before_run=false pnpm ...`。本轮新增 workspace package 后执行一次受供应链校验的 `pnpm install`，锁文件增加当前本地 workspace package link，未修改 `.npmrc` 或外部依赖版本。
   Linux helper 当前通过 Rust 9 项与 `x86_64-unknown-linux-gnu` 完整源码/测试图检查；Ubuntu 24.04/x86_64/Linux 6.8 的协议 1/16 类历史原生验收仍有效，但当前协议 2 增加 PTY 后必须重跑 19 类入口，尚未把交叉检查写成实机通过。临时 Linux 主机仅作为验收环境，不是当前或未来产品节点。
   本轮新增 Observer 验收 2 项、独立冷库集成 4 项、冷库真实强杀 4 项；Observer 必须在签发前证明至少两个不同 claim 的确定性、证据可复查、完整回执身份、预取消响应和宿主可观测无副作用，同一验收不能复制给另一个 Adapter。冷库不接活动 SQLite，完成签名接收、原子发布、幂等重授权、容量/路径/符号链接围栏、默认取证保留、revision 固定的解除保留、二次授权精确销毁和 `secureErase:false` 诚实声明；接收 staging/发布后、销毁准备/删除后四个 SIGKILL 窗口均由新宿主收敛。真实模型、真实外部 Observer、对象存储/异地主机以及 24/72 小时长稳仍未执行，不能把确定性 Observer 夹具写成生产事实源验收。
   此前基础批次新增 Scenario Process 持久化监督 6 项与生产重建 1 项，联合既有 Runtime/Execution Node 定向共 4 个文件、35 项；覆盖真实 OS 子进程、启动证明核对、跨 Runtime generation、跨宿主回执重放、未决结果拒绝重做、撤销/预算持久化、两代永久容量占用，以及宿主进程被真实 SIGKILL 后由新宿主恢复 generation 2。真实模型与 24/72 小时长稳仍按用户要求跳过，没有把模拟模型测试写成真实模型验收。
@@ -1875,7 +1892,7 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
 34. 完成首个真实 Linux 平台闭环：Ubuntu 24.04/x86_64、Linux 6.8、cgroup v2、systemd 255 上以专用非 root 账号和 `Delegate=yes` 运行。新增固定 root-owned helper 路径的 AppArmor `userns` Profile，未全局关闭 Ubuntu 防护；同一运行 ID 关联 cgroup/scratch，启动 `recover` 只清理受控前缀，存活残余先 `cgroup.kill` 并等待空树。16 类原生验收覆盖文件读写/deny、环境隔离、软链接与非规范路径、读写/拒绝重叠、断网、seccomp、孤儿进程、CPU/内存/进程/写入超限、不支持网络/cgroup 配置拒绝、helper 与 Execution Node 父进程 SIGKILL、死亡传播及新宿主恢复，全部通过，最终活动 cgroup/scratch 均为 0。实机发现并修复 PID namespace 父 PID 判断、合并 `/usr` 顶层运行时别名、资源事件基线和多行 cgroup 字段解析问题；Linux release 构建现强制跑完整矩阵。环境、helper SHA-256、证据与适用边界记录在 [首个 Linux 原生验收记录](validation/linux-native-ubuntu-24.04-x64.md)，但该记录不是独立签名的生产 attestation。
 35. 完成 **进程控制逐操作可靠性**：stdin、PTY resize、signal、terminate、adopt 均要求稳定 `operationId`，生产 Execution Node 在产生副作用前以有界 SQLite 账本原子 claim，完成后保存可回放响应；换内容复用 ID、仅有 claim、持久记录损坏均 fail closed。该能力最初曾通过远程 TLS 子进程验证提交后、响应前 SIGKILL；第 36 项撤回远程链后，只保留适用于本机 IPC 断开、Execution Node 或应用崩溃的逐操作身份、节点账本和回放语义。
 36. 完成 **远程 Execution Node 定向撤回与本机主链收口**：删除远程 trust wrapper、TLS/证书固定分支、远程派发围栏与对账控制面、Foundation 远程配置入口、跨主机测试夹具及发布门禁；RPC 地址收窄为用户本机命名管道，不再暴露 TCP/TLS 地址类型。保留本机进程隔离所需的 RPC token、并发/帧/截止门禁、逐操作 `operationId` 与 SQLite 节点账本、PTY/signal/terminate/adopt，以及 Linux 原生 helper。新数据库不创建远程表；旧数据库可能保留无人读取的历史表，不做破坏性删表。
-37. 完成 **本机 Execution Node 发布身份、启动健康与关闭清场闭环**：新增严格 `traceforge-native-helper-release-v1` 清单，Linux/Windows 构建原子写入平台、x64、后端、协议、文件名和 helper SHA-256，桌面出包与运行时共用校验；打包启动强制要求相邻清单。启动预检结构化区分平台/架构、缺件/权限、清单漂移、Linux runtime 配置和 native probe 失败，Linux 先执行受控残留恢复并报告清理数量。`/api/health` 暴露无路径/无秘密的节点状态，每次检查重新量取 helper，运行中替换立即降级且 Launcher 继续逐执行 fail closed。节点关闭先停 RPC，再等待并发启动收敛、强制终止全部受管进程树并要求有界退出证明；进入关闭后拒绝新进程。桌面更新关闭“下载后随普通退出自动安装”，避免未经明确操作切换 helper generation；安装器级旧版本自动回退尚未实现。
+37. 完成 **本机 Execution Node 发布身份、启动健康与关闭清场闭环**：新增严格 `traceforge-native-helper-release-v1` 清单，Linux/Windows 构建原子写入平台、x64、后端、协议、文件名和 helper SHA-256，桌面出包与运行时共用校验；打包启动强制要求相邻清单。启动预检结构化区分平台/架构、缺件/权限、清单漂移、Linux runtime 配置和 native probe 失败，Linux 先执行受控残留恢复并报告清理数量。`/api/health` 暴露无路径/无秘密的节点状态，每次检查重新量取 helper，运行中替换立即降级且 Launcher 继续逐执行 fail closed。节点关闭先停 RPC，再等待并发启动收敛、强制终止全部受管进程树并要求有界退出证明；进入关闭后拒绝新进程。桌面更新关闭“下载后随普通退出自动安装”，避免未经明确操作切换 helper generation；Linux DEB 安装器级材料回滚由第 49 项补齐，通用桌面自动更新仍暂缓。
 38. 完成 **本机进程控制跨宿主崩溃矩阵**：新增独立真实 Node 宿主、用户本机 pipe、真实 SQLite/WAL 和确定性受管进程副作用夹具，对 stdin、PTY resize、signal、terminate、adopt 五类操作分别在“claim 已提交、尚未执行”和“副作用及完成响应已提交、RPC 尚未回复”两个边界执行 `SIGKILL`。新宿主以相同节点身份重开账本后，前者保持结果未知且副作用为零，后者精确回放已提交响应且副作用仍为一次；adopt 同时证明新 token 不会因重放再次轮换。该夹具证明本机 IPC、逐操作账本和新宿主恢复语义，不冒充 Linux/Windows 原生沙箱验收，也不引入远程节点。
 39. 完成 **本机执行底座生产闭环的仓库实现**：Linux helper 协议提升到 2，新增与 Windows 共用控制器语义的 framed PTY，复用原有原子 cgroup 加入、namespace/tmpfs 文件边界、seccomp、资源监督、`PDEATHSIG` 和空树屏障；生产 Service 同时装配 Linux stdio/PTY，并在每次启动前重验 helper measurement。Linux 原生验收入口从 16 类扩为 19 类，增加输入/resize/terminate、Ctrl-C 与 close-input/EOF；当前 macOS 已通过 Rust 9 项、Linux x64 完整交叉检查和 TypeScript 合同，协议 2 的 Linux 实机重跑仍是发布门槛。逐操作 SQLite 账本新增 24 小时默认热保留、有界 gzip 归档、精确透明回放、摘要/解压上限/损坏拒绝、活跃/总量/字节/物理空间准入与无秘密健康摘要；未知 claim 永不归档。归档提交前后两类真实 `SIGKILL` 证明重启只出现完整热记录或完整归档。Foundation 边界固定 PTY、操作归档与故障门禁；完整 `verify:foundation` 110 文件/1,555 项通过。本批不包含远程节点、桌面更新、具体场景或应用 UI。
 40. 完成 **受控扩展装配与信任生命周期闭环**：新增统一、无秘密的 `traceforge.extension-assembly.v1`，以精确 Package、Skill、Knowledge、MCP Tool/Context Profile、Package Process Provider 和 Managed Tool Provider 单元记录内容/契约摘要、生命周期状态及依赖闭包；不可变 Profile 身份、装配快照、单调 activation 和活动指针进入有界 SQLite 与物理空间准入。MCP Tools 不再是宿主全局能力，Profile 必须声明精确 Package 版本，能力名相同的另一个 Package 也不能借用；相同 reviewVersion 不能换身份或扩权。MCP Tool/Context Profile 新增默认拒绝、逐次授权、不可变且重启保留的精确撤销，执行链在发现/启动/发送/响应各关键边界复查，撤销后不启动新进程、不缓存或投递返回。低版本 Profile 默认拒绝，只能凭受信宿主的整代 Deployment rollback 同步证明记录回退；可信部署清单新增必填 `extension_assembly` 组件。现有 Managed Provider 的签名 manifest、签名者与 installed/enabled/draining/disabled/quarantined/failed/collected 状态会在成功控制命令后同步更新同一 Assembly generation，直接存储变化也会在读取时对账，不把本机安装路径写入清单。Package Process 单元同时固定签名 runtime manifest 与 Host 启动材料摘要，原始路径/环境不落库，同一 Package 版本偷换启动配置会在执行前拒绝。Provider 状态提交、排空/失败补偿、装配同步和启动恢复之间的 26 个真实 `SIGKILL` 窗口均在新宿主对账到完整 generation；装配活动指针切换强杀也只保留旧代或完整新代。历史容量新增默认拒绝、逐次授权的同库有界 gzip 归档，保留活动代和最近 32 个热代，旧 activation/snapshot 只有在归档正文、摘要、索引和审计同事务提交后才释放，并可按 generation 完整校验回读；这不是独立冷对象库或备份。回归还覆盖运行中撤销、跨 Package 拒绝、Provider 状态代次、进程启动材料替换、隐式降级、归档重放/冲突/热窗口保护和审计不可改写。本批没有添加场景常量、远程节点、账号/租户或桌面更新。
@@ -1886,6 +1903,19 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
 45. 完成 **首个 Web 黑盒场景的数据化、进程化接入**：应用组合根删除 `WEB_BLACKBOX_PACKAGE`、Web Host Capability 和生产依赖，不再默认创建 Web Session/Traffic Adapter；新增严格 `traceforge.scenario-host.v1` 本机部署配置，缺失时零场景启动，从中装配审核材料、公钥与 Scenario Process 启动 Profile。Web `0.2.0` 以 `scenario.json` 声明 Definition、Scope、Output/Evidence、Skill、Knowledge 和进程清单，子进程提供 Scope Snapshot 与有界 HTTP 请求；HTTP 先经精确资源授权，再通过新增的通用 `traceforge.scenario.execution@1` Host 能力进入本机 Execution Node，沿用 Case/Run/Work/Worker/lease、权限、截止、响应容量和网络回执，不获得裸网络或底座对象。离线 `scenario:package` 命令可复制精确材料、生成 SHA-256 清单、Ed25519 审核和宿主 sidecar，私钥不随包交付。回归覆盖零配置、严格宿主配置、组合根无 Web import、真实描述解析、独立子进程反向授权/HTTP，以及主服务从临时签名安装加载真实 Web Definition。本批没有远程节点、多用户、桌面更新、浏览器直连或漏洞特判。
 46. 完成 **Web 黑盒结构化 HTTP 探索与证据闭环**：Web Package 进程新增 `web.surface.explore`，一次调用最多执行 8 个受控 GET；在场景内完成 HTTP(S) URL 规范化、同源 `href/src/action` 发现、去重队列、内容类型判断、正文摘要、外部 origin 清单和明确覆盖统计。每个 URL 都独立申请 `network.url` 授权，经本机 Execution Node 获得 Network Receipt，再记录带正文摘要哈希的 Artifact 与 Evidence；每个尝试后把队列、已访问项、观察和跳过项通过 revision CAS 写入 Package 私有 State，新进程可从相同 Run 续跑。队列、历史、链接、摘要和响应均有硬上限，正文不复制进场景状态。SDK 仅新增领域无关的显式词法前缀资源选择器，底座不解释 URL/路径语义；Web 包用预先规范化的 `urlPrefixes` 表达授权范围。本批没有 Browser、登录凭据、漏洞 Payload、应用 UI、远程节点或多用户逻辑。
 47. 完成 **Web 黑盒受控认证会话与脱敏流量闭环**：Web Package 升至 `0.3.0`，新增身份目录、Session 打开/请求、认证探索和当前 Run 流量快照。Package 只接收 Scope 允许的身份/Session 描述符和命名秘密句柄；Vault 中的秘密头、Cookie、表单/JSON 字段只在 Host 内解密、按显式 URL 前缀和 Cookie 规则注入，短期文本值以最多 16 个精确分隔符捕获并加密回写，场景进程只收到名称。每次 Session 使用重验 Case/Run/Scope/身份版本/有效期/当前租约，同一 Session 不能跨有效租约并发转交；撤销或失效会冻结。认证响应移除 `Set-Cookie` 并替换已知秘密，Traffic 只保留请求头存在性、秘密模板或正文摘要以及身份版本、Network Receipt 和 Run 归属。通用 SDK/Foundation 只增加声明式 Session/Traffic 能力 ID 和按 Package 声明的惰性 Adapter，不包含登录流程或 Web 字段语义；旧应用身份路径未在本批迁移。本批没有 Browser、应用 UI、远程节点、多用户或漏洞特判。
+48. 完成 **继续开发前的三个 P0 同批整改**：Electron Main 取得随机、内存态管理 capability，只对当前 loopback Server 的 API/WS 注入；模型配置改为无秘密元数据，Desktop 使用系统 `safeStorage`，独立 Server 使用 AES-256-GCM Vault/环境覆盖，旧明文自动迁移，明文取回路由彻底删除。生产入口删除旧 `McpManager/connectAll` 和 `/api/mcp/tools`，旧配置仅诊断，MCP Tool/Context 只保留既有受治理路径。Web 正式源码删除手写 Definition、`0.1.0` 同进程工具、Web Host ports、Playwright/direct Browser 和旧工具测试，Kernel/Scheduler/Server 测试改从真实 `scenario.json` 读取 Definition，包身份统一为 `0.3.0` 数据描述 + Scenario Process；边界门禁阻止这些旁路回归。相关构建、针对性测试、离线 LLM Secret 测试和 Host Control/MCP 短集成测试通过；真实模型与长稳仍按决定暂缓，完整快速套件因受限环境 socket `EPERM` 中止，不记为通过。
+49. 完成 **Linux Desktop 部署链仓库闭环**：正式 Linux 发行物收窄为 DEB-only，安装钩子以 root-owned 固定路径装入 helper/release manifest 和 AppArmor Profile，加载策略后安装 `/usr/bin/traceforge`；升级任一步失败会恢复上一代 helper、manifest、Profile 和 launcher，卸载不删除用户数据。启动器以当前登录用户创建 `Delegate=yes` 的瞬态 systemd user scope，把监督进程移到 `supervisor` 子 cgroup，在空 scope 根启用 cpu/io/memory/pids，并交付 mode-0700 用户 scratch；没有系统 daemon、产品账号、远程节点或多用户功能。Desktop 直接/便携启动明确报告 `linux_deployment_not_installed` 并关闭 Sandboxed Process，不能把随包 helper 当作部署证明。跨平台静态验收、shell 语法、生命周期 4 项测试和 Server/Desktop 编译通过；协议 2/19 类、真实 DEB 安装/卸载/失败升级仍等待 Linux x64 真机，不能由本机检查冒充。
+50. 完成 **Runtime 下沉与 Web 构建整改第一大批**：把上下文血缘的纯投影和 Planner/Observer 共用上下文装配迁入 `@traceforge/cognitive-runtime`，删除 Server 私有装配文件；Server 只采集 SQLite Tool Receipt、Package Context、Snapshot 和 derivation 等宿主事实后调用通用 Runtime。Web Scenario 把原 309 行手写 `runtime/main.mjs` 拆为合同、RPC、校验、HTTP/Session/Traffic、Surface/HTML 和入口 6 个 TypeScript 模块；构建会二次编译逐字节验真，打包器自动收集完整入口闭包并作为同一签名材料集合。24 项针对性测试、相关编译、离线真实 Ed25519 打包和 Foundation 构建通过；没有把 Web、URL、登录或漏洞语义写入 Core。Planner/Observer 内剩余决策/监督逻辑与 Fastify/SQLite Adapter 的分离仍是下一优先级。
+51. 完成 **Planner/Observer Runtime 整体下沉**：结构化决策合同、通用提示词/模型请求、上下文授权复检、认知快照生命周期、Planner 合法性校验、Observer 语义去重、循环调度、并发冲突重试和幂等 Run 命令应用进入 `@traceforge/cognitive-runtime`。Runtime 只消费通用端口，不依赖 Fastify、SQLite、LLM 实现或具体 Scenario；Server 原 470/392 行文件分别收窄为 83/94 行 SQLite/HTTP Adapter，产品 Composition 直接装配 package 类。无 Server 测试 2 项与既有 4 文件/26 项集成回归通过，合计 5 文件/28 项；Foundation 的 15 packages、Server 编译和 292 源码边界检查通过。下一项是提取 Structured Worker Model，不移动 WorkerHost 的工具副作用和租约所有权。
+52. 完成 **Structured Worker Model 下沉与认知模型层收口**：Worker 提示词、Invoke/Complete/Block 决策合同、上下文裁剪/压缩、认知快照、受治理模型路由、取消检查、排队后授权复检和来源派生记录进入 `@traceforge/cognitive-runtime`。删除 Server 原 146 行实现，Embedded Worker 直接消费最小 JSON Model Port；没有把 WorkerHost 的租约、工具副作用、Checkpoint 或结果提交移入模型层。三类认知角色联合短回归 9 文件/48 项、Foundation 的 15 packages、Server 编译和 292 源码边界检查通过，边界门禁禁止实现返回 Server。整改计划第 5 节至此完成，下一批转入强制代理的 Brokered Browser Runtime。
+53. 完成 **Brokered Browser Runtime Core 与 Host 控制传输边界**：新增 `@traceforge/browser-runtime`，Browser Process 必须由本机 Execution Node 以 sandboxed 且 OS `network=deny` 启动；调用者原 brokered 网络权限只保留在可信 Host。Controller 必须先证明 pipe、联网前暂停、Service Worker 禁用、下载和 WebSocket 拦截，验证后才能开始交付请求。navigation、redirect、popup、iframe、fetch/XHR 和 download 每次复检 Case/Run/Work/Worker/Scope/lease、重新授权并通过 `ExecutionNode.requestHttp`，重定向不自动跟随；WebSocket 在有界流式 Broker 完成前阻断。下载必须形成 Artifact，Session 失效/超额会冻结并终止进程，快照不保留正文或完整敏感 URL；重放、未知结果围栏和关闭失败后仍杀 OS 进程已有回归。Host 侧 `ExecutionNodeBrowserController` 进一步实现版本化有界长度帧、审核 Controller/Browser 版本与 SHA-256 对照、handshake-before-activation、稳定写操作 ID、并发容量、协议丢字节/截断/进程退出失败关闭及旧 generation 迟到响应隔离。3 文件/18 项短回归、16 packages/Server 编译和 294 源码边界检查通过。沙箱内 Chromium/CDP 适配器、真实浏览器/原生平台断网证明、DOM/截图及人工接管恢复仍未完成，Browser Provider 继续关闭；下一批整体完成这些底座能力，不接 Web Scenario。
+54. 完成 **Browser Controller 进程协议与 Chromium CDP 策略适配**：进程侧 `BrowserControllerProcessRuntime` 与 Host Controller 使用同一版本化有界帧完成 ready/activate/request/result/shutdown，Host 请求超时、未知或损坏帧会关闭 CDP 并以失败码退出。`ChromiumCdpAdapter` 在激活前设置 Target auto-attach、`waitForDebuggerOnStart`、全局 deny download；每个 page/popup/iframe/worker 都在脚本释放前安装 HTTP(S) request-stage Fetch 拦截，Service Worker 在释放前关闭，未知 target detach。POST 优先保留 CDP 原始 base64 entries，正文不可取得即阻断；Host Broker 响应只能由 `Fetch.fulfillRequest` 注入，拒绝走 `BlockedByClient`，Chromium download 事件必须对应已形成 Artifact 的响应。普通 document 返回 attachment 也会自动保存 Artifact，解决 CDP 在请求阶段无法预知下载的问题。5 文件/27 项短回归、16 packages/Server 编译和 296 源码门禁通过。真实 Chromium FD pipe transport、浏览器子进程/发布装配、DOM/截图和人工接管恢复仍未完成，生产 Browser 继续关闭；下一批不接 Scenario。
+55. 完成 **真实 Chromium pipe transport 与双材料发布身份/启动装配**：`ChromiumPipeTransport` 使用 Chromium `--remote-debugging-pipe` 的 FD 3/4 和 NUL 分帧，限制消息、缓冲、在途命令及启动/命令/退出时间；固定无后台网络、禁 Service Worker、独立 profile 等参数，只允许显示尺寸/语言/缩放参数和最小环境白名单，拒绝无沙箱、调试端口、代理、替换 profile 及未知环境。启动前核对浏览器文件 SHA-256，连接后再核对 `Browser.getVersion`；协议损坏、未知响应、超时、进程退出均失败关闭，退出卡死强杀且 stderr 原文不外泄。严格发布清单把 Controller bundle 和 Chromium 的文件名、版本、摘要、平台、架构钉在同一身份上，bootstrap 复核两个安装文件后固定装配 pipe、CDP Adapter 和进程 Runtime，没有非 pipe 的生产注入旁路。8 文件/37 项 Browser 短回归、16 packages/Server 编译和 299 源码门禁通过。真实 Controller bundle/Chromium 发行物、真实浏览器/原生断网验收、DOM/截图/控制和人工接管恢复仍未完成，生产 Browser 继续关闭；下一批仍只做底座，不接 Scenario。
+56. 完成 **有界页面观察/控制、人工接管恢复与 Controller bundle 入口**：Controller 用 Accessibility Tree 生成省略表单 value 的有界 DOM Artifact，用视口/尺寸/像素/字节上限生成 PNG Screenshot，并记录与前一 DOM Artifact 的 added/removed/changed 摘要。元素引用同时绑定控制代次、page、document loader 和 backend node，且只有最近一次 DOM 观察实际签发的元素可操作；模型猜编号、导航后复用、接管后复用均拒绝。动作限定为绑定当前 view 的 navigation、已签发元素 click、editable-only fill 和固定键，不执行任意 JavaScript；Host 对 Controller 返回的 bytes/digest/MIME/schema/代次二次验真，正文写 Artifact 后只返回引用。人工通道以 takeover ID 区分，但继续复用同一观察/动作/授权/网络上限；接管和恢复各换代一次，Agent/人工旧引用全部失效，Snapshot 有界保留观察、动作来源/输入摘要及控制转换。严格 CLI/stdin/stdout 入口读取稳定、限长、严格 UTF-8 发布清单，可确定性构建为单文件 Node 22 ESM Controller bundle，禁止遗留相对/workspace 运行依赖。10 文件/48 项 Browser 短回归、64,196 字节 bundle 双构建一致性检查、16 packages/Server 编译和 302 源码门禁通过。本批没有运行真实 Chromium/原生平台联网、真实模型、超长全量或 Linux 真机测试；正式发行材料与真实浏览器验收未完成，生产 Browser 继续关闭，不接 Scenario。
+57. 完成 **真实 Chromium 本机全链、崩溃回收与整树发行身份/原子装配**：macOS arm64 Chrome 152 通过真实 FD 3/4 pipe 跑通 navigation、302 redirect、popup、同进程 iframe、fetch/XHR、Artifact-backed download、DOM/截图/动作、人工接管恢复和 renderer crash 通知；同一验收还从 v2 manifest 启动可复现单文件 Controller，完成 stdio handshake/activate/request/observe/act/shutdown 并正常退出。测试页面全部由内存 Broker 注入，不访问外部目标。修复真实 Chrome 揭示的 iframe 分类和 shutdown stdin 悬挂。发布身份不再只哈希启动文件，而是度量完整安装树的内容、权限、目录和根内相对软链接；逃逸/绝对链接、特殊文件、容量超限、测量时变化、复制前后不一致或覆盖已有目标均失败关闭。12 文件/52 项短回归、1 文件/2 项真实 Chrome 集成、71,629 字节可复现 bundle、16 packages/Server 编译和 304 源码门禁通过。正式可再分发 Chromium 和 Linux/Windows 原生断网证明仍未完成，生产 Browser 继续关闭，不接应用或 Scenario。
+58. 完成 **Chromium 来源锁、安全解压与 v3 本机安装门禁**：新增严格 `traceforge-browser-runtime-source-lock-v1`，固定来源身份、版本、revision、平台/架构、HTTPS URL、归档字节数/SHA-256、唯一根目录、相对启动文件及安全/许可证评审引用。发布装配不再接受任意已解压目录；同一只读归档句柄在解压前后验真，ZIP 流式解压限制条目、单文件与总展开量，拒绝加密项、路径穿越、重复路径、特殊文件、逃逸软链接及链接下内容，失败清除半成品且不覆盖已有目标。v3 release manifest 记录锁摘要与归档溯源，发布目录携带 `source-lock.json`；Controller CLI 启动时重新核对可信来源锁、溯源、平台/架构、完整树、启动文件和 Controller 后才打开 CDP。14 文件/56 项 Browser 短回归、1 文件/2 项真实 macOS Chrome 集成、78,996 字节可复现 bundle、16 packages/Server 编译和 306 源码门禁通过；完整 Foundation 矩阵另有 92 文件/1,465 项、8 文件/62 项及 15 文件/90 项全部通过。没有把开发机 Chrome 或 Chrome for Testing 直接认定为生产发行源，也没有修改应用或 Scenario；各平台正式材料审核和 Linux/Windows 原生断网证明仍是发布门槛。
+59. 完成 **Browser 来源评审权威、撤销门禁与生产路线收敛**：新增严格 Source Review/Authority 合同，以离线 Ed25519 签名把精确 Source Lock 摘要绑定到 review key、允许的 source ID、签发/过期窗口和撤销时间；未知 key、跨来源越权、未来/过期评审、已撤销 Authority、非规范 Base64、错误签名或 Lock 换代全部 fail closed。v3 manifest 追加 Review key/摘要/到期身份，原子 release tree 携带 `source-review.json` 但不携带 Authority；Controller CLI 从 release tree 外部读取可信 Authority，每次启动重新验签后才检查安装树并打开 CDP。官方资料核对后明确：Chrome for Testing 仅用于可信内容自动化，Chromium 公开快照是 best-effort 且可能为任意 revision，自动更新 Chrome 和未经审核第三方包也不能满足固定生产身份；候选路线收敛为固定 Chromium 官方 commit、完整依赖/工具链后自建无品牌产物。15 文件/58 项 Browser 短回归、1 文件/2 项真实 macOS Chrome 集成、87,335 字节可复现 bundle 和 307 源码门禁通过。本批没有批准虚假的真实发行版本，也未修改应用或 Scenario。详见 [Browser Runtime 发行来源策略](architecture/browser-runtime-source-policy.md)。
+60. 完成 **官方 Chromium 自构建证明与发布启动硬门禁**：新增严格 `traceforge-browser-runtime-build-attestation-v1`，只接受 Chromium 官方 Git 仓库和完整 40 位 commit，固定源码依赖清单、`depot_tools` commit、依赖解析、GN 参数、构建配方、目标归档/完整树、SPDX/CycloneDX SBOM、NOTICE、安全/许可证评估及平台签名身份。每个目标至少需要两个 builder、环境摘要和 provenance 摘要均不同的独立复现，且完整浏览器树必须完全一致；macOS/Windows 分别要求 Apple Developer ID/AuthentiCode 身份，Linux 不接受用两者冒充本机平台证明。Attestation 摘要进入 Source Lock 后再由离线 Source Review 签名，换工具链、评估、SBOM 或复现记录都会让原签名失效。原子发布携带 `build-attestation.json`，装配时实测树、启动时安装树都必须与证明树一致，CLI 对证明文件使用有界稳定读取。16 文件/61 项 Browser 短回归、1 文件/2 项真实 macOS Chrome 全链、98,215 字节可复现 Controller bundle、308 个生产源码边界及完整 Foundation 的 92 文件/1,465 项、8 文件/62 项、15 文件/90 项全部通过。本批没有执行或伪造大体积 Chromium 正式构建，没有启用生产 Browser，也未修改应用或 Scenario。
 
 ### 2026-09-02 排期决定：暂缓桌面软件更新系统
 
@@ -1912,7 +1942,13 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
 
 底座完成度审查与仓库收口已经完成，不再默认增加新的控制层。审查按实际代码核对 Scenario/Core 边界、Runtime/Model/Tool/Context/Execution/恢复主链、生产默认配置和文档声明，并修复签名数据包本地资源正文仍需宿主重复配置的问题；“仓库实现/外部平台验收/场景阶段”清单已经落档。
 
-下一开发里程碑为：**Web 黑盒业务流程、参数与身份差异模型 + 单任务因果验证闭环**。在 Scenario Package 内把已观察请求组织为端点、参数、身份、页面状态和前后置步骤，形成可恢复的流程图；Research Worker 保留多个独立 Hypothesis 与排队任务，Validation Worker 一次只执行一个基线/变量/反事实对照，结果必须关联 Traffic、Network Receipt、Artifact 和 Evidence，不能因单次差异直接生成 verified Finding。先覆盖结构化 HTTP 流程，不提前解冻 Browser，不把 Web 语义写进 Core。
+刚完成的整改里程碑：**三个 P0 安全/架构债一次性整改**。Desktop Main 已把现有随机内存 Host Capability 只注入当前本机 Server 的 API/WS；LLM 配置改为元数据文件 + 宿主 Secret Store，明文取回路由已删除，旧明文会迁移后从 JSON 消失；生产 `main.ts` 不再创建或连接旧 MCP Manager，旧配置只给出停用诊断；Web `0.1.0` 同进程工具、direct Browser 和相关生产依赖已删除，唯一生产身份为签名数据描述 + Scenario Process 的 `0.3.0`。详细实现和验证基线见 [TraceForge 继续开发前整改计划](remediation-plan-2026-09-03.md)。
+
+刚完成的 Linux 部署里程碑：**安装链仓库实现闭环、实机发布证明待验收**。实际作用是 Linux 用户必须通过受支持 DEB 和本机 systemd/AppArmor 启动链才能获得进程沙箱；双击便携程序不会偷偷退回普通进程。当前没有 Linux 真机，所以系统级安装、升级回滚和协议 2/19 类矩阵保持未验收，不借用远程节点或模拟结果填满。
+
+当前下一开发里程碑：**执行第一套真实 Chromium 自构建发行材料**。Build Attestation、Source Lock/Review、原子装配和启动硬门禁已经完成，不再继续增加空字段。下一整批应在有足够磁盘/内存的隔离构建环境固定一个官方 Chromium commit、`depot_tools`、依赖解析和 GN 配置，完成至少两次独立构建，产出真实 SBOM/NOTICE、安全/许可证评估、平台签名、归档和完整树摘要，再用现有门禁生成第一套非测试 Source Lock/Review/release tree。Linux/Windows 原生 `network=deny` 证明仍需对应真机可用后执行；当前不做应用 UI、桌面自动更新系统或 Scenario 适配。
+
+实际作用：底座现在不仅强制检查“用户装的是不是批准的那份浏览器”，还会追问“它由哪份官方源码、哪套工具和参数制造，SBOM/NOTICE 与安全/许可证评估是什么，两次独立生产是否得到完全相同的文件树”。系统 Chrome 偷偷升级、安装包被换、少一个库文件、清单自带假公钥、旧批准过期、审批 key 被撤销，或者有人只替换 GN 参数/SBOM/评估记录，都会拒绝装配或启动。下一批的价值是把这套已经能验真的质检线喂入第一批真实工厂材料，而不是继续拿测试摘要证明自己。
 
 里程碑完成标准不变：新扩展只靠声明的 Package/Skill/Knowledge/MCP/Provider 资源即可装配，不修改 Core 默认工具或场景常量；安装内容和运行内容可追溯到同一签名身份，撤销后新的模型上下文和工具调用立即停止使用，旧任务保留证据但不盲目重做；升级/崩溃/数据库重开不会留下半安装、半授权或被误释放的未知外部占用；完整 `verify:foundation` 与相关跨进程强杀门禁通过。真实模型与 24/72 小时长稳仍按用户要求暂缓，实机平台门槛另行执行。
 
@@ -1928,7 +1964,11 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
 
 本批的实际作用：智能体现在能检查“登录后才能看到”的内网页面，但密码、Token、Cookie 不交给模型，也不会散落在普通日志里。会话被撤销或任务失去执行权时会立即冻结，同时能追溯某条流量使用了哪个受控身份。
 
-下一批的实际作用：让智能体不再把页面和请求看成互不相干的碎片，而是理解“登录 → 查询 → 修改”这类连续业务流程，并在相同请求上比较两个受控身份或一个变量变化前后的结果。实际排查越权或业务逻辑问题时，它会先保存多个可疑点，再一次验证一个，只有差异可重复、原因和影响都成立才形成漏洞结论。
+本批整改的实际作用：Web 场景程序现在由可审查的 TypeScript 模块稳定生成，签名时不会漏掉它依赖的运行文件；底座组装模型上下文时也统一走同一套血缘过滤，Planner 和 Observer 不会各自漏掉已失效或受污染的来源。
+
+本批整改的实际作用：Planner、Observer 和 Worker 现在都是可以脱离 Server 使用的“思考发动机”，但真正执行网络、文件、进程和工具的钥匙仍握在受控宿主手里。换成 CLI 或另一种本机存储时，不需要复制三套模型逻辑，也不会因为代码下沉让模型直接获得执行权。
+
+本批整改的实际作用：已经从 Fake CDP 走到真实 Chrome，并把“主程序哈希没变就算可信”升级为“从审核来源压缩包到完整安装树再到每次启动，任何一环对不上都失信”。下一批固定真正随产品交付的 Chromium 发行方和真实材料；发行审核或原生沙箱若不能证明合规且全部流量被拦住，生产能力仍保持关闭。
 跨角色结构化 lineage、有界压缩生命周期及压缩事实协议已实现，但任意文本污染追踪、真实语义质量与全部事件历史冷热归档/扩容未完成。
 用户取消信号与 Discovery/RPC 截止已接线，本机原生进程的强制停止与可信清理仍须继续扩大平台实机证明；
 永久键/上下文规模扩展、桌面本机受信宿主桥接、混合资产包迁移及签名轮换仍为显式缺口。签名数据化 Scenario Package 加载已完成；生产 Scenario 工具工厂与授权/输出回调已禁止同进程执行。远程管理与多活/多节点配额已排除出产品范围，不再列作缺口。

@@ -7,7 +7,7 @@ import {
   type ScenarioRunState,
   type WorkKind,
 } from "@traceforge/orchestration-core";
-import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "./index.js";
+import { WEB_BLACKBOX_CAPABILITIES, WEB_BLACKBOX_SCENARIO } from "../test-fixtures/descriptor.js";
 
 const at = (step: number) => `2026-08-24T00:00:${String(step).padStart(2, "0")}.000Z`;
 const capabilities = Object.values(WEB_BLACKBOX_CAPABILITIES);

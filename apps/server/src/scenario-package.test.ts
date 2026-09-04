@@ -4,16 +4,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ExecutionToolDiscoveryRuntime } from "@traceforge/worker-runtime";
 import { createScenarioHostCapabilities, ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
-import { WEB_BLACKBOX_HOST_CAPABILITIES, WEB_BLACKBOX_PACKAGE,
-  type ScenarioSessionPort, type ScenarioTrafficPort } from "@traceforge/scenario-web-blackbox";
+import { webBlackboxControlPlanePackage } from "./test-fixtures/web-blackbox-control-plane-package.js";
+
+const WEB_BLACKBOX_PACKAGE = webBlackboxControlPlanePackage();
 
 const hostContext = {
   artifacts: {} as any,
   state: {} as any,
-  capabilities: createScenarioHostCapabilities({
-    [WEB_BLACKBOX_HOST_CAPABILITIES.sessions]: {} as ScenarioSessionPort,
-    [WEB_BLACKBOX_HOST_CAPABILITIES.traffic]: {} as ScenarioTrafficPort,
-  }),
+  capabilities: createScenarioHostCapabilities({}),
   evidence: { recordNode() { return []; } },
   authorization: {
     requireAction() { throw new Error("not used by package discovery test"); },
@@ -31,18 +29,11 @@ describe("ScenarioPackageRegistry", () => {
     await runtime.close();
   });
 
-  it("exposes Web tools only after the Web package is explicitly installed", async () => {
+  it("keeps a control-plane-only fixture free of in-process tools", async () => {
     const registry = new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]);
     expect(registry.definitions().map((definition) => definition.kind)).toEqual(["web_blackbox"]);
     const sources = registry.toolSources(hostContext, { allowInProcessDevelopment: true });
-    expect(sources.map((source) => source.source)).toEqual(["scenario:web_blackbox@1"]);
-    const tools = await sources[0].discover();
-    expect(tools.map((tool) => tool.name).sort()).toEqual([
-      "execution.session.open",
-      "scope.authorization.snapshot",
-      "web.browser.observe",
-      "web.traffic.snapshot",
-    ]);
+    expect(sources).toEqual([]);
   });
 
   it("rejects duplicate package and tool-source identities", () => {
@@ -73,7 +64,7 @@ describe("ScenarioPackageRegistry", () => {
   it("resolves only the exact Package version and Schema revision bound to a Run", () => {
     const registry = new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]);
     const binding = registry.bindingFor(WEB_BLACKBOX_PACKAGE);
-    expect(binding).toEqual({ id: "traceforge.web-blackbox", version: "0.1.0", schemaRevision: 1 });
+    expect(binding).toEqual({ id: "traceforge.web-blackbox", version: "0.3.0", schemaRevision: 1 });
     expect(registry.requireBinding(binding, "web_blackbox", 1)).toBe(WEB_BLACKBOX_PACKAGE);
     expect(registry.bindingStatus({ ...binding, version: "0.0.9" }, "web_blackbox", 1)).toMatchObject({
       status: "recovery_required",

@@ -1,0 +1,21 @@
+{
+  "name": "@traceforge/browser-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "traceforge-browser-controller": "./dist/traceforge-browser-controller.mjs"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:controller": "esbuild src/controller-main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/traceforge-browser-controller.mjs"
+  },
+  "dependencies": {
+    "@traceforge/execution-node": "workspace:*",
+    "@traceforge/orchestration-core": "workspace:*",
+    "yauzl": "^3.4.0"
+  }
+}

@@ -1,18 +1,16 @@
 {
   "name": "@traceforge/scenario-web-blackbox",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "type": "module",
   "main": "./src/index.ts",
   "exports": { ".": "./src/index.ts" },
-  "scripts": { "build": "tsc -p tsconfig.json" },
+  "scripts": {
+    "build:runtime": "tsc -p tsconfig.runtime.json && node ../../scripts/verify-scenario-runtime-build.mjs scenarios/web-blackbox",
+    "build": "pnpm build:runtime && tsc -p tsconfig.json"
+  },
   "dependencies": {
-    "@traceforge/execution-node": "workspace:*",
     "@traceforge/orchestration-core": "workspace:*",
     "@traceforge/scenario-sdk": "workspace:*",
-    "@traceforge/shared": "workspace:*",
-    "@traceforge/tool-resolver": "workspace:*",
-    "@traceforge/worker-runtime": "workspace:*",
-    "playwright": "^1.50.0",
-    "zod": "^3.24.0"
+    "@traceforge/worker-runtime": "workspace:*"
   }
 }
