@@ -7,12 +7,13 @@ export interface AnthropicOptions {
   apiKey: string;
   model: string;
   baseUrl?: string;
+  fetch?: typeof fetch;
 }
 
 export class AnthropicProvider implements LlmProvider {
   private client: Anthropic;
   constructor(private opts: AnthropicOptions) {
-    const fetchImpl = proxyFetch();
+    const fetchImpl = opts.fetch ?? proxyFetch();
     this.client = new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseUrl, ...(fetchImpl ? { fetch: fetchImpl } : {}) });
   }
 

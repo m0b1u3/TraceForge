@@ -12,6 +12,7 @@ import {
   parseLinuxSandboxHelperRecovery,
   parseWindowsSandboxHelperProbe,
   verifyNativeHelperRelease,
+  runMacosOwnedExecution,
   type LinuxSandboxHelperRecovery,
 } from "@traceforge/execution-node";
 
@@ -29,7 +30,8 @@ export interface LocalExecutionNodeHealth {
   architecture: string;
   processReady: boolean;
   terminalReady: boolean;
-  backend: "traceforge-windows-native" | "traceforge-linux-native" | null;
+  backend: "traceforge-windows-native" | "traceforge-linux-native" | "traceforge-macos-native" | null;
+  resourcePolicy?: "sampled_terminate";
   helper: null | {
     source: "configured" | "bundled";
     executable: string;
@@ -74,6 +76,32 @@ export async function preflightLocalExecutionNode(options: PreflightOptions): Pr
   const hostPlatform = options.platform ?? process.platform, platform = runtimePlatform(hostPlatform);
   const architecture = options.architecture ?? process.arch, env = options.env ?? process.env;
   const now = options.now ?? (() => new Date().toISOString()), checkedAt = now();
+  if (hostPlatform === "darwin") {
+    if (architecture !== "arm64") return unavailable(platform, architecture, checkedAt, "macos_architecture_not_accepted", "The first macOS release targets Apple Silicon.");
+    const configured = env.TRACEFORGE_MACOS_SANDBOX_HELPER?.trim();
+    if (!configured) return unavailable(platform, architecture, checkedAt, "helper_missing", "Build or install the macOS native helper. No Linux host is required.");
+    const executablePath = resolve(configured), manifestPath = env.TRACEFORGE_NATIVE_HELPER_RELEASE_MANIFEST?.trim() || resolve(dirname(executablePath), "release.json");
+    try {
+      const bytes = await readFile(executablePath);
+      verifyNativeHelperRelease(JSON.parse(await readFile(manifestPath, "utf8")), { platform: "darwin", architecture,
+        backend: "traceforge-macos-native", executable: basename(executablePath), protocol: 1, bytes });
+      // Execute the actual supervisor and Seatbelt, not a self-declared feature list.
+      const probe = await runMacosOwnedExecution({ requestId: "host-preflight", attribution: { caseId: "host-preflight", runId: "host-preflight", workId: "host-preflight",
+        workerId: "host", scopeRef: "host", leaseId: "host", leaseExpiresAt: new Date(Date.now() + 10000).toISOString(), actionId: "probe", idempotencyKey: "probe" },
+        executable: "/usr/bin/true", arguments: [], workingDirectory: "/usr/bin", environment: {}, stdin: "closed", timeoutMs: 3000, outputLimitBytes: 4096,
+        resources: { cpuTimeMs: 1000, memoryBytes: 134217728, maximumProcesses: 8, writeBytes: 0 },
+        permissions: { version: 1, platform: "darwin", network: "deny", process: { access: "sandboxed", interactive: false, background: false }, secrets: "deny", sources: ["host-preflight"],
+          filesystem: { read: [{ path: "/usr/bin", scope: "tree" }], write: [], deny: [] } },
+      }, { path: executablePath, sha256: digest(bytes) }, AbortSignal.timeout(8000));
+      if (!probe.cleanupConfirmed || probe.exitCode !== 0 || probe.reason !== "exited") throw new Error("Native probe failed");
+      return { schemaVersion: 1, state: "ready", platform, architecture, processReady: true, terminalReady: false,
+        backend: "traceforge-macos-native", resourcePolicy: "sampled_terminate",
+        helper: { source: "configured", executable: basename(executablePath), releaseManifest: "verified", measurement: digest(bytes) },
+        startupCleanup: null, checkedAt, reasonCode: null, recoveryHint: null, executablePath, helperSize: bytes.length, linuxRuntime: null };
+    } catch {
+      return unavailable(platform, architecture, checkedAt, "macos_native_preflight_failed", "Repair the macOS helper and matching release inventory; native execution and cleanup must pass before tasks can run.");
+    }
+  }
   if (!(["win32", "linux"] as NodeJS.Platform[]).includes(hostPlatform)) {
     return unavailable(platform, architecture, checkedAt, "platform_not_supported", "Install on an accepted Windows or Linux host to enable sandboxed process execution.");
   }

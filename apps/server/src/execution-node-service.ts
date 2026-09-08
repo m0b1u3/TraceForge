@@ -10,6 +10,7 @@ import {
   LocalExecutionNode,
   NativeTerminalProcessLauncher,
   NodeSpawnProcessLauncher,
+  MacosProcessLauncher,
   WindowsConptyProcessLauncher,
   compileLinuxStdioSandboxLaunch,
   compileLinuxPtySandboxLaunch,
@@ -70,14 +71,19 @@ export function processOperationJournalHealth(usage: ProcessOperationJournalUsag
 }
 
 class PlatformSandboxLauncher implements ProcessLauncher {
-  private readonly stdio: NodeSpawnProcessLauncher;
-  private readonly terminal: NativeTerminalProcessLauncher | WindowsConptyProcessLauncher;
+  private readonly stdio: ProcessLauncher;
+  private readonly terminal: ProcessLauncher;
 
   constructor(
     backendExecutable: string,
     backendMeasurement: string,
     linuxRuntime?: LinuxSandboxRuntime,
   ) {
+    if (process.platform === "darwin") {
+      this.stdio = new MacosProcessLauncher({ path: backendExecutable, sha256: backendMeasurement });
+      this.terminal = new UnavailableProcessLauncher();
+      return;
+    }
     if (process.platform === "win32") {
       const options = { windowsHelperPath: backendExecutable, backendMeasurement, pathExists: existsSync };
       const assertMeasurement = () => {
@@ -176,15 +182,17 @@ export async function startLocalExecutionNodeService(
     platform,
     sandboxBackends: processReady ? [backend] : [],
     sandboxMeasurements: processReady && backendMeasurement ? { [backend]: backendMeasurement } : undefined,
+    acceptedSampledResourceBackends: preflight.resourcePolicy === "sampled_terminate" ? [backend] : [],
     httpBroker,
     capabilities: {
       process: {
         spawn: processReady,
         stdio: processReady,
-        tty: processReady,
+        tty: processReady && preflight.terminalReady,
         adoption: processReady,
-        resourceLimits: processReady,
-        signals: processReady ? ["interrupt", "terminate", "kill"] : [],
+        resourceLimits: processReady && preflight.resourcePolicy !== "sampled_terminate",
+        resourcePolicy: preflight.resourcePolicy,
+        signals: processReady ? (platform === "darwin" ? ["terminate", "kill"] : ["interrupt", "terminate", "kill"]) : [],
       },
     },
   });

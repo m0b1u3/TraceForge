@@ -48,9 +48,10 @@ function setup(decision: RunObserverDecision) {
   }).state;
   const model = new FixedObserver(decision);
   const observerStore = new SqliteRunObserverStore(sqlite);
+  let nextEvaluation = 0;
   const supervisor = new RunObserverSupervisor(
     runtime, definitions, events, new SqliteEvidenceGraphStore(sqlite), observerStore, model,
-    { errorBackoffMs: 1_000, concurrencyRetries: 3 }, () => "evaluation_1", () => at,
+    { errorBackoffMs: 1_000, concurrencyRetries: 3 }, () => `evaluation_${++nextEvaluation}`, () => at,
   );
   return { runtime, model, observerStore, supervisor };
 }
@@ -60,6 +61,24 @@ afterEach(() => {
 });
 
 describe("independent Run Observer", () => {
+  it("does not mark concurrently changed shared work as already observed", async () => {
+    const { runtime, model, supervisor, observerStore } = setup({ action: "continue", rationale: "Current state is consistent" });
+    const evaluate = model.evaluate.bind(model);
+    model.evaluate = async () => {
+      const state = runtime.load("run_1")!;
+      runtime.execute({ runId: state.id, commandId: "concurrent-work", expectedRevision: state.revision,
+        command: { type: "propose_work", proposal: { id: "second_work", kind: "research", title: "Inspect second candidate",
+          objective: "Review newly available evidence", idempotencyKey: "second_effect" }, at } });
+      return evaluate();
+    };
+    await expect(supervisor.tick()).rejects.toThrow("context changed");
+    expect(observerStore.list("run_1")[0].applied).toBe(false);
+    model.evaluate = evaluate;
+    await supervisor.tick();
+    expect(model.calls).toBe(2);
+    expect(observerStore.list("run_1").some(item => item.applied)).toBe(true);
+    await supervisor.tick(); expect(model.calls).toBe(2);
+  });
   it("persists and injects a structured steering directive exactly once", async () => {
     const { runtime, model, observerStore, supervisor } = setup({
       action: "steer", workId: "work_1", instruction: "Compare current coverage with unexplored entities before another request.",

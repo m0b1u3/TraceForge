@@ -28,6 +28,7 @@ export interface FoundationHost {
 export async function foundationHost(options: { root?: string; discoveryGate?: Promise<void>; ready?: () => boolean;
   model?: LlmProvider["extractJson"]; modelTimeoutMs?: number; observationToken?: string; objective?: string;
   input?: Record<string, unknown>; failResultCheckpoint?: boolean; empty?: boolean;
+  initialWork?: boolean;
   foundation?: Partial<SecurityAgentFoundationOptions> } = {}): Promise<FoundationHost> {
   const root = options.root ?? await mkdtemp(join(tmpdir(), "traceforge-host-"));
   const sqlite: Database.Database = getSqliteClient(createDb(join(root, "state.db")));
@@ -95,6 +96,7 @@ export async function foundationHost(options: { root?: string; discoveryGate?: P
     async start(id = "run") {
       await request("/api/scenarios/authorizations", { id: `${id}:scope`, caseId: "case", scenarioKind: "neutral", scope: {}, approvedBy: "test", expiresAt: "2099-01-01T00:00:00.000Z" });
       await request("/api/scenarios/runs", { commandId: `${id}:start`, runId: id, caseId: "case", goal: options.objective ?? "Observe", scopeRef: `${id}:scope`, scenarioKind: "neutral", definitionVersion: 1 });
+      if(options.initialWork===false)return;
       await request(`/api/scenarios/runs/${id}/work`, { commandId: `${id}:propose`, expectedRevision: 1,
         proposal: { id: "work", kind: "observe", title: "Observe", objective: options.objective ?? "Observe", idempotencyKey: `${id}:effect`, maxAttempts: 1 } });
     },

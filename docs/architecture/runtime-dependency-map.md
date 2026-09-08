@@ -9,9 +9,10 @@
 SQLite/Drizzle 或 Server 数据库模块。数量增长主要来自后续持久化治理与控制面切片，也说明不能按文件名机械搬迁。产品入口 `main.ts` 可以选择安装具体
 Scenario Package，但 packages 与通用 Server 生产模块由 `verify:foundation` 禁止反向依赖应用或具体场景。
 
-workspace 包依赖当前无环。原 `llm → extension → reasoning-core → llm` 循环已经拆除：模型 Provider Contract
-由 `llm` 唯一持有，`extension` 只保留兼容类型转导并继续拥有工具发现/执行 Contract；`reasoning-core`
-删除未被源码使用的模型依赖。底座边界门禁现在会遍历 workspace package graph，后续新增任何包循环都会失败。
+2026-09-08 清理：旧 `extension`、`mcp-poc-server`、`tools`、`reasoning-core` 包已删除，不再拥有当前工具 Contract。
+当前工具发现/执行由 `worker-runtime` 与 `tool-resolver` 的能力注册表承担；受控 MCP 由 Server 装配到本地执行链路。
+上下文压缩和召回属于 `cognitive-runtime`，不是已经删除的旧推理包。Shared 只保留当前消费的协议与桌面/会话合同。
+下文带日期的数量和提取批次为历史记录；最新构建及边界基线见开发计划。包依赖门禁继续拒绝循环。
 
 ```mermaid
 flowchart TD

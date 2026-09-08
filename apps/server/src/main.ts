@@ -20,6 +20,10 @@ import { loadOrCreateVaultKey, SqliteEncryptedSecretVault } from "./execution-se
 import { resolveFoundationActiveDatabase } from "./foundation-recovery-activation.js";
 import { resolveFoundationDeployment } from "./foundation-deployment.js";
 import { loadScenarioHostConfiguration } from "./scenario-host-configuration.js";
+import { loadBrowserInstallation } from "./browser-installation.js";
+import { ModelAccounts } from "./model-accounts.js";
+import { registerDesktopExecutionRoutes } from "./desktop-execution-routes.js";
+import { registerDesktopEvidenceRoutes, SqliteDesktopBrowserEvidenceReader } from "./desktop-evidence.js";
 
 // 运行时数据固定放在项目根目录 data/ 下，避免受 process.cwd() 影响（tsx watch 从 apps/server 启动）
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -57,10 +61,16 @@ export async function buildServer(
   llmConfigPath = DEFAULT_LLM_CONFIG_PATH,
   projectRoot = PROJECT_ROOT,
   webRoot?: string,
-  hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"|"deployment">
-    & { llmSecretStore?: LlmSecretStore } = {},
+  hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"|"deployment"|"browserDeployment"|"browserInstallation">
+    & { llmSecretStore?: LlmSecretStore; browserInstallationPath?: string; modelAccounts?: ModelAccounts } = {},
 ) {
+  const { llmSecretStore: suppliedLlmSecretStore, browserInstallationPath, modelAccounts, ...foundationHostOptions } = hostOptions;
+  if (browserInstallationPath !== undefined) {
+    if (foundationHostOptions.browserInstallation || foundationHostOptions.browserDeployment) throw new Error("Choose one Browser installation source");
+    foundationHostOptions.browserInstallation = await loadBrowserInstallation(browserInstallationPath);
+  }
   const app = Fastify({ logger: true });
+  app.addHook("onClose", async () => { modelAccounts?.close(); });
   await app.register(cors, {
     origin: (origin, callback) => callback(null, trustedUiOrigin(origin)),
   });
@@ -77,7 +87,6 @@ export async function buildServer(
     });
   }
 
-  const { llmSecretStore: suppliedLlmSecretStore, ...foundationHostOptions } = hostOptions;
   const selected=resolveFoundationActiveDatabase(dbPath,foundationHostOptions.recoveryActivation);
   const deploymentContext={databasePath:selected.path,activeCandidate:selected.candidate};
   const effectiveHostOptions={...foundationHostOptions,deployment:foundationHostOptions.deployment?{...foundationHostOptions.deployment,startupContext:deploymentContext}:undefined};
@@ -114,7 +123,7 @@ export async function buildServer(
     },
     save(secrets) { vault().put("llm-config-secrets:v1", secrets); },
   };
-  const llmService = new LlmConfigService(llmConfigPath, { secretStore: llmSecretStore });
+  const llmService = new LlmConfigService(llmConfigPath, { secretStore: llmSecretStore, gateway: modelAccounts?.gateway });
   let llmConfigured = false;
   try {
     llmService.initializeFromConfig();
@@ -152,7 +161,17 @@ export async function buildServer(
     toolProviderTrustRoots: loadToolProviderTrustRoots(resolve(projectRoot, "config/tool-provider-trust-roots.json")),
   });
   // Register application APIs after the host transport fence. No unguarded legacy API back door.
-  registerRoutes(app, db, bus, provider, llmService, projectRoot);
+  registerRoutes(app, db, bus, provider, llmService, projectRoot, modelAccounts);
+  const desktopChannel = foundationHostControl(app).management();
+  registerDesktopEvidenceRoutes(app, sqlite, new SqliteDesktopBrowserEvidenceReader(sqlite));
+  registerDesktopExecutionRoutes(app, sqlite, {
+    ready: () => llmService.hasProvider(),
+    request: async (url, body) => {
+      const response = await app.inject({ url, method: body === undefined ? "GET" : "POST",
+        headers: desktopChannel.headers(), ...(body === undefined ? {} : { payload: body }) });
+      return { status: response.statusCode, body: response.json() };
+    },
+  });
 
   app.get("/api/health", async () => {
     const executionNode = await executionNodeService.health();
@@ -185,7 +204,8 @@ export type { LlmSecretBundle, LlmSecretStore };
 // 直接运行时启动（用 pathToFileURL 规范化，跨平台可靠：Windows 下 argv[1] 是反斜杠路径，
 // 直接拼 file:// 永不等于 import.meta.url，会导致 listen 不执行、进程空跑退出）
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const app = await buildServer(process.env.TRACEFORGE_DB ?? DEFAULT_DB_PATH);
+  const app = await buildServer(process.env.TRACEFORGE_DB ?? DEFAULT_DB_PATH, undefined, undefined, undefined, undefined,
+    { browserInstallationPath: process.env.TRACEFORGE_BROWSER_INSTALLATION });
   const listen = resolveListenConfig();
   await app.listen(listen);
   console.log(`TraceForge server listening on http://${listen.host}:${listen.port}`);

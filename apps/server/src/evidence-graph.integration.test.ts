@@ -9,6 +9,7 @@ import {
 } from "./evidence-graph-store.js";
 import { registerEvidenceGraphRoutes } from "./evidence-graph-routes.js";
 import { EvidenceGraphMutateTool } from "./evidence-graph-tools.js";
+import { SqliteScenarioArtifactStore } from "./scenario-runtime-state.js";
 
 const open: Database.Database[] = [];
 const at = "2026-08-24T08:00:00.000Z";
@@ -139,5 +140,19 @@ describe("durable Evidence Graph", () => {
     }, context);
     expect(result.status).toBe("succeeded");
     expect(store.load("case_1")?.nodes[0].source?.ref).toBe("traffic_1");
+    const digest = "a".repeat(64);
+    const artifact = new SqliteScenarioArtifactStore(sqlite, () => at).record({
+      packageId: "fixture", packageVersion: "1", caseId: "case_1", runId: "run_1", commandId: "save",
+      kind: "observation", summary: "saved", contentRef: "artifact:fixture", digest: `sha256:${digest}`,
+      byteSize: 1, metadata: {},
+    });
+    const input = { type: "add_node", node: {
+      id: "artifact_evidence", kind: "evidence", title: "Saved artifact", summary: "Persisted observation",
+      status: "active", confidence: 0.8, properties: {}, source: { type: "artifact", ref: artifact.id },
+    } };
+    await expect(tool.execute(input, { ...context, runId: "other_run", idempotencyKey: "other" })).rejects.toThrow(/does not exist/);
+    expect((await tool.execute(input, { ...context, idempotencyKey: "artifact_invocation" })).status).toBe("succeeded");
+    expect(store.load("case_1")?.nodes.find(node => node.id === "artifact_evidence")?.source?.integrity)
+      .toEqual({ algorithm: "sha256", digest });
   });
 });

@@ -1,5 +1,14 @@
 # TraceForge project rules
 
+## Desktop product goal
+
+TraceForge is a desktop AI security-agent application, with Codex and Claude Desktop as interaction references, not a Web administration platform or a library-only deliverable.
+
+- Make agent conversation the primary workflow; expose tasks, tool activity and evidence on demand.
+- Prioritize complete desktop user journeys over isolated infrastructure features. Internal libraries and the local Server support the desktop application; they are not separate product goals.
+- Target macOS Apple Silicon first. Keep Scenario-specific security workflows decoupled from the general foundation and desktop shell.
+- Do not introduce remote execution nodes, multi-user platform management or automatic desktop updates; these are outside the agreed scope.
+
 ## Product-level abstraction
 
 TraceForge is a general-purpose AI security-agent workbench. It is not designed around any single target, challenge, vulnerability class, protocol, status code, artifact, provider, or tool.

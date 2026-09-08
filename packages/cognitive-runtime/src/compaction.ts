@@ -50,6 +50,14 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
     // Only these narrative fields can be transformed. Goal, identifiers, statuses, references,
     // leases, approvals, tool schemas, graph properties and active task instructions stay exact.
     const protectedContext = structuredClone(original);
+    // Preserve the newest bounded receipt observation for the next decision.
+    // Authorization filtering precedes compaction; recency confers no trust.
+    const transcript = Array.isArray(protectedContext.transcript) ? protectedContext.transcript : [];
+    let latestTool = -1;
+    transcript.forEach((entry, index) => { if (entry && typeof entry === "object" && entry.kind === "tool") latestTool = index; });
+    const latest = transcript[latestTool];
+    const protectedObservation = latest && typeof latest.receiptKey === "string" && latest.receiptKey.length > 0
+      && typeof latest.summary === "string" && latest.summary.length <= 8000 ? `/transcript/${latestTool}/summary` : undefined;
     const extract = (value: unknown, path: string, enabled: boolean, depth = 0): void => {
       if (depth > 32) throw new Error("Compaction document depth exceeded");
       if (!value || typeof value !== "object") return;
@@ -57,7 +65,7 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
       const record = value as Record<string, unknown>;
       for (const [key, child] of Object.entries(record)) {
         const id = `${path}/${key}`;
-        if (enabled && typeof child === "string" && ["summary", "resultSummary", "rationale"].includes(key) && child.length > 128) {
+        if (enabled && id !== protectedObservation && typeof child === "string" && ["summary", "resultSummary", "rationale"].includes(key) && child.length > 128) {
           entries.push({ id, text: child }); record[key] = { contextTextId: id };
         } else extract(child, id, enabled && !["properties", "input", "inputSchema", "schema", "pendingApproval", "approvalHistory", "latestCheckpoint"].includes(key), depth + 1);
       }
@@ -67,7 +75,7 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
     if (entries.length > 512) throw new Error("Compaction text entry budget exceeded");
     const inputFingerprint = contextFingerprint(original), protectedFingerprint = contextFingerprint(protectedContext);
     const sourceIds = entries.map((entry) => entry.id);
-    const baseManifest = { version: 1, inputFingerprint, protectedFingerprint, sourceFingerprint: input.sourceFingerprint,
+    const baseManifest = { version: 2, protectedObservation, inputFingerprint, protectedFingerprint, sourceFingerprint: input.sourceFingerprint,
       compactorVersion: this.compactor.version, sourceIds, preservedStructure: true, semanticQualityVerified: false };
     const originalFits = Buffer.byteLength(JSON.stringify(original)) <= this.limits.maximumContextBytes;
     if (!entries.length || entries.reduce((sum, entry) => sum + entry.text.length, 0) <= this.limits.triggerCharacters) {
@@ -75,7 +83,7 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
       return { context: original, manifest: { contextCompaction: { ...baseManifest, status: "not_needed", outputFingerprint: inputFingerprint } } };
     }
     const id = contextFingerprint({ caseId: input.caseId, runId: input.runId, consumer: input.consumer,
-      inputFingerprint, sourceFingerprint: input.sourceFingerprint, compactor: this.compactor.version, limits: this.limits });
+      inputFingerprint, sourceFingerprint: input.sourceFingerprint, compactor: this.compactor.version, limits: this.limits, layoutVersion: 2 });
     let record = this.store.get(id);
     let replayed = !!record;
     if (!record) {

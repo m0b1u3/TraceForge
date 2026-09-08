@@ -14,6 +14,7 @@ export type ExecutionCapabilityName =
   | "process.tty"
   | "process.adopt"
   | "process.resource_limits"
+  | "process.sampled_resource_budgets"
   | "process.execution_observation"
   | "process.operation_observation"
   | "filesystem.canonicalize"
@@ -32,6 +33,7 @@ export interface ExecutionNodeCapabilities {
     tty: boolean;
     adoption: boolean;
     resourceLimits: boolean;
+    resourcePolicy?: "sampled_terminate";
     executionObservation?: boolean;
     operationObservation?: boolean;
     signals: ProcessSignal[];
@@ -319,6 +321,8 @@ export interface ProcessEnforcementAttestation {
   filesystemPolicyApplied: boolean;
   permissionProfileFingerprint: string;
   resourceLimitsApplied: boolean;
+  /** Explicit weaker budget policy; never implies kernel-enforced hard limits. */
+  resourcePolicy?: "sampled_terminate";
   resourceLimitsFingerprint: string;
   network: "deny" | "brokered" | "direct";
   /** Native helper accepted the child into its owned process-tree boundary before releasing exec. */
@@ -487,6 +491,7 @@ export function capabilityNames(capabilities: ExecutionNodeCapabilities): Execut
   if (capabilities.process.tty) names.push("process.tty");
   if (capabilities.process.adoption) names.push("process.adopt");
   if (capabilities.process.resourceLimits) names.push("process.resource_limits");
+  if (capabilities.process.resourcePolicy === "sampled_terminate") names.push("process.sampled_resource_budgets");
   if (capabilities.process.executionObservation) names.push("process.execution_observation");
   if (capabilities.process.operationObservation) names.push("process.operation_observation");
   if (capabilities.filesystem.canonicalize) names.push("filesystem.canonicalize");

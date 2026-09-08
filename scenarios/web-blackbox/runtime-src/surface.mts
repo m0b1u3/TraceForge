@@ -2,7 +2,7 @@ import type { CapabilityReceipt, JsonObject, ToolResult } from "./contracts.mjs"
 import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredText, sha, shaBytes, stringRecord, succeeded, unique } from "./validation.mjs";
 
 type CapabilityCall = (capability: string, action: string, input: unknown, suffix: string) => Promise<CapabilityReceipt>;
-interface SurfaceState { schemaVersion: 1; seeds: string[]; queue: string[]; visited: string[]; observations: JsonObject[]; skipped: JsonObject[] }
+interface SurfaceState { schemaVersion: 1; seeds: string[]; queue: string[]; visited: string[]; observations: JsonObject[]; skipped: JsonObject[]; pending: string | null }
 
 export async function exploreSurface(input: JsonObject, capability: CapabilityCall): Promise<ToolResult> {
   exact(input, ["seeds", "headers", "maxRequests", "maxLinksPerPage", "responseLimitBytes", "sessionId"]);
@@ -16,6 +16,11 @@ export async function exploreSurface(input: JsonObject, capability: CapabilityCa
   const stateKey = sessionId ? `web.surface.v1:${sha(sessionId).slice(0, 16)}` : "web.surface.v1";
   const loaded = await capability("traceforge.scenario.state@1", "read", { operation: "read", key: stateKey }, "surface-state-read");
   let state = restoreSurfaceState(loaded.output), revision = loaded.output?.revision ?? 0;
+  if (state.pending !== null) return succeeded("Surface request outcome is unconfirmed; automatic replay is blocked", {
+    status: "interrupted", pendingUrl: state.pending, observations: state.observations, queued: state.queue,
+    limitations: ["Inspect attributed traffic and evidence before further discovery. Do not start another exploration to replay the unknown request."],
+    resume: { stateKey, revision },
+  }, state.observations.flatMap(item => [item.networkReceipt, ...(item.evidenceRefs ?? [])]));
   const origins = new Set([...state.seeds, ...seeds].map((value) => new URL(value).origin));
   state.seeds = unique([...state.seeds, ...seeds]).slice(0, 16);
   state.queue = unique([...state.queue, ...seeds]).filter((value) => !state.visited.includes(value)).slice(0, 32);
@@ -34,6 +39,8 @@ export async function exploreSurface(input: JsonObject, capability: CapabilityCa
       state.visited.push(url); state.skipped.push({ url, reason: "not_authorized" }); state.skipped = state.skipped.slice(-16);
       ({ state, revision } = await saveSurface(capability, state, revision, step, stateKey)); step += 1; continue;
     }
+    state.pending = url;
+    ({ state, revision } = await saveSurface(capability, state, revision, step, stateKey));
     const execution = await capability("traceforge.scenario.execution@1", sessionId ? "request_http_session" : "request_http", {
       authorizationAction: "web.request.replay", ...(sessionId ? { sessionAuthorizationAction: "web.session.use", sessionId } : {}),
       url: authorization.output.canonicalValue, method: "GET", headers, bodyBase64: "", timeoutMs: 10000, responseLimitBytes,
@@ -54,7 +61,7 @@ export async function exploreSurface(input: JsonObject, capability: CapabilityCa
       byteSize: observation.responseBytes, metadata: observation }, `surface-artifact:${key}`);
     const artifact = artifactReceipt.output;
     const evidenceReceipt = await capability("traceforge.scenario.evidence@1", "record_node", { commandId: "observation", node: {
-      id: `web-observation:${sha(`${url}\0${receiptId}`)}`, kind: "evidence", title: `Observed ${url}`,
+      id: `web-observation:${sha(`${url}\0${receiptId}`)}`, kind: "fact", title: `Observed ${url}`,
       summary: `GET returned ${observation.status} (${contentType || "unknown content type"})`, status: "active", confidence: 1,
       properties: { url, status: observation.status, contentType, responseBytes: observation.responseBytes, bodyTruncated: observation.bodyTruncated,
         bodyDigest, artifactId: artifact.id, networkReceipt: observation.networkReceipt, discoveredUrls: observation.discoveredUrls,
@@ -62,6 +69,7 @@ export async function exploreSurface(input: JsonObject, capability: CapabilityCa
     } }, `surface-evidence:${key}`);
     const saved = { ...observation, artifactId: artifact.id, evidenceRefs: evidenceReceipt.refs };
     state.visited.push(url); state.observations.push(saved); state.visited = unique(state.visited).slice(-64); state.observations = state.observations.slice(-16);
+    state.pending = null;
     invocationObservations.push(saved); refs.push(artifact.contentRef, ...artifactReceipt.refs, ...evidenceReceipt.refs, ...execution.refs);
     ({ state, revision } = await saveSurface(capability, state, revision, step, stateKey)); step += 1;
   }
@@ -73,18 +81,18 @@ export async function exploreSurface(input: JsonObject, capability: CapabilityCa
 
 async function saveSurface(capability: CapabilityCall, state: SurfaceState, revision: number, step: number, stateKey: string) {
   const receipt = await capability("traceforge.scenario.state@1", "compare_and_set", { operation: "compare_and_set",
-    commandId: `checkpoint:${stateKey}:${step}`, key: stateKey, expectedRevision: revision, value: state }, `surface-state:${stateKey}:${step}`);
+    commandId: `checkpoint:${stateKey}:${revision}`, key: stateKey, expectedRevision: revision, value: state }, `surface-state:${stateKey}:${revision}`);
   return { state: restoreSurfaceState(receipt.output), revision: receipt.output.revision as number };
 }
 
 function restoreSurfaceState(record: any): SurfaceState {
-  if (record === null || record === undefined) return { schemaVersion: 1, seeds: [], queue: [], visited: [], observations: [], skipped: [] };
+  if (record === null || record === undefined) return { schemaVersion: 1, seeds: [], queue: [], visited: [], observations: [], skipped: [], pending: null };
   const value = plainObject(record.value, "Surface state");
   if (value.schemaVersion !== 1 || ![value.seeds, value.queue, value.visited, value.observations, value.skipped].every(Array.isArray)) throw new Error("Surface state is incompatible");
   return { schemaVersion: 1, seeds: value.seeds.map((item: unknown) => canonicalHttpUrl(item, "Saved seed")).slice(0, 16),
     queue: value.queue.map((item: unknown) => canonicalHttpUrl(item, "Saved queued URL")).slice(0, 32),
     visited: value.visited.map((item: unknown) => canonicalHttpUrl(item, "Saved visited URL")).slice(0, 64),
-    observations: value.observations.slice(-16), skipped: value.skipped.slice(-16) };
+    observations: value.observations.slice(-16), skipped: value.skipped.slice(-16), pending: value.pending == null ? null : canonicalHttpUrl(value.pending, "Pending Surface URL") };
 }
 
 export function discoverLinks(body: string, base: string, origins: Set<string>, maximum: number) {

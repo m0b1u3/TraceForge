@@ -3,13 +3,9 @@ import { proxyFetch } from "@traceforge/shared/proxy";
 import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall, StreamToolsHandlers, UsageSnapshot } from "./provider.js";
 import { withRetry } from "./retry.js";
 
-export interface OpenAIOptions {
-  apiKey: string;
-  model: string;
-  baseUrl?: string;
-  jsonMode?: "json_schema" | "json_object";
-  embeddingModel?: string;
-}
+import type { ModelAdapterOptions } from "./adapter-options.js";
+/** Compatibility alias for existing adapter consumers. */
+export type OpenAIOptions = ModelAdapterOptions;
 
 interface ToolAccumulator { id: string; name: string; args: string }
 
@@ -77,8 +73,19 @@ export function assembleOpenAIStreamChoice(chunks: OpenAIStreamChunk[]): RunTurn
 export class OpenAICompatibleProvider implements LlmProvider {
   private client: OpenAI;
   constructor(private opts: OpenAIOptions) {
-    const fetchImpl = proxyFetch();
+    const fetchImpl = opts.fetch ?? proxyFetch();
     this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseUrl, ...(fetchImpl ? { fetch: fetchImpl } : {}) });
+  }
+
+  private parameters() {
+    const options = this.opts.requestOptions;
+    return {
+      ...(this.opts.maxOutputTokens === undefined ? {} : { max_tokens: this.opts.maxOutputTokens }),
+      ...(options?.temperature === undefined ? {} : { temperature: options.temperature }),
+      ...(options?.thinking === undefined ? {} : { thinking: { type: options.thinking } }),
+      // Compatible suppliers extend the SDK's older reasoning-effort enum; config validates our allowlist.
+      ...(options?.reasoningEffort === undefined ? {} : { reasoning_effort: options.reasoningEffort as OpenAI.Chat.Completions.ChatCompletionCreateParams["reasoning_effort"] }),
+    };
   }
 
   async embed(args: { inputs: string[]; signal?: AbortSignal }): Promise<number[][]> {
@@ -98,7 +105,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     let res;
     try {
       res = await withRetry("openai.extractJson", () => this.client.chat.completions.create({
-        model: this.opts.model,
+        ...this.parameters(), model: this.opts.model,
         response_format: {
           type: "json_schema",
           json_schema: { name: "extraction", schema: args.schema },
@@ -111,7 +118,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     } catch (error) {
       if (!isResponseFormatUnavailable(error) && !isEmptyJsonResponseError(error)) throw error;
       res = await withRetry("openai.extractJson.fallback", () => this.client.chat.completions.create({
-        model: this.opts.model,
+        ...this.parameters(), model: this.opts.model,
         messages: [
           { role: "system", content: `${args.system}\n只输出一个 JSON 对象，不要输出 Markdown 或解释文字。JSON 必须符合这个 schema：${JSON.stringify(args.schema)}` },
           { role: "user", content: args.user },
@@ -129,7 +136,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     try {
       res = await withRetry("openai.extractJson.jsonObject", async () => {
         const response = await this.client.chat.completions.create({
-          model: this.opts.model,
+          ...this.parameters(), model: this.opts.model,
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: jsonObjectSystemPrompt(args.system, args.schema) },
@@ -143,7 +150,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     } catch (error) {
       if (isResponseFormatUnavailable(error) || isEmptyJsonResponseError(error)) {
         res = await withRetry("openai.extractJson.jsonObject.fallback", () => this.client.chat.completions.create({
-          model: this.opts.model,
+          ...this.parameters(), model: this.opts.model,
           messages: [
             { role: "system", content: jsonObjectSystemPrompt(args.system, args.schema) },
             { role: "user", content: args.user },
@@ -163,7 +170,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     // 用 OpenAI 原生 tool-calling：tools(function) 参数 + tool_calls/tool 消息。
     const msgs = this.toOpenAIMessages(args);
     const res = await withRetry("openai.runTools", () => this.client.chat.completions.create({
-      model: this.opts.model,
+      ...this.parameters(), model: this.opts.model,
       messages: msgs as never,
       tools: args.tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
     }), { onRetry: mapRetry(args.onRetry) });
@@ -182,7 +189,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
       const chunks: OpenAIStreamChunk[] = [];
       let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
       const stream = await this.client.chat.completions.create({
-        model: this.opts.model,
+        ...this.parameters(), model: this.opts.model,
         messages: msgs as never,
         tools: args.tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
         stream: true,

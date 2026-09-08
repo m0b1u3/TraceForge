@@ -7,17 +7,21 @@
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
+    "dev:models": "pnpm --filter @traceforge/server build:model-settings && pnpm --filter @traceforge/web build:desktop-preview && pnpm build && electron dist/model-settings-main.js",
     "build": "tsc -p tsconfig.json",
-    "dev": "pnpm build && electron dist/main.js",
-    "pack": "pnpm build && electron-builder --dir",
-    "dist": "pnpm build && electron-builder",
-    "dist:win": "pnpm build && electron-builder --win nsis --publish never",
-    "dist:mac": "pnpm build && electron-builder --mac dmg zip --publish never",
-    "dist:linux": "pnpm build && electron-builder --linux deb --publish never"
+    "prepare:runtime": "node ../../scripts/prepare-desktop-runtime.mjs",
+    "restore:node-runtime": "node ../../scripts/restore-node-runtime.mjs",
+    "verify:launch": "electron ../../scripts/verify-desktop-launch.mjs",
+    "dev": "pnpm --filter @traceforge/server build && pnpm --filter @traceforge/web build:desktop-preview && pnpm build && pnpm prepare:runtime && electron dist/development-main.js",
+    "pack": "node ../../scripts/desktop-release-unavailable.mjs",
+    "dist": "node ../../scripts/desktop-release-unavailable.mjs",
+    "dist:win": "node ../../scripts/desktop-release-unavailable.mjs",
+    "dist:mac": "node ../../scripts/desktop-release-unavailable.mjs",
+    "dist:linux": "node ../../scripts/desktop-release-unavailable.mjs"
   },
   "dependencies": {
-    "@traceforge/server": "workspace:*",
-    "electron-updater": "^6.6.2"
+    "@traceforge/shared": "workspace:*",
+    "@traceforge/server": "workspace:*"
   },
   "devDependencies": {
     "electron": "37.10.3",

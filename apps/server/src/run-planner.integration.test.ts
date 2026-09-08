@@ -79,6 +79,23 @@ afterEach(() => {
 });
 
 describe("independent Run Planner", () => {
+  it("reevaluates shared work that changes while the model is thinking", async () => {
+    const wait = {action:"wait", rationale:"Await active work"} as const;
+    const {runtime, model, supervisor, plannerStore} = setup([wait, wait]);
+    const evaluate = model.evaluate.bind(model);
+    model.evaluate = async () => {
+      const state = runtime.load("run_1")!;
+      runtime.execute({runId:state.id, commandId:"concurrent", expectedRevision:state.revision,
+        command:{type:"propose_work", proposal:{id:"new_work",kind:"research",title:"First candidate",
+          objective:"Inspect shared evidence",idempotencyKey:"first_effect"}, at}});
+      return evaluate();
+    };
+    await expect(supervisor.tick()).rejects.toThrow("context changed");
+    expect(plannerStore.list("run_1")[0].applied).toBe(false);
+    model.evaluate = evaluate;
+    await supervisor.tick(); await supervisor.tick();
+    expect(model.calls).toBe(2);
+  });
   it("persists a bounded plan and creates server-owned Work exactly once", async () => {
     const plan: RunPlannerDecision = {
       action: "plan",

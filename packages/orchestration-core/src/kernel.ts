@@ -441,7 +441,8 @@ export class ScenarioKernel {
       return [{ type: "run_cancelled", reason: command.reason, at: command.at }];
     }
 
-    const state = requireActive(current);
+    const state = command.type === "issue_directive" && command.directive.issuedBy === "operator" && current?.status === "paused"
+      ? current : requireActive(current);
     const phase = requirePhase(this.definition, state.activePhaseId);
     switch (command.type) {
       case "propose_work": {
@@ -705,7 +706,7 @@ export class ScenarioKernel {
       }
       case "issue_directive": {
         const work = requireWork(state, command.directive.targetWorkId);
-        if (terminalWork.has(work.status)) throw new Error(`Cannot steer terminal work ${work.id}`);
+        if (terminalWork.has(work.status) && !(command.directive.issuedBy === "operator" && ["blocked", "failed"].includes(work.status))) throw new Error(`Cannot steer terminal work ${work.id}`);
         if (!command.directive.id.trim() || !command.directive.instruction.trim() || !command.directive.rationale.trim()) {
           throw new Error("Observer directive id, instruction and rationale are required");
         }

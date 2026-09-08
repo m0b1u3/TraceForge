@@ -1,4 +1,5 @@
 import type { EvidenceGraphState, KnowledgeNode } from "@traceforge/evidence-graph";
+import { createHash } from "node:crypto";
 import { canonicalJson, type ScenarioEvent, type ScenarioRunState } from "@traceforge/orchestration-core";
 import type { WorkerModelRequest, WorkerTranscriptEntry } from "@traceforge/worker-runtime";
 
@@ -7,6 +8,7 @@ export * from "./evaluation.js";
 export * from "./wakeup.js";
 export * from "./loop.js";
 export * from "./compaction.js";
+export * from "./recall.js";
 export * from "./lineage.js";
 export * from "./run-planning.js";
 export * from "./run-observation.js";
@@ -46,7 +48,8 @@ export interface DistilledWorkerContext {
 }
 
 function visibleNodes(run: ScenarioRunState, graph: EvidenceGraphState): KnowledgeNode[] {
-  return graph.nodes.filter((node) => node.runId === null || node.runId === run.id);
+  if (graph.caseId !== run.caseId) throw new Error("Context graph Case mismatch");
+  return graph.nodes.filter((node) => node.caseId === run.caseId && (node.runId === null || node.runId === run.id));
 }
 
 function semanticRun(run: ScenarioRunState) {
@@ -79,6 +82,7 @@ function semanticRun(run: ScenarioRunState) {
       targetWorkId: directive.targetWorkId,
       instruction: directive.instruction,
       rationale: directive.rationale,
+      issuedBy: directive.issuedBy,
     })),
   };
 }
@@ -94,6 +98,7 @@ export class CognitiveContextDistiller {
       if (!Number.isInteger(value) || value < 1) throw new Error(`Context budget ${name} must be a positive integer`);
     }
     const allNodes = visibleNodes(run, graph);
+    const visibleIds = new Set(allNodes.map(node => node.id));
     const nodes = allNodes.slice(-budget.maximumGraphNodes);
     const nodeIds = new Set(nodes.map((node) => node.id));
     const edges = graph.edges.filter((edge) => nodeIds.has(edge.sourceId) && nodeIds.has(edge.targetId));
@@ -102,7 +107,9 @@ export class CognitiveContextDistiller {
     const directives = run.directives.slice(-budget.maximumRunItems);
     const recentEvents = events.slice(-budget.maximumRecentEvents);
     const distilledRun: ScenarioRunState = { ...run, workItems, outputs, directives };
-    const semanticNodes = nodes.map((node) => ({
+    // Wake-up identity covers all visible durable facts, not just the prompt
+    // window. An older changed fact must still wake a consumer after compaction.
+    const semanticNodes = allNodes.map((node) => ({
       id: node.id,
       runId: node.runId,
       kind: node.kind,
@@ -114,11 +121,12 @@ export class CognitiveContextDistiller {
       source: node.source,
       version: node.version,
     }));
-    const semanticFingerprint = canonicalJson({
-      run: semanticRun(distilledRun),
+    const semanticFingerprint = createHash("sha256").update(canonicalJson({
+      run: semanticRun(run),
       nodes: semanticNodes,
-      edges: edges.map((edge) => ({ id: edge.id, sourceId: edge.sourceId, targetId: edge.targetId, relation: edge.relation, rationale: edge.rationale })),
-    });
+      edges: graph.edges.filter((edge) => visibleIds.has(edge.sourceId) && visibleIds.has(edge.targetId))
+        .map((edge) => ({ id: edge.id, sourceId: edge.sourceId, targetId: edge.targetId, relation: edge.relation, rationale: edge.rationale })),
+    })).digest("hex");
     return {
       run: distilledRun,
       graph: { revision: graph.revision, nodes, edges },

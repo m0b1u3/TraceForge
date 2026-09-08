@@ -187,6 +187,15 @@ export class RunObserverSupervisor {
     if (evaluation.applied) return;
     if (this.contextPolicy) await this.contextPolicy.recordDerivations(evaluation.id,
       evaluation.decision.action === "steer" ? [{ kind: "directive", id: evaluation.id }] : []);
+    // A model may run while another role changes shared state. Never apply its
+    // old decision and then advance the cursor over facts it did not observe.
+    const currentRun = this.runtime.load(run.id);
+    const currentGraph = this.graphs.ensure(run.caseId, this.now());
+    const budget = { maximumRecentEvents, maximumGraphNodes, maximumRunItems };
+    if (!currentRun || this.distiller.distillRun(currentRun, currentGraph, [], budget).semanticFingerprint
+      !== this.distiller.distillRun(run, graph, [], budget).semanticFingerprint) {
+      throw new Error("Observer context changed during evaluation; reevaluate current state");
+    }
     const resultingRevision = this.applyDecision(run.id, evaluation.id, evaluation.decision);
     this.store.complete(evaluation.id, run.id, resultingRevision, graph.revision, this.now());
     const latestRun = this.runtime.load(run.id);

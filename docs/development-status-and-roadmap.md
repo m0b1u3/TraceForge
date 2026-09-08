@@ -1,6 +1,563 @@
 # TraceForge 当前开发进度与生产化计划
 
-更新日期：2026-09-04
+更新日期：2026-09-08
+
+## 产品目标与当前推进主线
+
+TraceForge 是以 Codex、Claude Desktop 为交互参考的桌面端安全智能体应用：对话为主，任务、工具操作和证据按需展开。不是 Web 管理平台，不以单独交付底座库为最终目标。macOS Apple Silicon 首发；通用底座、模型连接、桌面宿主和 Scenario 保持解耦。远程节点、多用户平台、自动更新不在约定范围。该约束同时写入根目录 AGENTS.md，供后续开发持续遵循。
+
+当前优先级覆盖下方历史批次的“下一步”：完成 macOS 正式 Browser 接入与桌面对话/证据闭环，结合 Scenario 做实际任务验收；长期经验记忆保留为独立缺口，不用新增基础设施无限推迟桌面可用版本。
+
+### 最新整改：旧系统代码、依赖与产物清理（2026-09-08）
+
+按用户要求对当前入口和引用图核对后清理，不把旧 PoC 算作新桌面能力：
+
+- 删除整个 `packages/extension`、`packages/mcp-poc-server`、`packages/tools`、`packages/reasoning-core`，包括旧 stdio MCP Manager、文件读写 PoC、工具注册/HTTP replay、旧上下文构建/压缩及其专属测试。当前上下文压缩和召回保留在 Cognitive Runtime；当前工具合同保留在 Worker Runtime，能力注册表保留在 Tool Resolver。
+- 删除已脱离当前入口的旧 Server artifact 分析/恢复、验证工作流、旧 Observer/假设调度、语义索引和专属 Store/测试；混合测试里的当前 CaseStore 回归迁出保留。Shared 删除旧实体、旧图构建及旧界面事件，只保留当前消费的会话/桌面/协议合同。不按目录名称删除新 `apps/web/renderer`。
+- 数据库不再创建或升级 26 张旧应用专用表，包括旧 artifact、facts/tasks、报告、Observer、语义索引及迁移记录表。移除旧失败 Fact 数据删除迁移及启动时旧 Agent 表删除代码。已有历史表和数据保持原样，本次不操作用户数据库、密钥、证据文件或本机授权配置。当前 traffic、Scenario artifact、执行身份和证据图存储继续保留。
+- 当前 Evidence Graph 的 artifact 来源查验从无人写入的旧 artifacts 表改用当前 `scenario_artifacts`，核对 Case/Run 并使用持久化 digest；新增同 Run 成功、异 Run 拒绝回归。
+- 删除旧 Web 的被忽略静态产物、四个退役包的编译/依赖残留，以及 Server/Shared 等目录中 292 个对应的旧编译文件。删除旧 MCP 示例配置、PoC 自动构建脚本依赖、无引用的 UI 依赖及 electron-updater，同步 lockfile。源码中尚在使用的受控 MCP、Tool Provider、沙箱、浏览器和 Scenario Runtime 不受影响。
+- 根启动命令改为 `dev:desktop`，Renderer 的工作区 build 构建新界面；正式发行仍由 `desktop-release-unavailable.mjs` 拦截，不以清理为由解除未验收门禁。README 与依赖图校正；旧前端重建/独立预览文档明确标为历史批次。
+- 新增 `verify-retired-code.mjs` 并接入 test/test:fast/build:foundation，拒绝退役包、依赖与旧入口重新出现。Scenario 边界测试保留具体场景限制，允许通用 `ScenarioBrowserDeployment` 宿主接口。Real Chromium 保留独立 `test:browser-runtime:real` 验收命令，不属于无需专用环境的 test:fast。
+
+验证基线：全工作区构建、build:foundation、228 个生产源文件底座边界、退役源码/依赖边界、git diff --check 通过。清理专项 7 文件/24 项通过。首次全量回归发现 2 项缺少 Real Chromium 配置及旧边界断言误判，随后将专用环境测试保留在独立验收命令并修正误判。第二次全量快速回归为 214 文件/2081 项通过、1 项失败、22 项跳过；唯一失败是新 Scenario Artifact 的 `sha256:` 前缀与 Evidence Graph 原十六进制摘要格式不同，现已校验并规范化，最终受影响文件复测通过。全量运行期间已加载旧模块，因此不把专项复测描述为一次完整全绿运行；本批未再重跑整套全量，也不宣称真实 Chromium、Linux 或真实模型端到端验收通过。验证日志位于本机 `/private/tmp/traceforge-legacy-cleanup-final-tests.log` 与 `/private/tmp/traceforge-legacy-cleanup-final-build.log`。未提交推送。
+
+能力与下一优先级：继续既定 macOS 桌面/Scenario 真实用户流程验收；通用受控文件读取、写入、搜索、修改工具的产品闭环仍是缺口，不能用本次删除的 MCP PoC 充数。通用系统操作放在底座受控工具层，资产测绘/指纹识别等安全专用工具留在 Scenario/Provider。通俗地说，本批清除的是已经不用的旧发动机和接线，保住当前桌面链路；下一步应验证用户真正能完成调查，而不是继续堆旧工具或把场景策略塞回底座。
+
+### 已完成：桌面审批与补充信息的持久命令闭环（2026-09-08）
+
+本批补齐上批列出的桌面入口，不另建 Scenario 编排：从当前 Run/work 的 pendingApproval 展示工作项、工具、风险、理由；批准前必须读取并确认具体参数。只读参数端点按会话归属读取 SQLite checkpoint，核对内容摘要、Case/Run/work/workKey、tool/risk/actionKey，并仅返回最多 32 KiB 的待执行输入，不暴露整份 journal。缺失、超限、归属不符或损坏均不能批准，仍可明确拒绝。旧文件 checkpoint 或没有 exact pending invocation 的旧审批不静默降级，需要宿主恢复可核对的输入。
+
+批准/拒绝必须带说明；批准额外带 reviewedInputRef 并在宿主再次核对。当前版本/审批内容/说明变化使旧勾选失效。新固定 IPC 命令复用 ExecutionController、先写日志及严格回执；成功回执校验实际 command 事件而不依赖仍 pending 的状态，丢响应后核对不再次授权。支持真实工作/审批的冒号标识，路由编码，不开放任意 API 代理。
+
+补充内容以 issuedBy=operator 的现有通用 directive 持久化，不伪装 Observer；保留来源到认知语义指纹与工作分配上下文。界面可选工作项、填写信息、查看宿主已保存的补充；失败保留草稿，同一草稿的成功核对才清空。暂停或阻塞时可保存信息，但不会恢复运行、重试工具、自动批准或扩大 scope。用户输入是待评估上下文，不变成已验证证据。
+
+验证基线：10 文件 65 项针对回归通过；Shared、Orchestration Core、Cognitive Runtime、Server、Desktop、Renderer 构建通过，341 个底座源文件边界通过。真实 SQLite/Runtime 验证批准与拒绝、提交后丢响应重放、版本冲突、跨会话拒绝、撤权拒绝、参数读取/不可用、暂停/阻塞不重试及后续 Worker 取得补充。桌面和 390px 合成截图无横向溢出；独立审阅的参数不可核对、核对成功草稿残留等问题均已修正，最终限定范围复核通过。本批未调用真实模型或连接调查目标，不借上批 Grok 认知验收宣称本批原生全链通过。未提交推送。
+
+剩余正式门槛：在真实 macOS 桌面跑完整 Scenario 调查验收，包含模型 → 工具 → 人工决策 → 继续执行 → 证据；本批已完成审批和文本补充入口，不声称任意结构化问卷、凭证输入、token 流或正式 Browser 发行完成。下一优先级是上述端到端验收及修复实际断点：让用户从桌面发起到查看依据都能走通，而非继续增加外围基础设施。
+
+### 历史进展：桌面增量执行记录与停止控制（2026-09-08）
+
+已接通既有持久 Agent 事件到桌面对话：新增会话/Run 所有权校验的只读分页接口，Electron 仅开放固定 GET 路径；Renderer 校验事件协议、连续序号、归属和游标，整页通过后才推进。每页 100 条、界面保留最近 100 条，前台约 2 秒/后台约 15 秒读取；不是 token 流，也不展示内部思维链。工具/模型/审批/进展事实可展开，工具引用沿用已有证据读取合同。
+
+运行回复旁新增停止和原请求核对入口，复用同一个 ExecutionController 和持久命令日志；结果未知不替换命令，不自动重跑操作。显示“宿主已确认停止”不声称外部副作用已撤销。审批事件当前仅显示，尚不能在桌面批准/拒绝或提交补充信息，不能将整个人工处理闭环标成完成。
+
+验证：7 文件 52 项针对回归通过，Server、Desktop、Renderer 类型/构建通过，341 个源文件底座边界通过。桌面/窄窗口合成截图无横向溢出，独立 UI 审阅无阻断项，展开入口缺少箭头的小问题已修正。真实模型验收另行记录，不把合成截图或存量模型脚本当作完整桌面 E2E。本批未提交推送。
+
+仍需完成：审批/补充信息的桌面命令合同及重放核对，覆盖真实模型 → 工具 → 人工处理 → 停止 → 证据的整链验收。实际作用是遇到需要人工决定的操作时，不必退出桌面另找接口处理。当前是轮询持久事件，未声称逐字流式模型回复、历史无限分页浏览或正式 macOS 发行已完成。
+
+真实模型补充验证：使用已有 Electron 加密配置中的 responses / grok-4.6 执行 cognitive 验收，3 次逻辑调用通过，报告 data/desktop-model-acceptance/traceforge-cognitive-DImSue/report.json。未输出凭证、未连接调查目标；它验证认知底座，不是新增桌面事件和人工审批的全链验收。验收后恢复 Node 原生依赖。
+
+### 历史完成：用户选定的对话内确认卡 A（2026-09-08）
+
+用户以“就按照你推荐的”确认 A，对应 mock JSON 已标记 approved。已将真实 HostWorkbench 的导航、标题、左右对话、短输入框与行内授权卡替换为该方向；样式隔离在 host-workbench.css，不改独立演示页、Core、模型网关或 Scenario 权限语义。最新保存说明未关联 Run 时自动展示只读授权准备，范围仍由用户逐字填写，不从自然语言推断；登记与启动继续分离，所有写入沿用原控制器及确认约束。模型设置为真实入口，不增加假附件或假模型选择器。
+
+本轮验证：4 个 Renderer 测试文件共 19 项通过（含自动展示仅 GET、空范围不推断回归），Renderer 类型检查及生产构建通过。1440×960 与 390×844 合成只读浏览器截图完成，窄窗口无横向溢出；未注册真实授权、调用模型或连接目标，不等同于原生 Electron/整产品验收。设计检测无发现，独立审阅无阻断项，提出的小字对比度与已有授权折叠入口问题已修正。未提交或推送。
+
+本批替代下方“待确认结构”的历史状态，不将选稿或测试通过当成用户已经认可最终实装。下一完整优先级仍为桌面实际任务反馈闭环：复用 Runtime 事件呈现增量进展、工具状态和人工处理入口，让用户知道正在做什么、何时需要确认、如何停止；不新增编排体系。正式 macOS Browser 发行隔离与真实调查验收仍未完成。
+
+### 历史完成：Scenario 声明式授权表单接入桌面
+
+**视觉验收状态修正（用户再次反馈后）**：授权逻辑与测试已实现，但用户再次明确表示现有界面远未达到 Codex/Claude 桌面质量。下方局部独立审阅的 Ship 只表示其检查范围，没有获得用户视觉认可，不再将该界面视为设计交付完成。本轮暂停继续微调旧表单，生成三份桌面高保真结构稿：对话内确认卡（A）、右侧检查面板（B）、独立确认浮层（C），保存在 .impeccable/mocks/authorization-desktop-{A,B,C}-20260908.png，对应 prompt/approved:false 记录在相邻 JSON。它们是未实现的设计提案，不修改真实授权或运行逻辑；生成图中的附加权限文字、Logo、附件/模型选择控件仅作构图，不能当作已实现能力或新的授权规则。需先由用户确认结构，再替换现有交互；不再以测试通过替代视觉验收。本轮未修改业务代码，仅记录设计与计划，执行 diff 检查。
+
+本批完成“选择已安装场景 → 填写范围 → 核对动作与资源 → 明确登记 → 单独确认启动”的可视化接线。延续现有桌面交互，不修改 Core 的调查编排，不把地址/身份/网络规则放进通用 Renderer。
+
+- shared 增加浏览器安全、版本化、严格的授权展示合同；当前 v1 支持有界文本列表与嵌套路径。禁止未知/可执行字段、重复或重叠路径及原型属性；只去掉行首尾空白，不推断协议、站点、通配符或更宽前缀。输入生成器限制数量、长度和完整范围 32 KiB。
+- Scenario 的声明式 policy 可携带可选 form；SDK 安装解析确保表单恰好覆盖该策略的动态资源路径。Web Blackbox 在自己的 scenario.json 中声明字段及说明；通用底座不认识 targets、urlPrefixes 或 identityHandles。旧场景没有 form 时仍保留显式高级 JSON，不伪造表单；未知 form/缺失策略回顾则禁止登记。
+- 现有 Scenario definitions 路由投影已安装策略的表单、允许/禁止动作及资源规则，经既有桌面桥传递。表单仅为输入展示，真实权限仍由既有 Scenario authorization 与执行 Broker 决定，不根据前端校验授予权限。
+- 桌面先显示输入后的精确列表、到期时间、动作和固定资源，再要求明确勾选。编辑内容、切换场景或轮询改变合同会撤销旧核对。沿用一小时期限，登记不会自动运行；收到匹配回执后选中新授权，启动仍独立确认。未确认原请求期间禁止再登记，复用上一批持久命令与恢复控制器。
+- 没有新增正则/脚本执行、动态组件加载、场景专属前端、远程节点或多用户能力。空字段不新增资源权限，场景固定资源仍明确展示；身份字段只填写句柄，不填写密码或令牌。
+
+视觉整改：用户明确否定第一版长表单，因此第一版独立审阅的 ship 结论不视为用户接受。按这一反馈重做为紧凑的两阶段交互：无授权时不展示空授权选择与无效启动控件；仅一个场景时无需再选择；默认展示主要字段，可选高级字段按需展开，必填项永不隐藏。核对替换输入而不是向下追加长表；返回修改保留草稿并撤销确认。动作名称由 Scenario 的 actionLabels 提供，SDK 校验其只能引用已声明动作；未标注的场景仍显示原标识，不由 Core 猜测翻译。具体交互说明见 [桌面场景授权表单](desktop-authorization-form.md)。
+
+最终验证：11 文件 116 项回归通过，包含缺失策略、固定资源展示、待确认禁用、可选展开与必填始终可见。Shared、Scenario SDK、Server、Desktop、Renderer 构建与 341 文件底座边界通过，`git diff --check` 通过。浏览器用明确标注的只读合成数据检查 1440×960 与 390×844；填写与核对分别截图，最终窄窗口无横向溢出。当前截图为 output/playwright/authorization-compact-{desktop,narrow}.png 及 authorization-review-{desktop,narrow}.png；此前 authorization-*-final.png 是被用户否定的初版，不作为当前设计验收依据。未将浏览器截图说成原生 Electron 或真实模型验收；未运行 Linux/超长测试，未提交推送。
+
+独立收尾：重做后的审阅要求去掉冗余标题层级，已删除无授权状态下的“准备调查”并在核对阶段隐藏竞争标题。相同四张截图复核结论为 Ship（仅限本批界面），两项标题问题 Resolved、桌面/窄窗口一致性 Pass；不表示用户已接受审美。最后两处标题调整后，12 项受影响 UI 回归、Renderer 构建及 diff 检查再次通过。Impeccable 保留原视觉语言并完成局部交互文档，没有重写 DESIGN.md 或修复无关的旧设计索引。
+
+依赖恢复说明：本批为 SDK 显式增加 shared 工作区依赖并更新锁文件。pnpm 重建依赖目录后，以已批准安装恢复缓存包（未下载新包），并恢复 SQLite Node 原生扩展及 Electron 可执行文件；首次数据库测试因扩展缺失失败，修复后重跑通过。不是生产桌面原生验收。
+
+兼容边界：form 作为已审查策略的一部分，改变它会改变现有策略合同摘要。既有授权不能静默套用变更后的策略；旧安装包应按原审查/安装流程更新并明确重新授权，不自动改旧绑定或提升信任。当前仅支持文本列表展示，不声称任意 JSON Schema、自然语言自动授权或身份管理全部完成。
+
+下一完整工作包回到桌面实际任务闭环：贯通模型执行中的增量进展、工具操作和需要用户处理的状态，使用户不只在任务输出保存后才看到反馈；沿用现有 Runtime 事件与桌面桥，不另造编排系统。实际作用是发起调查后能看见正在做什么、何时需要确认、如何停止并继续核对结果。正式 macOS Browser 发行/隔离验收仍是独立未完成门槛，不借表单完成宣称整产品可发行。
+
+### 最新完成：授权、派发与停止的桌面命令闭环
+
+本批优先修复实际操作可靠性，不把增加表单控件当作执行链已经成立。未改视觉布局，未把任何具体 Scenario 的授权字段写进通用前端。
+
+- 新增浏览器安全的 shared desktop-execution 合同，统一授权、启动、停止请求 schema 和版本化回执。Electron 白名单与本地待确认日志使用同一严格解析，不再接受仅有 commandId 的损坏日志、未知字段或跨会话路径。完整既有命令格式保留。
+- 宿主成功回执绑定 conversationId、commandId、操作种类和实际资源 ID；返回前核对 Scenario 结果身份。启动响应错误但实际已经提交时，先查询同一 Run 后返回核对结果；无法确认或上游成功体缺失则返回不确定，不伪造成功。
+- 独立 ExecutionController 在派发前持久保存请求，校验对应成功回执后才清除；重定向、超时、丢回执、错命令/资源、传输失败均保留原命令。明确且符合错误合同的拒绝可解除待确认；新命令不能替换未知结果。同一 Renderer 内共享存储的控制器使用同步锁，防止快速双击或面板重新挂载时并发派发；它不是跨实例分布式锁。
+- 确认绑定当前消息正文/身份、授权内容与期限、选定定义版本。轮询使授权发生变化时旧确认立即失效；用户必须重新确认新目标/范围。停止回执表示既有生命周期接受取消，不证明所有外部副作用已清理，原执行围栏未降低。
+- 使用真实 SQLite、现有 Scenario 路由和固定 Electron bridge 验证授权 → 已提交但丢响应 → 控制器重建后原命令核对 → 停止同一个 Run，不重复创建任务。模型/工具仍由原 Runtime 决定，本批未调用真实模型或目标。
+
+验证基线：最终针对 7 文件执行 35 项回归；Shared、Server、Desktop 和 Renderer 类型/前端构建已通过，340 文件底座边界及 `git diff --check` 已通过。收尾增加传输错误脱敏回归后再次验证，不累加此前重复测试数量。本批为命令和确认状态逻辑改动，没有新增视觉界面或开展新的截图验收，未运行超长/Linux/原生 Browser 测试，未提交推送。
+
+剩余与下一工作包：高级授权仍为 Scenario JSON，未宣称完成自然语言或可视化范围授权。接下来应由 Scenario 提供声明式授权展示合同，桌面按合同生成输入与核对视图；具体目标/动作字段不进入 Core。实际作用是用户在桌面看懂“允许做什么、对哪些资源做”，明确确认后即可执行，而不再手写范围 JSON。正式 macOS Browser 部署、模型逐字对话流及实际调查全链验收仍保留原门槛。
+
+### 最新完成：桌面对话与证据页的本地正文读取
+
+本批贯通共享读取合同、受控 Electron IPC、宿主持久内容读取和桌面阅读组件；引用不再只能显示编号。通用桌面路由依赖 `DesktopEvidenceReader` 端口，当前装配独立 SQLite Browser 内容适配器，不往 Core/Scenario 加浏览器或具体安全调查规则。
+
+- 操作者从对话或任务/证据面板点击引用后读取；只支持已持久化且与真实索引绑定的 Browser artifact ID/contentRef。宿主根据会话确定 Case，再检查 Run、绑定、字节数和完整 SHA-256；伪造索引、跨会话/Run、正文损坏均拒绝。不将 ref 转为文件路径或外部 URL，不重新请求目标。
+- 每页固定至多 64 KiB，总量 4 MiB；Renderer 验证连续偏移、稳定身份/摘要/格式及每页应有长度，完整读取后复核全文摘要。UTF-8 跨页不显示破损尾字符；文本按需继续读取。PNG 只在尺寸受限、完整读取且摘要一致后通过本地 data URL 预览；解码失败明确提示。其他二进制只显示前 256 字节十六进制，不启动原生程序。
+- HTML/SVG 和工具式文字都作为普通文本，不执行、不变成模型指令；历史审计阅读不等于授予 Agent 活动目标权限，也不等于验证了安全发现。关闭时取消显示流程并忽略迟到回执，错误可手动重读。
+- 按 impeccable 规范延续白底/石板色及按需展开；文档见 `docs/desktop-evidence-reader.md`。未重做设计身份，未增加导出、文件打开或多用户系统。
+
+验证基线：8 文件 38 项相关回归通过，包括真实 SQLite 持久索引/正文 → 固定 IPC → 分页回执、越权/伪造/损坏拒绝、UTF-8 连续分页、正文摘要、PNG、本地 HTML 惰性文本及关闭后迟到响应。Shared、Server、Desktop、Renderer 构建通过；339 文件底座边界检查及 `git diff --check` 通过。最后补强了每页应有长度校验，防止上游用极小分页制造过多请求，收尾重跑结果见最终记录。桌面 1440×960、窄窗口 390×844 使用标注的合成只读正文检查，窄窗口无横向溢出；截图 `output/playwright/evidence-desktop.png` / `evidence-narrow.png`。不是 Electron 原生整链、真实模型或实际目标验收；未运行超长/Linux 测试，未提交推送。
+
+依赖说明：Desktop 显式声明 shared 合同依赖并更新锁文件。初次构建发现工作区实际使用 isolated linker，而 .npmrc 声明 hoisted；没有清空或重建依赖树，使用与当前安装一致的 `pnpm install --offline --node-linker=isolated --ignore-scripts --frozen-lockfile` 补齐本地 workspace 链接后构建通过，没有下载依赖或切换 SQLite ABI。
+
+独立收尾审阅结论：ship（限定本批阅读器），无实质视觉问题；审阅只独立检查合成截图和源码，不扩大为原生 Electron 或真实模型认证。
+
+最终收尾：每页应有长度校验补强后，同一 8 文件 38 项回归再次全部通过（不重复累计）；Renderer 再构建、339 文件边界检查及 `git diff --check` 通过。
+
+仍未完成：这不是全部类型的证据查看器，普通工具回执/外部资料等非 Browser 引用尚未接入该操作者阅读端口；不自动尝试其他来源。正式 macOS Browser 发行安装/隔离合同、模型逐字对话流、完整授权交互及实际 Scenario 长任务仍需继续完成。
+
+下一工作包保持桌面产品闭环：完善对话中的执行反馈与明确授权流程，并让已支持的内容阅读参与真实任务验收。实际作用是用户在应用中提出任务、确认范围、看到结果并查阅依据，不再依赖开发脚本操作；不能为这个目标绕过正式 Browser 部署门槛。
+
+### 本批完成：正式 Browser 私有写目录与取消清理合同
+
+- 安装器为正式启动配置启用 `restrictWritesToWorkingDirectory`。Browser Runtime 仅收窄子进程写权限至本次分配的 scratch 子树，保持 OS 断网；Host Broker 仍使用原始调用权限，避免破坏网络回执指纹和授权核对。普通工具和 Scenario 合同未增加任何特例。
+- 必须具有该目录完整子树授权；仅目录本身的 exact 授权、被 deny 覆盖的子路径均拒绝，不通过新增 tree 权限扩权。Node 可执行程序不得位于 scratch 根内。
+- 分配后再次检查取消；尚未派发的目录和持久分配记录立即按准确所有权清理，可重新尝试。已派发且终止不明的目录继续保留，原恢复围栏不变。
+- 验证：5 文件 43 项离线回归通过，覆盖正式安装、私有写权限、Broker 原授权、Server 派发、证据、取消重试及持久恢复。Browser Runtime 与 Server 构建、337 文件边界检查及 `git diff --check` 通过。首次类型构建发现新增测试 close 参数类型错误，修正后重新验证通过。未调用真实模型或重跑 macOS 原生 Browser；未提交推送。
+
+范围限制：本批完成的是正式启动中的写权限收窄，不是完整跨进程隔离证明；读取权限仍遵循原调用合同，未宣称不同运行的全部读取隔离。macOS Browser 专用生产隔离选择、Mach 权限边界、正式发行材料及桌面全栈真实验收仍未完成，诊断 outer-only 启动未自动转为生产配置。
+
+下一完整工作包仍是上述桌面产品闭环：先收口正式 Browser 的受支持启动合同和发行材料，再贯通桌面对话、操作进展与证据阅读。实际作用是让用户在应用里提出任务并看到有依据的结果，而不必操作开发脚本或 JSON 管理页面。
+
+### 后续完成：持久化任务进展回到主对话
+
+- Desktop execution GET 从本机会话派发表读取精确 `messageCommandId` 关联，Renderer 在对应用户消息之后展示真实 Run 状态、已保存输出、可展开工作项和引用。旧运行无绑定时单列，不根据目标文字猜测关联，不修改 Core 或 Scenario 的运行语义。
+- 主对话内可按需展开既有启动/停止控件；仅打开时挂载。打开会话、刷新状态和保存说明都不自动发起模型或工具调用。新的已保存说明会撤销旧启动确认，需要针对新目标重新确认。
+- 只读轮询在请求完成后调度，正常间隔 2 秒、隐藏文档 15 秒；失败保留旧快照并明确提示，恢复时替换而非追加重复回复。会话切换忽略旧请求迟到结果，非法响应拒绝展示。目录限 20 次运行并标明截断。
+- 沿用既有白底/石板色与用户右侧、智能体左侧布局。任务/依据使用原生 disclosure，补充可见开合箭头。按 impeccable 规范完成独立收尾审阅及局部交互文档，不替换既定视觉身份。合同见 `docs/desktop-conversation-execution.md`。
+
+验证：5 文件 17 项回归通过，覆盖后端持久关联/旧运行、前端只读投影、故障恢复、不重复输出、跨会话迟到响应、HTML 作为文本、新目标重新确认及原请求恢复；Server 与 Renderer 构建通过，337 文件底座边界检查与 `git diff --check` 通过。首次 Renderer 类型构建暴露测试 spy 参数声明问题，已修正后重新通过。浏览器使用显式标注的合成只读桥检查 1440×960 和 390×844，窄窗口无横向溢出；初审指出展开入口缺乏标记，已补充箭头并复截图。截图位于 `output/playwright/conversation-*-final.png`。本批没有调用真实模型、真实目标或原生 Browser，不算 Electron/整产品端到端验收，未提交推送。
+
+独立视觉复核最终结论：ship（仅限本批对话投影），展开标记问题已 Resolved，无剩余实质视觉问题；不扩大为功能或产品发行认证。
+
+剩余：对话现在能阅读真实持久任务结果，但仍非模型 token 流，也没有将保存文字直接等同执行。引用尚非完整 artifact 阅读器；高级授权仍沿用 Scenario JSON。正式 macOS Browser 安装/启动、可发行材料、对话流与证据正文阅读及实际 Scenario 长任务验收继续属于桌面闭环工作，不宣称整体完成。
+
+下一交付重点：接通对话中的证据正文读取和实际任务反馈，并继续解决正式 macOS Browser 的部署门槛；不先引入跨用户系统或独立网关产品。通俗作用是用户看到智能体结论后，能在桌面里直接核对原始依据，而不是只能看到一串引用编号。
+
+## 最新完成：模型接入边界优化
+
+本批完成模型协议、适配器配置、账号授权与宿主装配的解耦，不改变 Core / Scenario 行为，不修改已登录账号、密钥文件或模型配置格式。
+
+- 新增浏览器安全子路径 `@traceforge/shared/model-protocol`，统一协议和供应商标识；模型配置 schema、Server 设置/账号校验、Renderer 类型共同使用。供应商预设通过类型检查覆盖共享标识，供应商不限制协议选择。
+- Responses 与 OpenAI 适配器改用独立 `ModelAdapterOptions`，移除适配器间类型依赖；保留旧 `OpenAIOptions` 类型别名。
+- ModelGateway 只依赖注入的 `ModelAccountConnection`，不再依赖设备授权具体类、OAuth 注册或令牌存储。`createDeviceModelGateway` 负责具体装配，Server 已迁移；网关构造 API 改为 `(bindings, dependencies)`，原设备注册调用方应使用该工厂。现有文件格式和设备登录流程不变。
+- 新增不使用设备授权实现或令牌存储的网关契约测试；既有设备授权、刷新、断开、模型发现、设置桥接与 Responses 回归继续验证。现有凭证端点绑定和禁止重定向逻辑未修改。
+
+验证：13 文件，104 项通过、1 项显式排除。首次执行中新增测试 fixture 缺少合法 Responses message 字段，修正后通过；另有既有连通性测试因缺少 `config/llm.json` 失败，后续按测试名排除，未伪造配置或绕过凭证存储。LLM、Server、桌面预览构建通过；337 文件底座边界检查和 `git diff --check` 通过。本批未调用真实模型、未运行超长全仓/Linux 测试、未提交推送。
+
+边界：这是已有功能的内部解耦，不表示新增授权协议或支持全部供应商型号；公开登录挑战仍服务于现有设备登录交互。Responses 保留现有 HTTP/SSE 实现，本批未评估或迁移官方 SDK；SDK 替换不是解耦成立的前提。
+
+下一优先级回到下方认知主线的剩余缺口：通用原文回读与长期记忆生命周期，按完整闭环推进。实际作用是让长任务在上下文压缩后仍能找到依据，并能修订或作废旧经验，而不是继续细拆模型配置工作。
+
+## 当前优先级：核心压缩、记忆、Agent 交接和工具核查
+
+用户要求优先确认底座四条核心链路，不将其视作已经完整完成。本节覆盖下方历史批次的“下一步”。详细源码核查见 `docs/core-cognition-audit-2026-09-07.md`。
+
+本轮修复：
+
+- 认知去重指纹改为覆盖 Case/Run 全部可见语义事实，不随 prompt 窗口截断；较早的工作结果或图节点变化现在会触发评估。无关 Case 不进入上下文，纯 lease/heartbeat 所有权变化仍不反复唤醒模型。
+- 指纹采用固定长度 SHA-256，不把完整上下文正文反复存进游标。旧游标在新语义指纹下会重新评估一次，不删除历史状态。
+- Planner/Observer 模型执行期间若共享语义状态变化，旧决策不应用，重新评估。修复 Observer 把未读的新状态推进为已读游标的问题；新增并发工作变化回归。
+- Planner 对压缩后保留的旧图引用按完整 Case/Run 可见图验证，而非仅按末尾显示窗口验证。没有增加任何具体场景规则。
+- 新增三角色压缩验收入口：`verify-desktop-model.mjs ... --suite cognitive`，最多 3 次逻辑模型调用。默认摘录仍是不可信、语义完整性未证明的上下文，不能当作完整长期记忆。
+
+真实 Grok `grok-4.6` 已完成三次调用、HTTP 均为 200；Planner/Observer/Worker 均实际触发压缩，分别保持已有工作、不无据干预、从摘录读出准确观察值；SQLite 压缩缓存 Runtime 重建后复用通过。报告：`data/desktop-model-acceptance/traceforge-cognitive-ANuPpj/report.json`。重要边界：这三个角色由验收程序顺序调用，不是自主调度的 Planner → Worker → Observer 闭环；本轮工具观察为中性 fixture，上轮独立真实模型工具/RPC 恢复测试的结论不扩大。没有进行跨任务长期记忆认证或语义无损证明。
+
+测试准备发现 Electron rebuild 缓存标记可能与恢复为 Node ABI 的二进制不一致；`prepare:runtime` 改为使用现有构建依赖强制重建 SQLite，测试后已恢复 Node。首次本轮启动因此未发出模型请求；修复后才完成上述三次真实调用。没有改系统代理、模型配置或增加运行节点。
+
+验证基线：15 文件 144 项针对性回归通过；固定长度指纹收尾后又跑 5 文件 30 项相关回归通过（为重复验证，不累计为 174 项）。Cognitive Runtime 与 Server 类型构建、331 文件底座边界检查、脚本语法检查及 `git diff --check` 均通过。真实三角色验收与离线回归分别记录；未运行 Linux 或超长全仓测试，未提交/推送。
+
+仍未完成：所有压缩叙述字段的通用原文回读、跨任务经验的提取/检索/修订/失效闭环、实际安全场景中的长任务协作验收。资料回执、普通工具回执和受控真实模型规划链路的已实现范围见下文；任务持久化和检查点不等于完整长期记忆。
+
+### 后续实现：授权资料回执的原文回读与撤销闭环
+
+新增独立 `ContextRecallRuntime` 及宿主 `context.recall` 工具：使用保留的 `receiptKey` 对已存储的 `context.read` 原始回执分页读取，连续页绑定正文摘要；异步读取前后重新检查来源，取消、变更或授权失效时拒绝返回。通用分页模块不依赖 SQLite、Scenario 或具体安全场景，宿主负责当前 Case/Run/Work、租约、资源版本和权限校验。
+
+读取需要独立 `context.recall` action 授权及工具能力装配，不默认给现有 Scenario 增加权限。仅允许同一工作项的原始资料读取回执，不允许读取其他任务、递归回读或把调用者提交的文本当作来源。返回值沿用原资源来源标记，始终为不可信参考；源资料撤销后，原始读取与回读结果均从后续 Worker 上下文过滤，审计回执不删除。
+
+验证：2 文件 68 项离线回归通过，包括真实 HTTP Worker/Gateway/SQLite 调用链的 read → recall → complete、两份持久化回执、跨归属/失效租约拒绝、分页摘要校验、异步撤销以及已回读内容的后续过滤。该 HTTP 测试使用确定性模型，不是本轮真实 LLM 验收。Server 与 Cognitive Runtime 类型构建、332 文件底座边界检查通过；`git diff --check` 通过。未重跑 Linux 或超长全仓测试，未提交/推送。
+
+范围限制：回读的是之前实际读取并保存的那一页资料回执，不是整个未读资源；尚不覆盖任意工具输出或所有压缩叙述字段。没有实现跨任务经验库。上文“通用按需回读未完成”的结论仍成立，但授权资料回执这一子链路已接通；真实模型的受控验收结果见下一节。
+
+### 真实压缩回读与持久化交接验收通过
+
+修复刚回读的资料可能立即再次被压缩、导致模型仍看不到细节的问题。通用压缩器保留最新一条带回执且 summary 不超过 8,000 字符的工具观察；更早观察照常参与压缩，超长观察不享受豁免，整体上下文硬上限仍有效。规则不识别工具名称或 Scenario，来源授权过滤先于压缩，保留原文不提升信任。压缩布局缓存身份升级为 v2，避免复用旧布局记录。
+
+新增 `verify-desktop-model.mjs ... --suite recall`：通过实际 HTTP Worker、Gateway、SQLite、默认摘录压缩及独立 Planner/Observer 监督器执行。验收脚本先用确定性工具选择准备 19 条授权参考读取；确认原始随机观察值已被压缩隐藏后，交由真实模型选择回读并完成任务。随后监督器由持久状态变化唤醒，读取已完成工作的结果；源资料撤销后再评估，输入和回答均不得含撤销细节。资料明确授予三个角色读取权限，不绕过默认 Worker-only 边界。
+
+真实 Grok `grok-4.6` 成功报告：`data/desktop-model-acceptance/traceforge-recall-2fpMmp/report.json`。六次真实调用均为 HTTP 200：Worker 回读/完成两次、Planner/Observer 接收结果各一次、撤销后各一次。供应商报告合计 56,262 tokens；无项目源码、真实调查目标或解密令牌进入测试提示。数据库只读复核：20 份工具回执、5 份完成的压缩记录，`integrity_check=ok`。测试后已恢复 Node ABI。
+
+完成边界：这是实际宿主中“真实模型续作 → 工具原文回读 → 持久结果 → 监督器接收 → 撤销后过滤”通过，不再只是三个角色由脚本分别调用。但最初 Work 与长历史仍由验收准备，Planner 没有自主提出本次 Work；没有认证完整调查中的初始规划、再规划、跨任务经验记忆、任意工具原文回读或语义无损压缩。生产 Scenario 未被自动增加 `context.recall` 权限。
+
+本轮最终基线：14 文件 116 项针对性回归通过，包括模型拒绝回读时必须失败的反例；Server/Cognitive Runtime 类型构建、332 文件底座边界检查、脚本语法检查和 `git diff --check` 通过。真实测试与离线测试分别计数；未跑 Linux 或超长全仓测试，未提交/推送。
+
+### 普通工具原文回读、来源治理与结果驱动再规划
+
+新增宿主 `ToolReceiptContext` 与独立 `tool.recall` 能力，复用 Cognitive Runtime 有界分页。按 `receiptKey` 返回已保存的普通工具 raw 文本，保留原始成功/失败状态、来源合同、摘要与分页信息，始终标记为不可信观察；不会重新执行原工具或读取尚未保存的 artifact 内容。单页 1,200 字符，原文上限沿用 1 MiB，审批中回执不可回读。
+
+调用必须属于当前 Case/Run/Work 和有效 Worker 租约，直接回读不跨 Work。读取需要独立 `tool.recall` action，以及 `tool.receipt`、`tool.receipt.reader`、`tool.source` 资源授权；原工具必须仍在当前注册表中接收调用，合同/版本匹配且未被标为不可用。资料来源仍走 `context.recall`，普通工具通道不绕过其权限；禁止递归回读，不复用旧执行许可，不验证安全发现。
+
+显式声明 `tool.recall` 能力的 Work，从普通工具观察首次进入模型时记录来源，不必等模型选择回读。原始回执、回读回执及派生 Work 共用现有 Worker/Run 来源过滤；撤销授权或回执、来源合同变化后过滤失效内容及依赖，审计原文不删除。无绑定的旧历史不作为兼容放行路径。逐回执撤销目前是可信宿主接口，不是模型工具或桌面操作界面。未启用此能力的旧 Work 不自动改变历史读取合同。
+
+真实 Grok `grok-4.6` 规划验收通过：`data/desktop-model-acceptance/traceforge-planning-2cqoGH/report.json`。八次请求均为 HTTP 200，供应商报告合计 30,066 tokens：Planner 初始规划 → Worker 执行普通 RPC 工具、回读并完成 → Planner 根据结果创建第二项 Work → 第二项完成 → Planner/Observer 最终确认。两个工作项由监督器应用模型计划后创建，第二项 objective 的随机观察值来自第一项持久结果，不由验收程序预填。原工具执行一次、两份回执、第二项具备来源派生记录，SQLite integrity_check 为 ok。
+
+验收边界：使用中性本地 RPC fixture，不是原生沙箱或漏洞验证测试；等待中的 wait/continue 由脚本提供以控制用量，关键规划、执行、回读、再规划和最终确认使用真实模型。真实轮后的首次观察来源登记补充仅追加离线回归，没有重新发起计费请求。Node ABI 已恢复。权限/撤销/竞态/旧历史过滤的离线用例不全部标作真实模型验收。
+
+风险与剩余边界：保守策略会在工具升级、停用或合同变化后阻止旧回执继续进入模型，但保留审计原文；尚无跨 Work 原文读取或旧合同显式兼容机制。它不是跨任务经验库，也不保证压缩语义无损。生产 Scenario 未自动获得新权限；未增加远程节点、多用户系统、更新系统或额外记忆 Agent。
+
+本轮最终验证：17 文件 134 项针对性回归通过，含普通回执首次关联、分页、不重复执行、独立权限、撤销竞态、旧历史过滤、派生 Work 失效及宿主规划链路；Server/Cognitive 类型构建、333 文件底座边界检查、脚本语法检查与 `git diff --check` 通过。未运行 Linux 或超长全仓测试，未提交/推送。规划 fixture 偶有约 30 秒调度等待，当前测试没有把它当作低延迟保证。
+
+下一完整工作包：在 Web Blackbox Scenario 中按声明接入已有的上下文、回读和结果再规划合同，验收实际授权调查中的任务推进、证据链和报告闭环。通用缺口回到底座修复，具体调查规则只留在 Scenario。通俗作用：让智能体在实际调查中查回操作记录、据此继续工作并交付有依据的结果，而不是继续堆独立模块。跨任务长期经验记忆保持单独缺口，不先引入向量数据库。
+
+## 真实 Grok 模型流程验收：正常执行与检查点恢复通过
+
+经用户明确授权，新增 `scripts/verify-desktop-model.mjs`，在 Electron 中读取本机操作系统加密的现有账号，通过相同 `ModelAccounts → Gateway → LlmConfigService` 接入真实 Responses 模型 `grok-4.6`。不输出令牌或原始上游错误，不导出解密凭证，不修改模型设置；正常账号刷新仍由原有加密存储负责。真实请求只携带中性的测试任务与工具观察，不发送项目私有代码或外部调查目标。
+
+成功轮报告：`data/desktop-model-acceptance/traceforge-model-Q65RQP/report.json`。总耗时 25.05 秒，4 次真实模型调用全部完成，供应商报告合计 9,963 tokens。正常流程与检查点恢复流程各执行工具一次；随机观察内容在调用前不提供给模型，最终 summary 与实际观察完全一致。恢复后新增工具调用为 0；各保存一条工具回执，分别 3 / 4 个检查点，SQLite integrity_check 均为 ok。
+
+首轮报告 `data/desktop-model-acceptance/traceforge-model-U8hpW5/report.json` 保留为 failed：首个逻辑模型调用约 10 秒后失败，没有进入工具执行，usage 未返回。增加只记录 HTTP 状态/受限错误码的诊断后重新测试通过，成功轮各请求 HTTP 200；不能据此确定首轮根因已经修复，网络或服务稳定性仍需持续验收。成功轮 token 统计不包含首轮未知计费。
+
+完成边界：这是“真实模型 + 真实宿主/SQLite + 测试工具进程/RPC + 检查点恢复”验收，不是模拟模型回答。但 Scenario 和工具为中性 fixture，工作项由验收装配创建；没有覆盖桌面用户操作、真实 Web Blackbox 规划、受控 Browser、漏洞因果验证或最终报告。恢复为同进程重建宿主/数据库连接，不是断电恢复。下方历史批次“未使用真实模型”的表述由本节在该验收范围内取代，不扩大为整产品通过。
+
+复现：先构建 Server/Desktop 并执行 `pnpm --filter @traceforge/desktop prepare:runtime`，再用 Electron 运行 `scripts/verify-desktop-model.mjs --allow-model-api --config-directory <桌面配置目录>`；最多 6 次逻辑模型调用、120 秒测试时限，不保证约束上游内部重试或最终费用。结束后执行 `pnpm --filter @traceforge/desktop restore:node-runtime`；本轮已恢复。
+
+收尾验证：验收框架的 14 项离线回归再次通过（与上面的真实供应商结果分开计数），新脚本语法检查和 `git diff --check` 通过。未重跑无关全仓或超长测试。
+
+下一优先级不变：完成 macOS Browser 的正式安装/启动合同，再将已验证的真实模型接入 Scenario 与持久化证据全链路。通俗作用：当前已证明模型会真正使用工具且中断后不会重复干活，下一步要证明它能通过产品入口完成实际网页调查，而不仅是隔离测试题。
+
+## 当前优先批次：桌面宿主、模型账号与 Run 派发装配
+
+本节优先级覆盖下方历史批次的“下一步”。本次只在桌面与 Server 应用装配层增加绑定，未把 Web Blackbox、模型供应商或界面操作写入 Core/Scenario Runtime。
+
+已经实现：
+
+- 正式桌面改为加载 `apps/web/renderer/dist`，保留缺失资源时的启动围栏；开发入口使用独立 TypeScript loader。Electron SQLite 原生依赖由 `prepare:runtime` 构建，开发命令自动执行该准备步骤。旧自动更新初始化和 preload 更新操作已移除；安装包发布仍保持关闭。
+- 正式 Server 与模型设置宿主共用 `ModelAccounts`/Gateway，账号令牌仍由操作系统加密存储提供。模型发现和连通测试走相同注册账号，桌面不持有令牌、不依赖本机第三方代理。注入对象只停留在应用装配层。
+- 会话保存与执行授权分开。新增桌面执行端口，将已保存说明绑定到现有 Scenario Run API；授权范围交给选择的 Scenario 校验，桌面不推断目标或扩大权限。运行状态、工作项、任务输出和引用可读取，停止请求复用现有 revision/lifecycle 合同。
+- 派发身份先写入 SQLite，结果丢失后核对同一 Run，不创建第二份。会话与 Case 绑定由宿主检查；IPC 限定路径、字段和大小，不开放任意 Scenario 管理接口。前端待确认记录损坏时停止操作，不默默清除后重发。
+- 任务页提供显式确认和高级范围 JSON 输入；证据页只读输出/引用，不重复显示启动授权控件。界面保留既定白底、左导航和按需展开方向，窄窗口输入区与当前导航状态已按独立复核修正。
+
+实际验收：Electron 37.10.3/macOS arm64 在全新临时数据目录成功启动正式 Server、隔离 preload 和新工作台，真实会话读取接口返回 200。启动核验脚本为 `scripts/verify-desktop-launch.mjs`。这证明启动装配，不代表真实模型或 Browser 全栈任务已验收。浏览器界面检查使用合成数据，未读取现有账号、未请求真实目标。
+
+验证基线：12 文件 60 项回归通过，覆盖执行路由、正式 Server 账号装配、会话与账号恢复、主入口、IPC、前端原命令恢复及任务/证据控件；Server、Desktop、Renderer 构建通过。Electron TypeScript 导入和 SQLite 打开检查通过，随后恢复 Node SQLite 并重跑上述回归。1440×960 与 390×844 合成界面截图经独立复核，窄输入区、导航选中状态与重复标题三项修复全部 Resolved，UI disposition=ship。该 UI 结论不是整产品发布结论。未运行超长测试或 Linux/真实供应商验收。
+
+收尾补充：证据视图在存在待确认命令时也不显示写操作按钮，对应 3 项前端测试再次通过；Renderer 再构建通过。331 个生产源文件边界检查通过；移除更新系统后，检查器允许“无 updater”或“保留 updater 但禁用退出自动安装”，其余原生身份/预检/关闭要求未放宽。`git diff --check` 通过。专用设计审阅角色未提供，使用无历史的独立审阅代理等价复核；表面契约记录在 `docs/desktop-renderer-surface-brief.md`。
+
+开发使用：`pnpm --filter @traceforge/desktop dev`。Electron 与普通 Node 的 SQLite ABI 不同，退出桌面开发后用 `pnpm --filter @traceforge/desktop restore:node-runtime` 恢复普通 Node 测试绑定；本轮已恢复并复核。正式发行需要独立依赖产物，不能沿用工作区切换方案作为发布设计。
+
+剩余边界：目前高级授权仍需输入 Scenario 格式 JSON；主对话没有连续推理流，任务结果显示在任务/证据视图；引用不等于完整 Artifact 查看器。没有重新启用包装、签名、公证或更新系统，没有验证真实账号费用/模型质量，也没有把诊断 Browser 隔离策略直接启用为生产配置。
+
+下一完整工作包（最高优先）：macOS Browser 专用生产安装/启动合同及 Scenario → Broker → 持久化证据的真实联调，同时核对普通工具的 macOS 资源预算声明。通俗作用：让从桌面启动的调查真正能在受控浏览器里工作并留下可查证据，而不是只看到 Run 已创建。
+
+后续顺序：真实模型与黑盒任务闭环（含暂停/停止、因果验证和报告）→ 对话输出/证据阅读及 Skills/MCP 的产品装配 → macOS arm64 独立安装包验收。Linux、远程节点、多用户平台和桌面更新系统不在本轮范围。完成标准继续区分核心实现、产品装配和真实环境验证。
+
+## macOS 真实 Browser 受管链路验收已通过（诊断隔离模式）
+
+本轮没有停在单项启动诊断：新增真实 `MacosProcessLauncher → LocalExecutionNode → ExecutionNodeBrowserController → Chromium CDP → BrokeredBrowserRuntime → BrokeredHttpGateway` 集成验收。官方 headless-shell 152.0.7977.82 运行在原生外层 Seatbelt 内，通过本机 HTTP fixture 实际验证重定向、脚本子资源、DOM、下载、PNG 截图、人工接管/恢复、授权拒绝和独立新会话租约撤销。下载正文、摘要、Owner 与真实 Broker 回执实际落盘并重读核对；浏览器只可写 scratch，Controller 与宿主证据文件不在其写授权中。没有使用假 HTTP 回执或将浏览器直连当 Broker。
+
+修复三处实际缺口：
+
+- pipe 启动显式创建 `about:blank`，避免 headless shell 没有初始页面而始终无法观察；初始页面不会发出目标网络请求。
+- Browser 授权未取得时记录 blocked 审计，authorizationRef/receiptRef 为 null，不伪造授权、不泄露原始错误或 URL 查询参数；仍在 HTTP 派发前失败关闭，不把授权异常改成继续执行。
+- macOS ManagedProcess 不再把 cleanupConfirmed=true 的 supervision_failed 当作正常退出。专用启动器可接受宿主固定的系统服务策略副本；普通启动器默认不变，任务/RPC 不能提供该策略。
+
+验证基线：9 文件 64 项通过，包含真实 macOS Browser、原生进程/Seatbelt、Controller/transport/Runtime 以及 Server Scenario Browser 与 Artifact 测试。证据元数据落盘增强后再次独立真实验收通过。Execution Node、Browser Runtime、Server 类型构建通过；329 个生产源文件边界检查通过。未执行超长全仓测试、未验证 Linux、未使用真实外部目标或模型。
+
+复现入口：先 `pnpm build:macos-sandbox`，设置 `TRACEFORGE_REAL_CHROMIUM_PATH`、`TRACEFORGE_REAL_CHROMIUM_ROOT`、`TRACEFORGE_REAL_CHROMIUM_PRODUCT` 后运行 `pnpm test:browser-runtime:macos`。该命令显式选择测试专用 outer-only Controller；默认测试跳过本机原生用例。测试 Controller 不属于生产发行入口，不制作虚假签名/审核材料。
+
+完成边界：该隔离组合的 Runtime/Broker/文件证据链已实测，不再列为“尚未验收”；Server 的 Scenario/SQLite 装配本轮为单独回归，不宣称同一个真实浏览器测试已穿过桌面/Server/SQLite 全栈。生产入口依然禁止任意 --no-sandbox，未自动注册诊断策略。减少的 Chromium 内层防护、Mach rendezvous 前缀非 Run 身份绑定、正式发行材料与桌面派发仍是不同层面的剩余项。
+
+下一完整优先工作包：将已验证的隔离选择落实为宿主专用 Browser 安装/启动合同，处理同一宿主进程间权限边界，再跑真实 Scenario/持久化装配验收；普通工具和 Scenario 不得获得 Browser 专用系统权限。通俗作用：把已经在测试中跑通的浏览器能力变成产品可明确配置、可启动、可保存证据的功能，而不是继续堆兼容白名单或将测试开关直接当生产配置。
+
+## 外层隔离 Browser：真实诊断通过，尚未生产启用
+
+用户同意独立验证保留 TraceForge 外层 Seatbelt、关闭 Chromium 内层沙箱。诊断脚本新增显式 `--outer-sandbox-only` 和 `--isolation-suite`；生产 transport 的 `--no-sandbox` 禁止规则未改变，普通工具策略未放宽。下方“没有测试 --no-sandbox / 等待诊断选择”的历史状态由本节取代。
+
+官方 mac-arm64 headless-shell 152.0.7977.82 实测五项通过：data 页面渲染、授权临时文件可读、授权目录外临时文件内容不可读、直连 loopback HTTP 被阻断（宿主先确认 fixture 正常，浏览器请求计数为零）、无限脚本页面取消后进程树清理确认。前四项 reason=exited、exitCode=0；取消项 reason=cancelled，全部 cleanupConfirmed=true。这是本机诊断，不是完整安全审计或生产 Browser 验收。
+
+同时修复原生进程采样退出竞争：枚举后已确认 ESRCH 消失，或 rusage 失败后确认同一出生身份已成为 zombie，不再误报监督失效；读取拒绝、身份变化等未知状态继续失败关闭。新增快速子进程退出回归。诊断成功条件现要求正常监督状态，不能仅凭 DOM 输出与 exitCode=0 忽略 supervision_failed。
+
+验证：原生策略/监督器/Browser 专用策略 3 文件 23 项通过；真实浏览器隔离套件 5 项通过；原生 helper 重新编译通过。剩余边界：Chromium 内层进程间防护确实减少，Mach rendezvous 前缀仍非 Run 级身份绑定；CDP → Broker → receipt/artifact 在该新隔离组合下尚未验收，生产注册继续关闭。下一完整工作包是受管 CDP/Broker 链路与上述隔离模式的显式配置、身份限制和端到端验收，不再逐条扩大系统服务白名单。通俗作用：浏览器能工作后，还必须保证访问目标只能经过授权通道、结果能保存为证据，才能接进实际任务。
+
+收尾复核：Execution Node、Browser Runtime、Server 三包类型构建通过；329 个生产源文件的底座边界检查通过；`git diff --check` 通过。
+
+## macOS Browser 根因收敛：双层 Seatbelt 冲突已独立实测
+
+本轮继续了真实兼容诊断，没有将每个失败当验收完成。Browser 候选增加命名范围内的 Mach rendezvous 与标准空/随机设备、same-sandbox 进程信息和信号权限。local-name-prefix 不匹配 Chromium 当前 bootstrap 注册；global-name-prefix 可越过注册失败，但仅是诊断候选，不能宣称它已绑定某个 Run/进程组，不得据此生产开启。普通工具默认策略仍不变。
+
+加入标准设备后子进程可启动，随后重复报 `sandbox initialization failed: Operation not permitted`，GPU 最终失败。Apple 本机 SDK sandbox.h 第 23–26 行明确记录已沙箱化进程不能再次 sandbox_init。本轮新增独立 C 探针：同一程序直接运行 sandbox_init 返回 0，在 TraceForge 外层 Seatbelt 内运行返回 -1/EPERM。由此确认当前“外层 Seatbelt + 原版 Chromium 内层 Seatbelt”组合无法按此方式工作；不是再增加目录/Mach 白名单即可解决。没有测试或加入 --no-sandbox，也没有关闭外层隔离。
+
+验收：原生执行、策略（含嵌套探针）、Browser 配置 3 文件 22 项通过；真实 headless-shell 页面验收仍失败但清理成功。Execution Node、Browser Runtime、Server 构建收尾复核。下一决策是选择隔离边界，而不是继续零碎加白名单：保留外层并取消 Chromium 内层会失去浏览器自身进程间防护；保留 Chromium 内层并取消外层则不再具备当前 Browser 主进程文件/断网保证。两者都不同于此前双层合同，不能默默降级，也不能把 Codex 通用 shell 策略当作双层 Browser 已成立的证据。生产配置继续关闭；暂停追加兼容规则和自编译提案，等待明确隔离边界选择。
+
+## Codex 兼容策略适配进展
+
+按用户明确指示，Browser 专用候选改为 Codex 同类的 RootDomainUserClient registry-class 放行及 PowerManagement.control、opendirectoryd.libinfo；追加从 Codex seatbelt_read_only_platform_defaults.sbpl 核对的 bsd.dirhelper。通用策略默认不变，宿主可选参数不进入任务/RPC；采用 class-level 权限，明确不再宣称逐方法只读通知。旧受私有 entitlement 限制的过滤型接口保留但不用于该 Browser 候选。没有扩张文件目录或 network deny。
+
+真实 headless-shell 152.0.7977.82 实测：电源初始化 SIGSEGV 消失；首次推进到 confstr Darwin cache 目录查询失败，加入 dirhelper 后该错误消失，推进到 MachPortRendezvousServer bootstrap_check_in 被拒绝（1100）。两次失败均 cleanupConfirmed=true。尚未通过页面渲染、pipe/Broker 或产品验收；仍只诊断启用，不注册普通工具或生产 Browser。下一实际缺口是仅限浏览器受管进程之间的 Mach rendezvous 注册/查询，需与进程身份绑定，不能放行任意系统服务。通俗作用是让浏览器主进程与自己的渲染子进程通信，不是给它联网或控制其他应用。
+
+本轮策略测试 2 文件 4 通过、5 原生跳过；真实诊断另行执行并记录上述失败，不能计为 Browser 通过。Server 类型构建与边界检查收尾复核；不做 Chromium 自编译，不要求 Linux 主机。
+
+## Codex 源码对照纠偏（覆盖下方自编译 Chromium 优先路线）
+
+用户明确要求直接参考 Codex。2026-09-07 实际读取 openai/codex main 的 `codex-rs/sandboxing/src/seatbelt_base_policy.sbpl` 与 `seatbelt.rs`：
+
+- 基础策略 deny default，但明确放行 RootDomainUserClient（iokit-registry-entry-class）、com.apple.PowerManagement.control、用户信息查询服务等兼容权限。该 IOKit 规则没有 apply-message-filter；不能把 TraceForge 自加的逐方法过滤当作 Codex 的前提。
+- seatbelt.rs 将基础、文件读、文件写、动态网络及平台默认权限分段装配，使用固定 /usr/bin/sandbox-exec；支持受管代理端口、Unix socket 白名单和不可用代理时失败关闭。不是仅设置代理环境变量，也不是要求所有平台能力完全拒绝。
+- Codex Process 平台默认还包括较广的系统临时目录读写；TraceForge 不能直接照搬后仍宣称只有独立 scratch 可写。同样，放行电源客户端不等于只读通知，必须如实记录兼容性取舍。
+
+纠正：暂停自编译 Chromium 和私有消息过滤路线。后续先按 Codex 已有结构完成独立 Browser 兼容 profile 的选择性适配及真实验证，不修改 Core/Scenario，不默认扩大普通工具授权；保留本产品已验证的进程清理和授权网络 Broker。参考源码不代表当前 Chrome 已通过或公开 CLI 等同 Codex 桌面内部浏览器。此轮仅源码核对与计划纠偏，没有启用更宽的运行权限。
+
+来源：https://github.com/openai/codex/blob/main/codex-rs/sandboxing/src/seatbelt_base_policy.sbpl 、https://github.com/openai/codex/blob/main/codex-rs/sandboxing/src/seatbelt.rs 。main 是移动引用，实际移植前须固定提交及保留许可证说明。本轮文档变更以 git diff --check 验证，不重复执行无代码变动的测试。
+
+## Browser 独立 macOS 权限适配：用户已接受，方法过滤受系统限制
+
+用户已接受仅为 Browser Runtime 适配最小系统服务权限；无需再次确认同一范围。普通工具、Core、网络 deny 不变。
+
+新增宿主代码专用 `MacosSystemServicePolicy` 编译参数（不在 StartProcessRequest/RPC 中），Browser 的候选类名配置保存在 browser-runtime 独立文件。严格限制名称、数量并防止策略语法注入；没有默认开启、没有接入普通 launcher、没有根据可执行文件名自动提权。IOKit 客户端必须附加逐连接 external/async method deny 过滤器，避免将通知需求误变成电源控制权限。该候选仅接入诊断脚本 `--browser-services`，未注册生产后端。
+
+实际结果：顶层 external-method deny 语法不可用，已修正为系统 airlock.sb 展示的 apply-message-filter 嵌套形式。随后运行浏览器和独立 `/usr/bin/true` 均在 sandbox_apply 阶段 EPERM（exit 71）；未执行目标，监督者确认清理。WebKit 官方历史记录明确指出 sandbox message filtering 依赖私有 entitlement（https://bugs.webkit.org/show_bug.cgi?id=218982），与本机结果一致；这不是普通 Developer ID 签名已证明能解决的问题。没有删除过滤器、放宽 IOKit 方法、关闭 SIP 或添加伪造私有 entitlement。
+
+验收：快速 4 文件 39 通过 / 5 原生跳过；单独开启原生回归 3 文件 25 项通过，验证普通策略未受影响；Execution Node、Browser Runtime、Server 构建通过，329 个生产文件边界检查及 git diff --check 通过。Browser 启动/通信/证据闭环仍未验收，不宣称完成。
+
+下一条可行开发方向是独立浏览器构建的“系统通知不可用时安全降级”，而不是继续堆叠宿主授权：浏览器不因电源通知句柄不可用而崩溃，同时外层仍拒绝设备控制。这需要取得并构建对应 Chromium 源码、固定版本和产物验收，属于 Browser 依赖构建工作，不是 Core 或 Scenario 逻辑。通俗地说，让浏览器在读不到电池/休眠通知时仍能看网页，而不是为了看网页给它控制系统电源的权限。尚未启动大型 Chromium 源码下载或构建，也未将候选配置标成产品支持。
+
+## macOS 执行装配实况：原生进程链路接通，Browser 实机验收未通过
+
+本节覆盖下方“尚非 ProcessLauncher / 未接 Server”的旧状态，但不覆盖 Browser 与桌面尚未端到端完成的结论。
+
+- 已实现 `MacosProcessLauncher`：复用原生组监督入口，支持 pipe 输入、输出、关闭输入、取消和资源事件；只有监督者确认组内无存活成员才发布退出。修复退出监听者被 shutdown 监听覆盖的问题，以及结束后流错误再次启动清理计时器的问题。不提供 PTY、interrupt 或非空环境。
+- Execution Node、Browser 配置增加显式 `sampled_terminate` 接受合同：必须绑定已测量后端和进程组屏障；`resourceLimitsApplied` 保持 false。macOS 能力公布 sampled_resource_budgets，不宣称 process.resource_limits。要求硬配额的 Tool Provider 仍拒绝此后端，不能自动降级。
+- Server 已选择 macOS launcher；启动前检查要求匹配的辅助程序清单，实际运行 Seatbelt 及退出屏障探针。新增 `pnpm build:macos-sandbox`，生成 darwin-arm64 辅助程序与完整性清单；该清单不是签名、公证或供应链审核证明。桌面打包入口已预留对应 helper 路径，未解除旧桌面发行禁用。
+- Browser 安装装配可处理 darwin/arm64，接受资源策略必须写在宿主安装配置里；修复 Windows permission platform 的 win32/windows 映射。来源审核、树测量和信任锚检查继续保留。
+- 实际诊断：本机 Google Chrome 在独立临时目录、network deny 下启动返回 SIGABRT(6)，无输出，cleanupConfirmed=true。仅证明失败后清理成功，不证明 Browser 运行成功；原因尚未定位，不能把旧日期崩溃报告当成本次原因。没有添加宽泛 Mach/网络授权，也没有 `--no-sandbox` 回退。
+- 桌面当前新界面的对话仍只持久化，不派发调查；旧入口 retirement fence 仍保留。不能将移除 fence 当成任务授权、Scenario 派发和证据展示已接通。
+
+本轮验证：macOS 原生与 Server preflight 4 文件 27 项通过；相关快速回归 9 文件 69 项通过；Browser 回归 16 文件 62 项通过；最终原生/Runtime/Browser 合同联合回归 6 文件 62 项通过（这些集合有重叠，不累计成独立总数）。Execution Node、Browser Runtime、Server、Desktop 构建均通过，边界检查为 328 个生产源文件，git diff --check 通过。未跑超长完整套件、Linux 或真实模型验收。
+
+进一步真实诊断：从 Google 官方 CfT 清单下载 headless-shell 152.0.7977.82 mac-arm64，下载归档 SHA-256 为 `1615f063c894aa824fd55c89f8f05e9904f63cce0c95d0cbce7394d77884fba5`，只保存在临时测试目录，未注册生产信任。正常环境及空环境基线都成功渲染内嵌页面；相同构建进入当前 Seatbelt 后 SIGSEGV(11)，并完成进程组清理。本次对应崩溃记录 `chrome-headless-shell-2026-09-07-211205.ips` 的故障栈顶是 `IONotificationPortGetRunLoopSource`，空地址 0x10。结合 Chromium 的 power monitor 源码，这是系统服务通知初始化受限的调查方向，尚不能只凭栈认定唯一根因。新增 `scripts/diagnose-macos-browser.mts` 可复现，失败退出非零，未知清理状态保留目录。
+
+实际阻塞不只是下载材料：需要决定 Browser Runtime 独立的 macOS 系统服务权限边界，或使用能在这些服务被拒绝时继续运行的专用浏览器构建。尚未把 IOKit/Mach 访问加入通用执行策略，也未关闭 Chromium 内置沙箱。新增系统服务权限是现有授权范围之外的扩展，需明确接受后再实现；不得为了这个浏览器样本把白名单硬编码到 Core 或通用进程底座。
+
+剩余完整交付目标仍是 macOS 原生 Browser 与桌面调查闭环，而非再拆组件交付：先用明确选定并具备来源材料的 darwin/arm64 浏览器构建完成隔离兼容性诊断及真实 pipe/Broker/证据/取消验收，再让桌面明确授权的 Scenario 任务使用该能力。当前缺少通过该隔离验证的浏览器发行材料；本机普通 Chrome 不能替代。未完成前不得标记“产品可用”或解除发行门槛。Linux 后移，不需要远程服务器。
+
+本地后端验证配置：先运行 `pnpm build:macos-sandbox`，再显式设置 `TRACEFORGE_MACOS_SANDBOX_HELPER` 为生成的 `packages/execution-node/native/darwin-arm64/traceforge-macos-sandbox` 绝对路径；相邻 `release.json` 必须匹配。Browser 安装配置另需 `acceptedResourcePolicy: "sampled_terminate"` 与实际 helper 测量值；这不是跳过 Browser 材料审核的开关。
+
+## macOS 原生监督进展：采样、超限终止与进程组退出实测
+
+沿用用户接受的 sampled-terminate 资源预算，不重新请求方案确认。新增原生只读采样器与出生身份绑定解析，核验 PID/启动秒与微秒、同 UID、采样前后身份；无记录/身份变化/超容量/非整数计数拒绝，不将缺失进程视作清理证明。原生计数通过 libproc 读取 CPU、驻留内存与磁盘写入，PID 重用单独计费，退出进程已观察到的累计值继续保留。
+
+新增独立 macOS 原生组监督进程和 runMacosOwnedExecution 有界 stdio 入口：监督者创建 session/group，在回收组之前不 reap 根进程以防 PID/组号重用；目标经 Seatbelt 启动，禁止 setsid/setpgid，并关闭监督通道 FD。监督者保有专用采样通道和父端控制通道，父端断开、父进程消失、取消、时限或预算超限触发组终止。只有根退出、组扫描完整且没有存活成员才发送 terminal；僵尸不再执行，根由监督者回收，其他僵尸由系统回收。失败/超时保留 cleanupConfirmed=false，不声称发送信号等于清理成功。该结果是受管组屏障，不是 Linux namespace/cgroup 等价保证，也不替代持久化崩溃恢复证据。
+
+本机实测解决两项问题：进程组查询可不返回已退出的根，不能把空列表一律当查询错误；node 子进程使用 stdio ignore 会访问未授权 /dev/null，测试改为继承已有 stdio，未扩大文件授权。新增 syscall 禁止进程组/session 脱离，经真实 C fork/setsid/setpgid 探针验证；目标向监督者 SIGKILL 的尝试也被拒绝。监督者和系统规则禁止出现在任务可写授权内，环境暂只接受空对象，防止未沙箱化监督者的 loader 注入。
+
+验证：当前 Apple Silicon 真机 3 文件/19 项通过（4 项静态、15 项显式原生），包含正常退出、实际 CPU/内存/进程数超限、时限、输出截断、取消、遗留子进程清理、监督者信号保护、文件/网络/继承隔离和采样身份变化。短回归 12 文件/65 项通过、15 项原生默认跳过；Execution Node/Server 编译、327 个生产源码边界检查及 git diff --check 通过。没有以此宣称真实 Chromium、签名公证或默认桌面验收通过。
+
+完整任务仍在推进：原生有界入口尚未适配 ProcessLauncher 的流式 stdin/control、后端身份发行/preflight、资源保证协商和 Browser 宿主启动；生产入口继续关闭。剩余工作属于同一个 macOS 首发集成目标，不再拆成需要用户逐项批准的资源方案。下一实施的实际作用是让已经在原生测试中成立的“授权执行、超限停止、确认退出”成为桌面任务的真实执行路径，而不是只留测试入口。普通采样仍会遗漏瞬时峰值/短命进程，CPU/写入不是精确计费，硬文件/网络限制不降低。
+
+## macOS 资源方案已获确认：监督预算实现中
+
+用户已明确接受：文件/网络继续由系统沙箱限制，CPU、内存与进程数量允许采用监测超限后终止，存在短暂超限窗口。本节覆盖下方“资源合同待确认”阻塞，不再重复请求该决定。此授权不等于批准降低文件/网络隔离，也不等于允许伪造进程树清理结果。
+
+新增平台无关 SampledResourceBudget 与 ResourceBudgetSupervisor。预算按原生进程出生身份去重，保留已退出进程的累计 CPU/写入采样值；拒绝过期、重复、回退、溢出及超容量样本。监督循环串行采样，超限、取消、采样失败或超时均要求终止；清理有独立截止时间，只有适配器的清理屏障成功才返回 cleanupConfirmed=true。超限结果锁定，不能因后续用量下降抹掉。采样会遗漏采样间隔内的短命进程/峰值，不声称硬配额或精确累计计费。
+
+本轮验证：4 文件/16 项通过、4 项原生测试默认跳过；Execution Node 编译和 git diff --check 通过。本轮没有重跑原生测试，上一批 macOS 文件/网络实测记录保持不变。以上组件尚未接入生产 ProcessLauncher；原生身份安全采样、监督进程生命周期与终止屏障、资源保证声明及宿主/Browser 装配仍在同一完整任务内，不能宣布本机执行已完成。下一实施作用是让超限任务被停止、无法确认清理的任务保留未知状态，而不把“发送 kill”当作“所有进程消失”。
+
+## macOS 首发实现进展：原生策略实测与资源合同待确认
+
+新增独立 macOS Seatbelt 策略编译器，将 darwin 文件授权编译为默认拒绝、显式路径规则与 network deny；拒绝 direct/brokered 进程网络、无授权启动路径、交互/后台模式和无界策略输入。该编译器不是生产 ProcessLauncher，不产生完整 ProcessEnforcementAttestation，明确返回 resourceLimitsApplied=false、processTreeCleanupProven=false。它使用系统 dyld-support.sb 引导动态加载器，并允许系统运行库读取；这属于平台基础例外，不宣称严格只有用户路径可读。Seatbelt/private profile 兼容性仍需发行版本约束。
+
+在当前 darwin/arm64 真机经授权执行原生测试：授权文件读写成功，越权文件与指向其的符号链接被拒绝；外部对照可连接的回环监听器在沙箱内得到权限拒绝；spawn 子进程不能读取未授权文件。最初在工具沙箱中 sandbox_apply 被拒绝，授权后发现 Node 在 dyld 初始化 SIGABRT，使用系统最小 dyld 支持规则后这些断言通过。未放开 home、全部文件读取或全部 Mach 服务。
+
+资源实测：有界 C 探针在独立进程设置 8 MiB RLIMIT_RSS 返回 EINVAL（22），未进行后续 32 MiB 分配。它证明当前候选 API 不能履行所要求的内存限制，不证明 macOS 不存在任何其他机制。本机 setrlimit 手册将 CPU/单文件限制描述为单进程/单文件，将 NPROC 描述为同 UID 数量，不能直接声称它们是隔离的任务进程树配额。
+
+当前阻塞是产品资源保证的选择，不是缺 Linux 主机。已向用户请求确认：macOS 首发是否允许文件/网络保持系统强制隔离，而 CPU/内存/进程数量采用可短暂超限的监督终止预算。未经确认，不修改既有硬资源合同、不把监控伪装成硬配额、不引入虚拟机替代方案。若接受，下一完整任务是原生监督/取消清理、明确的资源保证合同及本机 Browser/桌面装配；实际作用是在 Mac 上安全执行任务，同时让界面和审计如实说明资源保护边界。若不接受，保留当前不可执行状态并重新评估可满足硬配额的架构。
+
+macOS 健康诊断已从“换 Windows/Linux”改为 macOS ARM64 后端尚未完成资源监督/清理验收；Intel Mac 单独提示非首发架构。Browser 生产安装仍关闭，没有宣布首发完成。本批验证：8 文件/53 项短回归通过、4 项原生测试默认跳过；显式原生运行 1 文件/6 项通过（含 2 项纯策略测试、3 项隔离实测、1 项资源限制不可用的特征测试）。Server/Execution Node 编译、323 个源码边界检查、git diff --check 通过。未执行真实 Browser、签名公证、长全量或模型测试。
+
+## 首发平台纠正：macOS Apple Silicon 优先
+
+用户明确：首发支持 macOS 苹果芯片（darwin/arm64），Linux 后续再测试。本节覆盖下文把 Linux/Windows 原生验收列为当前首发前置条件的排期。首发不是“macOS 仅控制面、另找 Linux 执行”，不要求用户准备 Linux 主机，不引入远程节点，也不默认引入 Linux 虚拟机作为替代方案。现有 Linux/Windows 代码保留，不因测试后移而删除。
+
+实际缺口：当前 PlatformSandboxLauncher 只有 Windows/Linux 装配，Browser 安装器明确拒绝 darwin；已有真实 macOS Chrome 功能测试只证明浏览器控制链，不证明宿主级网络、文件系统、资源与进程树隔离。因此之前“软件整改完成、只剩 Linux 真机”的判断不能作为首发完成结论。Browser Runtime、事务证据存储、能力 RPC 与恢复实现继续复用，缺失的是 macOS 执行后端及首发平台集成。
+
+下一完整交付：macOS ARM64 本地执行与 Browser 首发闭环。统一核实并实现 macOS 可强制执行的进程启动、文件授权、网络 deny、取消/退出清理、资源限制与后端身份装配；平台差异留在 Execution Node/宿主适配，Core 与 Scenario 不加 macOS 特判。在本机验证允许路径可用、越权文件/直接网络被拒绝、取消与重启恢复成立，再接 Browser 安装、Broker、证据存取和桌面启动链。不能仅删除 darwin 拒绝检查或把普通进程标记为 sandboxed；无法证明的能力必须明确限制，并如实记录，不复制 Linux 的隔离保证。
+
+通俗作用：用户在苹果芯片 Mac 上安装后即可在本机安全执行任务，不需要另一台 Linux 机器；任务只能读取授权文件、通过批准的通道联网，停止后能确认清理情况。macOS 实际后端、可信 arm64 浏览器发行、签名/公证及整链验收才是首发门槛，Linux 平台矩阵后排。
+
+本次仅同步平台决策和代码差距，未修改运行时代码、未宣布 macOS 沙箱已完成；未重跑代码测试，git diff --check 通过。下方 179 项测试基线保留为上一实现批次记录，不是 macOS 首发验收结果。
+
+## 当前整改进展：Browser 安装、证据与恢复整链（生产验收待材料）
+
+本节覆盖下方 Browser 接线批次的剩余项。新增 `browserInstallation` 宿主配置，经 buildServer → Foundation 装配独立安装校验器和 SQLite Browser 正文存储，与原有自定义 browserDeployment 互斥。安装器逐次检查发行清单、来源锁定、独立来源授权、评审、构建证明、Controller/Chromium 文件与树身份，以及固定 Node 摘要；不接受 Scenario 提供启动路径，不扩大调用权限。Linux/Windows 以外的平台明确拒绝此生产安装入口；这不是平台真机验收通过的声明。
+
+本轮已将正文与 Scenario Artifact 索引/幂等命令合入同一 SQLite 事务；索引失败或当前调用检查失败时正文一起回滚。正文包含 Case/Run/Work/Session 归属与摘要，支持跨重启读取、去重、不可变和容量检查（单项 4 MiB、总量 256 MiB/10000 项）。启动维护只回收无任何索引引用的旧正文；已登记证据不自动到期删除，配额不足拒绝新增。web.browser.inspect 返回索引描述，web.browser.read 通过能力 RPC 按 Package/Case/Run 和当前调用授权读取至多 64 KiB 的正文分块，复核摘要/大小，不启动浏览器或访问目标。
+
+scratch 现有 SQLite 分配意图和派发状态：创建目录前登记，派发前绑定实际启动请求的进程键，终结后清理精确目录。Host 启动恢复未派发/已终结目录；已派发目录只在既有容量账本确认 terminal_observed/released 后回收，无记录或未知状态继续保留。清理拒绝符号链接替换，不扫描或删除未登记目录。该机制不签发清理证明、不释放既有容量账本，不扩建远程节点。Controller 构建失败会清理自己的准备目录，重复准备失败不会误清理其他调用。
+
+正文读取额外复核同事务登记的索引—正文绑定；通用 Artifact RPC 伪造其他 Package 的索引不能转化为正文访问权，该失败路径已有回归。状态 failed 不等于确认退出，终止结果不明确时拒绝成功回执并保留目录和容量。
+
+桌面和 Server 直接启动均支持 TRACEFORGE_BROWSER_INSTALLATION 指定宿主安装配置 JSON；buildServer 也提供 browserInstallationPath。路径、字段、身份摘要、资源值及 16 KiB 文档界限严格校验，不搜索开发机 Chrome，不接受 RPC 配置，多个安装来源冲突拒绝。生产入口提供完整 SQLite 装配；自定义 browserDeployment 必须自行实现同等持久化/恢复保证，不能继承内置实现的验收结论。
+
+本批验证：17 文件/179 项测试通过；Server、Desktop 编译，8 个 Scenario 模块可复现构建，322 个生产源码边界检查及 git diff --check 通过。包含真实磁盘文件、Ed25519 签名与树校验的安装成功/篡改/撤销测试、实际 Browser Runtime 到 SQLite 的存取联测、事务回滚、分块归属检查和数据库重开后的清理恢复。Browser 执行节点/控制器仍为测试替身；发行字节是明确测试夹具，没有执行真实 Chromium、真实模型、原生矩阵或超长全量测试。
+
+软件整改的本轮安装/存取/恢复目标已实现。剩余生产验收依赖可信 Chromium 发行、对应原生沙箱身份和受支持本机环境，当前没有将这些条件伪造成已满足。下一完整验收是准备真实材料后运行本机 Browser 整链，重建并签署更新后的 Scenario 包，验证请求确实只经 Broker、证据保留和退出恢复。实际作用是证明真实页面能安全执行并留下可追溯证据，而不只是模拟链路通过。不新增远程服务、长期登录会话或桌面证据 UI 作为本轮前置任务。详见 [Browser 装配与验收](browser-product-assembly.md)。
+
+## 当前整改：有界 Browser Scenario/Host 接线（生产仍关闭）
+
+本节覆盖下方“Server 完全未引用 Browser Runtime”和旧优先级。新增 Server 本机 Browser 能力适配，Foundation → Governed Scenario Source → 能力 Handler 已传递可选安装部署。Web 黑盒新增 web.browser.inspect：导航、DOM/可选截图、网络回执与 Artifact 索引在一次调用内完成并关闭浏览器。无部署材料时明确不可用，不启用默认 Browser、不提供 direct 或无沙箱回退。网页交互语义留在 Scenario，Core 不增加 Web 分支。
+
+进程使用既有容量/执行归属账本；请求逐次检查租约、当前调用和授权，强制预期沙箱后端测量与等权启动配置。测试覆盖真实 Scenario 子进程到实际 Browser Runtime 的装配，浏览器控制器/Execution Node 为受控替身，不能当原生隔离证明。Server 生产编译排除测试源，避免跨 desktop/renderer 测试被误打包；测试仍独立执行。清理了该次错误编译在源目录生成的 JS/声明副产物，保留原 TypeScript 源码。
+
+本批验证：最终统一回归 14 文件/163 项通过，包含取消前拒绝、权限扩大拒绝、清理结果未知保留容量及 Cognitive loop/wakeup。Server 编译、8 模块 Scenario 可复现构建及 319 个生产源码边界检查通过，git diff --check 通过。应用 buildServer 已接受并向 Foundation 传递 browserDeployment，未提供时仍关闭。未运行超长全量、真实 Linux/Windows 原生矩阵、真实浏览器或模型调用。本地依赖锁仅新增 browser-runtime 工作区链接。
+
+纠正周报整改范围：工具网络采用结构化 HTTP Broker，未实现的透明进程网络继续拒绝；不建设远程 Browser 服务、多节点或分布式通知。Blackboard 已有持久游标与启动/周期恢复，不能因 ChangeBus 在内存就宣称重启状态全部丢失。
+
+尚未完成：默认应用的安装级 Browser 部署配置、Artifact 内容存储装配、可信发行材料和原生平台真机验收；交互式长期 Browser 会话未接产品。本批是“有界能力接线完成”，不是“默认产品或生产 Browser 完成”。下一完整任务为这些安装/平台条件的整链验收；实际作用是让黑盒任务在真正断网的浏览器进程中观察页面，网络只经授权 Broker。详见 [Browser 产品装配边界](browser-product-assembly.md)。
+
+## 当前状态：模型目录自动获取与真实账号验证
+
+新增独立模型目录发现能力：packages/llm 通过现有认证传输读取标准 models 目录，支持 OpenAI/Responses 与 Anthropic 请求头/路径；宿主负责端点和账号绑定、配置版本检查及已存密钥的同端点复用，桌面通过受保护 IPC 获取仅含模型 ID 的列表。Core/Scenario 未增加供应商分支。请求限时 15 秒、响应上限 1 MiB、展示最多 1000 项；去重排序，不跨端点回退、不跟随重定向，不把目录当成权限/工具能力证明。上游分页未继续追取，has_more 或数量截断会明确提示列表不完整。
+
+页面在连接就绪后自动读取目录，支持刷新、下拉选择与手动填写兜底；一个已登录账号且尚无配置时自动带入该连接。刷新失败保留输入，切换连接清除旧列表；不自动选模型、保存或推理。界面按现有视觉实现补齐加载/空目录/权限失败/不支持/限流状态。
+
+真实验证：用户完成 Grok 授权；重启设置窗口后登录状态恢复，自动读取到 12 个模型。随后观察到用户在界面选择 grok-4.6 并得到保存成功回执。没有由开发验证发起生成调用，不能据此宣称模型推理、工具调用和续期已通过。
+
+本批验证：15 个文件，104 项通过、1 项真实连接测试跳过；renderer、settings-only 宿主、桌面构建通过，UI 检测无命中、实际桌面布局和目录已检查。下一完整优先级是选定连接的结构化输出、流式响应、工具往返及取消/续期真实验收；由用户主动测试或授权执行。实际作用：用户登录后直接选模型，不再查文档手抄型号；真正开始调查前，再确认该账号和型号能完成所需调用。
+
+以下登录批次及后续历史状态由本节覆盖。
+
+## 当前状态：Grok 兼容登录进入手动验收
+
+本节覆盖下方历史批次的注册阻塞及下一步描述。settings-only 桌面在没有显式安装清单时默认提供 Grok 兼容连接；已有清单完整覆盖默认项，包括显式空目录。公开客户端来自官方 Grok 源码，并参照 CC Switch 的六项 scope 和 Responses 端点装配。这是兼容模式，不是 TraceForge 自有注册、合作身份或套餐权限保证。没有读取其他客户端凭据，没有自动登录或真实模型调用。
+
+供应商差异留在宿主注册：允许明确列出的 accounts.x.ai 验证地址，令牌类型/有效期缺省仅通过该注册配置处理。通用 OAuth、协议网关、宿主安全存储与桌面仍分离，Core/Scenario 不增加 Grok 分支。
+
+验证：14 个文件，89 项通过、1 项真实连接测试跳过；settings-only 宿主、桌面与 renderer 构建通过。下一完整验收由用户手动登录，随后验证准确模型 ID 的连接、保存重开、调用续期和退出。作用：直接在 TraceForge 连接自己的账号，不依赖本机 CC Switch。尚未证明真实套餐权限、全部 Responses 能力或完整调查桌面生产装配；不能将模拟回归写成真实供应商验收。注册来源、风险和操作见 [账号注册说明](model-account-registration.md)。
+
+以下为历史批次记录，状态与优先级以本节为准。
+
+## 登录体验补齐（尚未达到 Grok 手动授权验收入口）
+
+用户要求功能完成后自行授权，本批未发起真实账号登录。新增“打开授权网页”：renderer 只传账号引用，主进程从当前未过期登录流程取回 HTTPS 地址，拒绝 renderer 任意 URL；子框架/错误来源/桥关闭仍拒绝。新增页面自动检查授权结果、关闭自动检查选项、过期提示与手动检查保留。自动检查只在当前设置页存在时运行，使用单次串行请求，供应商 slow_down 仍由网关限速控制。
+
+本批 settings-only Server、Desktop、renderer 构建通过；账号/表单既有 8 项回归通过，新增浏览器打开桥来源与载荷检查。此前 87 项全套回归仍为上一批基线，不冒称本批全量重跑。真实登录、真实套餐调用及新界面实机验收均未执行。
+
+阻塞：未确认 TraceForge 可独立使用的 Grok OAuth 注册，默认账号目录仍为空，因此功能**尚未完全实现到可让用户直接点 Grok 登录的程度**。CC Switch 源码的特定 client ID 不是已核实的本产品注册。下一步必须解决注册来源/适用范围及对应推理协议，不能要求用户用 API Key 替代其账号授权需求，也不能把本批通用 UI 完成说成 Grok 接入完成。
+
+## 最新进展：账号连接宿主与设置界面装配
+
+已接通 settings-only 桌面的安装级账号注册、设备码登录/手动检查/取消/确认退出、账号状态读取和模型认证连接选择。账号登录不自动选模型、不启动推理；选择连接并保存后才改变后续调用配置。服务端绑定 credentialRef、协议、准确 API 地址及 Bearer 认证，拒绝混入 API Key。退出移除本产品凭据，保留配置但后续调用失败，不声称撤销供应商远端授权或取消已发出的调用。
+
+注册从桌面 userData/config/model-accounts.json 读取（严格 schema、32 项/64 KiB 上限）；默认空目录，不内置借用的 CLI client ID。刷新令牌使用独立 model-tokens.bin，由 Electron safeStorage 加密、临时文件改名发布；禁用不安全存储后端，损坏文件不覆盖。网关与协议适配不依赖 Electron，宿主注入存储；Core、Scenario 未修改。invalid_grant 清除失效凭据；关闭账号控制面撤销未完成登录。
+
+验证：12 文件 / 87 项通过，1 项真实模型测试跳过。包含账号授权→配置保存→宿主重建→模型调用→退出后拒绝、端点/协议/认证绑定、取消、刷新失败、受控加密文件恢复/删除/损坏拒绝及 renderer 登录→选择→保存→确认退出。加密文件测试采用注入的测试密码实现，不是 OS safeStorage 实机验收；界面状态为 jsdom 验证，本批未完成真实账号桌面视觉/登录验收。真实模型调用 0。详细安装合同见 [账号注册说明](model-account-registration.md)。
+
+当前完整交付仍未结束：默认发行注册、Grok 真实账号兼容、注册安装入口、浏览器一键打开与自动轮询、完整桌面运行入口的账号装配仍未完成。现有账号界面使用手动打开授权地址与“检查登录”，不夸大为一键登录。下一完整目标继续完成安装者可直接使用的账号接入闭环，并核实 Grok 的注册及推理端点；同时保留 API Key 多协议能力。通俗地说：登录机制已经接上，但还要把具体供应商的可用身份和权限落实，用户才能真正用自己的套餐，而不是看到一个空登录入口。
+
+## 当前方向：TraceForge 独立多供应商模型网关
+
+用户确认参考 CC Switch 源码建设 TraceForge 自身的多协议、多供应商接入，不是仅开发 API Key 表单，也不依赖本机 CC Switch。此记录覆盖下方“等待 API 配置后才继续”的历史优先级。完整计划、源码参考及验收边界见 [模型网关实施计划](model-gateway-plan.md)。
+
+本批已实现：新增 Responses 协议适配器（结构化输出、普通/流式文本、函数工具调用与结果历史转换、用量、取消、120 秒时限、16 MiB 响应边界、失败/不完整响应拒绝），通过原 LlmProvider 合同接入。供应商预设不再强制绑定单一协议；factory 按协议穷尽选择适配器。新增进程内 ModelGateway，装配宿主批准的账号注册与注入的 OAuthTokenStore，按 credentialRef 分派设备授权、轮询/取消、刷新、断开与模型调用；LlmConfigService 可注入该网关。它不新增监听端口、不读取第三方账号文件，不复制 Model Runtime 调度/预算或工具执行。
+
+设置端贯通 Responses 校验、保存/重读/测试和协议选择。切换协议保留供应商/地址，清除已输入密钥及协议专用参数。适配器不把推理内容当最终答案，不把中断或不支持的上游工具结果当成功，不在已输出流式文本后自动重放；新增协议不自动回退到另一协议。现有 Chat Completions / Anthropic 重试策略仍保留，并非本批已统一全部重试行为。
+
+当前验证基线：模型包、宿主配置、renderer 表单 10 文件 / 82 项通过，1 项真实模型连通测试明确跳过；包含独立本机 HTTP 端点、Responses 消息/工具往返、逐字节 SSE、异常/取消、网关设备授权→刷新→调用→退出、宿主配置保存重开后真实适配器派发（受控传输）。LLM、settings-only Server、renderer、Desktop 构建及 Server Foundation 类型检查通过，315 个生产源码边界检查通过。界面检测器无报告项；独立复核接受协议切换代码与桌面新增内容，窄屏截图证据不足，未冒称窄屏验收通过。真实供应商调用 0，未冒称账号套餐或 Linux 实机已验收。
+
+尚未完成：Grok 真实注册可用性、桌面账号登录/退出界面与宿主安全存储装配、多连接管理 UI、Responses 加密推理续接及其他协议族。ModelGateway 已可由宿主注入，不表示默认桌面已装配任何供应商 OAuth 注册。Responses 对加密推理续接、嵌入模型与非函数内置工具明确拒绝；不能宣称覆盖所有 Responses 型号。
+
+下一完整交付目标：继续同一网关计划，完成账号连接在宿主与桌面的实际装配，先核实 Grok 授权注册/接口约束，再贯通登录、刷新、断开、连接选择和真实授权验收；无可用注册时明确阻塞具体供应商，不拖住通用接入开发。实际作用：用户可在 TraceForge 中选择 API Key 或账号连接，切换模型时不需要修改底座或安全场景。
+
+## 当前优先交付：模型配置（覆盖下方历史下一步）
+
+按用户要求先推进模型配置，不推进调查派发。已实现供应商预设（DeepSeek、xAI、Kimi、GLM）/自定义端点、协议、明确模型 ID、密码输入、高级参数、读取、独立测试和保存。renderer 通过限定来源/操作的 IPC 使用宿主服务，不直接连接厂商；Core 与 Scenario 不承载配置界面或供应商选择逻辑。浏览器预览无桥时禁止密钥输入、测试和保存。已有受管 credentialRef 只读，不用 API Key 覆盖订阅连接。
+
+新增 `pnpm --filter @traceforge/desktop dev:models`：只启动模型设置窗口，不启动调查。静态页面服务器不提供模型控制 API，控制服务不监听端口，仅接受主进程内部请求。密钥使用 Electron safeStorage 加密；配置元数据不写明文密钥，读取不回显，浏览器存储不保存密钥。保存采用秘密代际与元数据指针发布，保留先前选中代际以避免中途写失败破坏旧配置；通过 revision 拒绝过期覆盖。测试单飞、30 秒超时并取消，不隐式保存，错误不透传上游正文。预加载改为 CommonJS `.cjs`，修复 sandbox 模式实际无法加载 ESM 导致回落演示的问题。
+
+验证：5 文件 / 37 项通过，1 项真实模型连通测试明确跳过。覆盖配置读取→测试不保存→保存→重开恢复、秘密写入中断、损坏配置、冲突、超时、renderer 表单和控制面隔离，并回归会话桥与正式启动围栏。Desktop TypeScript、renderer TypeScript/Vite 构建通过。Electron 实际窗口已打开并读取配置；这不是实际供应商模型调用验收。真实模型调用 0；未执行全量 Foundation 或 Linux 实机测试。正式桌面启动/打包围栏保留，settings-only 入口不代表完整智能体桌面已经交付。
+
+剩余边界：尚未验证真实 API 凭据/供应商能力和真实 safeStorage 保存重启流程；不支持 SuperGrok 订阅登录；不提供备选路由/角色策略的可视编辑。下一完整目标是用户提供授权模型配置后的实际连接与保存恢复验收，再推进既有对话→授权 Run→状态/审批/证据的完整接线，不拆出新的底层体系。通俗地说：先让用户在自己的安装环境里可靠选模型、填密钥、知道连接是否可用，再让这个模型真正参与调查。
+
+## 当前接线进度：桌面会话传输与宿主界面
+
+本批已在 Electron preload/main 接入限定为会话 API 的 IPC 桥，并新增可消费该桥的 HostWorkbench。仅允许当前窗口主框架、精确本机 origin 和根文档；路径、方法、字段、正文大小与并发有边界，拒绝其他来源、子框架、任意 URL、模型配置/执行 API 和 renderer 传入令牌。主进程调用原管理通道，凭据不交给 renderer。窗口关闭撤销桥。未修改 Core/Scenario、远程节点或更新系统。
+
+真实模式界面：读取会话、新建、分页恢复、保存用户说明、显示 saved / not_dispatched、出错后使用原命令核对；不展示示例证据、虚构助手回复或演示审批。浏览器没有 preload 桥时继续显示清晰标注的旧预览；宿主模式失败不会回退为演示。命令先保存到独立 localStorage 日志，写入失败不发请求，收到有效回执后清除；IPC 丢响应后保留原 ID，组件切换不混入其他会话。当前草稿仅在打开页面内保留，跨退出草稿、最近会话自动恢复和永久拒绝命令的人工处置仍未实现；不可把它说成完整退出恢复。
+
+验证：新增桥策略测试 7 项、宿主组件测试 1 项；与上一批会话、Case、预览和围栏测试合计 8 文件 / 52 项通过。受控集成贯通 journal→renderer transport→sender-checked bridge→真实管理通道→SQLite，覆盖 IPC 响应丢失后重建 controller 原命令核对和日志存储失败不发请求。Desktop TypeScript、新 renderer TypeScript/Vite 构建通过。组件为 jsdom 验证，并非 Electron 实机或浏览器中真实宿主视图验收。
+
+仍未开放正式桌面：启动/打包围栏保持，当前 localhost:5178 仍为演示，不代表 Electron 已可启动。模型配置、意图准备/授权 Run 关联、补充消息派发、执行投影、真实审批与证据读取依旧是同一个未完成产品流程；后续继续该流程，不以新增 IPC/接口数声称产品完成。
+
+下一完整目标：把已保存意图与现有授权/Run 关联，接入真实运行状态、审批和证据，并补齐恢复/错误处置后做 Electron 验收。实际作用：用户在同一对话里从“记录目标”走到“明确授权后执行”，能够核查实际进度，而不是把保存记录误认成智能体已经开始调查。
+
+## 当前接线进度：宿主会话持久化（完整产品流程仍进行中）
+
+新增应用层 desktop_conversations / desktop_conversation_messages SQLite 表与受现有本机管理通道保护的会话接口。创建会话与无授权范围的 Case 容器在一个事务内完成；稳定 commandId 支持创建/消息幂等重放，不同内容复用命令返回冲突。消息仅保存用户文本，固定返回 saved / not_dispatched，不形成助手回复、Planner 输入、授权或 Run。Case 丢失后会话不可读取或追加；重放创建返回明确归属已丢失。输入和分页有边界，每会话最多 2000 条、最多 1000 会话、消息正文总量 32 MiB；满额拒绝新增而不静默删记录，容量管理 UI 仍待实现。
+
+renderer 新增可注入宿主传输的 ConversationClient，无凭据、厂商端点、Core 或 Scenario 依赖。验证回执归属、命令/正文一致性、连续分页与重复命令；断线和服务端错误保留 unknown，不自动生成新命令重发。真实接口与客户端合同集成测试贯通了创建→消息保存→落库后响应丢失→原命令对账→多页恢复。当前可见工作台仍使用显式演示状态，尚未绑定此客户端；不能将本批记为模型配置/授权调查/审批/证据/退出恢复完整产品链路已完成。
+
+验证：6 文件 / 43 项通过，包括新增宿主/客户端、既有 Case、renderer 状态与桌面退役围栏；磁盘 SQLite 关闭重开恢复、事务失败回滚、本机管理令牌/Worker 拒绝/远程拒绝/撤销均有测试。Server Foundation 类型检查、新 renderer 类型检查及 Vite 构建、311 个生产源码边界检查通过。真实模型调用数 0；未运行全量 Foundation、Electron 或平台实机验收。
+
+下一完整目标仍为真实宿主使用流程：将会话保存合同接入桌面传输和现有界面，补齐意图准备/授权 Run 关联、用户补充消息的明确处理回执、真实运行投影/审批/证据读取与恢复。实际作用：用户输入不仅留在预览页，而是可靠保存、明确知道有没有被智能体处理，并能从真实进度继续调查。不得用另一套聊天循环绕过底座；正式启动/发行围栏保持。
+
+## 当前优先记录：行动谱面 A 交互预览
+
+用户已确认 A 并列核查，并进一步指定“用户消息居右、智能体回复居左”。本批将精细稿落实为独立可交互 renderer，见 [预览说明](desktop-renderer-preview.md)。实现对话输入与本页回执、观察来源展开、任务/证据切换、行动轨、审批详情及模拟确认/暂缓、设置说明和重置；浏览器会话存储可恢复草稿、预览消息、面板与模拟决定。加入空输入/容量限制、存储损坏/不可用提示、键盘焦点、组合输入保护和窄窗口切换。
+
+解耦边界：源码为全新 apps/web/renderer，仅复用已有 React/Vite 依赖容器；未恢复旧 src、API 客户端、布局或旧 web/dist。新增命令 preview:desktop / build:desktop-preview 仅服务预览，监听本机回环地址，产物独立 renderer/dist。Core、Scenario、模型和 Host 生产实现本批未改。桌面正式启动与发行围栏不解除。
+
+真实性：这是可点击界面，不是已接通的智能体。所有初始记录与时间为合成示例；输入不发送模型、不伪造模型回复，模拟确认不批准真实执行，观察不升级已验证发现。附件/密钥设置/宿主调查存档未接线；sessionStorage 恢复不是正式退出恢复，也不承诺关闭标签页后保留。真实模型调用数为 0。
+
+验证基线：renderer TypeScript 与 Vite 生产构建通过；桌面预览状态、旧前端退役围栏、桌面路径共 3 文件 / 29 项通过，含 Enter/换行/组合输入、状态恢复校验和容量/存储异常。浏览器验证来源→任务→收起→草稿刷新恢复→添加消息→模拟审批→刷新决定→确认重置及窄窗口导航/行动轨；1536×1024 与 390×844 无页面横向溢出，首屏审批完整显示。设计检测器无报告项；独立视觉复核通过，两个发现均修复，详见 [复核记录](desktop-renderer-review.md)，设计系统见 [DESIGN.md](../DESIGN.md)。本批未重跑全量 Foundation、真实模型、Electron 人工冒烟或平台实机矩阵；根递归发行构建仍因退役围栏失败关闭。git diff --check 通过。
+
+下一完整目标：依照 desktop-interaction-contract.md 接通当前桌面宿主的模型配置、授权调查、消息/事件、人工审批、证据引用和退出恢复，不再重复选择视觉方向，也不碎拆成逐按钮交付。实际作用：当前界面中的输入能可靠送到智能体，进度、审批、证据都来自真实回执，重启后能继续原调查；“未送达、未知结果、未验证”不会被画成成功。验收前不解除正式启动/打包围栏。
+
+以下桌面设计与退役记录为前序批次历史，具体布局待确认、renderer 尚未实现等描述已由本节覆盖；未完成的宿主接线、订阅装配和真实验收仍保留。
+
+## 前序批次记录
+
+桌面设计推进记录：已按“对话优先”审查当前 Run、审批、模型配置、Agent 事件回放、协作快照及证据图入口，形成 [交互与接线审查](desktop-interaction-contract.md)。明确现有协议是执行事件而非完整聊天：对话持久化/补充消息送达、证据工件安全读取和跨状态源恢复仍需宿主适配；模型设置当前为宿主级，不能伪装会话级切换。新增视觉方向选择材料见 [探索记录](desktop-direction-notes.md)；这是草图与待确认方向，不是可点击桌面 renderer，也没有接通模型或解除停用围栏。本轮无生产代码变更，文档检查使用 git diff --check，代码测试沿用下述上一批基线。
+
+最新设计确认：用户通过截图明确选择“行动谱面”，并要求 Claude Desktop / ChatGPT 桌面端级别的精致体验。不是“常规桌面 AI 助手”，此前助手误解已纠正。选择不依赖临时网页按钮。当前在同一方向内生成 A 并列核查、B 合并侧栏、C 轻量旁注三张精细稿，见 [行动谱面原型](desktop-action-score-prototype.md)；具体空间方案待确认，不再重新投票风格。本轮只更新设计材料与文档，git diff --check 验证，未修改生产源码、调用真实模型或解除桌面启动/打包围栏。
+
+最新排期覆盖（桌面前端重建）：用户明确废弃旧 Web 应用设计并授权删除旧前端，确认新桌面以“智能体对话为主，任务与证据按需展开”。当前先完成桌面产品设计和有效宿主合同核对，再按完整使用流程实现；下文模型订阅装配仍为未完成工作，不再单独抢先决定前端结构。产品事实见 [PRODUCT.md](../PRODUCT.md)，清理范围、交互要求、接口线索与缺口见 [桌面前端重建基线](desktop-frontend-reset.md)。
+
+本批已完成：删除 apps/web 的 42 个受跟踪旧文件（含页面、样式、API 客户端、状态与旧测试），移除 Vitest 的旧前端别名。保留明确停用的 package.json 及依赖记录；标准旧 Web 开发/构建和桌面打包/发行命令失败关闭，桌面在初始化数据前停止，避免加载残留旧构建。桌面宿主源码、当前 Server/Foundation、数据和前几批未提交修改保留；未把 apps/server 整体认定为废弃后端。旧前端可从 Git HEAD 恢复，忽略的构建/依赖缓存本批未递归删除。
+
+验证基线：桌面路径与前端停用回归 2 文件 / 6 项通过，Desktop TypeScript 构建、310 生产源码 Foundation 边界检查及 git diff --check 通过。未运行全量 Foundation、Electron 人工冒烟或真实模型。根递归 build/verify:release 因旧前端显式停用不再能成功发行；这不是新桌面已可运行的交付。本批只完成旧实现退役与新交互基线，视觉原型、对话持久化/恢复合同、证据详情接线仍未完成。
+
+当前下一完整目标：确认对话主工作台原型与当前后端合同，贯通模型配置、授权调查、对话进度、人工审批、证据引用和退出恢复。实际作用是用户围绕对话开展调查，需要时再看任务与证据，不被旧 Web 后台的页面结构限制；新 renderer 未通过验收前不解除启动/打包围栏。
+
+最新排期覆盖（模型接入，2026-09-05）：参考 CC Switch，只建设 TraceForge 自身的上游模型接入，不做其他客户端的配置切换、代理接管或协议服务。黑盒 HTTP 批次保持已实现状态，当前优先级转为独立模型接入与订阅装配；不依赖开发者个人 CC Switch。
+
+模型接入本批已实现：在 `packages/llm` 中分离供应商预设、协议 Provider 和请求时凭据解析。DeepSeek/xAI/Kimi/GLM 提供可覆盖的 API 地址与 JSON 模式；模型 ID 显式配置；Chat Completions 传递思考/推理强度/温度与输出上限。factory 统一启用端点/凭据归属校验及禁止重定向，宿主配置换端点不隐式沿用旧 key，目录通过现有控制通道读取。凭据保持在 Host，不进入 Core 或 Scenario。未修改其他客户端配置，也没有独立代理服务。
+
+OAuth 边界：通用设备授权模块已实现登录请求、有界轮询、刷新合并、过期/拒绝/取消和本地断开，采用宿主注入存储与明确注册，不内置其他 CLI 的 client ID。**Grok 订阅产品接入尚未完成**：缺少经确认的 TraceForge 注册、宿主 OAuth 控制面/加密账号存储装配和所需 Responses 适配，不能把此模块或 CC Switch 的成功经验记成已可用。详细说明与参考代码链接见 [模型接入设计](model-connections.md)。
+
+当前下一完整目标：在确认供应商可用授权方式后，完成仅服务 TraceForge 的订阅登录、凭据持久化/续期/退出与所需协议适配，并做独立环境整链路验收；真实账号权限未具备时明确未支持。实际作用是安装者可以在 TraceForge 内配置/连接模型，不必再装 CC Switch，也不需要改调查场景。此前“下一步直接做黑盒真实模型验收”顺延到接入可用之后。
+
+模型接入验证基线：LLM、Model Runtime 与宿主模型配置回归共 9 文件 / 70 项通过，1 项真实模型连通测试按既定决定跳过。包含独立本机 HTTP 请求及受控 OAuth 模拟，不代表厂商账号验收；真实模型调用数为 0。LLM 构建、Server Foundation 类型检查、310 个生产源码的 Foundation 边界检查和 `git diff --check` 通过；未重跑全量 Foundation 或平台实机矩阵。
+
+前一批优先级（2026-09-05，已由页首模型接入排期承接）：先完善 Web 黑盒 Scenario，并保持与 Core 解耦。以下历史记录里的“继续 Chromium 双构建 / 随后 Code Audit”不再代表当前排期：真实 Chromium 双构建、SBOM/NOTICE 与发行评审留到发布阶段；已有生产 Browser 门禁保持关闭，不恢复 direct Browser。白盒场景后排，真实模型、长稳和 Linux/Windows 真机验收仍按既定条件暂缓。
+
+本批已实现（HTTP 场景整链路收口）：在尚未提交的 Web Package `0.4.0` 中，将已存在的 Surface/Session/比较能力和新增 `web.hypothesis.register`、`web.validation.execute`、`web.validation.review`、`web.report.build` 贯通。流程覆盖已记录观察→独立候选假设→有前置条件的请求序列→重复对照→复核→保留未解决项的报告材料；不再以单个工具为交付终点。8 个独立 TypeScript Runtime 模块、12 个工具全部位于 Scenario Package；Core/Runtime/Host 生产源码未改，应用侧仅调整相关测试。研究/验证/复核/报告工具通过 Package 角色能力声明装配，原有 Core 的一个 active validation Work 和 Work 调度不变。
+
+具体行为：最多保留 16 个独立候选，来源必须引用当前保留的 Surface 回执或观察节点并重新检查 URL 授权；前置序列最多 4 步，允许显式带用途与预期状态的受控变更请求，后续比较为 2–3 轮 GET/HEAD。整个计划在发送前校验、预授权所有 URL，并在每次发送时重新授权。每次最多 6 请求，计划摘要与原 Work/Scope 绑定；预算续跑不重复已完成准备动作，前置状态不符停止后续请求，CAS 拒绝竞争写入。请求/观察保存前有意图检查点；未知效果、图注册/复核写入不确定均保留明确状态，不盲目重试。Surface 本身也补上了未知请求的续跑围栏。
+
+复核与报告：观察以带回执引用的 fact 记录；候选保持 hypothesis，复核只形成 candidate validation_conclusion 或 limitation，不自动升级 Finding。报告汇总支持/反驳的复核意见、未执行/失败/中断/未复核候选及保留范围；明确标记未读取正式 Finding 图、非完整覆盖。Reporter 仍须通过已有图工具引用真正完成生命周期的 Finding。Skill/Knowledge 已写入完整各阶段操作、Work 输出提交、引用要求和限制，正文摘要同步。
+
+同时修正既有 Surface 的观察写入：Host 的通用节点端口不承载原始证据 source，普通观察因此以 `fact` 加网络回执/Artifact 引用记录，不能冒充正式 `evidence` 或 verified Finding。对照观察使用同一方式，hypothesisId 仅作为关联属性，工具不代替图关系审查、因果证明或生命周期验证。
+
+本批边界：支持有界 HTTP 前置序列，不是任意业务脚本执行器；对照只变 URL / GET、HEAD 方法 / Session / headers 中一个字段，不支持 POST/body 对照、每轮业务状态重置、动态 URL 参数提取、响应归一化或浏览器场景。准备动作不自动回滚，未知效果没有自动解除入口；Session 状态变化、URL 内多个参数变化和 Host 正文脱敏仍可能影响比较。报告仅是场景记录汇总，正式图关系、因果和安全影响仍需审查。真实模型调用数为 0，不能把脚本驱动流程测试当成模型自主调查或真实目标验收。
+
+本批验证基线：`pnpm test:scenario:web` 6 文件 / 50 项通过，含 14 项完整工作流/异常测试；真实 Scenario 子进程与本机 HTTP 站点完成准备、重启续跑、对照、复核和报告，另一路通过实际 Host Adapter、SQLite Scenario State 与 Evidence Graph Kernel 检查合同。覆盖重复调用、竞争写入、跨 Work/Scope、计划变化、伪造引用、失败前置、波动/截断、已发送后丢回执/图写入失败/检查点失败及未知图写入。阶段流转、单验证任务调度与 Package/Route 回归 4 文件 / 33 项通过；Web Package 编译、8 模块可复现构建、308 个生产源码的 Foundation 边界与 `git diff --check` 通过。本批未重跑全量 Foundation、真实模型、长稳或平台实机验收。
 
 当前排期调整（2026-08-31，用户要求）：跳过实际 24/72 小时超长长稳测试，状态记为“暂缓、未执行”，不再作为后续底座开发的前置阻塞。
 保留测试入口、已有短时结果及长期稳定性风险，不安排自动或后台长跑，也不将跳过等同于验收通过。
@@ -10,7 +567,7 @@
 保留验收入口及 `not_run / modelApiCalls=0` 的实际结果，不作为后续通用底座开发的前置阻塞，不以离线回归替代真实模型验收。
 
 整改优先级调整（2026-09-03，用户要求）：以 [TraceForge 继续开发前整改计划](remediation-plan-2026-09-03.md) 作为后续任务基线。
-三个 P0 已在同一批次完成：Desktop 本机控制通道和 LLM Secret Store 已接线，旧 MCP 直接启动/路由已拆除，Web 0.1 同进程/direct Browser 实现已删除。Linux 本机部署的仓库实现也已闭环：正式 Linux Desktop 收窄为 DEB，安装 AppArmor 与固定 helper/manifest，并由瞬态 systemd user scope 提供本机 cgroup delegation；便携/直接启动明确关闭进程能力。协议 2/19 类真机终验等待可用 Linux x64。Web Scenario 的手写运行物已完成 6 个 TypeScript 模块与可复现签名构建；Cognitive Runtime 已承接 Planner、Observer、Structured Worker 的完整模型决策监督和上下文治理。Brokered Browser 的无场景 Core、Host/Controller 协议、Chromium CDP 策略、真实 pipe transport、页面观察/动作、人工接管恢复、可复现 Controller bundle、真实 macOS Chrome 集成、Build Attestation、Source Lock、离线评审签名、安全解压和 v3 整树发行安装门禁均已实现；当前只继续执行官方 Chromium 固定源码的真实双构建、SBOM/NOTICE、安全/许可证材料、各平台锁定产物和可用真机上的原生隔离证明。生产 Browser 在这些验收完成前保持关闭。随后才用最小 Code Audit Scenario 验证底座通用性。Foundation 整改与 Scenario 整改分别归档，不把 Web 语义写回 Core。
+三个 P0 已在同一批次完成：Desktop 本机控制通道和 LLM Secret Store 已接线，旧 MCP 直接启动/路由已拆除，Web 0.1 同进程/direct Browser 实现已删除。Linux 本机部署的仓库实现也已闭环：正式 Linux Desktop 收窄为 DEB，安装 AppArmor 与固定 helper/manifest，并由瞬态 systemd user scope 提供本机 cgroup delegation；便携/直接启动明确关闭进程能力。协议 2/19 类真机终验等待可用 Linux x64。Web Scenario 的手写运行物已完成 6 个 TypeScript 模块与可复现签名构建；Cognitive Runtime 已承接 Planner、Observer、Structured Worker 的完整模型决策监督和上下文治理。Brokered Browser 的无场景 Core、Host/Controller 协议、Chromium CDP 策略、真实 pipe transport、页面观察/动作、人工接管恢复、可复现 Controller bundle、真实 macOS Chrome 集成、Build Attestation、Source Lock、离线评审签名、安全解压和 v3 整树发行安装门禁均已实现；这些发行材料和平台证明转入发布准备，生产 Browser 在验收完成前保持关闭。当前先完善 Web 黑盒 Scenario，最小 Code Audit 后排。Foundation 整改与 Scenario 整改分别归档，不把 Web 语义写回 Core。
 
 ## 1. 项目目标
 
@@ -28,7 +585,7 @@ TraceForge 的目标不是通用编程 Agent，也不是某个漏洞扫描器，
 | --- | ---: | --- |
 | 通用安全智能体底座 | 约 90% | 仓库内调度、证据、执行、Provider、数据化 Scenario 及资源装配主链已收口，可进入首个真实场景接入；真实模型、原生平台矩阵和长稳仍是外部发布验收，不能按代码完成冒充生产验收 |
 | 单机生产化能力 | 约 71% | 已具备持久化、门禁、Execution Node、Provider 生命周期与受控分发；执行异常查询、可信凭据核验、对账和授权重试已连通，并通过选定跨进程强杀窗口；Windows 实机隔离、容量与长稳验收仍未完成，不按新增接口数量上调完成度 |
-| Web 黑盒实战场景 | 约 60% | 签名数据包和独立进程已接入；结构化同源探索、断点续跑、网络回执—Artifact—Evidence 关联、受控认证会话、秘密句柄和按 Run 脱敏流量历史已闭环；业务流程/身份差异建模、受控浏览器和完整验证策略仍未完成 |
+| Web 黑盒实战场景 | 不按工具数量上调估算 | 签名数据包和独立进程已接入；有界探索、独立假设、前置请求、身份/请求对照、续跑、复核和报告材料已贯通并通过脚本驱动整链路测试；真实模型自主调查、任意业务流程、受控浏览器和正式 Finding 证据链验收仍未完成 |
 | 白盒代码审计场景 | 尚未正式开发 | 只复用底座，不在当前开发主线上加入 AST、污点规则等场景工具 |
 | 红队内网横向场景 | 尚未正式开发 | PTY、隧道、长期远程会话和高风险审批策略仍待后续装配 |
 
@@ -1946,9 +2503,11 @@ Run 仅事件回放可以只装目标包；若 scope 仍固定旧包，授权执
 
 刚完成的 Linux 部署里程碑：**安装链仓库实现闭环、实机发布证明待验收**。实际作用是 Linux 用户必须通过受支持 DEB 和本机 systemd/AppArmor 启动链才能获得进程沙箱；双击便携程序不会偷偷退回普通进程。当前没有 Linux 真机，所以系统级安装、升级回滚和协议 2/19 类矩阵保持未验收，不借用远程节点或模拟结果填满。
 
-当前下一开发里程碑：**执行第一套真实 Chromium 自构建发行材料**。Build Attestation、Source Lock/Review、原子装配和启动硬门禁已经完成，不再继续增加空字段。下一整批应在有足够磁盘/内存的隔离构建环境固定一个官方 Chromium commit、`depot_tools`、依赖解析和 GN 配置，完成至少两次独立构建，产出真实 SBOM/NOTICE、安全/许可证评估、平台签名、归档和完整树摘要，再用现有门禁生成第一套非测试 Source Lock/Review/release tree。Linux/Windows 原生 `network=deny` 证明仍需对应真机可用后执行；当前不做应用 UI、桌面自动更新系统或 Scenario 适配。
+当前下一明确优先级：**对话优先的桌面工作台重建**，以页首及 [桌面前端重建基线](desktop-frontend-reset.md) 为准。旧前端已移除，先核实当前宿主合同并确认新原型，再整链路实现。模型连接是此流程的能力依赖；API 接入与通用 OAuth 引擎已有实现，但订阅登录仍需注册/权限、宿主装配及所需协议，不能宣称 SuperGrok 已可用。
 
-实际作用：底座现在不仅强制检查“用户装的是不是批准的那份浏览器”，还会追问“它由哪份官方源码、哪套工具和参数制造，SBOM/NOTICE 与安全/许可证评估是什么，两次独立生产是否得到完全相同的文件树”。系统 Chrome 偷偷升级、安装包被换、少一个库文件、清单自带假公钥、旧批准过期、审批 key 被撤销，或者有人只替换 GN 参数/SBOM/评估记录，都会拒绝装配或启动。下一批的价值是把这套已经能验真的质检线喂入第一批真实工厂材料，而不是继续拿测试摘要证明自己。
+后续验收：**真实模型驱动的黑盒 HTTP 整链路验收**（等待用户提供配置，按既定决定暂缓）。场景侧工作流实现和脚本驱动验证已完成，验收要让模型根据授权目标实际选择探索、提出独立假设、形成前置计划、解释对照结果、提交 Work 输出并完成复核/报告，检查幻觉引用、错误因果与遗漏候选；按一次完整调查批次修复实测问题，不再默认拆成单工具开发或扩建 Core。浏览器生产启用、任意多步业务适配、每轮状态重置和第二个 Scenario 另行排期，不声称本批已实现。
+
+实际作用：现在已能把“发现疑点→先准备条件→反复比较→说明结果→留下未解决项”串起来，并在准备动作完成后断开进程，再继续而不重复提交。下一验收检查的是模型是否真的会正确使用这套流程、是否能解释证据，而不是继续增加接口；配置未到前不伪造真实模型验收结果。
 
 里程碑完成标准不变：新扩展只靠声明的 Package/Skill/Knowledge/MCP/Provider 资源即可装配，不修改 Core 默认工具或场景常量；安装内容和运行内容可追溯到同一签名身份，撤销后新的模型上下文和工具调用立即停止使用，旧任务保留证据但不盲目重做；升级/崩溃/数据库重开不会留下半安装、半授权或被误释放的未知外部占用；完整 `verify:foundation` 与相关跨进程强杀门禁通过。真实模型与 24/72 小时长稳仍按用户要求暂缓，实机平台门槛另行执行。
 

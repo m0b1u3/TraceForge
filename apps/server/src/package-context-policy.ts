@@ -6,6 +6,7 @@ import { BoundedOutputDistiller, type ToolExecutionContext, type WorkerModelCont
 import { PackageContextDiscoverySource } from "./package-context-resources.js";
 import { SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 import type { RunContextPolicy } from "./run-context-policy.js";
+import type { ToolReceiptContext } from "./tool-receipt-context.js";
 
 /** Re-project audit originals; never edit a receipt, old snapshot, or recovery checkpoint. */
 export class PackageContextPolicy implements WorkerModelContextPolicy {
@@ -13,7 +14,7 @@ export class PackageContextPolicy implements WorkerModelContextPolicy {
   private readonly receipts: SqliteToolReceiptStore;
   private readonly distiller = new BoundedOutputDistiller();
   constructor(private readonly sqlite: Database.Database, private readonly resources: PackageContextDiscoverySource,
-    private readonly runContext?: RunContextPolicy) {
+    private readonly runContext?: RunContextPolicy, private readonly toolReceipts?: ToolReceiptContext) {
     this.bindings = new SqliteToolInvocationBindingStore(sqlite);
     this.receipts = new SqliteToolReceiptStore(sqlite);
   }
@@ -31,7 +32,7 @@ export class PackageContextPolicy implements WorkerModelContextPolicy {
     let legacyContextHistory = false;
     if (input.transcript.some((entry) => entry.kind === "tool" && !entry.receiptKey)) {
       const rows = this.contextBindings(context.runId, context.workId);
-      legacyContextHistory = rows.length > 0;
+      legacyContextHistory = rows.length > 0 || (!!this.toolReceipts && input.assignment.work.requiredCapabilities.includes("tool.recall"));
       if (rows.length > 256) throw new Error("Legacy context receipt lookup budget exceeded");
       for (const row of rows) {
         const receipt = await this.receipts.get(row.idempotency_key);
@@ -61,6 +62,19 @@ export class PackageContextPolicy implements WorkerModelContextPolicy {
       if (!binding || binding.attribution.caseId !== context.caseId || binding.attribution.runId !== context.runId
         || binding.attribution.workId !== context.workId || key !== `${input.assignment.work.idempotencyKey}:${binding.invocationId}`) {
         throw new Error("Context projection receipt attribution mismatch");
+      }
+      this.toolReceipts?.observe(key,{caseId:context.caseId,runId:context.runId,workId:context.workId,role:"worker"});
+      if (this.toolReceipts?.managed(key)) {
+        const receipt = await this.receipts.get(key);
+        if (!receipt || !await this.toolReceipts.current(key,{caseId:context.caseId,runId:context.runId,workId:context.workId,role:"worker"})) {
+          earliestInvalid=Math.min(earliestInvalid,entry.turn);
+          suppressed.push({turn:entry.turn,reason:"receipt_source_unavailable"});entries.push(removed(entry));
+        } else {
+          const distilled=await this.distiller.distill(receipt,8000);
+          entries.push({turn:entry.turn,kind:"tool",...distilled,receiptKey:key});
+          validated.push({turn:entry.turn,receiptKey:key,refs:distilled.refs});
+        }
+        continue;
       }
       if (binding.tool.source !== this.resources.source) { entries.push(entry); continue; }
       if (selection === undefined) {
@@ -92,6 +106,7 @@ export class PackageContextPolicy implements WorkerModelContextPolicy {
 
   assertReplayAllowed(snapshot: CognitiveSnapshotRecord): void {
     this.runContext?.assertReplayAllowed(snapshot);
+    if(this.toolReceipts?.hasRunSources(snapshot.runId)) throw new Error("Receipt-bearing history requires current projection");
     if (snapshot.workId && (this.contextBindings(snapshot.runId, snapshot.workId).length > 0
       || JSON.stringify(snapshot.request).includes("context:"))) {
       throw new Error("Historical resource-bearing model requests cannot be replayed verbatim; continue the Work through current context policy");
@@ -103,6 +118,10 @@ export class PackageContextPolicy implements WorkerModelContextPolicy {
   }
 
   private contextBindings(runId: string, workId: string): Array<{ idempotency_key: string }> {
+    if(this.toolReceipts) return this.sqlite.prepare(`SELECT idempotency_key FROM tool_invocation_bindings
+      WHERE run_id=? AND work_id=? AND tool_source IN (?,?)
+      UNION SELECT receipt_key AS idempotency_key FROM tool_receipt_context_sources WHERE run_id=? AND work_id=? LIMIT 257`)
+      .all(runId,workId,this.resources.source,this.toolReceipts.source,runId,workId) as Array<{idempotency_key:string}>;
     return this.sqlite.prepare("SELECT idempotency_key FROM tool_invocation_bindings WHERE run_id=? AND work_id=? AND tool_source=? LIMIT 257")
       .all(runId, workId, this.resources.source) as Array<{ idempotency_key: string }>;
   }

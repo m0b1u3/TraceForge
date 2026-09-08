@@ -13,14 +13,32 @@ const limits = { triggerCharacters: 256, maximumTextCharacters: 200, maximumCont
 function input() { return { caseId: "case", runId: "run", consumer: "worker", sourceFingerprint: "sources-1", context: {
   run: { id: "run", scopeRef: "scope", goal: "Original goal", workItems: [{ id: "pending", status: "queued", objective: "Do not lose this instruction", evidenceRefs: ["early-evidence"] }] },
   transcript: [{ turn: 1, kind: "tool", receiptKey: "first-receipt", refs: ["first-evidence"], summary: "first observation ".repeat(80) },
-    { turn: 2, kind: "tool", receiptKey: "last-receipt", refs: ["last-evidence"], summary: "last observation ".repeat(80) }],
+    { turn: 2, kind: "tool", receiptKey: "last-receipt", refs: ["last-evidence"], summary: "last observation ".repeat(80) },
+    { turn: 3, kind: "tool", receiptKey: "newest-receipt", refs: [], summary: "Current bounded observation" }],
 } }; }
 describe("Bounded context compaction lifecycle", () => {
+  it("keeps new receipt detail exact, then permits its compression after a newer observation", async () => {
+    const source = input(); source.context.transcript[2].summary = "prefix ".repeat(70) + "middle detail" + " suffix".repeat(70);
+    const runtime = new ContextCompactionRuntime(new Store(), undefined, limits);
+    const first = await runtime.prepare(source);
+    expect((first.context.transcript as any[])[2].summary).toBe(source.context.transcript[2].summary);
+    expect(first.manifest.contextCompaction).toMatchObject({protectedObservation:"/transcript/2/summary"});
+    source.context.transcript.push({turn:4,kind:"tool",receiptKey:"next",refs:[],summary:"Next observation"});
+    const next = await runtime.prepare(source);
+    expect((next.context.transcript as any[])[2].summary).toEqual({contextTextId:"/transcript/2/summary"});
+  });
+  it("does not exempt an oversized latest observation or exceed the hard context budget", async () => {
+    const source = input(); source.context.transcript[2].summary = "x".repeat(9000);
+    const result = await new ContextCompactionRuntime(new Store(), undefined, {...limits,maximumTextCharacters:500}).prepare(source);
+    expect((result.context.transcript as any[])[2].summary).toEqual({contextTextId:"/transcript/2/summary"});
+    source.context.transcript[2].summary = "x".repeat(7000);
+    await expect(new ContextCompactionRuntime(new Store(), undefined, {...limits,maximumContextBytes:1000}).prepare(source)).rejects.toThrow("budget");
+  });
   it("preserves early/later identities, task instructions and exact references without mutating input", async () => {
     const original = input(), before = JSON.stringify(original), store = new Store();
     const result = await new ContextCompactionRuntime(store, undefined, limits).prepare(original);
     expect(result.context.run).toEqual(original.context.run);
-    expect(result.context.transcript).toMatchObject([{ receiptKey: "first-receipt", refs: ["first-evidence"] }, { receiptKey: "last-receipt", refs: ["last-evidence"] }]);
+    expect(result.context.transcript).toMatchObject([{ receiptKey: "first-receipt", refs: ["first-evidence"] }, { receiptKey: "last-receipt", refs: ["last-evidence"] }, {receiptKey:"newest-receipt"}]);
     expect(result.context.compactedText).toMatchObject({ trust: "untrusted_summary", entries: [{ id: "/transcript/0/summary" }, { id: "/transcript/1/summary" }] });
     expect(result.manifest.contextCompaction).toMatchObject({ status: "completed", semanticQualityVerified: false });
     expect(JSON.stringify(original)).toBe(before); expect(store.rows.size).toBe(1);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ScopeRuleSchema, CaseSchema, TrafficEntrySchema } from "./schemas.js";
+import { ScopeRuleSchema, CaseSchema } from "./schemas.js";
 
 describe("ScopeRuleSchema", () => {
   it("accepts a valid scope rule", () => {
@@ -21,13 +21,5 @@ describe("CaseSchema", () => {
       createdAt: "2026-06-23T00:00:00Z",
     });
     expect(c.status).toBe("active");
-  });
-});
-
-describe("TrafficEntrySchema", () => {
-  it("requires caseId", () => {
-    expect(() =>
-      TrafficEntrySchema.parse({ id: "t1", url: "http://x", method: "GET", createdAt: "now" }),
-    ).toThrow();
   });
 });

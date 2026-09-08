@@ -176,7 +176,7 @@ describe("scenario control-plane routes", () => {
     expect(started.statusCode).toBe(201);
     expect(started.json().state.revision).toBe(1);
     expect(started.json().state.scenarioPackage).toEqual({
-      id: "traceforge.web-blackbox", version: "0.3.0", schemaRevision: 1,
+      id: "traceforge.web-blackbox", version: "0.4.0", schemaRevision: 1,
     });
     const replayed = await app.inject({ method: "POST", url: "/api/scenarios/runs", payload: startPayload });
     expect(replayed.statusCode).toBe(200);
@@ -184,7 +184,7 @@ describe("scenario control-plane routes", () => {
 
     const bindingList = await app.inject({ method: "GET", url: "/api/scenarios/runs?caseId=case_1" });
     expect(bindingList.json()[0]).toMatchObject({
-      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.3.0", schemaRevision: 1 },
+      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.4.0", schemaRevision: 1 },
       packageAvailability: "available",
       packageDiagnostic: null,
     });

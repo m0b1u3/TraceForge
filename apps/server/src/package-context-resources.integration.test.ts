@@ -50,6 +50,57 @@ async function observedFixture(configure?: (pkg: ScenarioPackageInstallation) =>
 }
 
 describe("Current context projection", () => {
+  it("recalls original context through the HTTP Worker and persists both Gateway receipts", async () => {
+    const pkg = contextPackage(["context.read", "context.recall"]);
+    pkg.definition.authorizationActions.push("context.recall");
+    const policy = pkg.authorizationPolicy!;
+    const parse = policy.parseScope;
+    policy.parseScope = value => { const scope = parse(value); return { ...scope, allowedActions: [...scope.allowedActions, "context.recall"] }; };
+    let turns = 0;
+    const h = await foundationHost({ foundation: { scenarioPackageRegistry: new ScenarioPackageRegistry([pkg]), toolDiscoverySources: [],
+      contextResourceContents: [{ package: contextBinding, resourceId: "first", content: contextText }] }, model: async args => {
+      const request = JSON.parse(args.user); turns++;
+      if (turns === 1) return { type: "invoke_tool", invocation: { id: "first", tool: "context.read",
+        input: { id: "first", digest: contextContentDigest(contextText) }, rationale: "Read authorized reference" } };
+      if (turns === 2) return { type: "invoke_tool", invocation: { id: "recall", tool: "context.recall",
+        input: { receiptKey: request.transcript.find((entry: any) => entry.kind === "tool").receiptKey }, rationale: "Recover original receipt" } };
+      expect(args.user).toContain("original_receipt_json");
+      expect(args.user).toContain(contextText);
+      return { type: "complete", summary: "Original reference recovered; no finding verified", outputs: [] };
+    } }); cleanup.push(() => h.close());
+    await h.start(); await eventually(async () => (await h.state()).workItems[0]?.status === "completed");
+    expect(turns).toBe(3);
+    const receipts = h.sqlite.prepare("SELECT result_json FROM worker_tool_receipts").all() as { result_json: string }[];
+    expect(receipts).toHaveLength(2);
+    expect(receipts.every(row => JSON.parse(row.result_json).status === "succeeded")).toBe(true);
+  });
+  it("recalls owned original context, rejects foreign/stale reads, and preserves the audit original", async () => {
+    const f = await observedFixture(pkg => {
+      pkg.definition.authorizationActions.push("context.recall");
+      const policy = pkg.authorizationPolicy as {parseScope(payload:unknown):{payload:unknown;allowedActions:string[];deniedActions:string[]}};
+      const parse=policy.parseScope; policy.parseScope=value=>({...parse(value),allowedActions:[...parse(value).allowedActions,"context.recall"]});
+    });
+    const tool=(await f.source.discover()).find(tool=>tool.name==="context.recall")!;
+    const original=(await new SqliteToolReceiptStore(f.sqlite).get("effect:first"))!.raw;
+    const recalled=await tool.execute({receiptKey:"effect:first"},f.context);
+    expect(recalled.status).toBe("succeeded");
+    expect(JSON.parse(recalled.raw)).toMatchObject({trust:"untrusted_context",content:original,recall:{receiptKey:"effect:first",nextOffset:null}});
+    for (const changed of [{caseId:"other"},{runId:"other"},{workId:"other"},{leaseId:"other"}])
+      expect(await tool.execute({receiptKey:"effect:first"},{...f.context,...changed})).toMatchObject({status:"failed",raw:""});
+    expect(await tool.execute({receiptKey:"effect:first",digest:"0".repeat(64)},f.context)).toMatchObject({status:"failed"});
+    const bindings = new SqliteToolInvocationBindingStore(f.sqlite);
+    await bindings.prepare({ idempotencyKey: "effect:recall", invocationId: "recall", inputFingerprint: "b".repeat(64),
+      tool: { name: tool.name, source: tool.source, version: tool.version, contractFingerprint: executionToolContractFingerprint(tool) },
+      attribution: { caseId: "case", runId: "run", workId: "work" } });
+    await new SqliteToolReceiptStore(f.sqlite).put("effect:recall", recalled); await bindings.complete("effect:recall");
+    f.request.transcript.push({ turn: 3, kind: "tool", ...await new BoundedOutputDistiller().distill(recalled, 8000), receiptKey: "effect:recall" });
+    expect(JSON.stringify((await f.policy.prepare(f.request)).request)).toContain(contextText);
+    f.store.revoke(contextContentDigest(contextText),"withdrawn");
+    expect(await tool.execute({receiptKey:"effect:first"},f.context)).toMatchObject({status:"failed",raw:""});
+    expect(JSON.stringify((await f.policy.prepare(f.request)).request)).not.toContain(contextText);
+    expect((await new SqliteToolReceiptStore(f.sqlite).get("effect:recall"))!.raw).toBe(recalled.raw);
+    expect((await new SqliteToolReceiptStore(f.sqlite).get("effect:first"))!.raw).toBe(original);
+  });
   it("prepares and evaluates a Skill using owned immutable receipts, without verifying findings", async () => {
     const f = fixture(enableSkillContract);
     const specs = await f.source.discover();

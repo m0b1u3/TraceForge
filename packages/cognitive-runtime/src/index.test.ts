@@ -97,6 +97,20 @@ function graph(): EvidenceGraphState {
 }
 
 describe("CognitiveContextDistiller", () => {
+  it("wakes for changes outside the visible prompt window but not another Case", () => {
+    const distiller = new CognitiveContextDistiller();
+    const budget = { maximumGraphNodes: 1, maximumRecentEvents: 1, maximumRunItems: 1 };
+    const state = run({ workItems: [work({id: "older"}), work()] });
+    const initial = distiller.distillRun(state, graph(), [], budget);
+    expect(initial.semanticFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    const changedGraph = graph(); changedGraph.nodes[0].summary = "New evidence on an older node";
+    expect(distiller.distillRun(state, changedGraph, [], budget).semanticFingerprint).not.toBe(initial.semanticFingerprint);
+    const changedRun = structuredClone(state); changedRun.workItems[0].resultSummary = "New outcome";
+    expect(distiller.distillRun(changedRun, graph(), [], budget).semanticFingerprint).not.toBe(initial.semanticFingerprint);
+    const foreign = graph(); foreign.nodes.push({...node("foreign", null), caseId: "another_case"});
+    expect(distiller.distillRun(state, foreign, [], budget).semanticFingerprint).toBe(initial.semanticFingerprint);
+    expect(() => distiller.distillRun(state, {...graph(), caseId: "another_case"}, [], budget)).toThrow("Case mismatch");
+  });
   it("bounds Run context, excludes unrelated nodes, and reports omissions", () => {
     const context = new CognitiveContextDistiller().distillRun(
       run({ workItems: [work({ id: "older_task" }), work()] }),

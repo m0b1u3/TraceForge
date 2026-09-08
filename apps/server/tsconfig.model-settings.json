@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/model-settings-host.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.integration.test.ts"]
+}

@@ -1,3 +1,4 @@
+import "./desktop-release-unavailable.mjs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 

@@ -128,7 +128,9 @@ export class ChromiumPipeTransport implements ChromiumCdpPort {
     }
     const spec: ChromiumPipeLaunchSpec = {
       executable: options.browserExecutable,
-      arguments: [...fixedArguments, `--user-data-dir=${options.userDataDirectory}`, ...(options.browserArguments ?? [])],
+      // Headless shell does not create an initial page in pipe mode by default.
+      // A local blank target also avoids startup navigation before interception.
+      arguments: [...fixedArguments, `--user-data-dir=${options.userDataDirectory}`, ...(options.browserArguments ?? []), "about:blank"],
       workingDirectory: options.workingDirectory,
       environment: { LANG: "C.UTF-8", ...(options.environment ?? {}) },
     };

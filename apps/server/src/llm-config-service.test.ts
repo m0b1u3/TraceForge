@@ -25,6 +25,20 @@ describe("LlmConfigService", () => {
   let tmp: string;
   beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), "llmcfg-")); });
 
+  it("does not silently send the previous supplier key to a changed endpoint", () => {
+    makeConfig(tmp,{provider:"openai",model:"m",apiKey:"previous-secret",baseUrl:"https://first.example/v1"});
+    const svc=service(tmp);
+    expect(()=>svc.reload({provider:"openai",model:"m",baseUrl:"https://second.example/v1"})).toThrow(/apiKey/);
+    expect(svc.load().baseUrl).toBe("https://first.example/v1");
+  });
+
+  it("preserves supplier/parameter metadata without storing credentials in the metadata file",()=>{
+    const svc=service(tmp),view=svc.reload({provider:"openai",supplier:"kimi",model:"operator-selected",apiKey:"kimi-secret",requestOptions:{thinking:"disabled"}});
+    expect(view).toMatchObject({supplier:"kimi",requestOptions:{thinking:"disabled"},apiKeyMasked:"••••••••"});
+    expect(readFileSync(join(tmp,"llm.json"),"utf8")).not.toContain("kimi-secret");
+    expect(svc.connectionCatalog().kimi.baseUrl).toBe("https://api.moonshot.cn/v1");
+  });
+
   it("loads config and masks the key", () => {
     makeConfig(tmp, { provider: "openai", model: "m", apiKey: "sk-abcdef123456", jsonMode: "json_object" });
     const svc = service(tmp);
@@ -69,7 +83,8 @@ describe("LlmConfigService", () => {
     expect(json.provider).toBe("anthropic");
     expect(json.model).toBe("claude");
     expect(json.apiKey).toBeUndefined();
-    expect(secrets.value.primary).toBe("sk-new");
+    expect(secrets.value.generations?.[json.secretGeneration]?.primary).toBe("sk-new");
+    expect(svc.load().model).toBe("claude");
   });
 
   it("keeps existing api key when not provided during reload", () => {

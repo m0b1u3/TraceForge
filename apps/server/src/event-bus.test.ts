@@ -7,9 +7,9 @@ describe("EventBus", () => {
     const calls: unknown[] = [];
     const fn = (event: unknown) => { calls.push(event); };
     bus.subscribe(fn);
-    bus.emit({ type: "scope_violation", caseId: "c1", url: "http://x", reason: "out of scope" });
+    bus.emit({ type: "case_deleted", caseId: "c1" });
     expect(calls).toHaveLength(1);
-    expect((calls[0] as { type: string }).type).toBe("scope_violation");
+    expect((calls[0] as { type: string }).type).toBe("case_deleted");
   });
 
   it("stops delivering after unsubscribe", () => {
@@ -18,7 +18,7 @@ describe("EventBus", () => {
     const fn = (event: unknown) => { calls.push(event); };
     const off = bus.subscribe(fn);
     off();
-    bus.emit({ type: "scope_violation", caseId: "c1", url: "http://x", reason: "r" });
+    bus.emit({ type: "case_deleted", caseId: "c1" });
     expect(calls).toHaveLength(0);
   });
 });

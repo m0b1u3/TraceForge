@@ -11,6 +11,7 @@ import { createScenarioProcessCapabilityHandlers } from "./scenario-process-capa
 import type { SqliteScenarioProcessSupervisionStore } from "./scenario-process-supervision.js";
 import type { ExecutionSessionGateway } from "./execution-session-gateway.js";
 import type { SqliteScenarioTrafficStore } from "./scenario-traffic-store.js";
+import type { ScenarioBrowserDeployment } from "./scenario-browser-host.js";
 
 interface Scope {
   token: object;
@@ -61,7 +62,7 @@ export class GovernedExecutionSources {
     policies: Readonly<Record<string, ExecutionSourcePolicy>> = {},
     launches: Readonly<Record<string, ScenarioProcessLaunch>> = {},
     allowInProcessDevelopment = false,
-    processServices: {sessions?:ExecutionSessionGateway;traffic?:SqliteScenarioTrafficStore} = {}): ExecutionToolDiscoverySource[] {
+    processServices: {sessions?:ExecutionSessionGateway;traffic?:SqliteScenarioTrafficStore;browser?:ScenarioBrowserDeployment} = {}): ExecutionToolDiscoverySource[] {
     const sources: ExecutionToolDiscoverySource[] = [], seen = new Set<string>(), consumed = new Set<string>(), consumedLaunches = new Set<string>();let quarantined=false;
     for (const installation of registry.list()) {
       if(registry.bindingStatus(registry.bindingFor(installation),installation.definition.kind,installation.definition.version).status!=="available"){quarantined=true;continue;}
@@ -81,7 +82,8 @@ export class GovernedExecutionSources {
           if (policy.version !== installation.version || policy.process !== "governed") throw new Error("Scenario Process policy identity mismatch");
         }
         const runtime = new ScenarioProcessRuntime({ manifest: installation.runtime, launch,
-          capabilityHandlers: createScenarioProcessCapabilityHandlers(installation, context, undefined, this.node,processServices.sessions,processServices.traffic)
+          capabilityHandlers: createScenarioProcessCapabilityHandlers(installation, context, undefined, this.node,processServices.sessions,processServices.traffic,
+            {capacity:this.capacity,deployment:processServices.browser})
             .filter((handler) => installation.runtime!.hostCapabilities.includes(handler.capability)),
           transport: { allowUnsandboxedDevelopment: false }, assertAvailable: () => registry.assertAvailable(installation),
           scheduler: this.capacity.scheduler, executionNode: this.node, supervision: this.scenarioSupervision,

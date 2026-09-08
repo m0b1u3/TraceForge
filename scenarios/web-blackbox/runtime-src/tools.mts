@@ -1,18 +1,50 @@
 import type { JsonObject, RpcRequest, ToolResult } from "./contracts.mjs";
 import type { ScenarioRpcHost } from "./rpc.mjs";
 import { exploreSurface } from "./surface.mjs";
+import { compareHttp } from "./comparison.mjs";
+import { investigation } from "./workflow.mjs";
 import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, requiredText, sha, stringRecord, succeeded } from "./validation.mjs";
 
 export async function callTool(request: RpcRequest, host: ScenarioRpcHost): Promise<ToolResult> {
   const params = plainObject(request.params, "Tool call"), context = plainObject(params.context, "Tool context");
   if (typeof context.idempotencyKey !== "string" || !context.idempotencyKey) throw new Error("Tool context idempotency key is required");
   const capability = (name: string, action: string, input: unknown, suffix: string) => host.capability(request.id, context, name, action, input, suffix);
+  const operations: Record<string, string> = { "web.hypothesis.register": "register", "web.validation.execute": "advance", "web.validation.review": "review", "web.report.build": "report" };
+  if (typeof params.tool === "string" && operations[params.tool]) {
+    return investigation(operations[params.tool]!, plainObject(params.input, "Workflow input"), context, capability, (input, suffix) => {
+      const scoped: Capability = (name, action, value, child) => capability(name, action, value, `${suffix}:${child}`);
+      const bounded = { ...input, timeoutMs: 15000, responseLimitBytes: 1024 * 1024 };
+      return input.sessionId === undefined ? requestHttp(bounded, scoped) : requestSession(bounded, scoped);
+    });
+  }
   if (params.tool === "scope.authorization.snapshot") {
     exact(plainObject(params.input, "Scope input"), []);
     const receipt = await capability("traceforge.scenario.authorization@1", "require", { action: "scope.read" }, "scope");
     return succeeded("Authorization scope loaded", receipt.output, [`authorization:${receipt.output.id}`, ...receipt.refs]);
   }
   if (params.tool === "web.http.request") return requestHttp(plainObject(params.input, "HTTP input"), capability);
+  if (params.tool === "web.browser.read") {
+    const input = plainObject(params.input, "Browser artifact input"); exact(input, ["artifactId", "offset", "length"]);
+    const receipt = await capability("traceforge.scenario.browser@1", "read", { operation: "read", authorizationAction: "web.traffic.read",
+      artifactId: requiredText(input.artifactId, "Artifact id"), offset: boundedInteger(input.offset ?? 0, 0, 4194304, "Content offset"),
+      length: boundedInteger(input.length ?? 65536, 1, 65536, "Content length"),
+    }, "browser-read");
+    return succeeded("Retained Browser artifact chunk loaded", receipt.output, receipt.refs);
+  }
+  if (params.tool === "web.browser.inspect") {
+    const input = plainObject(params.input, "Browser input"); exact(input, ["url", "screenshot"]);
+    const url = canonicalHttpUrl(input.url, "Browser URL");
+    if (input.screenshot !== undefined && typeof input.screenshot !== "boolean") throw new Error("Screenshot option must be boolean");
+    const receipt = await capability("traceforge.scenario.browser@1", "inspect", {
+      operation: "inspect", authorizationAction: "web.request.replay", url, screenshot: input.screenshot ?? false,
+    }, "browser-inspect");
+    return succeeded("Browser observation retained; this is not a verified security finding", receipt.output, receipt.refs);
+  }
+  if (params.tool === "web.validation.compare") return compareHttp(plainObject(params.input, "Comparison input"), capability, (spec, step) => {
+    const scoped: Capability = (name, action, input, suffix) => capability(name, action, input, `comparison-request:${step}:${suffix}`);
+    const input = { url: spec.url, method: spec.method, responseLimitBytes: 1024 * 1024 };
+    return spec.sessionId === null ? requestHttp(input, scoped) : requestSession({ ...input, sessionId: spec.sessionId }, scoped);
+  });
   if (params.tool === "web.session.catalog") {
     exact(plainObject(params.input, "Session catalog input"), []);
     const identities = await capability("traceforge.scenario.sessions@1", "list_identities",

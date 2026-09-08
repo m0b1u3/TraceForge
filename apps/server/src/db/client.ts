@@ -1,6 +1,5 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { applyDataMigrations } from "./data-migrations.js";
 import { initializeExecutionStorage } from "./execution-storage.js";
 import { registerExecutionArchiveFunctions } from "./execution-archive.js";
 import { initializePhysicalStorage, registerPhysicalStorageFunctions } from "./physical-storage.js";
@@ -41,45 +40,19 @@ export function createDb(path: string, options: { activeCandidate?: { candidateI
     `);
   }
   sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS desktop_conversations (
+      id TEXT PRIMARY KEY, command_id TEXT NOT NULL UNIQUE, case_id TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS desktop_conversation_messages (
+      conversation_id TEXT NOT NULL, command_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+      text TEXT NOT NULL, created_at TEXT NOT NULL,
+      PRIMARY KEY(conversation_id, command_id), UNIQUE(conversation_id, sequence)
+    );
     CREATE TABLE IF NOT EXISTS cases (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL,
       scope_rules_json TEXT NOT NULL, created_at TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS identity_contexts (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL,
-      status TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
-      credentials_json TEXT NOT NULL DEFAULT '{}', headers_json TEXT NOT NULL DEFAULT '{}',
-      cookies_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_identity_contexts_case ON identity_contexts(case_id);
-    CREATE TABLE IF NOT EXISTS attack_paths (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, objective TEXT NOT NULL,
-      status TEXT NOT NULL, confidence REAL NOT NULL, source_run_id TEXT, last_run_id TEXT,
-      entry_identity_id TEXT, target_asset_fact_id TEXT,
-      finding_fact_ids_json TEXT NOT NULL DEFAULT '[]',
-      hypothesis_ids_json TEXT NOT NULL DEFAULT '[]', evidence_refs_json TEXT NOT NULL DEFAULT '[]',
-      breakpoint TEXT, steps_json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_attack_paths_case ON attack_paths(case_id, updated_at);
-    CREATE TABLE IF NOT EXISTS security_reports (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
-      executive_summary TEXT NOT NULL, scope TEXT NOT NULL, methodology TEXT NOT NULL,
-      limitations_json TEXT NOT NULL DEFAULT '[]', finding_fact_ids_json TEXT NOT NULL,
-      attack_path_ids_json TEXT NOT NULL DEFAULT '[]', evidence_refs_json TEXT NOT NULL,
-      source_run_ids_json TEXT NOT NULL DEFAULT '[]', review_status TEXT NOT NULL DEFAULT 'current',
-      review_reasons_json TEXT NOT NULL DEFAULT '[]', dependency_versions_json TEXT NOT NULL DEFAULT '{}',
-      version INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_security_reports_case ON security_reports(case_id, updated_at);
-    CREATE TABLE IF NOT EXISTS security_report_revisions (
-      id TEXT PRIMARY KEY, report_id TEXT NOT NULL, case_id TEXT NOT NULL, version INTEGER NOT NULL,
-      change_type TEXT NOT NULL, snapshot_json TEXT NOT NULL, diff_json TEXT NOT NULL,
-      review_decision TEXT NOT NULL DEFAULT 'pending', reviewed_at TEXT, created_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_security_report_revisions_version ON security_report_revisions(report_id, version);
-    CREATE INDEX IF NOT EXISTS idx_security_report_revisions_case ON security_report_revisions(case_id, created_at);
     CREATE TABLE IF NOT EXISTS traffic_entries (
       id TEXT PRIMARY KEY, case_id TEXT NOT NULL, url TEXT NOT NULL, method TEXT NOT NULL,
       run_id TEXT, identity_id TEXT, identity_version INTEGER, attribution_source TEXT, parent_traffic_id TEXT,
@@ -101,13 +74,6 @@ export function createDb(path: string, options: { activeCandidate?: { candidateI
     );
     CREATE INDEX IF NOT EXISTS idx_execution_network_receipts_run
       ON execution_network_receipts(case_id, run_id, completed_at);
-    CREATE TABLE IF NOT EXISTS artifacts (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, source_url TEXT,
-      filename TEXT NOT NULL, relative_path TEXT NOT NULL, byte_size INTEGER NOT NULL,
-      sha256 TEXT NOT NULL, detected_format TEXT NOT NULL, media_type TEXT,
-      status TEXT NOT NULL, analyzer_id TEXT, analysis_json TEXT, error TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
     CREATE TABLE IF NOT EXISTS scenario_artifacts (
       id TEXT PRIMARY KEY, package_id TEXT NOT NULL, package_version TEXT NOT NULL,
       case_id TEXT NOT NULL, run_id TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL,
@@ -824,179 +790,6 @@ export function createDb(path: string, options: { activeCandidate?: { candidateI
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_evidence_graph_edges_case ON evidence_graph_edges(case_id, relation, source_id, target_id);
-    CREATE INDEX IF NOT EXISTS idx_artifacts_case ON artifacts(case_id, created_at);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_case_sha ON artifacts(case_id, sha256);
-    CREATE TABLE IF NOT EXISTS artifact_analysis_attempts (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, artifact_id TEXT NOT NULL,
-      analyzer_id TEXT, status TEXT NOT NULL, coverage_dimensions_json TEXT NOT NULL DEFAULT '[]',
-      preflight_fingerprint TEXT, preflight_availability TEXT, preflight_reason TEXT,
-      error TEXT, analysis_json TEXT, started_at TEXT NOT NULL, finished_at TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_artifact_analysis_attempts_artifact ON artifact_analysis_attempts(artifact_id, started_at);
-    CREATE INDEX IF NOT EXISTS idx_artifact_analysis_attempts_case ON artifact_analysis_attempts(case_id, started_at);
-    CREATE TABLE IF NOT EXISTS artifact_retry_authorizations (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, artifact_id TEXT NOT NULL,
-      analyzer_id TEXT NOT NULL, failed_attempt_id TEXT NOT NULL, preflight_fingerprint TEXT NOT NULL,
-      reason TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_artifact_retry_authorizations_case ON artifact_retry_authorizations(case_id, updated_at);
-      CREATE INDEX IF NOT EXISTS idx_artifact_retry_authorizations_artifact ON artifact_retry_authorizations(artifact_id, analyzer_id);
-      CREATE TABLE IF NOT EXISTS artifact_recoveries (
-        id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, task_id TEXT NOT NULL,
-        artifact_id TEXT NOT NULL, analyzer_id TEXT NOT NULL, failed_attempt_id TEXT,
-        before_fingerprint TEXT NOT NULL, after_fingerprint TEXT, instruction TEXT NOT NULL,
-        result TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_artifact_recoveries_case ON artifact_recoveries(case_id, updated_at);
-      CREATE INDEX IF NOT EXISTS idx_artifact_recoveries_artifact ON artifact_recoveries(artifact_id, analyzer_id);
-    CREATE TABLE IF NOT EXISTS artifact_limitation_dispositions (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT, task_id TEXT NOT NULL, artifact_id TEXT NOT NULL,
-      status TEXT NOT NULL, missing_dimensions_json TEXT NOT NULL DEFAULT '[]', attempt_ids_json TEXT NOT NULL DEFAULT '[]',
-      rationale TEXT NOT NULL, prohibited_conclusion TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_artifact_limitations_case ON artifact_limitation_dispositions(case_id, updated_at);
-    CREATE INDEX IF NOT EXISTS idx_artifact_limitations_task ON artifact_limitation_dispositions(task_id, artifact_id);
-    CREATE TABLE IF NOT EXISTS facts (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL,
-      source_run_id TEXT,
-      value_json TEXT NOT NULL, source_json TEXT NOT NULL, confidence REAL NOT NULL,
-      tags_json TEXT NOT NULL, created_at TEXT NOT NULL,
-      update_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '', validity TEXT NOT NULL DEFAULT 'valid',
-      finding_status TEXT, evidence_refs_json TEXT NOT NULL DEFAULT '[]',
-      hypothesis_ids_json TEXT NOT NULL DEFAULT '[]', task_ids_json TEXT NOT NULL DEFAULT '[]',
-      action_ids_json TEXT NOT NULL DEFAULT '[]', verification_summary TEXT,
-      observations_json TEXT NOT NULL DEFAULT '[]'
-    );
-    CREATE INDEX IF NOT EXISTS idx_facts_case ON facts(case_id);
-    CREATE TABLE IF NOT EXISTS tasks (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
-      run_id TEXT,
-      reason TEXT NOT NULL, blocked_by_json TEXT NOT NULL, trigger_when_json TEXT NOT NULL,
-      related_facts_json TEXT NOT NULL, hypothesis_ids_json TEXT NOT NULL DEFAULT '[]',
-      relationship_gate_json TEXT NOT NULL DEFAULT 'null', priority TEXT NOT NULL,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-      update_count INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE INDEX IF NOT EXISTS idx_tasks_case ON tasks(case_id);
-    CREATE TABLE IF NOT EXISTS timeline (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, event_type TEXT NOT NULL,
-      run_id TEXT, ref_id TEXT, detail TEXT NOT NULL, created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_timeline_case ON timeline(case_id);
-    CREATE TABLE IF NOT EXISTS action_cards (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, goal TEXT NOT NULL,
-      evidence_refs_json TEXT NOT NULL, hypothesis_refs_json TEXT NOT NULL, task_refs_json TEXT NOT NULL,
-      reasoning TEXT NOT NULL, steps_json TEXT NOT NULL, expected_results_json TEXT NOT NULL,
-      risk_notes_json TEXT NOT NULL, tool TEXT NOT NULL, priority TEXT NOT NULL,
-      requires_human_approval INTEGER NOT NULL, status TEXT NOT NULL,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_actions_case ON action_cards(case_id);
-    CREATE TABLE IF NOT EXISTS decisions (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, decision TEXT NOT NULL,
-      based_on_json TEXT NOT NULL, reasoning TEXT NOT NULL, action_ref TEXT, result TEXT,
-      new_facts_json TEXT NOT NULL, created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_decisions_case ON decisions(case_id);
-    CREATE TABLE IF NOT EXISTS knowledge_usage (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT NOT NULL,
-      knowledge_id TEXT NOT NULL, knowledge_kind TEXT NOT NULL,
-      injected_count INTEGER NOT NULL DEFAULT 0, used_count INTEGER NOT NULL DEFAULT 0,
-      positive_outcome_score REAL NOT NULL DEFAULT 0,
-      negative_outcome_score REAL NOT NULL DEFAULT 0,
-      first_injected_at TEXT NOT NULL, last_injected_at TEXT NOT NULL, last_used_at TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_knowledge_usage_case ON knowledge_usage(case_id, knowledge_id);
-    CREATE TABLE IF NOT EXISTS validation_conclusions (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT NOT NULL,
-      finding_id TEXT NOT NULL, gap_id TEXT NOT NULL, verdict TEXT NOT NULL,
-      confidence REAL NOT NULL, baseline_traffic_id TEXT NOT NULL,
-      variant_traffic_id TEXT NOT NULL, confirmation_traffic_id TEXT,
-      identity_id TEXT, assessment_json TEXT NOT NULL, created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_validation_conclusions_case ON validation_conclusions(case_id, created_at);
-    CREATE TABLE IF NOT EXISTS validation_consensus (
-      finding_id TEXT PRIMARY KEY, case_id TEXT NOT NULL, status TEXT NOT NULL,
-      independent_supports INTEGER NOT NULL, independent_refutes INTEGER NOT NULL,
-      inconclusive_count INTEGER NOT NULL, duplicates_excluded INTEGER NOT NULL,
-      confidence REAL NOT NULL, recommendation TEXT NOT NULL,
-      result_json TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_validation_consensus_case ON validation_consensus(case_id, updated_at);
-    CREATE TABLE IF NOT EXISTS observer_warnings (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, level TEXT NOT NULL,
-      issue_type TEXT NOT NULL DEFAULT 'other', subject TEXT NOT NULL DEFAULT '',
-      title TEXT NOT NULL, description TEXT NOT NULL,
-      related_facts_json TEXT NOT NULL, related_tasks_json TEXT NOT NULL,
-      suggested_action TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
-      fingerprint TEXT NOT NULL DEFAULT '',
-      occurrence_count INTEGER NOT NULL DEFAULT 1,
-      last_observed_at TEXT NOT NULL DEFAULT '',
-      correction_count INTEGER NOT NULL DEFAULT 0,
-      correction_resolved_count INTEGER NOT NULL DEFAULT 0,
-      correction_failed_count INTEGER NOT NULL DEFAULT 0,
-      correction_outcome TEXT NOT NULL DEFAULT 'none',
-      correction_evidence TEXT,
-      last_correction_at TEXT, last_correction_trigger TEXT,
-      recovery_strategy_refs_json TEXT NOT NULL DEFAULT '[]',
-      escalation_reason TEXT,
-      related_run_id TEXT, suggested_goal TEXT NOT NULL DEFAULT '',
-      evidence TEXT, resolved_at TEXT, created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_warnings_case ON observer_warnings(case_id);
-    CREATE TABLE IF NOT EXISTS observer_strategy_audits (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT NOT NULL,
-      trigger TEXT NOT NULL, offered_candidates_json TEXT NOT NULL,
-      adoptions_json TEXT NOT NULL, ignored_strategy_ids_json TEXT NOT NULL,
-      context_characters INTEGER NOT NULL, created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_observer_strategy_audits_case
-      ON observer_strategy_audits(case_id, created_at);
-    CREATE TABLE IF NOT EXISTS hypotheses (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, statement TEXT NOT NULL,
-      run_id TEXT, status TEXT NOT NULL, priority_score INTEGER NOT NULL DEFAULT 50,
-      score_factors_json TEXT NOT NULL DEFAULT '{}', based_on_fact_ids_json TEXT NOT NULL,
-      related_task_ids_json TEXT NOT NULL, relations_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL, update_count INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_hypotheses_case ON hypotheses(case_id);
-    CREATE TABLE IF NOT EXISTS context_summaries (
-      seq INTEGER PRIMARY KEY AUTOINCREMENT,
-      id TEXT NOT NULL, case_id TEXT NOT NULL,
-      covers_up_to_event_seq INTEGER NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_context_summaries_case ON context_summaries(case_id);
-    CREATE TABLE IF NOT EXISTS semantic_documents (
-      id TEXT PRIMARY KEY, case_id TEXT, kind TEXT NOT NULL, source_id TEXT NOT NULL,
-      text_hash TEXT NOT NULL, content TEXT NOT NULL, model TEXT NOT NULL,
-      dimensions INTEGER NOT NULL, vector_json TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_semantic_source ON semantic_documents(kind, source_id);
-    CREATE INDEX IF NOT EXISTS idx_semantic_case_kind ON semantic_documents(case_id, kind);
-    CREATE TABLE IF NOT EXISTS experience_entries (
-      id TEXT PRIMARY KEY, title TEXT NOT NULL, applicability TEXT NOT NULL,
-      procedure_json TEXT NOT NULL, expected_signals_json TEXT NOT NULL,
-      failure_modes_json TEXT NOT NULL, evidence_requirements_json TEXT NOT NULL,
-      source_case_id TEXT NOT NULL, source_run_id TEXT, source_task_id TEXT NOT NULL,
-      evidence_fact_ids_json TEXT NOT NULL, status TEXT NOT NULL, version INTEGER NOT NULL,
-      success_count INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0,
-      tags_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_experience_status ON experience_entries(status, updated_at);
-    CREATE INDEX IF NOT EXISTS idx_experience_source ON experience_entries(source_case_id, source_task_id);
-    CREATE TABLE IF NOT EXISTS network_search_runs (
-      id TEXT PRIMARY KEY, case_id TEXT NOT NULL, grant_id TEXT NOT NULL, query TEXT NOT NULL,
-      allowed_domains_json TEXT NOT NULL, results_json TEXT NOT NULL, status TEXT NOT NULL,
-      error TEXT, created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_network_search_case ON network_search_runs(case_id, created_at);
-    CREATE TABLE IF NOT EXISTS run_cognitive_state (
-      run_id TEXT PRIMARY KEY, case_id TEXT NOT NULL,
-      current_goal TEXT NOT NULL, phase TEXT NOT NULL,
-      focus_json TEXT NOT NULL, active_hypothesis_ids_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_run_cognitive_state_case ON run_cognitive_state(case_id);
   `);
   const currentScenarioStreamColumns = sqlite.prepare("PRAGMA table_info(scenario_event_streams)").all() as Array<{ name: string }>;
   if (!currentScenarioStreamColumns.some((column) => column.name === "scenario_package_id")) {
@@ -1020,28 +813,6 @@ export function createDb(path: string, options: { activeCandidate?: { candidateI
   }
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_tool_provider_diagnostics_retention
     ON tool_provider_diagnostics(detail_retained, created_at)`);
-  const warningColumns = sqlite.prepare("PRAGMA table_info(observer_warnings)").all() as Array<{ name: string }>;
-  const hasWarningColumn = (name: string) => warningColumns.some((column) => column.name === name);
-  if (!hasWarningColumn("status")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");
-  if (!hasWarningColumn("issue_type")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN issue_type TEXT NOT NULL DEFAULT 'other'");
-  if (!hasWarningColumn("subject")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN subject TEXT NOT NULL DEFAULT ''");
-  if (!hasWarningColumn("related_run_id")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN related_run_id TEXT");
-  if (!hasWarningColumn("suggested_goal")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN suggested_goal TEXT NOT NULL DEFAULT ''");
-  if (!hasWarningColumn("evidence")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN evidence TEXT");
-  if (!hasWarningColumn("resolved_at")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN resolved_at TEXT");
-  if (!hasWarningColumn("fingerprint")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''");
-  if (!hasWarningColumn("occurrence_count")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1");
-  if (!hasWarningColumn("last_observed_at")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN last_observed_at TEXT NOT NULL DEFAULT ''");
-  if (!hasWarningColumn("correction_count")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_count INTEGER NOT NULL DEFAULT 0");
-  if (!hasWarningColumn("correction_resolved_count")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_resolved_count INTEGER NOT NULL DEFAULT 0");
-  if (!hasWarningColumn("correction_failed_count")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_failed_count INTEGER NOT NULL DEFAULT 0");
-  if (!hasWarningColumn("correction_outcome")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_outcome TEXT NOT NULL DEFAULT 'none'");
-  if (!hasWarningColumn("correction_evidence")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN correction_evidence TEXT");
-  if (!hasWarningColumn("last_correction_at")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN last_correction_at TEXT");
-  if (!hasWarningColumn("last_correction_trigger")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN last_correction_trigger TEXT");
-  if (!hasWarningColumn("recovery_strategy_refs_json")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN recovery_strategy_refs_json TEXT NOT NULL DEFAULT '[]'");
-  if (!hasWarningColumn("escalation_reason")) sqlite.exec("ALTER TABLE observer_warnings ADD COLUMN escalation_reason TEXT");
-  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_warnings_fingerprint ON observer_warnings(case_id, fingerprint)");
   const trafficColumns = sqlite.prepare("PRAGMA table_info(traffic_entries)").all() as Array<{ name: string }>;
   if (!trafficColumns.some((c) => c.name === "request_body")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN request_body TEXT");
   if (!trafficColumns.some((c) => c.name === "response_headers_json")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN response_headers_json TEXT");
@@ -1069,51 +840,6 @@ export function createDb(path: string, options: { activeCandidate?: { candidateI
   }
   ensureColumns("execution_process_journal", [{ name: "history_purged", definition: "INTEGER NOT NULL DEFAULT 0" }]);
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_execution_journal_retention ON execution_process_journal(history_purged, idempotency_key)");
-  ensureColumns("knowledge_usage", [
-    { name: "positive_outcome_score", definition: "REAL NOT NULL DEFAULT 0" },
-    { name: "negative_outcome_score", definition: "REAL NOT NULL DEFAULT 0" },
-  ]);
-  ensureColumns("facts", [
-    { name: "source_run_id", definition: "TEXT" },
-    { name: "finding_status", definition: "TEXT" },
-    { name: "evidence_refs_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
-    { name: "hypothesis_ids_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
-    { name: "task_ids_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
-    { name: "action_ids_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
-    { name: "verification_summary", definition: "TEXT" },
-    { name: "observations_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
-  ]);
-  ensureColumns("security_reports", [
-    { name: "review_status", definition: "TEXT NOT NULL DEFAULT 'current'" },
-    { name: "review_reasons_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
-    { name: "dependency_versions_json", definition: "TEXT NOT NULL DEFAULT '{}'" },
-  ]);
-  ensureColumns("tasks", [
-    { name: "run_id", definition: "TEXT" },
-    { name: "hypothesis_ids_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
-    { name: "relationship_gate_json", definition: "TEXT NOT NULL DEFAULT 'null'" },
-  ]);
-  ensureColumns("timeline", [{ name: "run_id", definition: "TEXT" }]);
-  ensureColumns("artifact_analysis_attempts", [
-    { name: "analysis_json", definition: "TEXT" },
-    { name: "preflight_fingerprint", definition: "TEXT" },
-    { name: "preflight_availability", definition: "TEXT" },
-    { name: "preflight_reason", definition: "TEXT" },
-  ]);
-  ensureColumns("hypotheses", [
-    { name: "run_id", definition: "TEXT" },
-    { name: "priority_score", definition: "INTEGER NOT NULL DEFAULT 50" },
-    { name: "score_factors_json", definition: "TEXT NOT NULL DEFAULT '{}'" },
-    { name: "relations_json", definition: "TEXT NOT NULL DEFAULT '{}'" },
-    { name: "audit_trail_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
-  ]);
-  sqlite.exec(`
-    DROP TABLE IF EXISTS agent_run_usage;
-    DROP TABLE IF EXISTS solver_work_items;
-    DROP TABLE IF EXISTS agent_runs;
-    DROP TABLE IF EXISTS agent_events;
-  `);
-  applyDataMigrations(sqlite);
   const modelCallColumns = sqlite.prepare("PRAGMA table_info(scenario_model_calls)").all() as Array<{name:string}>;
   if (!modelCallColumns.some((column) => column.name==="termination_kind")) sqlite.exec("ALTER TABLE scenario_model_calls ADD COLUMN termination_kind TEXT CHECK(termination_kind IN ('cancelled','interrupted'))");
   initializeExecutionStorage(sqlite);

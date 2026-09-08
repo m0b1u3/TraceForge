@@ -177,9 +177,10 @@ export class EvidenceGraphMutateTool implements ExecutionToolAdapter {
       const row = this.sqlite.prepare("SELECT 1 FROM traffic_entries WHERE id = ? AND case_id = ?").get(source.ref, caseId);
       if (!row) throw new Error(`Evidence source traffic ${source.ref} does not exist in the assigned Case`);
     } else if (source.type === "artifact") {
-      const row = this.sqlite.prepare("SELECT sha256 FROM artifacts WHERE id = ? AND case_id = ?").get(source.ref, caseId) as { sha256: string } | undefined;
+      const row = this.sqlite.prepare("SELECT digest FROM scenario_artifacts WHERE id = ? AND case_id = ? AND run_id = ?").get(source.ref, caseId, context.runId) as { digest: string } | undefined;
       if (!row) throw new Error(`Evidence source artifact ${source.ref} does not exist in the assigned Case`);
-      integrity = { algorithm: "sha256", digest: row.sha256 };
+      if (!/^sha256:[a-f0-9]{64}$/.test(row.digest)) throw new Error("Evidence source artifact digest is invalid");
+      integrity = { algorithm: "sha256", digest: row.digest.slice("sha256:".length) };
     } else {
       const row = this.sqlite.prepare("SELECT 1 FROM worker_tool_receipts WHERE idempotency_key = ?").get(source.ref);
       if (!row) throw new Error(`Evidence source tool result ${source.ref} has no durable receipt`);

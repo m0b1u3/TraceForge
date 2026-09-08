@@ -8,7 +8,7 @@ import {
   type ProcessDescriptor,
   type StartProcessRequest,
 } from "@traceforge/execution-node";
-import type { EffectivePermissionProfile } from "@traceforge/orchestration-core";
+import { allowsFileSystemPath, type EffectivePermissionProfile } from "@traceforge/orchestration-core";
 import {
   BrokeredBrowserRuntime,
   type BrowserControllerProof,
@@ -75,6 +75,36 @@ function processConfiguration(patch: Partial<BrowserProcessConfiguration> = {}):
     ...patch,
   };
 }
+
+it("narrows child writes to its allocated directory without changing the invocation", async () => {
+  const subject = fixture();
+  const original = permissions({ filesystem: { read: [], write: [{ path: "/scratch", scope: "tree" }, { path: "/evidence", scope: "tree" }], deny: [] } });
+  const session = await subject.runtime.open(owner(), processConfiguration({ workingDirectory: "/scratch/first",
+    permissions: original, restrictWritesToWorkingDirectory: true }));
+  const child = subject.startProcess.mock.calls[0]![0].permissions;
+  expect(child.filesystem.write).toEqual([{ path: "/scratch/first", scope: "tree" }]);
+  expect(allowsFileSystemPath(child, "write", "/scratch/first/profile/file")).toBe(true);
+  expect(allowsFileSystemPath(child, "write", "/scratch/second/profile/file")).toBe(false);
+  expect(allowsFileSystemPath(child, "write", "/evidence/file")).toBe(false);
+  expect(original.filesystem.write).toHaveLength(2);
+  expect(original.network).toBe("brokered");
+  expect(child.network).toBe("deny");
+  await expect(subject.invoke(intercepted())).resolves.toMatchObject({ action: "fulfill" });
+  expect(subject.requestHttp.mock.calls[0]![0].permissions).toEqual(original);
+  await subject.runtime.close(session.id);
+});
+
+it("does not widen exact-only grants or discard denied scratch descendants", async () => {
+  for (const filesystem of [
+    { read: [], write: [{ path: "/scratch/first", scope: "exact" as const }], deny: [] },
+    { read: [], write: [{ path: "/scratch", scope: "tree" as const }], deny: [{ path: "/scratch/first/private", scope: "tree" as const }] },
+  ]) {
+    const subject = fixture();
+    await expect(subject.runtime.open(owner(), processConfiguration({ workingDirectory: "/scratch/first",
+      permissions: permissions({ filesystem }), restrictWritesToWorkingDirectory: true }))).rejects.toThrow("authorized writable tree");
+    expect(subject.startProcess).not.toHaveBeenCalled();
+  }
+});
 
 function intercepted(patch: Partial<InterceptedBrowserRequest> = {}): InterceptedBrowserRequest {
   return {
@@ -278,6 +308,15 @@ function fixture(options: {
 }
 
 describe("Brokered Browser Runtime", () => {
+  it("requires explicit acceptance of measured sampled-budget execution", async () => {
+    const processEnforcement = { resourceLimitsApplied: false, resourcePolicy: "sampled_terminate" as const, atomicProcessTreeAssignment: true, processTreeEmptyBarrier: true };
+    await expect(fixture({ processEnforcement }).runtime.open(owner(), processConfiguration())).rejects.toThrow("OS-enforced");
+    const subject = fixture({ processEnforcement });
+    const session = await subject.runtime.open(owner(), processConfiguration({ acceptedResourcePolicy: "sampled_terminate" }));
+    await subject.runtime.close(session.id);
+    await expect(fixture({ processEnforcement: { ...processEnforcement, processTreeEmptyBarrier: false } }).runtime.open(owner(),
+      processConfiguration({ acceptedResourcePolicy: "sampled_terminate" }))).rejects.toThrow("OS-enforced");
+  });
   it("denies browser OS networking and brokers navigation, redirects, popups, frames, fetch/XHR and downloads one request at a time", async () => {
     const subject = fixture();
     const session = await subject.runtime.open(owner(), processConfiguration());
@@ -399,6 +438,20 @@ describe("Brokered Browser Runtime", () => {
     clock = leaseExpiresAt;
     await expect(subject.invoke(intercepted({ id: "request_2" }))).rejects.toThrow(/expired/);
     expect(subject.runtime.snapshot(session.id)?.status).toBe("frozen");
+  });
+
+  it("records authorization rejection without inventing a grant or dispatching HTTP", async () => {
+    const subject = fixture();
+    const session = await subject.runtime.open(owner(), processConfiguration());
+    subject.authorizeRequest.mockRejectedValueOnce(new Error("private authorization detail"));
+    await expect(subject.invoke(intercepted())).rejects.toThrow("private authorization detail");
+    expect(subject.requestHttp).not.toHaveBeenCalled();
+    const records = subject.runtime.snapshot(session.id)!.records;
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ outcome: "blocked", reason: "authorization_unavailable", authorizationRef: null, receiptRef: null });
+    expect(JSON.stringify(records)).not.toMatch(/private authorization detail|must-not-be-snapshotted/);
+    await expect(subject.invoke(intercepted())).rejects.toThrow("uncertain prior result");
+    expect(subject.runtime.snapshot(session.id)!.records).toHaveLength(1);
   });
 
   it("never returns a downloaded body when durable Artifact recording is unavailable", async () => {

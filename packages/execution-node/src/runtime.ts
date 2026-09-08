@@ -286,6 +286,7 @@ export interface LocalExecutionNodeOptions {
   capabilities?: Partial<ExecutionNodeCapabilities>;
   sandboxBackends: string[];
   sandboxMeasurements?: Readonly<Record<string, string>>;
+  acceptedSampledResourceBackends?: readonly string[];
   maximumProcesses?: number;
   maximumResidentProcesses?: number;
   terminalRetentionMs?: number;
@@ -358,7 +359,9 @@ export class LocalExecutionNode implements ExecutionNode {
   private readonly maximumResidentProcesses: number;
   private readonly terminalRetentionMs: number;
 
+  private readonly acceptedSampledResourceBackends: readonly string[];
   constructor(private readonly launcher: ProcessLauncher, options: LocalExecutionNodeOptions) {
+    this.acceptedSampledResourceBackends = [...(options.acceptedSampledResourceBackends ?? [])];
     this.now = options.now ?? (() => new Date().toISOString());
     this.httpBroker = options.httpBroker;
     this.processJournal = options.processJournal;
@@ -925,7 +928,8 @@ export class LocalExecutionNode implements ExecutionNode {
   }
 
   private assertResourceLimits(request: StartProcessRequest): void {
-    if (!this.descriptor.capabilities.process.resourceLimits) {
+    if (!this.descriptor.capabilities.process.resourceLimits
+      && !(this.descriptor.capabilities.process.resourcePolicy === "sampled_terminate" && this.acceptedSampledResourceBackends.length)) {
       throw new Error("Execution Node does not provide enforceable process-tree resource limits");
     }
     const checks: Array<[keyof StartProcessRequest["resources"], number, number]> = [
@@ -958,7 +962,10 @@ export class LocalExecutionNode implements ExecutionNode {
     if (enforcement.permissionProfileFingerprint !== permissionProfileFingerprint(permissions)) {
       throw new Error("Launcher enforcement proof does not match the effective permission profile");
     }
-    if (!enforcement.resourceLimitsApplied) throw new Error("Launcher did not enforce the requested process-tree resource limits");
+    const sampledAccepted = enforcement.resourcePolicy === "sampled_terminate"
+      && this.acceptedSampledResourceBackends.includes(enforcement.sandboxBackend)
+      && !!expectedMeasurement && enforcement.atomicProcessTreeAssignment && enforcement.processTreeEmptyBarrier;
+    if (enforcement.resourcePolicy ? !sampledAccepted : !enforcement.resourceLimitsApplied) throw new Error("Launcher did not enforce the accepted process-tree resource policy");
     if (enforcement.resourceLimitsFingerprint !== resourceLimitsFingerprint(resources)) {
       throw new Error("Launcher resource-limit proof does not match the requested limits");
     }

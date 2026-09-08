@@ -176,7 +176,12 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
     });
   });
 
-  app.get("/api/scenarios/definitions", async () => definitions.list());
+  app.get("/api/scenarios/definitions", async () => definitions.list().map(definition => {
+    const policy = packages.requireForScenario(definition.kind, definition.version).authorizationPolicy;
+    return { ...definition, ...("format" in policy && policy.form ? { authorizationForm: policy.form,
+      authorizationReview: { allowedActions: policy.allowedActions, deniedActions: policy.deniedActions,
+        resources: policy.resources } } : {}) };
+  }));
 
   app.get("/api/scenarios/authorizations", async (request) => {
     const query = z.object({ caseId: z.string().min(1) }).parse(request.query);
@@ -263,6 +268,27 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       status: z.enum(["pending", "approved", "rejected", "cancelled"]).optional(),
     }).parse(request.query);
     return store.listApprovals(query);
+  });
+
+  // Run/work identity is explicit so replay does not depend on a still-pending row.
+  app.post("/api/scenarios/runs/:runId/work/:workId/operator-approval", async (request, reply) => {
+    try {
+      const { runId, workId } = z.object({ runId: z.string().min(1), workId: z.string().min(1) }).parse(request.params);
+      const body = commandBase.extend({ approvalId: z.string().min(1), approved: z.boolean(), reason: z.string().trim().min(1).max(4000) }).strict().parse(request.body);
+      if (!store.findCommand(runId, body.commandId)) authorizationService.requireRun(requireRun(runId));
+      return execute(runId, body.commandId, body.expectedRevision, { type: "resolve_work_approval", workId,
+        approvalId: body.approvalId, approved: body.approved, reason: body.reason, at: now() });
+    } catch (error) { return sendError(reply, error); }
+  });
+  app.post("/api/scenarios/runs/:runId/work/:workId/operator-input", async (request, reply) => {
+    try {
+      const { runId, workId } = z.object({ runId: z.string().min(1), workId: z.string().min(1) }).parse(request.params);
+      const body = commandBase.extend({ instruction: z.string().trim().min(1).max(8000) }).strict().parse(request.body);
+      if (!store.findCommand(runId, body.commandId)) authorizationService.requireRun(requireRun(runId));
+      return execute(runId, body.commandId, body.expectedRevision, { type: "issue_directive", directive: {
+        id: body.commandId, kind: "steer", targetWorkId: workId, instruction: body.instruction,
+        rationale: "User-supplied context; does not grant permissions or authorize retry", issuedBy: "operator" }, at: now() });
+    } catch (error) { return sendError(reply, error); }
   });
 
   app.post("/api/scenarios/approvals/:approvalId/resolve", async (request, reply) => {

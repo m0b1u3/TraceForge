@@ -64,7 +64,7 @@ describe("ScenarioPackageRegistry", () => {
   it("resolves only the exact Package version and Schema revision bound to a Run", () => {
     const registry = new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]);
     const binding = registry.bindingFor(WEB_BLACKBOX_PACKAGE);
-    expect(binding).toEqual({ id: "traceforge.web-blackbox", version: "0.3.0", schemaRevision: 1 });
+    expect(binding).toEqual({ id: "traceforge.web-blackbox", version: "0.4.0", schemaRevision: 1 });
     expect(registry.requireBinding(binding, "web_blackbox", 1)).toBe(WEB_BLACKBOX_PACKAGE);
     expect(registry.bindingStatus({ ...binding, version: "0.0.9" }, "web_blackbox", 1)).toMatchObject({
       status: "recovery_required",
@@ -96,7 +96,8 @@ describe("ScenarioPackageRegistry", () => {
       "scenario-evidence-store.ts",
     ]) {
       const content = readFileSync(join(sourceRoot, name), "utf8");
-      expect(content, name).not.toMatch(/@traceforge\/scenario-(?!sdk\b)|web_blackbox|WEB_BLACKBOX|ScenarioBrowser|ScenarioHttp/);
+      // The generic ScenarioBrowserDeployment host port is not a concrete Web tool.
+      expect(content, name).not.toMatch(/@traceforge\/scenario-(?!sdk\b)|web_blackbox|WEB_BLACKBOX|ScenarioBrowser(?!Deployment\b)|ScenarioHttp/);
     }
   });
 });

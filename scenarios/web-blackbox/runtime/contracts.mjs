@@ -1,8 +1,76 @@
 export const PROTOCOL_VERSION = 1;
 export const PACKAGE_ID = "traceforge.web-blackbox";
-export const PACKAGE_VERSION = "0.3.0";
+export const PACKAGE_VERSION = "0.4.0";
 export const SOURCE = "scenario:web_blackbox@1";
+const comparisonRequest = { type: "object", additionalProperties: false, required: ["url"], properties: {
+        url: { type: "string" }, method: { enum: ["GET", "HEAD"] }, sessionId: { type: "string" },
+    } };
+const workflowRequest = { type: "object", additionalProperties: false, required: ["url"], properties: {
+        url: { type: "string" }, method: { enum: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }, sessionId: { type: "string" },
+        headers: { type: "object", maxProperties: 16, additionalProperties: { type: "string" } }, bodyBase64: { type: "string", maxLength: 87384 },
+        secretBody: { type: "object", additionalProperties: false, required: ["format", "fields"], properties: { format: { enum: ["form", "json"] }, fields: { type: "object" } } },
+        captures: { type: "array", maxItems: 16, items: { type: "object", additionalProperties: false, required: ["name", "start", "end", "maximumBytes"], properties: {
+                    name: { type: "string" }, start: { type: "string" }, end: { type: "string" }, maximumBytes: { type: "integer", minimum: 1, maximum: 8192 },
+                } } }, purpose: { type: "string" },
+    } };
+const evidenceRefs = { type: "array", minItems: 1, maxItems: 32, items: { type: "string" } };
 export const tools = Object.freeze([
+    {
+        name: "web.browser.read", source: SOURCE, version: PACKAGE_VERSION, priority: 85,
+        description: "Read a bounded chunk of a retained Browser artifact from this Run; does not launch a browser or contact the target.",
+        inputSchema: { type: "object", additionalProperties: false, required: ["artifactId"], properties: {
+                artifactId: { type: "string" }, offset: { type: "integer", minimum: 0, maximum: 4194304 }, length: { type: "integer", minimum: 1, maximum: 65536 },
+            } }, providedCapabilities: ["web.browser.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 10000,
+    },
+    {
+        name: "web.browser.inspect", source: SOURCE, version: PACKAGE_VERSION, priority: 85,
+        description: "Observe one page through the reviewed local Browser Runtime and HTTP Broker; unavailable without a trusted deployment, never falls back to direct networking. Observations are not verified findings.",
+        inputSchema: { type: "object", additionalProperties: false, required: ["url"], properties: { url: { type: "string" }, screenshot: { type: "boolean" } } },
+        providedCapabilities: ["web.browser.inspect"], dependencyCapabilities: [],
+        permissionRequirements: { network: "brokered", process: "sandboxed" }, risk: "bounded_write", timeoutMs: 45000,
+    },
+    {
+        name: "web.hypothesis.register", source: SOURCE, version: PACKAGE_VERSION, priority: 98,
+        description: "Preserve a distinct candidate linked to retained surface observations; Core still schedules validation Work.",
+        inputSchema: { type: "object", additionalProperties: false, required: ["candidateId", "statement", "basisRefs"], properties: {
+                candidateId: { type: "string" }, statement: { type: "string" }, basisRefs: evidenceRefs, surfaceSessionId: { type: "string" },
+            } }, providedCapabilities: ["web.hypothesis.register"], dependencyCapabilities: [], permissionRequirements: {}, risk: "bounded_write", timeoutMs: 10000,
+    },
+    {
+        name: "web.validation.execute", source: SOURCE, version: PACKAGE_VERSION, priority: 99,
+        description: "Execute a hypothesis-bound HTTP workflow: explicit preconditions, repeated comparison, durable continuation and unknown-effect fencing.",
+        inputSchema: { type: "object", additionalProperties: false, required: ["candidateId", "plan"], properties: {
+                candidateId: { type: "string" }, maxRequests: { type: "integer", minimum: 1, maximum: 6 },
+                plan: { type: "object", additionalProperties: false, required: ["prepare", "baseline", "candidate", "changedCondition"], properties: {
+                        prepare: { type: "array", maxItems: 4, items: { type: "object", additionalProperties: false, required: ["request", "expectedStatuses"], properties: {
+                                    request: workflowRequest, expectedStatuses: { type: "array", minItems: 1, maxItems: 8, items: { type: "integer", minimum: 100, maximum: 599 } },
+                                } } }, baseline: workflowRequest, candidate: workflowRequest, changedCondition: { type: "string" }, rounds: { type: "integer", minimum: 2, maximum: 3 },
+                    } },
+            } }, providedCapabilities: ["web.validation.execute"], dependencyCapabilities: [], permissionRequirements: { network: "brokered", secrets: "handles_only" }, risk: "bounded_write", timeoutMs: 125000,
+    },
+    {
+        name: "web.validation.review", source: SOURCE, version: PACKAGE_VERSION, priority: 98,
+        description: "Review attributed workflow observations and missing causal links without verifying a Finding or releasing unknown effects.",
+        inputSchema: { type: "object", additionalProperties: false, required: ["candidateId", "outcome", "causalMechanism", "expectedBoundary", "securityImpact", "alternatives", "refs"], properties: {
+                candidateId: { type: "string" }, outcome: { enum: ["supported", "refuted", "inconclusive"] }, causalMechanism: { type: "string" },
+                expectedBoundary: { type: "string" }, securityImpact: { type: "string" }, alternatives: { type: "string" }, refs: evidenceRefs,
+            } }, providedCapabilities: ["web.validation.review"], dependencyCapabilities: [], permissionRequirements: {}, risk: "bounded_write", timeoutMs: 10000,
+    },
+    {
+        name: "web.report.build", source: SOURCE, version: PACKAGE_VERSION, priority: 98,
+        description: "Assemble retained coverage, reviewed candidates and unresolved work without inventing verified findings or issuing network requests.",
+        inputSchema: { type: "object", additionalProperties: false }, providedCapabilities: ["web.report.build"], dependencyCapabilities: [],
+        permissionRequirements: {}, risk: "read_only", timeoutMs: 10000,
+    },
+    {
+        name: "web.validation.compare", source: SOURCE, version: PACKAGE_VERSION, priority: 97,
+        description: "Repeat a single-dimension HTTP comparison with evidence and resumable checkpoints; differences never verify findings.",
+        inputSchema: { type: "object", additionalProperties: false, required: ["experimentId", "hypothesisId", "baseline", "candidate"], properties: {
+                experimentId: { type: "string" }, hypothesisId: { type: "string" }, baseline: comparisonRequest, candidate: comparisonRequest,
+                rounds: { type: "integer", minimum: 2, maximum: 3 }, maxRequests: { type: "integer", minimum: 1, maximum: 6 },
+            } }, providedCapabilities: ["web.validation.compare"], dependencyCapabilities: [],
+        permissionRequirements: { network: "brokered", secrets: "handles_only" }, risk: "bounded_write", timeoutMs: 125_000,
+    },
     {
         name: "scope.authorization.snapshot", source: SOURCE, version: PACKAGE_VERSION, priority: 100,
         description: "Read the immutable authorization scope assigned to this investigation.",

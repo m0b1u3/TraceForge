@@ -3,49 +3,40 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  applyDataMigrations,
-  REMOVE_LEGACY_FAILED_ATTEMPT_FACTS,
-} from "./data-migrations.js";
 import { createDb, getSqliteClient } from "./client.js";
 
 describe("data migrations with real SQLite", () => {
-  it("removes legacy failure facts and their derived rows", () => {
-    const sqlite = new Database(":memory:");
-    sqlite.exec(`
-      CREATE TABLE facts (id TEXT PRIMARY KEY, type TEXT NOT NULL);
-      CREATE TABLE knowledge_usage (
-        id TEXT PRIMARY KEY,
-        knowledge_id TEXT NOT NULL,
-        knowledge_kind TEXT NOT NULL
-      );
-      CREATE TABLE timeline (
-        id TEXT PRIMARY KEY,
-        ref_id TEXT
-      );
-      INSERT INTO facts (id, type) VALUES
-        ('legacy_failure', 'failed_attempt'),
-        ('evidence', 'http_observation');
-      INSERT INTO knowledge_usage (id, knowledge_id, knowledge_kind) VALUES
-        ('legacy_usage', 'legacy_failure', 'fact'),
-        ('evidence_usage', 'evidence', 'fact');
-      INSERT INTO timeline (id, ref_id) VALUES
-        ('legacy_timeline', 'legacy_failure'),
-        ('evidence_timeline', 'evidence');
-    `);
-
-    applyDataMigrations(sqlite);
-    applyDataMigrations(sqlite);
-
-    expect(sqlite.prepare("SELECT id FROM facts ORDER BY id").all()).toEqual([{ id: "evidence" }]);
-    expect(sqlite.prepare("SELECT id FROM knowledge_usage ORDER BY id").all()).toEqual([{ id: "evidence_usage" }]);
-    expect(sqlite.prepare("SELECT id FROM timeline ORDER BY id").all()).toEqual([{ id: "evidence_timeline" }]);
-    expect(sqlite.prepare("SELECT id FROM app_migrations").all()).toEqual([
-      { id: REMOVE_LEGACY_FAILED_ATTEMPT_FACTS },
-    ]);
-
-    sqlite.close();
+  it("does not recreate abandoned application tables", () => {
+    const sqlite = getSqliteClient(createDb(":memory:"));
+    try {
+      const tables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>;
+      const names = new Set(tables.map(row => row.name));
+      for (const name of ["identity_contexts", "attack_paths", "security_reports", "security_report_revisions",
+        "artifacts", "artifact_analysis_attempts", "artifact_retry_authorizations", "artifact_recoveries",
+        "artifact_limitation_dispositions", "facts", "tasks", "timeline", "action_cards", "decisions",
+        "knowledge_usage", "validation_conclusions", "validation_consensus", "observer_warnings",
+        "observer_strategy_audits", "hypotheses", "context_summaries", "semantic_documents",
+        "experience_entries", "network_search_runs", "run_cognitive_state", "app_migrations"]) {
+        expect(names.has(name), name).toBe(false);
+      }
+      for (const name of ["desktop_conversations", "scenario_artifacts", "traffic_entries", "execution_identities", "evidence_graph_nodes"]) {
+        expect(names.has(name), name).toBe(true);
+      }
+    } finally { sqlite.close(); }
   });
+
+  it("leaves existing historical data untouched instead of deleting it during startup", () => {
+    const directory = mkdtempSync(join(tmpdir(), "traceforge-retirement-"));
+    const path = join(directory, "history.sqlite");
+    const old = new Database(path);
+    old.exec("CREATE TABLE facts (id TEXT PRIMARY KEY, type TEXT); INSERT INTO facts VALUES ('retained', 'failed_attempt')");
+    old.close();
+    const current = getSqliteClient(createDb(path));
+    try {
+      expect(current.prepare("SELECT * FROM facts").all()).toEqual([{ id: "retained", type: "failed_attempt" }]);
+    } finally { current.close(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
 
   it("does not recreate retired chat and solver tables", () => {
     const sqlite = getSqliteClient(createDb(":memory:"));

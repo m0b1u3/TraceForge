@@ -5,10 +5,10 @@ export const NATIVE_HELPER_RELEASE_PROFILE = "traceforge-native-helper-release-v
 export interface NativeHelperReleaseManifest {
   format: 1;
   profile: typeof NATIVE_HELPER_RELEASE_PROFILE;
-  platform: "linux" | "windows";
-  architecture: "x64";
-  backend: "traceforge-linux-native" | "traceforge-windows-native";
-  executable: "traceforge-linux-sandbox" | "traceforge-windows-sandbox.exe";
+  platform: "linux" | "windows" | "darwin";
+  architecture: "x64" | "arm64";
+  backend: "traceforge-linux-native" | "traceforge-windows-native" | "traceforge-macos-native";
+  executable: "traceforge-linux-sandbox" | "traceforge-windows-sandbox.exe" | "traceforge-macos-sandbox";
   protocol: number;
   sha256: string;
 }
@@ -24,10 +24,10 @@ export function parseNativeHelperReleaseManifest(value: unknown): NativeHelperRe
   const manifest = value as Record<string, unknown>;
   if (JSON.stringify(Object.keys(manifest).sort()) !== JSON.stringify(keys)) throw new Error("Native helper release manifest has missing or unknown fields");
   if (manifest.format !== 1 || manifest.profile !== NATIVE_HELPER_RELEASE_PROFILE) throw new Error("Native helper release manifest profile is incompatible");
-  if (manifest.platform !== "linux" && manifest.platform !== "windows") throw new Error("Native helper release manifest platform is invalid");
-  if (manifest.architecture !== "x64") throw new Error("Native helper release manifest architecture is invalid");
-  const expectedBackend = manifest.platform === "linux" ? "traceforge-linux-native" : "traceforge-windows-native";
-  const expectedExecutable = manifest.platform === "linux" ? "traceforge-linux-sandbox" : "traceforge-windows-sandbox.exe";
+  if (!["linux", "windows", "darwin"].includes(String(manifest.platform))) throw new Error("Native helper release manifest platform is invalid");
+  if (manifest.architecture !== (manifest.platform === "darwin" ? "arm64" : "x64")) throw new Error("Native helper release manifest architecture is invalid");
+  const expectedBackend = manifest.platform === "darwin" ? "traceforge-macos-native" : manifest.platform === "linux" ? "traceforge-linux-native" : "traceforge-windows-native";
+  const expectedExecutable = manifest.platform === "darwin" ? "traceforge-macos-sandbox" : manifest.platform === "linux" ? "traceforge-linux-sandbox" : "traceforge-windows-sandbox.exe";
   if (manifest.backend !== expectedBackend || manifest.executable !== expectedExecutable) throw new Error("Native helper release manifest identity is inconsistent");
   if (!Number.isSafeInteger(manifest.protocol) || (manifest.protocol as number) < 1) throw new Error("Native helper release manifest protocol is invalid");
   if (typeof manifest.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(manifest.sha256)) throw new Error("Native helper release manifest digest is invalid");
@@ -43,9 +43,9 @@ export function createNativeHelperReleaseManifest(input: {
     format: 1,
     profile: NATIVE_HELPER_RELEASE_PROFILE,
     platform: input.platform,
-    architecture: "x64",
-    backend: input.platform === "linux" ? "traceforge-linux-native" : "traceforge-windows-native",
-    executable: input.platform === "linux" ? "traceforge-linux-sandbox" : "traceforge-windows-sandbox.exe",
+    architecture: input.platform === "darwin" ? "arm64" : "x64",
+    backend: input.platform === "darwin" ? "traceforge-macos-native" : input.platform === "linux" ? "traceforge-linux-native" : "traceforge-windows-native",
+    executable: input.platform === "darwin" ? "traceforge-macos-sandbox" : input.platform === "linux" ? "traceforge-linux-sandbox" : "traceforge-windows-sandbox.exe",
     protocol: input.protocol,
     sha256: nativeHelperSha256(input.bytes),
   });

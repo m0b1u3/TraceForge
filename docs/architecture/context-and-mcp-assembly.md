@@ -163,7 +163,7 @@ Observer 伴随评估最多 4096 条、决策 JSON 64 KiB。写入均接物理�
 Host 显式配置 `mcpServers`；每份配置必须声明单调 `reviewVersion` 和允许使用它的精确
 `ScenarioPackageBinding[]`。`createFoundationMcpSource` 将其接到现有 Discovery、Gateway、Execution Node。
 没有 Execution Node 时组合即拒绝。节点返回的 sandbox、文件系统/资源限制及权限指纹必须匹配；
-MCP 不接 `packages/extension` 的开发 stdio 客户端，不提供 unsandboxed 开关，不修改原生信任默认值。
+MCP 仅通过当前受控执行来源装配；旧开发 stdio 客户端与 MCP PoC 已删除，不提供 unsandboxed 开关，不修改原生信任默认值。
 
 当前支持固定 `2025-03-26` 的 stdio JSON-RPC Tools 子集，参考官方
 [传输规范](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports)、

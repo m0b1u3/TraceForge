@@ -1,8 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { EvidenceGraphKernel, type KnowledgeNode } from "@traceforge/evidence-graph";
+import { parseScenarioPackageDescriptor } from "@traceforge/scenario-sdk";
+import { ScenarioProcessRuntime } from "@traceforge/worker-runtime";
 import { SCENARIO_PROCESS_HOST_CAPABILITIES, type ScenarioToolHostContext } from "@traceforge/scenario-sdk";
 import type { ToolExecutionContext } from "@traceforge/worker-runtime";
 import type { ExecutionNode } from "@traceforge/execution-node";
 import { createScenarioProcessCapabilityHandlers } from "./scenario-process-capabilities.js";
+import { createDb, getSqliteClient } from "./db/client.js";
+import { SqliteScenarioStateStore } from "./scenario-runtime-state.js";
+
+const databases: Array<ReturnType<typeof getSqliteClient>> = [];
+afterEach(() => { for (const database of databases.splice(0)) database.close(); });
 
 const attribution: ToolExecutionContext = {
   workerId: "worker", caseId: "case", runId: "run", workId: "work", scopeRef: "scope", leaseId: "lease",
@@ -12,7 +22,11 @@ const attribution: ToolExecutionContext = {
 };
 
 function fixture(executionNode?:ExecutionNode) {
+  const sqlite = getSqliteClient(createDb(":memory:")); databases.push(sqlite);
+  const stateStore = new SqliteScenarioStateStore(sqlite);
   const calls: Array<{ port: string; input: unknown }> = [];
+  const kernel = new EvidenceGraphKernel();
+  let graph = kernel.execute(undefined, { type: "initialize_graph", caseId: "case", at: "2026-09-05T00:00:00.000Z" }).state;
   const context: Omit<ScenarioToolHostContext, "execution" | "capabilities"> = {
     authorization: {
       requireAction(scopeRef, caseId, action) { calls.push({ port: "authorization", input: { scopeRef, caseId, action } });
@@ -20,16 +34,20 @@ function fixture(executionNode?:ExecutionNode) {
       authorizeResource(scopeRef, caseId, action, resourceKind, value) { calls.push({ port: "resource", input: { scopeRef, caseId, action, resourceKind, value } });
         return { id: "authorization", caseId, scenarioKind: "fixture", scopePayload: {}, expiresAt: attribution.leaseExpiresAt, canonicalValue: value }; },
     },
-    evidence: { recordNode(input) { calls.push({ port: "evidence", input }); return ["evidence:recorded"]; } },
+    evidence: { recordNode(input) {
+      calls.push({ port: "evidence", input });
+      graph = kernel.execute(graph, { type: "add_node", at: input.at,
+        node: { ...input.node, caseId: input.caseId, runId: input.runId, source: null } as KnowledgeNode }).state;
+      return [`knowledge-node:${input.node.id}`];
+    } },
     artifacts: {
       record(input) { calls.push({ port: "artifact.record", input }); return { ...input, id: "artifact", createdAt: "2026-09-02T00:00:00.000Z" }; },
       get(input) { calls.push({ port: "artifact.get", input }); return undefined; },
       list(input) { calls.push({ port: "artifact.list", input }); return []; },
     },
     state: {
-      read(input) { calls.push({ port: "state.read", input }); return undefined; },
-      compareAndSet(input) { calls.push({ port: "state.cas", input }); return { ...input, packageId: input.packageId,
-        packageVersion: input.packageVersion, revision: input.expectedRevision + 1, updatedAt: "2026-09-02T00:00:00.000Z" }; },
+      read(input) { calls.push({ port: "state.read", input }); return stateStore.read(input); },
+      compareAndSet(input) { calls.push({ port: "state.cas", input }); return stateStore.compareAndSet(input); },
     },
   };
   return { calls, handlers: createScenarioProcessCapabilityHandlers({ id: "fixture.package", version: "1.0.0" }, context,
@@ -37,6 +55,40 @@ function fixture(executionNode?:ExecutionNode) {
 }
 
 describe("Scenario process host capabilities", () => {
+  it("accepts Web comparison and surface observations through the real Host and graph contracts", async()=>{
+    const node={async requestHttp(){return {receipt:{id:"request-receipt"},status:200,headers:[],bodyBase64:"",responseBytes:0,bodyTruncated:false,replayed:false};}} as unknown as ExecutionNode;
+    const {handlers,calls}=fixture(node),root=resolve("scenarios/web-blackbox");
+    for(const capability of [SCENARIO_PROCESS_HOST_CAPABILITIES.sessions,SCENARIO_PROCESS_HOST_CAPABILITIES.traffic]) {
+      handlers.push({capability,actions:["list"],async execute(){throw new Error("Not exercised by anonymous observation contract test");}});
+    }
+    const descriptor=parseScenarioPackageDescriptor(JSON.parse(readFileSync(resolve(root,"scenario.json"),"utf8")));
+    const source=new ScenarioProcessRuntime({manifest:descriptor.runtime!,launch:{executable:process.execPath,arguments:[resolve(root,"runtime/main.mjs")],workingDirectory:root,
+      attestation:{sandboxed:false,backend:"test-only",network:"deny"}},capabilityHandlers:handlers,transport:{allowUnsandboxedDevelopment:true}});
+    try{
+      const tools=await source.discover();
+      const comparison=await tools.find(tool=>tool.name==="web.validation.compare")!.execute({experimentId:"one",hypothesisId:"candidate-one",
+        baseline:{url:"https://authorized.example/"},candidate:{url:"https://authorized.example/next"}},attribution);
+      expect(JSON.parse(comparison.raw)).toMatchObject({status:"complete",findingVerified:false});
+      const surface=JSON.parse((await tools.find(tool=>tool.name==="web.surface.explore")!.execute({seeds:["https://authorized.example/"],maxRequests:1},{...attribution,idempotencyKey:"surface"})).raw);
+      const observations=calls.filter(call=>call.port==="evidence");
+      expect(observations).toHaveLength(5);
+      for(const observation of observations)expect(observation.input).toMatchObject({node:{kind:"fact",status:"active"}});
+      const call=async(name:string,input:unknown,id:string)=>JSON.parse((await tools.find(tool=>tool.name===name)!.execute(input,{...attribution,idempotencyKey:id})).raw);
+      await call("web.hypothesis.register",{candidateId:"first",statement:"first candidate",basisRefs:[surface.observations[0].networkReceipt]},"register");
+      const plan={prepare:[{request:{url:"https://authorized.example/setup",method:"POST",purpose:"Explicit test setup"},expectedStatuses:[200]}],
+        baseline:{url:"https://authorized.example/"},candidate:{url:"https://authorized.example/next"},changedCondition:"One resource change"};
+      await call("web.validation.execute",{candidateId:"first",plan,maxRequests:1},"prepare");
+      const observed=await call("web.validation.execute",{candidateId:"first",plan},"continue");
+      expect(observed).toMatchObject({status:"observed",assessment:"no_observed_difference"});
+      await call("web.validation.review",{candidateId:"first",outcome:"inconclusive",causalMechanism:"No effect established",expectedBoundary:"Rule not established",
+        securityImpact:"No impact established",alternatives:"Equal responses do not establish safety",refs:observed.observations[0].refs},"review");
+      const report=await call("web.report.build",{},"report");
+      expect(report).toMatchObject({verifiedFindings:[],unresolved:[expect.objectContaining({id:"first",reviewRecorded:true})]});
+      expect(calls.filter(call=>call.port==="evidence").map(call=>(call.input as any).node.kind)).toEqual([
+        "fact","fact","fact","fact","fact","hypothesis","fact","fact","fact","fact","fact","limitation",
+      ]);
+    }finally{await source.close();}
+  });
   it("injects authorization ownership from the active parent invocation", async () => {
     const { calls, handlers } = fixture(); const handler = handlers.find((item) => item.capability === SCENARIO_PROCESS_HOST_CAPABILITIES.authorization)!;
     await handler.execute({ action: "fixture.read" }, attribution, AbortSignal.timeout(100));

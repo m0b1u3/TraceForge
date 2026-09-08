@@ -1,61 +1,45 @@
 # TraceForge
 
-TraceForge 是独立运行的通用安全智能体底座。它以 Scenario Control Plane、共享黑板、结构化证据、弹性 Worker、模型执行与安全门禁为核心，不依赖 Codex，也不围绕某个漏洞、工具或目标写死产品逻辑。
+TraceForge 是桌面端通用 AI 安全智能体应用，以智能体对话为主，任务、工具活动和证据按需展开。首发面向 macOS Apple Silicon；不是 Web 管理平台，也不以单独发布底座库为产品目标。
 
-当前实现仍存在一项已确认的 P0 架构债务：Web 黑盒 Definition、部分类型、授权与工具装配尚未完全
-从 Core 和 Server Composition Root 抽离。因此下面描述的是目标架构；在完成
-[Scenario Extraction 计划](docs/development-status-and-roadmap.md#p0scenario-extraction-与通用运行时边界)前，
-不宣称 Scenario 已经完全插件化，也不继续向通用层增加具体场景逻辑。
+## 当前代码
 
-当前代码只保留新的 Scenario 运行链路：
+- `apps/desktop`：Electron 桌面宿主、固定 IPC、会话与操作恢复。
+- `apps/web/renderer`：全新桌面对话界面与独立设计预览；目录名沿用工作区容器，不包含旧 Web 应用。
+- `apps/server`：本地宿主服务、持久化与 Runtime 装配。
+- `packages`：通用 Agent、认知上下文、模型连接、授权、证据、受控工具与本地执行能力。
+- `scenarios/web-blackbox`：独立进程形式的 Web 黑盒场景，不将场景策略写入通用底座。
 
-- Scenario Profile 定义目标、阶段、能力需求和授权边界。
-- Planner、Observer 与 Worker 通过结构化 Work、Fact、Hypothesis、Evidence 和事件协作。
-- Worker Runtime 提供租约、心跳、重试、取消、恢复和能力路由。
-- Model Runtime 提供模型准入、路由、预算、调用审计和结构化输出。
-- Scenario Agent Protocol 持久化 turn/item 生命周期，支持游标重放和 WebSocket 增量同步。
-- Evidence Graph、执行会话网关、审批门禁和认知上下文快照为不同安全场景提供统一底座。
-- Execution Node 对每次进程执行强制绑定 CPU、内存、进程数量和写入 I/O 配额，并将配额证明写入执行回执。
-- Web 黑盒 HTTP 通过 Execution Node 的授权网络 Broker 执行并生成持久化回执；Browser Worker 在受控代理后端完成前保持关闭，不允许直连回退。
+旧 Web 源码、旧工具扩展包、MCP PoC、旧推理包及专属后端模块已删除，不提供旧链路兼容执行入口。新库不再创建旧应用专用表；已有数据库中的历史数据不会因本次代码清理而被删除。
 
-旧聊天式 `AgentRun`/`AgentEvent` 运行时、旧 Solver、旧 BrowserSession 和 Burp 桥接已经删除，不提供兼容层。数据库启动时会直接丢弃它们对应的旧表。
-
-## 开发启动
+## 开发运行
 
 ```bash
 pnpm install
-pnpm dev:server
-pnpm dev:web
+pnpm dev:desktop
 ```
 
-默认地址：后端 `127.0.0.1:4000`，前端 `127.0.0.1:5173`。TraceForge 未配置 LLM 或 MCP 时仍可启动；需要执行模型任务时再通过设置界面或 `config/llm.json` 配置 Provider。
+桌面开发命令构建本地 Server、Renderer 与 Electron，并准备桌面运行时。仅查看界面预览可运行 `pnpm --filter @traceforge/web preview:desktop`，地址为 `http://127.0.0.1:5178/`；无宿主时的预览不代表真实任务执行。
 
-## 验证
+模型连接在桌面设置中配置，协议和供应商接入与 Agent/Scenario 解耦。受控 MCP 与 Tool Provider 使用当前可信装配和沙箱链路，不再提供旧 `config/mcp.json` 直接拉起进程的入口。
+
+## 验证与发布边界
 
 ```bash
 pnpm test:fast
 pnpm build
 ```
 
-当前基线（2026-08-27）：146 个快速测试文件、559 项测试通过，全工作区构建通过。
+部分真实环境测试需要单独配置 Chromium、原生沙箱或模型。测试/构建基线及未验收项以[开发计划](docs/development-status-and-roadmap.md)为准，不将缺少环境的测试记作通过。
 
-第三方 Tool Provider 默认不受信任。部署者需要将 Ed25519 公钥写入
-`config/tool-provider-trust-roots.json`（格式参见同目录示例），签名和包内可执行文件
-及完整包 SHA-256 均通过后，Provider 才会被原子复制到只读托管目录并形成持久化安装记录。
-Manifest 使用包内相对入口并签署静态工具目录；控制面会拒绝路径/符号链接逃逸、包变更和
-运行时身份不一致。默认生产来源按每次工具调用的真实 Run/Work 归属通过 Execution Node 启动，
-不会回退到全局常驻或非沙箱进程。版本切换会先停止旧版本接收新调用，原子记录新版本
-`enabled` 与旧版本 `draining`，等待旧调用完成后再关闭旧来源；重启会确定性收敛中断的排空状态。
+开发桌面可以运行；正式安装包发布仍有验收门禁。本次清理没有解除打包门禁，也没有新增远程执行节点、多用户平台或自动更新系统。
 
-## 架构文档
+## 文档
 
-- [Scenario Control Plane API](docs/scenario-control-plane-api.md)
-- [Security Execution Model](docs/security-execution-model.md)
-- [当前开发进度与生产化计划](docs/development-status-and-roadmap.md)
+- [开发状态与下一优先级](docs/development-status-and-roadmap.md)
+- [桌面对话契约](docs/desktop-conversation-contract.md)
+- [模型连接](docs/model-connections.md)
+- [Runtime 依赖边界](docs/architecture/runtime-dependency-map.md)
+- [Scenario Control Plane](docs/scenario-control-plane-api.md)
 
-## 项目约束
-
-- 具体攻击或分析手段属于 Scenario Profile、Worker 或工具插件，不进入底座调度逻辑。
-- 单一信号不能验证安全发现；结论必须具备可追溯证据链、可复现因果机制和明确影响。
-- 同一 Run 可保留多个独立假设和排队任务，但一次只执行一个验证任务。
-- 凭据可作为受权限控制的黑板实体供使用者查看和 Worker 使用，其访问与使用必须进入审计事件。
+具体安全分析方法属于 Scenario 或工具插件。安全结论需要可追溯证据链、可复现因果机制与明确影响；同一 Run 保留多个假设，但一次只执行一个验证任务。

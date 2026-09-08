@@ -346,7 +346,7 @@ export function registerEmbeddedWorkers(
   hostControl?: FoundationHostControl,
   authorization?: SqliteScenarioAuthorizationService,
   extensionAssembly?: ExtensionAssemblyControl,
-): void {
+): () => ReturnType<ExecutionToolDiscoveryRuntime["snapshot"]> {
   const builtinTools: ExecutionToolAdapter[] = [
     new EvidenceGraphSnapshotTool(evidenceGraph),
     new EvidenceGraphMutateTool(sqlite, evidenceGraph),
@@ -537,4 +537,5 @@ export function registerEmbeddedWorkers(
     await toolRuntime.close();
     startupState = "stopped";
   });
+  return () => toolRuntime.snapshot();
 }

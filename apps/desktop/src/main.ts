@@ -1,11 +1,15 @@
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from "electron";
-import { autoUpdater } from "electron-updater";
+import { requireDesktopRenderer } from "./renderer-availability.js";
+import { ModelAccounts, ModelAccountManifestSchema, defaultModelAccounts } from "@traceforge/server/model-settings";
+import { createModelTokenStore } from "./model-token-store.js";
 import { dirname, join, resolve } from "node:path";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { buildServer, foundationHostControl, type LlmSecretBundle, type LlmSecretStore } from "@traceforge/server";
 import { ensureDesktopData, resolveDesktopPaths } from "./desktop-paths.js";
+import { createConversationBridge } from "./conversation-bridge.js";
+import { createModelSettingsBridge } from "./model-settings-bridge.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
@@ -21,28 +25,6 @@ app.on("second-instance", () => {
   mainWindow.show();
   mainWindow.focus();
 });
-
-function emitUpdateState(state: Record<string, unknown>): void {
-  mainWindow?.webContents.send("updates:state", state);
-}
-
-function configureUpdates(): void {
-  autoUpdater.autoDownload = false;
-  // A downloaded release must be installed explicitly; quitting alone must not
-  // switch the native helper generation before the operator sees readiness.
-  autoUpdater.autoInstallOnAppQuit = false;
-  const updateUrl = process.env.TRACEFORGE_UPDATE_URL?.trim();
-  if (updateUrl) autoUpdater.setFeedURL({ provider: "generic", url: updateUrl });
-  autoUpdater.on("checking-for-update", () => emitUpdateState({ status: "checking" }));
-  autoUpdater.on("update-available", (info) => emitUpdateState({ status: "available", version: info.version }));
-  autoUpdater.on("update-not-available", () => emitUpdateState({ status: "current" }));
-  autoUpdater.on("download-progress", (progress) => emitUpdateState({ status: "downloading", percent: progress.percent }));
-  autoUpdater.on("update-downloaded", (info) => emitUpdateState({ status: "ready", version: info.version }));
-  autoUpdater.on("error", (error) => emitUpdateState({ status: "error", message: error.message }));
-  ipcMain.handle("updates:check", async () => app.isPackaged ? autoUpdater.checkForUpdates() : { updateInfo: { version: app.getVersion() } });
-  ipcMain.handle("updates:download", async () => autoUpdater.downloadUpdate());
-  ipcMain.handle("updates:install", () => { autoUpdater.quitAndInstall(false, true); return true; });
-}
 
 function desktopLlmSecretStore(path: string): LlmSecretStore {
   const requireEncryption = () => {
@@ -67,6 +49,14 @@ function desktopLlmSecretStore(path: string): LlmSecretStore {
 }
 
 async function start(): Promise<void> {
+  const webRoot = app.isPackaged ? join(process.resourcesPath, "web") : resolve(moduleDirectory, "../../web/renderer/dist");
+  requireDesktopRenderer(webRoot);
+  if (process.platform === "darwin" && app.isPackaged) {
+    const helperRoot = join(process.resourcesPath, "native", "darwin-arm64");
+    process.env.TRACEFORGE_MACOS_SANDBOX_HELPER = join(helperRoot, "traceforge-macos-sandbox");
+    process.env.TRACEFORGE_NATIVE_HELPER_RELEASE_MANIFEST = join(helperRoot, "release.json");
+    process.env.TRACEFORGE_REQUIRE_NATIVE_HELPER_RELEASE_MANIFEST = "1";
+  }
   if (process.platform === "win32" && app.isPackaged) {
     const helperRoot = join(process.resourcesPath, "native", "win32-x64");
     process.env.TRACEFORGE_WINDOWS_SANDBOX_HELPER = join(helperRoot, "traceforge-windows-sandbox.exe");
@@ -94,9 +84,19 @@ async function start(): Promise<void> {
     }
   }
   ensureDesktopData(paths);
-  const webRoot = app.isPackaged ? join(process.resourcesPath, "web") : resolve(moduleDirectory, "../../web/dist");
+  const manifestPath = join(paths.configDirectory, "model-accounts.json");
+  if (existsSync(manifestPath) && statSync(manifestPath).size > 65536) throw new Error("Account manifest exceeds limit");
+  const manifestText = existsSync(manifestPath) ? readFileSync(manifestPath, "utf8") : undefined;
+  if (manifestText && Buffer.byteLength(manifestText) > 65536) throw new Error("Account manifest exceeds limit");
+  const accounts = new ModelAccounts(manifestText ? ModelAccountManifestSchema.parse(JSON.parse(manifestText)) : defaultModelAccounts(),
+    createModelTokenStore(join(paths.configDirectory, "model-tokens.bin"), {
+      available: () => safeStorage.isEncryptionAvailable() && !(process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text"),
+      encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value),
+    }));
   server = await buildServer(paths.database, paths.mcpConfig, paths.llmConfig, paths.root, webRoot, {
     llmSecretStore: desktopLlmSecretStore(paths.llmSecrets),
+    modelAccounts: accounts,
+    browserInstallationPath: process.env.TRACEFORGE_BROWSER_INSTALLATION,
   });
   await server.listen({ host: "127.0.0.1", port: 0 });
   const address = server.server.address();
@@ -117,7 +117,7 @@ async function start(): Promise<void> {
     width: 1440, height: 920, minWidth: 1024, minHeight: 700,
     show: false, backgroundColor: "#11100e",
     webPreferences: {
-      preload: join(moduleDirectory, "preload.js"), contextIsolation: true,
+      preload: join(moduleDirectory, "preload.cjs"), contextIsolation: true,
       nodeIntegration: false, sandbox: true, webSecurity: true,
     },
   });
@@ -125,14 +125,45 @@ async function start(): Promise<void> {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
+  const conversationBridge = createConversationBridge({
+    webContentsId: mainWindow.webContents.id, origin: localOrigin,
+    host: { request: async input => {
+      if (!server) throw new Error("Desktop host unavailable");
+      const response = await server.inject({ method: input.method, url: input.path,
+        ...(input.body === undefined ? {} : { payload: input.body }),
+        headers: { ...managementChannel.headers(), ...(input.body === undefined ? {} : { "content-type": "application/json" }) },
+      });
+      return { status: response.statusCode, body: response.json() };
+    } },
+  });
+  ipcMain.handle("conversations:request", (event, input: unknown) => conversationBridge.request({
+    webContentsId: event.sender.id, mainFrame: event.senderFrame === event.sender.mainFrame,
+    url: event.senderFrame?.url ?? "",
+  }, input));
+  const modelBridge = createModelSettingsBridge({ origin: localOrigin, webContentsId: mainWindow.webContents.id,
+    async openLogin(id) {
+      const url = new URL(accounts.authorizationUrl(id));
+      if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error("Invalid authorization URL");
+      await shell.openExternal(url.href);
+    },
+    request: async (url, payload) => {
+      if (!server) throw new Error("Desktop host unavailable");
+      const response = await server.inject({ url, method: payload === undefined ? "GET" : "POST", ...(payload === undefined ? {} : { payload: JSON.stringify(payload) }),
+        headers: { ...managementChannel.headers(), ...(payload === undefined ? {} : { "content-type": "application/json" }) } });
+      return { status: response.statusCode, body: response.json() };
+    } });
+  ipcMain.handle("models:request", (event, input: unknown) => modelBridge.request({
+    webContentsId: event.sender.id, mainFrame: event.senderFrame === event.sender.mainFrame, url: event.senderFrame?.url ?? "",
+  }, input));
+  mainWindow.on("closed", () => { modelBridge.close(); ipcMain.removeHandler("models:request"); });
+  mainWindow.on("closed", () => { conversationBridge.close(); ipcMain.removeHandler("conversations:request"); });
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (!url.startsWith(localOrigin)) { event.preventDefault(); if (/^https?:\/\//i.test(url)) void shell.openExternal(url); }
+    const destination = new URL(url);
+    if (destination.origin !== localOrigin || destination.pathname !== "/") { event.preventDefault(); }
   });
   mainWindow.once("ready-to-show", () => mainWindow?.show());
   mainWindow.on("closed", () => { mainWindow = null; });
   await mainWindow.loadURL(`http://127.0.0.1:${address.port}`);
-  configureUpdates();
-  if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
 }
 
 app.whenReady().then(start).catch((error) => {

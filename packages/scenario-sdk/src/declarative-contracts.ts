@@ -1,8 +1,11 @@
 import type { ScenarioOutput, ScenarioRunState } from "@traceforge/orchestration-core";
 import type { ScenarioEvidenceNodeRecord } from "./index.js";
+import { AuthorizationFormSchema, type AuthorizationForm } from "@traceforge/shared/authorization-form";
 
 export interface ScenarioScopePolicyV1 {
   format: "traceforge.scenario-scope-policy.v1";
+  /** Reviewed presentation bound to this policy; not executable validation code. */
+  form?: AuthorizationForm;
   allowedActions: readonly string[];
   deniedActions: readonly string[];
   payload: { maximumBytes: number; maximumDepth: number };
@@ -98,7 +101,7 @@ export function mapDeclarativeEvidence(contract: ScenarioOutputContractV1, run: 
 
 function validatePolicy(policy: ScenarioScopePolicyV1): void {
   record(policy, "Declarative scope policy");
-  exact(policy,["format","allowedActions","deniedActions","payload","resources"]);
+  exact(policy,["format","allowedActions","deniedActions","payload","resources","form"]);
   if (policy.format !== "traceforge.scenario-scope-policy.v1") throw new Error("Invalid declarative scope policy format");
   record(policy.payload, "Declarative scope payload limits");
   exact(policy.payload,["maximumBytes","maximumDepth"]);
@@ -128,6 +131,15 @@ function validatePolicy(policy: ScenarioScopePolicyV1): void {
     || rule.payloadPath?.some((part: string) => !/^[a-zA-Z0-9_.:-]{1,128}$/.test(part))
     || rule.payloadPrefixPath?.some((part:string)=>!/^[a-zA-Z0-9_.:-]{1,128}$/.test(part));
   })) throw new Error("Invalid declarative resource rule");
+  if (policy.form !== undefined) {
+    const form = AuthorizationFormSchema.parse(policy.form);
+    if (Object.keys(form.actionLabels ?? {}).some(action => ![...policy.allowedActions, ...policy.deniedActions].includes(action)))
+      throw new Error("Authorization form labels must refer to declared actions");
+    const paths = policy.resources.flatMap(rule => rule.payloadPath ? [rule.payloadPath] : rule.payloadPrefixPath ? [rule.payloadPrefixPath] : []);
+    if (form.fields.some(field => !paths.some(path => JSON.stringify(path) === JSON.stringify(field.path)))
+      || paths.some(path => !form.fields.some(field => JSON.stringify(field.path) === JSON.stringify(path))))
+      throw new Error("Authorization form must cover exactly the policy's dynamic resource paths");
+  }
 }
 
 function validateOutputContract(contract: ScenarioOutputContractV1): void {

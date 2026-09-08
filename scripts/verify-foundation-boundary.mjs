@@ -522,7 +522,7 @@ if (!/NATIVE_HELPER_RELEASE_PROFILE/.test(nativeHelperReleaseSource)
   || !/release_manifest_missing/.test(localExecutionLifecycleSource)
   || !/helper_measurement_changed/.test(localExecutionLifecycleSource)
   || !/TRACEFORGE_REQUIRE_NATIVE_HELPER_RELEASE_MANIFEST/.test(desktopMainSource)
-  || !/autoInstallOnAppQuit\s*=\s*false/.test(desktopMainSource)
+  || (/autoUpdater/.test(desktopMainSource) && !/autoInstallOnAppQuit\s*=\s*false/.test(desktopMainSource))
   || !/verifyNativeHelperRelease/.test(desktopReleaseVerificationSource)
   || !/async shutdown\(/.test(executionRuntimeSource)) {
   violations.push("Local Execution Node releases must retain packaged helper identity, startup preflight, drift health and bounded process-tree shutdown");

@@ -6,6 +6,9 @@ import type { EventBus } from "./event-bus.js";
 import type { LlmProvider } from "@traceforge/llm";
 import type { CaseSummary } from "@traceforge/shared";
 import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
+import { registerConversationRoutes } from "./conversation-routes.js";
+import { registerModelSettingsRoutes } from "./model-settings-routes.js";
+import type { ModelAccounts } from "./model-accounts.js";
 
 /**
  * Small application control surface shared by the desktop shell and the
@@ -19,9 +22,11 @@ export function registerRoutes(
   _provider?: LlmProvider,
   llmService?: LlmConfigService,
   _projectRoot?: string,
+  accounts?: ModelAccounts,
 ): void {
   const cases = new CaseStore(db);
   const sqlite = getSqliteClient(db);
+  registerConversationRoutes(app, db);
 
   app.get("/api/cases", async () => cases.list());
 
@@ -82,16 +87,20 @@ export function registerRoutes(
   }));
 
   if (llmService) {
-    app.get("/api/config/llm", async () => llmService.load());
+    registerModelSettingsRoutes(app, llmService, accounts);
+    app.get("/api/config/llm", async (_request, reply) => {
+      try { return llmService.load(); } catch { return reply.code(503).send({ error: "Model configuration unavailable" }); }
+    });
+    app.get("/api/config/llm/suppliers", async () => llmService.connectionCatalog());
     app.post("/api/config/llm", async (request, reply) => {
-      const body = request.body as LlmConfigDto;
-      if (!body.provider || !body.model) return reply.code(400).send({ error: "provider and model are required" });
+      const body = request.body as LlmConfigDto | undefined;
+      if (!body?.provider || !body.model) return reply.code(400).send({ error: "provider and model are required" });
       try { return llmService.reload(body); }
-      catch (error) { return reply.code(500).send({ error: (error as Error).message }); }
+      catch { return reply.code(503).send({ error: "Model configuration was not confirmed; reload settings to reconcile" }); }
     });
     app.post("/api/config/llm/test", async (request, reply) => {
-      const body = request.body as LlmConfigDto;
-      if (!body.provider || !body.model) return reply.code(400).send({ error: "provider and model are required" });
+      const body = request.body as LlmConfigDto | undefined;
+      if (!body?.provider || !body.model) return reply.code(400).send({ error: "provider and model are required" });
       return llmService.test(body);
     });
   }

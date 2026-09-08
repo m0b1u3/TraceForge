@@ -14,6 +14,7 @@ import {
   type ContextCompactor,
 } from "@traceforge/cognitive-runtime";
 import { SqliteContextCompactionStore } from "./context-compaction-store.js";
+import { ToolReceiptContext } from "./tool-receipt-context.js";
 import { RunContextPolicy } from "./run-context-policy.js";
 import {
   createProviderCapabilityHost,
@@ -33,6 +34,9 @@ import { SqliteScenarioEventStore, SqliteWorkerRegistry } from "./scenario-event
 import { registerRunObserverRoutes, SqliteRunObserverStore } from "./run-observer.js";
 import { registerRunPlannerRoutes, SqliteRunPlannerStore } from "./run-planner.js";
 import { SqliteCognitiveContextCursorStore } from "./cognitive-context-distiller.js";
+import { createInstalledBrowserDeployment } from "./browser-installation.js";
+import { SqliteBrowserArtifactContent } from "./browser-artifact-content.js";
+import { BrowserScratchStore } from "./browser-scratch.js";
 import { registerCognitiveSnapshotRoutes, SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
 import {
   DEFAULT_MODEL_ROLE_POLICIES,
@@ -144,6 +148,9 @@ export interface SecurityAgentFoundationOptions {
   loadScenarioPackageDescriptors?: boolean;
   /** Opaque package-owned host ports, keyed by versioned capability id. */
   scenarioHostCapabilities?: Readonly<Record<string, unknown>>;
+  /** Optional reviewed local Browser deployment. Absent means unavailable, never direct fallback. */
+  browserDeployment?: import("./scenario-browser-host.js").ScenarioBrowserDeployment;
+  browserInstallation?: import("./browser-installation.js").BrowserInstallation;
   /** Composition callback for Host services that must delegate to the exact assembled authorization registry. */
   onScenarioAuthorizationReady?: (authorization: ScenarioAuthorizationPort) => void;
   autoScheduleIntervalMs?: number;
@@ -281,6 +288,16 @@ export function registerSecurityAgentFoundation(
   const executionSessions=needsSessions
     ?new ExecutionSessionGateway(sqlite,new SqliteEncryptedSecretVault(sqlite,loadOrCreateVaultKey(projectRoot))):undefined;
   const scenarioTraffic=needsTraffic?new SqliteScenarioTrafficStore(sqlite):undefined;
+  if (options.browserInstallation && options.browserDeployment) throw new Error("Choose one Browser installation source");
+  const browserContent = options.browserInstallation ? new SqliteBrowserArtifactContent(sqlite) : undefined;
+  const browserDeployment = options.browserInstallation
+    ? createInstalledBrowserDeployment(options.browserInstallation, browserContent!, new BrowserScratchStore(sqlite)) : options.browserDeployment;
+  if (browserContent && browserDeployment) {
+    browserDeployment.persistArtifact = browserContent.persistArtifact.bind(browserContent);
+    browserDeployment.readContent = browserContent.readBound.bind(browserContent);
+    browserContent.pruneUnreferenced();
+  }
+  app.addHook("onReady", async () => { await browserDeployment?.recover?.(); });
   if(executionSessions)registerExecutionSessionRoutes(app,executionSessions);
   governedSources=new GovernedExecutionSources(executionNode,processCapacity,scenarioProcessSupervision);
   const customSources=(options.governedToolSources??[]).map(source=>governedSources.register(source));
@@ -289,7 +306,7 @@ export function registerSecurityAgentFoundation(
     {authorization,evidence:scenarioEvidence,artifacts:scenarioArtifacts,state:scenarioState,
       capabilities:createScenarioHostCapabilities(options.scenarioHostCapabilities ?? {})},
     options.scenarioSourceExecutionPolicies, options.scenarioProcessLaunches, allowInProcessScenarioDevelopment,
-    {sessions:executionSessions,traffic:scenarioTraffic});
+    {sessions:executionSessions,traffic:scenarioTraffic,browser:browserDeployment});
   const customProviderFactory=options.governedToolProviderFactory ? (installation:ToolProviderInstallation)=>
     governedSources.registerProvider(installation,options.governedToolProviderFactory!) : options.toolProviderSourceFactory;
   registerProcessCapacityRoutes(app,processCapacity,options.processCleanupAuthorizer,options.toolRecoveryEvidenceAuthority??(()=>undefined));
@@ -341,8 +358,11 @@ export function registerSecurityAgentFoundation(
   const compactionStore = new SqliteContextCompactionStore(sqlite);
   compactionStore.recoverPrepared();
   const compaction = new ContextCompactionRuntime(compactionStore, options.contextCompactor);
-  const runContext = new RunContextPolicy(sqlite, contextSource, (id) => scenarioRuntime.load(id) ?? null, cognitiveSnapshots);
-  const contextPolicy = new PackageContextPolicy(sqlite, contextSource, runContext);
+  let toolInventory: ReturnType<typeof registerEmbeddedWorkers> | undefined;
+  const toolReceiptContext = new ToolReceiptContext(sqlite,scenarioPackages,(id)=>scenarioRuntime.load(id)??null,
+    ()=>toolInventory?.(),[contextSource.source]);
+  const runContext = new RunContextPolicy(sqlite, contextSource, (id) => scenarioRuntime.load(id) ?? null, cognitiveSnapshots,toolReceiptContext);
+  const contextPolicy = new PackageContextPolicy(sqlite, contextSource, runContext,toolReceiptContext);
   const modelExecutionStore = new SqliteModelExecutionStore(sqlite);
   const modelAdmissionStore = new SqliteModelAdmissionStore(sqlite);
   const modelRoutes = new Map<string, LlmProvider>([["primary", provider], ...(options.modelRoutes?.entries() ?? [])]);
@@ -422,10 +442,10 @@ export function registerSecurityAgentFoundation(
   registerModelExecutionRoutes(app, modelExecutionStore);
   registerModelAdmissionRoutes(app, modelAdmissions, modelAdmissionStore);
   registerScenarioAgentEventRoutes(app, agentEvents, auditProjection);
-  registerEmbeddedWorkers(
+  toolInventory = registerEmbeddedWorkers(
     app, sqlite, provider, projectRoot, providerReady, evidenceGraph, changes,
     cognitiveSnapshots, modelRuntime, lifecycleEvents, definitions, scenarioPackages, executionNode,
-    [...scenarioSources, contextSource],
+    [...scenarioSources, contextSource,toolReceiptContext],
     [...customSources, ...(options.toolDiscoverySources ?? []), ...mcpSources],
     options.toolProviderTrustRoots, customProviderFactory, providerCapabilityHost,
     options.toolProviderArchiveImportAuthorizer, options.toolProviderRefreshAuthorizer,

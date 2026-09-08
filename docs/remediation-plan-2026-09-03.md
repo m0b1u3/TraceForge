@@ -1,8 +1,12 @@
 # TraceForge 继续开发前整改计划
 
-更新日期：2026-09-04
+更新日期：2026-09-05
+
+首发排期覆盖（2026-09-07）：用户明确首发 macOS Apple Silicon，Linux 后续再测试。当前主线以 docs/development-status-and-roadmap.md 的“首发平台纠正”节为准：补齐 macOS 本机执行隔离与 Browser/桌面整链。保留已有 Linux/Windows 实现，但不再以 Linux 真机作为首发前置条件；不引入远程节点，不把 macOS 限定为控制面。原有跨平台完成描述必须区分功能测试和真实平台隔离验收。
+
+当前排期覆盖（2026-09-05）：先完善解耦的 Web 黑盒 Scenario。Chromium 真实双构建和发行材料留到发布阶段，Browser 生产门禁不放宽；最小 Code Audit 后排。下文既有整改记录保留，当前顺序以第 8 节为准。
 基线提交：`9b3fe97`
-状态：执行中；前三项 P0、Linux 部署仓库实现和 Web 构建结构整改已于 2026-09-03 完成，Structured Worker 收口、Brokered Browser Core、Host/进程控制协议、CDP 策略、Chromium pipe、DOM/截图/控制/人工接管、可复现 Controller、真实 macOS Chrome 集成、来源锁/离线评审签名/安全解压及 v3 整树发行安装门禁于 2026-09-04 完成；Linux 实机终验等待可用真机，当前继续建设官方 Chromium 源码固定、自构建证明与许可证清单
+状态：执行中；前三项 P0、Linux 部署仓库实现和 Web 构建结构整改已于 2026-09-03 完成，Structured Worker 收口、Brokered Browser Core、Host/进程控制协议、CDP 策略、Chromium pipe、DOM/截图/控制/人工接管、可复现 Controller、真实 macOS Chrome 集成、来源锁/离线评审签名/安全解压及 v3 整树发行安装门禁于 2026-09-04 完成；Linux 实机终验等待可用真机，当前优先完善独立 Web 黑盒 Scenario，Chromium 自构建与发行材料后排
 
 ## 1. 整改目的
 
@@ -165,7 +169,7 @@ Browser Process 必须经本机 Execution Node 启动并通过强制代理进入
 1. ~~先一次性完成第 3 节三个 P0，并同步删除旧路径、补回归和更新计划。~~ 已完成。
 2. ~~完成第 5.2 节 Web TypeScript 模块化，并完成第 5.1 节上下文血缘/装配的首个下沉切片。~~ 已完成；第 4 节只等待 Linux 真机终验。
 3. ~~完成第 5.1 节 Structured Worker 提取和认知模型层收口。~~ 已完成。
-4. 当前下一步：为第 6 节候选路线建立官方 Chromium 源码 commit、`depot_tools`/依赖解析、GN 参数、构建环境、SBOM/NOTICE 与双构建摘要合同；随后用真实构建产物生成各平台 Source Lock/Review 和产品 release tree。原生断网终验证在对应 Linux/Windows 真机可用后执行，不恢复任何 direct Browser 临时路径。
-5. 用第 7 节最小 Code Audit Scenario 验证通用性。
+4. 黑盒 HTTP 整链路仓库实现已完成：`0.4.0` 的 8 个 Runtime 模块、12 个工具贯通 Surface 观察、独立假设、带用途/预期状态的前置请求、重复比较、预算续跑、未知效果围栏、复核和保留未解决项的报告材料。能力按 Scenario 角色声明装配，未修改 Core/Host 生产源码；工具不代替 Work 调度或正式 Finding 生命周期。当前下一优先级是提供真实模型配置后的整链路验收（仍暂缓），以一次完整调查来检查和修正模型规划、引用、因果与报告问题，不默认扩建底座。实际作用：已有代码流程能运行，现在待检验的是模型是否会正确使用它，而非再增加一批孤立工具。
+5. 后排：最小 Code Audit Scenario 验证通用性；第 6 节真实 Chromium 自构建、SBOM/NOTICE 与 Source Lock/Review/release tree 在发布准备时恢复。原生隔离在对应真机可用后验收，未完成前不开放生产 Browser，不恢复 direct Browser。
 
 三个 P0 已完成并由边界门禁固定；后续不得恢复旧旁路或双实现，也不得用新增功能绕过现有授权、沙箱、审计与证据链。每个代码批次都必须同步 `docs/development-status-and-roadmap.md`，记录真实完成项、剩余风险、验收结果和下一明确优先级。

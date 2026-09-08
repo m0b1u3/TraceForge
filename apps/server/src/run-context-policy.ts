@@ -14,11 +14,13 @@ import {
 import { PackageContextDiscoverySource } from "./package-context-resources.js";
 import { SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 import type { SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
+import type { ToolReceiptContext } from "./tool-receipt-context.js";
 
 /** Conservative structural provenance; never edits durable Run or Evidence Graph state. */
 export class RunContextPolicy {
   constructor(private readonly sqlite: Database.Database, private readonly resources: PackageContextDiscoverySource,
-    private readonly loadRun: (id: string) => ScenarioRunState | null, private readonly snapshots: SqliteCognitiveSnapshotStore) {
+    private readonly loadRun: (id: string) => ScenarioRunState | null, private readonly snapshots: SqliteCognitiveSnapshotStore,
+    private readonly toolReceipts?: ToolReceiptContext) {
     sqlite.exec(`CREATE TABLE IF NOT EXISTS context_derivations (
       case_id TEXT NOT NULL, run_id TEXT NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL,
       snapshot_id TEXT NOT NULL, sources_json TEXT NOT NULL, PRIMARY KEY(run_id,target_kind,target_id,snapshot_id));
@@ -66,6 +68,7 @@ export class RunContextPolicy {
       sources.push({ key: row.idempotency_key, workId: row.work_id, valid, refs: receipt?.refs ?? [],
         fingerprint: toolInvocationInputFingerprint("context.receipt", receipt ?? null) });
     }
+    sources.push(...await this.toolReceipts?.lineage(run,role,readerWorkId)??[]);
     if (derived.some((row) => row.case_id !== run.caseId)) throw new Error("Context derivation Case mismatch");
     const fingerprint = toolInvocationInputFingerprint("context.lineage", { role, scopeRef: run.scopeRef, phase: run.activePhaseId, package: run.scenarioPackage, sources, derived });
     return { sources, derived, fingerprint };
@@ -127,6 +130,7 @@ export class RunContextPolicy {
   }
 
   assertReplayAllowed(snapshot: CognitiveSnapshotRecord): void {
+    if(this.toolReceipts?.hasRunSources(snapshot.runId)) throw new Error("Receipt-derived snapshot requires current projection");
     const manifest = snapshot.contextManifest.contextLineage as ContextLineageManifest | undefined;
     if (manifest?.sources.length || this.sqlite.prepare("SELECT 1 FROM tool_invocation_bindings WHERE run_id=? AND tool_source=? LIMIT 1").get(snapshot.runId, this.resources.source)) throw new Error("Resource-derived snapshot requires current context projection");
   }

@@ -108,6 +108,7 @@ describe("ChromiumPipeTransport", () => {
         "--disable-features=ServiceWorker",
         "--user-data-dir=/var/lib/traceforge/browser/profile/run-1",
         "--window-size=1280,720",
+        "about:blank",
       ]),
       workingDirectory: "/var/lib/traceforge/browser",
       environment: { LANG: "C.UTF-8", TZ: "UTC" },

@@ -1,9 +1,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, parse } from "node:path";
 import { z } from "zod";
+import { MODEL_PROTOCOLS, MODEL_SUPPLIER_IDS } from "@traceforge/shared/model-protocol";
 
 const endpointShape = {
-  provider: z.enum(["anthropic", "openai"]),
+  /** Wire protocol identifier; retained field name for existing configurations. */
+  provider: z.enum(MODEL_PROTOCOLS),
+  supplier: z.enum(MODEL_SUPPLIER_IDS).optional(),
+  credentialRef: z.string().regex(/^[a-z][a-z0-9_.:-]{0,127}$/).optional(),
+  authMode: z.enum(["api_key", "bearer"]).optional(),
+  requestOptions: z.object({
+    thinking: z.enum(["enabled", "disabled"]).optional(),
+    reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "max"]).optional(),
+    temperature: z.number().finite().min(0).max(2).optional(),
+  }).strict().optional(),
   model: z.string(),
   embeddingModel: z.string().min(1).optional(),
   baseUrl: z.string().optional(),

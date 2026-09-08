@@ -158,8 +158,8 @@ export class StructuredRunPlannerModel implements RunPlannerModel {
   }
 }
 
-function relevantNodes(run: ScenarioRunState, graph: EvidenceGraphState, limit: number): KnowledgeNode[] {
-  return graph.nodes.filter((node) => node.runId === null || node.runId === run.id).slice(-limit);
+function relevantNodes(run: ScenarioRunState, graph: EvidenceGraphState): KnowledgeNode[] {
+  return graph.nodes.filter((node) => node.caseId === run.caseId && (node.runId === null || node.runId === run.id));
 }
 
 export function planningFingerprint(run: ScenarioRunState, graph: EvidenceGraphState, maximumGraphNodes: number,
@@ -244,6 +244,12 @@ export class RunPlannerSupervisor {
     if (evaluation.applied) return;
     if (this.contextPolicy) await this.contextPolicy.recordDerivations(evaluation.id, evaluation.decision.action === "plan"
       ? evaluation.decision.proposals.map((_, index) => ({ kind: "work", id: `planner-work-${evaluation!.id}-${index}` })) : []);
+    const currentRun = this.runtime.load(run.id);
+    const currentGraph = this.graphs.ensure(run.caseId, this.now());
+    if (!currentRun || planningFingerprint(currentRun, currentGraph, config.maximumGraphNodes, config.maximumRunItems)
+      !== planningFingerprint(run, graph, config.maximumGraphNodes, config.maximumRunItems)) {
+      throw new Error("Planner context changed during evaluation; reevaluate current state");
+    }
     const result = this.applyDecision(run.id, evaluation.id, evaluation.observedPhaseId, evaluation.decision);
     const advanced = this.advanceIfAllowed(run.id, evaluation.id, evaluation.observedPhaseId);
     this.store.complete({ evaluationId: evaluation.id, runId: run.id, fingerprint,
@@ -256,7 +262,9 @@ export class RunPlannerSupervisor {
     if (decision.proposals.length > config.maximumProposalsPerEvaluation) throw new Error(`Planner proposed ${decision.proposals.length} Work Packages; maximum is ${config.maximumProposalsPerEvaluation}`);
     if (decision.proposals.length + decision.cancellations.length + decision.reprioritizations.length === 0) throw new Error("Planner plan must contain at least one state change");
     const phase = definition.phases.find((candidate) => candidate.id === run.activePhaseId)!;
-    const visibleNodes = relevantNodes(run, graph, config.maximumGraphNodes);
+    // Compacted inputs retain older graph anchors. The display budget is not an
+    // authorization boundary: validate against the full Case/Run-visible graph.
+    const visibleNodes = relevantNodes(run, graph);
     const knownHypotheses = new Set(visibleNodes.filter((node) => node.kind === "hypothesis" && node.status !== "invalidated").map((node) => node.id));
     const knownRefs = new Set([run.scopeRef, ...run.outputs.flatMap((output) => output.refs), ...visibleNodes.flatMap((node) => [node.id, `knowledge-node:${node.id}`])]);
     const available = new Set(run.availableCapabilities);

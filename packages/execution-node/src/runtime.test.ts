@@ -139,6 +139,16 @@ function startRequest(workspace: string): StartProcessRequest {
 }
 
 describe("LocalExecutionNode process lifecycle", () => {
+  it("requires explicit measured-backend acceptance for sampled resource budgets", async () => {
+    const launcher = new FakeLauncher();
+    Object.assign(launcher.enforcement, { resourceLimitsApplied: false, resourcePolicy: "sampled_terminate", backendMeasurement: "a".repeat(64), atomicProcessTreeAssignment: true, processTreeEmptyBarrier: true });
+    const rejected = createNode(launcher);
+    await expect(rejected.node.startProcess(startRequest(dirname(process.execPath)))).rejects.toThrow("resource policy");
+    const accepted = createNode(launcher, { acceptedSampledResourceBackends: ["test-sandbox"], sandboxMeasurements: { "test-sandbox": "a".repeat(64) } });
+    const started = await accepted.node.startProcess(startRequest(dirname(process.execPath)));
+    expect(started.process.enforcement).toMatchObject({ resourceLimitsApplied: false, resourcePolicy: "sampled_terminate" });
+    launcher.processes.at(-1)!.exit(0);
+  });
   it("terminates every owned process tree on shutdown and refuses new launches", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "traceforge-node-shutdown-"));
     const { node, launcher } = createNode();

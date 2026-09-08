@@ -195,6 +195,7 @@ export const SCENARIO_PROCESS_HOST_CAPABILITIES = Object.freeze({
   execution: "traceforge.scenario.execution@1",
   sessions: "traceforge.scenario.sessions@1",
   traffic: "traceforge.scenario.traffic@1",
+  browser: "traceforge.scenario.browser@1",
 });
 
 export function createScenarioHostCapabilities(entries: Readonly<Record<string, unknown>>): ScenarioHostCapabilities {

@@ -10,7 +10,7 @@ import {
   type ProcessAccess,
   type ProcessDescriptor,
 } from "@traceforge/execution-node";
-import type { EffectivePermissionProfile } from "@traceforge/orchestration-core";
+import { satisfiesPermissionRequirements, type EffectivePermissionProfile } from "@traceforge/orchestration-core";
 import type {
   BrowserControlAction,
   BrowserControlResult,
@@ -33,9 +33,13 @@ export interface BrowserProcessConfiguration {
   controllerIdentity: BrowserControllerIdentity;
   expectedSandboxBackend?: string;
   expectedBackendMeasurement?: string;
+  acceptedResourcePolicy?: "sampled_terminate";
   executable: string;
   arguments: string[];
   workingDirectory: string;
+  /** Trusted installation allocates a private scratch; narrow child writes only.
+   * Broker authorization continues to use the original invocation profile. */
+  restrictWritesToWorkingDirectory?: true;
   environment?: Record<string, string>;
   permissions: EffectivePermissionProfile;
   resources: ExecutionResourceLimits;
@@ -161,7 +165,7 @@ export interface BrowserNetworkRecord {
   origin: string;
   urlSha256: string;
   method: string;
-  authorizationRef: string;
+  authorizationRef: string | null;
   receiptRef: string | null;
   artifactRef: string | null;
   outcome: "fulfilled" | "blocked";
@@ -278,6 +282,9 @@ export class BrokeredBrowserRuntime {
     const sessionId = `browser_${this.createId()}`;
     const processPermissions = structuredClone(process.permissions);
     processPermissions.network = "deny";
+    if (process.restrictWritesToWorkingDirectory) {
+      processPermissions.filesystem.write = [{ path: process.workingDirectory, scope: "tree" }];
+    }
     const hostPermissions = structuredClone(process.permissions);
     hostPermissions.network = "brokered";
     const attribution = this.attribution(owner, `browser-process:${sessionId}`);
@@ -565,10 +572,18 @@ export class BrokeredBrowserRuntime {
     session.snapshot.activeRequests += 1;
     try {
       await this.assertCurrentOrFreeze(sessionId, session);
-      const grant = await this.options.authorization.authorizeRequest({
-        owner: structuredClone(session.snapshot.owner), url: request.url, method: request.method, kind: request.kind,
-      });
-      this.assertGrant(grant, request.url);
+      let grant: Awaited<ReturnType<BrowserAuthorizationPort["authorizeRequest"]>>;
+      try {
+        grant = await this.options.authorization.authorizeRequest({
+          owner: structuredClone(session.snapshot.owner), url: request.url, method: request.method, kind: request.kind,
+        });
+        this.assertGrant(grant, request.url);
+      } catch (error) {
+        // No HTTP request has been dispatched. Record the denied channel without
+        // fabricating a grant or leaking authorizer errors/URL query secrets.
+        this.record(session, request, null, null, null, "blocked", "authorization_unavailable");
+        throw error;
+      }
       if (request.kind === "websocket") {
         const blocked: BrowserResponseDirective = { action: "block", requestId: request.id, reason: "websocket_streaming_unavailable" };
         this.record(session, request, grant.authorizationRef, null, null, "blocked", blocked.reason);
@@ -633,6 +648,12 @@ export class BrokeredBrowserRuntime {
     if (!process.executable.trim() || !process.workingDirectory.trim()) throw new Error("Browser process paths are required");
     if (process.permissions.network !== "brokered") throw new Error("Brokered Browser requires brokered host networking");
     if (process.permissions.process.access !== "sandboxed") throw new Error("Browser process requires sandboxed execution permission");
+    if (process.restrictWritesToWorkingDirectory !== undefined) {
+      if (process.restrictWritesToWorkingDirectory !== true || !satisfiesPermissionRequirements(process.permissions,
+        { filesystem: { write: [{ path: process.workingDirectory, scope: "tree" }] } })) {
+        throw new Error("Browser private scratch requires an authorized writable tree without denied descendants");
+      }
+    }
     if (process.expectedSandboxBackend !== undefined && !process.expectedSandboxBackend.trim()) {
       throw new Error("Browser sandbox backend identity is invalid");
     }
@@ -662,7 +683,11 @@ export class BrokeredBrowserRuntime {
       || canonicalJson(descriptor.arguments) !== canonicalJson(configuration.arguments)
       || descriptor.workingDirectory !== configuration.workingDirectory
       || canonicalJson(descriptor.attribution) !== canonicalJson(attribution)
-      || !enforcement.sandboxed || !enforcement.filesystemPolicyApplied || !enforcement.resourceLimitsApplied
+      || !enforcement.sandboxed || !enforcement.filesystemPolicyApplied
+      || (enforcement.resourcePolicy === "sampled_terminate"
+        ? configuration.acceptedResourcePolicy !== "sampled_terminate" || !configuration.expectedBackendMeasurement
+          || !configuration.expectedSandboxBackend || !enforcement.atomicProcessTreeAssignment || !enforcement.processTreeEmptyBarrier
+        : !enforcement.resourceLimitsApplied)
       || enforcement.network !== "deny"
       || enforcement.permissionProfileFingerprint !== permissionProfileFingerprint(permissions)
       || enforcement.resourceLimitsFingerprint !== resourceLimitsFingerprint(configuration.resources)
@@ -758,7 +783,7 @@ export class BrokeredBrowserRuntime {
     }
   }
 
-  private record(session: ActiveSession, request: InterceptedBrowserRequest, authorizationRef: string,
+  private record(session: ActiveSession, request: InterceptedBrowserRequest, authorizationRef: string | null,
     receiptRef: string | null, artifactRef: string | null, outcome: BrowserNetworkRecord["outcome"], reason: string | null): void {
     const url = new URL(request.url);
     session.snapshot.records.push({ requestId: request.id, kind: request.kind, initiator: request.initiator,

@@ -1,0 +1,37 @@
+import { ConversationClient } from "./conversation-client";
+import type { SavedConversation, SavedMessage } from "./conversation-client";
+
+export type PendingCommand = { kind: "create"; commandId: string; title: string } | { kind: "send"; commandId: string; conversationId: string; text: string };
+export interface JournalStorage { getItem(key: string): string | null; setItem(key: string, value: string): void }
+const key = "traceforge.desktop.conversation-command.v1";
+export class HostConversationController {
+  pending: PendingCommand | null = null;
+  busy = false;
+  constructor(private client: ConversationClient, private storage: JournalStorage) {
+    const raw = storage.getItem(key);
+    if (raw === null || raw === "null") return;
+    if (raw.length > 100000) throw new Error("本地待确认命令损坏，未发出请求。请保留记录后检查。");
+    const value = JSON.parse(raw);
+    if (!value || typeof value.commandId !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(value.commandId) ||
+      !(value.kind === "create" && typeof value.title === "string" && value.title.trim() && value.title.length <= 200 ||
+        value.kind === "send" && typeof value.conversationId === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(value.conversationId) && typeof value.text === "string" && value.text.trim() && value.text.length <= 16000)) throw new Error("本地待确认命令损坏，未发出请求。请保留记录后检查。");
+    this.pending = value;
+  }
+  list() { return this.client.list(); }
+  restore(id: string) { return this.client.restore(id); }
+  async execute(command?: PendingCommand): Promise<SavedConversation | SavedMessage> {
+    if (this.busy) throw new Error("正在核对上一条请求。");
+    if (command && this.pending) throw new Error("先使用原命令核对上一条请求。");
+    const next = command ?? this.pending;
+    if (!next) throw new Error("没有待处理命令。");
+    // Write-ahead journal: refuse to send if the durable command cannot be retained.
+    this.storage.setItem(key, JSON.stringify(next));
+    this.pending = next; this.busy = true;
+    try {
+      const result = next.kind === "create" ? await this.client.create(next.commandId, next.title) : await this.client.send(next.conversationId, next.commandId, next.text);
+      this.storage.setItem(key, "null");
+      this.pending = null;
+      return result;
+    } finally { this.busy = false; }
+  }
+}

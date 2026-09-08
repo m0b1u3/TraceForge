@@ -16,19 +16,21 @@ const context:ToolExecutionContext={workerId:"worker",caseId:"case",runId:"run",
   effectivePermissions:{version:1,platform:process.platform==="win32"?"windows":process.platform==="darwin"?"darwin":"linux",
     filesystem:{read:[],write:[],deny:[]},network:"brokered",process:{access:"deny",interactive:false,background:false},secrets:"deny",sources:["test"]}};
 
-interface SurfaceStorage {state:{revision:number;value:unknown}|null}
+interface SurfaceStorage {state:{revision:number;value:unknown}|null; failRequest?:boolean; unstable?:boolean; truncated?:boolean; deny?:boolean}
 function runtime(calls:Array<{capability:string;action:string;input:unknown}>,storage:SurfaceStorage={state:null}){
-  const handlers:ScenarioPackageCapabilityHandler[]=[{
+  const handlers:ScenarioPackageCapabilityHandler[]=[{ capability: SCENARIO_PROCESS_HOST_CAPABILITIES.browser, actions: ["inspect"], async execute() { throw new Error("Browser deployment unavailable in HTTP fixture"); } },{
     capability:SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,actions:["require","authorize_resource"],async execute(input){
       const resource="resourceKind" in (input as object);calls.push({capability:SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,action:resource?"authorize_resource":"require",input});
+      if(storage.deny)throw new Error("scope denied");
       if(resource)return {output:{id:"authorization",canonicalValue:(input as {value:string}).value},refs:["authorization:scope"]};
       return {output:{id:"authorization",scopePayload:{targets:["https://authorized.example/"]}},refs:["authorization:scope"]};
     },
   },{
     capability:SCENARIO_PROCESS_HOST_CAPABILITIES.execution,actions:["request_http","request_http_session"],async execute(input){calls.push({capability:SCENARIO_PROCESS_HOST_CAPABILITIES.execution,action:"request_http",input});
-      const url=(input as {url:string}).url,body=url.endsWith("/next")?"Next":"<html><a href='/next'>Next</a><a href='https://outside.example/'>Outside</a></html>";
+      if(storage.failRequest)throw new Error("unknown request outcome");
+      const url=(input as {url:string}).url,body=storage.unstable?String(calls.length):url.endsWith("/next")?"Next":"<html><a href='/next'>Next</a><a href='https://outside.example/'>Outside</a></html>";
       return {output:{receipt:{id:`network-${calls.length}`},status:200,headers:[{name:"content-type",value:url.endsWith("/next")?"text/plain":"text/html"}],
-        bodyBase64:Buffer.from(body).toString("base64"),responseBytes:Buffer.byteLength(body),bodyTruncated:false,replayed:false},refs:[`network-receipt:${calls.length}`]};},
+        bodyBase64:Buffer.from(body).toString("base64"),responseBytes:Buffer.byteLength(body),bodyTruncated:storage.truncated??false,replayed:false},refs:[`network-receipt:${calls.length}`]};},
   },{
     capability:SCENARIO_PROCESS_HOST_CAPABILITIES.artifacts,actions:["record","get","list"],async execute(input){calls.push({capability:SCENARIO_PROCESS_HOST_CAPABILITIES.artifacts,action:"record",input});
       return {output:{id:`artifact-${calls.length}`,contentRef:(input as {contentRef:string}).contentRef},refs:[(input as {contentRef:string}).contentRef]};},
@@ -57,8 +59,68 @@ function runtime(calls:Array<{capability:string;action:string;input:unknown}>,st
 }
 
 describe("Web black-box Scenario Process",()=>{
+  const comparison={experimentId:"experiment-one",hypothesisId:"hypothesis-one",baseline:{url:"https://authorized.example/"},candidate:{url:"https://authorized.example/next"}};
+  it("resumes a paired experiment in a new process without replaying completed observations",async()=>{
+    const calls:Array<{capability:string;action:string;input:unknown}>=[],storage:SurfaceStorage={state:null};let source=runtime(calls,storage);
+    try{
+      let compare=(await source.discover()).find(tool=>tool.name==="web.validation.compare")!;
+      expect(JSON.parse((await compare.execute({...comparison,maxRequests:1},context)).raw)).toMatchObject({status:"in_progress",completedRequests:1,findingVerified:false});
+      await source.close();source=runtime(calls,storage);compare=(await source.discover()).find(tool=>tool.name==="web.validation.compare")!;
+      const completed=JSON.parse((await compare.execute(comparison,{...context,idempotencyKey:"resume"})).raw);
+      expect(completed).toMatchObject({status:"complete",assessment:"repeatable_difference",completedRequests:4,findingVerified:false});
+      expect(completed.pairs).toHaveLength(2);
+      expect(calls.filter(row=>row.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.execution)).toHaveLength(4);
+      expect(calls.filter(row=>row.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.evidence)).toHaveLength(4);
+      await compare.execute(comparison,{...context,idempotencyKey:"read-completed"});
+      expect(calls.filter(row=>row.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.execution)).toHaveLength(4);
+      expect(JSON.stringify(storage.state)).not.toContain("<html>");
+      expect(JSON.stringify(storage.state)).not.toContain("https://");
+      await expect(compare.execute({...comparison,rounds:3},{...context,idempotencyKey:"changed"})).rejects.toThrow(/Tool Provider reported an error/);
+    }finally{await source.close();}
+  });
+  it.each(["unstable","truncated","same"] as const)("reports %s observations without claiming verification",async(mode)=>{
+    const calls:Array<{capability:string;action:string;input:unknown}>=[],source=runtime(calls,{state:null,unstable:mode==="unstable",truncated:mode==="truncated"});
+    try{
+      const compare=(await source.discover()).find(tool=>tool.name==="web.validation.compare")!;
+      const result=JSON.parse((await compare.execute({...comparison,...(mode==="same"?{candidate:{url:"https://authorized.example/",method:"HEAD"}}:{})},context)).raw);
+      expect(result).toMatchObject({status:"complete",findingVerified:false,assessment:mode==="same"?"no_observed_difference":`${mode}_observations`});
+    }finally{await source.close();}
+  });
+  it("blocks automatic replay after an unknown request outcome",async()=>{
+    const calls:Array<{capability:string;action:string;input:unknown}>=[],storage:SurfaceStorage={state:null,failRequest:true};let source=runtime(calls,storage);
+    try{
+      let compare=(await source.discover()).find(tool=>tool.name==="web.validation.compare")!;
+      await expect(compare.execute(comparison,context)).rejects.toThrow(/Tool Provider reported an error/);
+      await source.close();storage.failRequest=false;source=runtime(calls,storage);compare=(await source.discover()).find(tool=>tool.name==="web.validation.compare")!;
+      expect(JSON.parse((await compare.execute(comparison,{...context,idempotencyKey:"resume"})).raw)).toMatchObject({status:"interrupted",completedRequests:0});
+      expect(calls.filter(row=>row.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.execution)).toHaveLength(1);
+    }finally{await source.close();}
+  });
+  it("routes identity comparisons through Host sessions without raw credentials",async()=>{
+    const calls:Array<{capability:string;action:string;input:unknown}>=[],source=runtime(calls);
+    try{
+      const compare=(await source.discover()).find(tool=>tool.name==="web.validation.compare")!;
+      await compare.execute({...comparison,candidate:{...comparison.baseline,sessionId:"session-one"}},context);
+      const requests=calls.filter(row=>row.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.execution);
+      expect(requests).toHaveLength(4);
+      expect(requests[1]!.input).toMatchObject({sessionId:"session-one",sessionAuthorizationAction:"web.session.use"});
+      expect(requests[3]!.input).toMatchObject({sessionId:"session-one"});
+    }finally{await source.close();}
+  });
+  it("rejects ambiguous changes and scope denial before dispatch",async()=>{
+    const calls:Array<{capability:string;action:string;input:unknown}>=[],storage:SurfaceStorage={state:null};const source=runtime(calls,storage);
+    try{
+      const compare=(await source.discover()).find(tool=>tool.name==="web.validation.compare")!;
+      await expect(compare.execute({...comparison,candidate:comparison.baseline},context)).rejects.toThrow(/Tool Provider reported an error/);
+      await expect(compare.execute({...comparison,candidate:{...comparison.candidate,method:"HEAD"}},context)).rejects.toThrow(/Tool Provider reported an error/);
+      storage.deny=true;
+      await expect(compare.execute(comparison,context)).rejects.toThrow(/Tool Provider reported an error/);
+      expect(storage.state).toBeNull();
+      expect(calls.filter(row=>row.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.execution)).toHaveLength(0);
+    }finally{await source.close();}
+  });
   it("loads the package as a pure-data descriptor with local Skill and Knowledge",()=>{
-    expect(descriptor).toMatchObject({id:"traceforge.web-blackbox",version:"0.3.0",
+    expect(descriptor).toMatchObject({id:"traceforge.web-blackbox",version:"0.4.0",
       runtime:{hostCapabilities:expect.arrayContaining([SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,SCENARIO_PROCESS_HOST_CAPABILITIES.execution,
         SCENARIO_PROCESS_HOST_CAPABILITIES.artifacts,SCENARIO_PROCESS_HOST_CAPABILITIES.state,SCENARIO_PROCESS_HOST_CAPABILITIES.evidence,
         SCENARIO_PROCESS_HOST_CAPABILITIES.sessions,SCENARIO_PROCESS_HOST_CAPABILITIES.traffic])}});
@@ -88,16 +150,16 @@ describe("Web black-box Scenario Process",()=>{
     try{let explore=(await source.discover()).find(tool=>tool.name==="web.surface.explore")!;
       const first=await explore.execute({seeds:["https://authorized.example/"],maxRequests:1},context),firstOutput=JSON.parse(first.raw);
       expect(first).toMatchObject({status:"succeeded",summary:"Explored 1 authorized URL(s); 1 remain queued"});
-      expect(firstOutput).toMatchObject({coverage:{visitedCount:1,queuedCount:1,observationCount:1,budgetExhausted:true},resume:{revision:1}});
+      expect(firstOutput).toMatchObject({coverage:{visitedCount:1,queuedCount:1,observationCount:1,budgetExhausted:true},resume:{revision:2}});
       expect(firstOutput.observations[0]).toMatchObject({url:"https://authorized.example/",status:200,
         discoveredUrls:["https://authorized.example/next"],externalOrigins:["https://outside.example"]});
       await source.close?.();source=runtime(calls,storage);explore=(await source.discover()).find(tool=>tool.name==="web.surface.explore")!;
       const resumed=await explore.execute({seeds:[],maxRequests:1},{...context,idempotencyKey:"effect-resumed"}),resumedOutput=JSON.parse(resumed.raw);
       expect(resumed).toMatchObject({status:"succeeded",summary:"Explored 1 authorized URL(s); 0 remain queued"});
-      expect(resumedOutput).toMatchObject({coverage:{visitedCount:2,queuedCount:0,observationCount:2,budgetExhausted:false},resume:{revision:2}});
+      expect(resumedOutput).toMatchObject({coverage:{visitedCount:2,queuedCount:0,observationCount:2,budgetExhausted:false},resume:{revision:4}});
       expect(calls.filter(item=>item.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.artifacts)).toHaveLength(2);
       expect(calls.filter(item=>item.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.evidence)).toHaveLength(2);
-      expect(calls.filter(item=>item.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.state&&item.action==="compare_and_set")).toHaveLength(2);
+      expect(calls.filter(item=>item.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.state&&item.action==="compare_and_set")).toHaveLength(4);
     }finally{await source.close?.();}
   });
   it("uses identity handles for authenticated requests and reads only redacted Traffic descriptors",async()=>{

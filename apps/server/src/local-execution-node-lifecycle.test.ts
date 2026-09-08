@@ -22,6 +22,12 @@ function fixture() {
 }
 
 describe("local Execution Node lifecycle", () => {
+  it.skipIf(process.env.TRACEFORGE_TEST_MACOS_SEATBELT !== "1")("preflights a built macOS helper through its actual Seatbelt and cleanup path", async () => {
+    const status = await preflightLocalExecutionNode({ projectRoot: process.cwd(), env: {
+      TRACEFORGE_MACOS_SANDBOX_HELPER: join(process.cwd(), "packages/execution-node/native/darwin-arm64/traceforge-macos-sandbox"),
+    } });
+    expect(status).toMatchObject({ state: "ready", processReady: true, terminalReady: false, resourcePolicy: "sampled_terminate", backend: "traceforge-macos-native", helper: { releaseManifest: "verified" } });
+  });
   it("verifies packaged material, recovers residues and reports a secret-free ready status", async () => {
     const f = fixture(); const status = await preflightLocalExecutionNode({ projectRoot: f.root, platform: "linux", architecture: "x64", env: f.env, execute: f.execute, now: () => "2026-09-02T00:00:00.000Z" });
     expect(status).toMatchObject({ state: "ready", processReady: true, backend: "traceforge-linux-native", helper: { releaseManifest: "verified" },
@@ -37,7 +43,7 @@ describe("local Execution Node lifecycle", () => {
     await expect(preflightLocalExecutionNode({ projectRoot: f.root, platform: "linux", architecture: "x64", env: f.env, execute: async () => { throw new Error("denied"); } }))
       .resolves.toMatchObject({ state: "unavailable", reasonCode: "native_probe_failed" });
     await expect(preflightLocalExecutionNode({ projectRoot: f.root, platform: "darwin", architecture: "arm64", env: {} }))
-      .resolves.toMatchObject({ state: "unavailable", reasonCode: "platform_not_supported" });
+      .resolves.toMatchObject({ state: "unavailable", reasonCode: "helper_missing", recoveryHint: expect.stringContaining("No Linux host is required") });
   });
 
   it("keeps process execution unavailable for portable or direct Linux desktop launches", async () => {

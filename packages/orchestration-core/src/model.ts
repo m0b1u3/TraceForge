@@ -176,7 +176,7 @@ export interface RunDirective {
   targetWorkId: string;
   instruction: string;
   rationale: string;
-  issuedBy: "observer";
+  issuedBy: "observer" | "operator";
   createdAt: string;
 }
 

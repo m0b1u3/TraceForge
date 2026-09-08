@@ -6,7 +6,11 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./graph": "./src/graph.ts",
+    "./model-protocol": "./src/model-protocol.ts",
+    "./desktop-evidence": "./src/desktop-evidence.ts",
+    "./desktop-execution": "./src/desktop-execution.ts",
+    "./authorization-form": "./src/authorization-form.ts",
+    "./scenario-agent-events": "./src/scenario-agent-events.ts",
     "./proxy": "./src/proxy.ts"
   },
   "scripts": {

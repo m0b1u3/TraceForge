@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { ContextRecallRuntime } from "@traceforge/cognitive-runtime";
 import type Database from "better-sqlite3";
 import type { ScenarioPackageBinding, ScenarioRunState } from "@traceforge/orchestration-core";
 import { authorizeScenarioResource, ScenarioPackageRegistry, validateSkillRecord, type ScenarioPackageResource } from "@traceforge/scenario-sdk";
@@ -121,6 +122,11 @@ export class PackageContextDiscoverySource implements ExecutionToolDiscoverySour
       providedCapabilities: [`context.${operation}`], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only" as const, timeoutMs: 2000,
       execute: async (input, context) => this.execute(operation, input, context),
     }));
+    specs.push({ name: "context.recall", source: this.source, version: "1", priority: 100,
+      description: "Read an original context.read receipt page omitted from compressed history. Use its receiptKey; rechecks current source authorization. Never grants permission or verifies evidence.",
+      inputSchema: {type:"object", properties:{receiptKey:{type:"string",minLength:1,maxLength:512},offset:{type:"integer",minimum:0},digest:{type:"string",pattern:"^[a-f0-9]{64}$"}},required:["receiptKey"],additionalProperties:false},
+      providedCapabilities:["context.recall"], dependencyCapabilities:[], permissionRequirements:{}, risk:"read_only",timeoutMs:2000,
+      execute:(input,context)=>this.recall(input,context) });
     if (available.some(p=>p.resourceManifest?.resources.some(r=>r.context?.skill))) {
       for (const operation of ["prepare", "evaluate"]) specs.push({ name: `context.skill.${operation}`, source: this.source, version: "1", priority: 100,
         description: operation === "prepare" ? "Validate Skill input against a pinned contract and record a preparation receipt. Does not execute the skill or grant permissions."
@@ -132,6 +138,30 @@ export class PackageContextDiscoverySource implements ExecutionToolDiscoverySour
         execute: (input, context) => this.skill(operation, input, context) });
     }
     return specs;
+  }
+
+  private async recall(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+    try {
+      if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some(key=>!["receiptKey","offset","digest"].includes(key))) throw new Error("Invalid recall");
+      const args = input as {receiptKey:string;offset?:number;digest?:string};
+      const readCurrent = async (key: string) => {
+        const selection = this.selection(context);
+        if (!selection.scope.allowedActions.includes("context.recall") || selection.scope.deniedActions.includes("context.recall")) throw new Error("Recall not authorized");
+        const binding = new SqliteToolInvocationBindingStore(this.sqlite).get(key);
+        if (!binding || binding.tool.source !== this.source || binding.tool.name !== "context.read"
+          || binding.attribution.caseId !== context.caseId || binding.attribution.runId !== context.runId || binding.attribution.workId !== context.workId
+          || key !== `${selection.work.idempotencyKey}:${binding.invocationId}`) throw new Error("Recall ownership mismatch");
+        const receipt = await new SqliteToolReceiptStore(this.sqlite).get(key);
+        if (!receipt || receipt.status !== "succeeded" || !this.observationIsCurrent(receipt.raw, context)) throw new Error("Recall source unavailable");
+        return {text:receipt.raw, refs:receipt.refs};
+      };
+      const page = await new ContextRecallRuntime({readCurrent}).read({id:args.receiptKey,offset:args.offset,digest:args.digest}, context, context.signal);
+      const original = JSON.parse((await readCurrent(args.receiptKey)).text);
+      context.signal?.throwIfAborted();
+      return result({package:original.package,caseId:original.caseId,runId:original.runId,workId:original.workId,trust:"untrusted_context",
+        id:original.id,digest:original.digest,version:original.version,recall:{receiptKey:page.id,digest:page.digest,offset:page.offset,nextOffset:page.nextOffset,format:"original_receipt_json"},
+        content:page.text},page.refs);
+    } catch { return {status:"failed",summary:"Context recall rejected: unavailable, invalid, or unauthorized",raw:"",refs:[],retryable:false}; }
   }
 
   selection(context: ToolExecutionContext) {

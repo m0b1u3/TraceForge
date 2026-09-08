@@ -1,6 +1,6 @@
 {
   "format": "traceforge.scenario-package.v1",
-  "package": { "id": "traceforge.web-blackbox", "version": "0.3.0", "schemaRevision": 1 },
+  "package": { "id": "traceforge.web-blackbox", "version": "0.4.0", "schemaRevision": 1 },
   "definition": {
     "kind": "web_blackbox",
     "version": 1,
@@ -18,10 +18,10 @@
       "planner": { "enabled": true, "pollIntervalMs": 30000, "maximumGraphNodes": 200, "maximumRecentEvents": 40, "maximumRunItems": 100, "maximumProposalsPerEvaluation": 4 },
       "observer": { "enabled": true, "pollIntervalMs": 30000, "maximumGraphNodes": 200, "maximumRecentEvents": 40, "maximumRunItems": 100 },
       "workerPools": [
-        { "id": "web-research", "role": "researcher", "workKinds": ["research"], "activation": "resident", "minimumInstances": 1, "maximumInstances": 4, "maxConcurrentWork": 1, "capabilities": ["scope.read", "web.request.replay", "web.surface.explore", "web.session.use", "web.traffic.read", "evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
-        { "id": "web-validation", "role": "validator", "workKinds": ["validation"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["scope.read", "web.request.replay", "web.surface.explore", "web.session.use", "web.traffic.read", "evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
-        { "id": "web-review", "role": "reviewer", "workKinds": ["review"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
-        { "id": "web-report", "role": "reporter", "workKinds": ["report"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["report.write", "knowledge.graph.read"] }
+        { "id": "web-research", "role": "researcher", "workKinds": ["research"], "activation": "resident", "minimumInstances": 1, "maximumInstances": 4, "maxConcurrentWork": 1, "capabilities": ["scope.read", "web.hypothesis.register", "web.request.replay", "web.surface.explore", "web.session.use", "web.traffic.read", "evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
+        { "id": "web-validation", "role": "validator", "workKinds": ["validation"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["scope.read", "web.validation.execute", "web.validation.review", "web.request.replay", "web.validation.compare", "web.surface.explore", "web.session.use", "web.traffic.read", "evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
+        { "id": "web-review", "role": "reviewer", "workKinds": ["review"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["web.validation.review", "evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
+        { "id": "web-report", "role": "reporter", "workKinds": ["report"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["web.report.build", "report.write", "knowledge.graph.read"] }
       ]
     },
     "phases": [
@@ -35,6 +35,16 @@
   },
   "authorizationPolicy": {
     "format": "traceforge.scenario-scope-policy.v1",
+    "form": {
+      "version": 1,
+      "description": "指定本次调查可以访问的范围。只有你确认后，授权才会生效。",
+      "actionLabels": { "scope.read": "读取授权范围", "web.request.replay": "发送受控请求", "web.session.use": "使用已授权身份", "web.traffic.read": "读取流量记录", "evidence.write": "保存证据", "report.write": "生成报告" },
+      "fields": [
+        { "path": ["targets"], "label": "精确地址", "description": "每行一个完整 URL，按原文精确匹配。不会自动包含同站点其他地址。", "type": "string-list", "required": false, "maximumItems": 128, "maximumLength": 4096 },
+        { "path": ["urlPrefixes"], "label": "允许的地址前缀", "description": "每行一个前缀，按原文开头匹配。站点根范围须包含末尾 /，例如 https://example.org/；不要使用裸域名或通配符。留空不授予前缀范围。", "type": "string-list", "required": false, "advanced": true, "maximumItems": 128, "maximumLength": 4096 },
+        { "path": ["identityHandles"], "label": "允许使用的身份句柄", "description": "每行一个宿主已保存的身份句柄，不要输入密码或令牌。留空不授予身份使用权限。", "type": "string-list", "required": false, "advanced": true, "maximumItems": 128, "maximumLength": 4096 }
+      ]
+    },
     "allowedActions": ["scope.read", "web.request.replay", "web.session.use", "web.traffic.read", "evidence.write", "report.write"],
     "deniedActions": [],
     "payload": { "maximumBytes": 65536, "maximumDepth": 8 },
@@ -60,10 +70,10 @@
     "resources": [
       {
         "id": "web.http-observation", "kind": "skill", "version": 1,
-        "locator": "package://skills/http-observation.md", "digest": "sha256:40ae5539014a161edb16a8d8e223a1da3c355569dc415eb301a107857b172a5c",
+        "locator": "package://skills/http-observation.md", "digest": "sha256:e894aba9329e7d4cffe55b6174cf21392d43ad3f3f60c151d7534463f1fb9ac0",
         "context": {
-          "type": "skill", "summary": "Bounded authorized HTTP observation workflow", "authorizationAction": "scope.read",
-          "requiredCapabilities": ["web.request.replay"], "phaseIds": ["scope_setup", "surface_mapping", "validation"], "references": ["web.verification-criteria"],
+          "type": "skill", "summary": "End-to-end bounded HTTP investigation: discovery, hypotheses, validation, review and report", "authorizationAction": "scope.read",
+          "requiredCapabilities": [], "phaseIds": ["scope_setup", "surface_mapping", "hypothesis_planning", "validation", "synthesis", "reporting"], "references": ["web.verification-criteria"],
           "readerRoles": ["worker", "planner", "observer"],
           "skill": {
             "version": 1,
@@ -75,7 +85,7 @@
       },
       {
         "id": "web.verification-criteria", "kind": "knowledge", "version": 1,
-        "locator": "package://knowledge/verification-criteria.md", "digest": "sha256:73ef605a479dd81eb5d60013715253d88441e5a5565487fee5e4d5025a7f3a8a",
+        "locator": "package://knowledge/verification-criteria.md", "digest": "sha256:69382db6731dcd669378d289c98a51aa69fe0a86a51d3f1397c4c926b120fe5a",
         "context": {
           "type": "knowledge", "summary": "Evidence threshold for security conclusions", "authorizationAction": "scope.read",
           "requiredCapabilities": [], "phaseIds": ["hypothesis_planning", "validation", "synthesis", "reporting"], "references": ["web.http-observation"],
@@ -86,9 +96,9 @@
   },
   "runtime": {
     "protocol": "traceforge-scenario-process-rpc", "protocolVersion": 1,
-    "id": "traceforge.web-blackbox", "version": "0.3.0", "source": "scenario:web_blackbox@1",
+    "id": "traceforge.web-blackbox", "version": "0.4.0", "source": "scenario:web_blackbox@1",
     "entrypoint": "package://runtime/main.mjs",
-    "providedCapabilities": ["scope.read", "web.request.replay", "web.surface.explore", "web.session.use", "web.traffic.read"],
-    "hostCapabilities": ["traceforge.scenario.authorization@1", "traceforge.scenario.execution@1", "traceforge.scenario.artifacts@1", "traceforge.scenario.state@1", "traceforge.scenario.evidence@1", "traceforge.scenario.sessions@1", "traceforge.scenario.traffic@1"]
+    "providedCapabilities": ["scope.read", "web.hypothesis.register", "web.validation.execute", "web.validation.review", "web.report.build", "web.request.replay", "web.validation.compare", "web.surface.explore", "web.session.use", "web.traffic.read", "web.browser.inspect", "web.browser.read"],
+    "hostCapabilities": ["traceforge.scenario.authorization@1", "traceforge.scenario.execution@1", "traceforge.scenario.artifacts@1", "traceforge.scenario.state@1", "traceforge.scenario.evidence@1", "traceforge.scenario.sessions@1", "traceforge.scenario.traffic@1", "traceforge.scenario.browser@1"]
   }
 }
