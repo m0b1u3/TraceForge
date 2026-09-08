@@ -30,12 +30,35 @@ async function host(fixture: ReturnType<typeof fixtureMcpNode>, server = config(
     contextResourceContents: [{ package: contextBinding, resourceId: "first", content: contextText }],
     toolDiscoverySources: [], mcpServers: [server], executionSchedulingLimits:{perWork:overrides.perWork??1} }, model: async (args) => {
     const c = JSON.parse(args.user);
+    if (!c.tools.some((tool: { name: string }) => tool.name === "fixture.mcp.observe")) return { type: "complete", summary: "No selected MCP tool", outputs: [] };
     if (c.transcript.some((t: { kind: string }) => t.kind === "tool")) return { type: "complete", summary: "Observed", outputs: [] };
     return { type: "invoke_tool", invocation: { id: "first", tool: "fixture.mcp.observe", input: overrides.invalidInput ? { extra: true } : {}, rationale: "Observe" } };
   } }); cleanup.push(() => h.sqlite.open ? h.close() : undefined); return h;
 }
 
 describe("MCP controlled foundation assembly", () => {
+  it("executes reviewed data-only input policies without host callbacks", async () => {
+    const f = fixtureMcpNode(), server = config(f);
+    for (const tool of server.tools) {
+      delete tool.validateInput; delete tool.authorizeInput;
+      tool.inputPolicy = { version: 1, fields: {}, resources: [] };
+    }
+    const h = await host(f, server);
+    await h.start(); await eventually(async () => (await h.state()).workItems[0]?.status === "completed");
+    expect(f.calls()).toBe(1);
+  });
+  it("desktop tool selection filters actual model input without starting an invocation", async () => {
+    const f = fixtureMcpNode(), h = await host(f);
+    const snapshot = await h.request("/api/desktop/configuration");
+    const pkg = snapshot.packages[0];
+    await h.request("/api/desktop/configuration", {
+      package: pkg.package, expectedRevision: pkg.revision, resources: [],
+      mcp: pkg.mcp.map((m: { source: string; profileDigest: string }) => ({ source: m.source, profileDigest: m.profileDigest, enabled: false, tools: [] })),
+    });
+    await h.start(); await eventually(async () => (await h.state()).workItems[0]?.status === "completed");
+    expect(f.calls()).toBe(0); expect(f.starts).toHaveLength(1);
+    expect(h.requests[0]!.tools.some((tool: { name: string }) => tool.name === "fixture.mcp.observe")).toBe(false);
+  });
   it("retains discovery against the shared global quota across sources and restart",async()=>{
     const f=fixtureMcpNode(),sqlite=database();cleanup.push(()=>{sqlite.close();});
     const capacity=new ProcessExecutionCapacity(sqlite,new ToolProviderFairScheduler({global:1,maximumWaitMs:15}));

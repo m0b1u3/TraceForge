@@ -1,3 +1,5 @@
+import { DesktopReplySchema } from "@traceforge/shared/desktop-replies";
+
 /** Host-only transport injection. No provider calls, tokens, or UI demo fallback. */
 export interface SavedConversation { id: string; caseId: string; title: string; createdAt: string }
 export interface SavedMessage {
@@ -48,6 +50,21 @@ export class ConversationClient {
     const result = message(await this.request(`/api/desktop/conversations/${requireId(conversationId)}/messages`, "POST", { commandId: requireId(commandId), text }), conversationId);
     if (result.commandId !== commandId || result.text !== text) throw new ConversationRequestError("invalid_response");
     return result;
+  }
+  async requestReply(conversationId: string, messageId: string): Promise<string | undefined> {
+    const response = await this.transport(`/api/desktop/conversations/${requireId(conversationId)}/replies/${requireId(messageId)}`, { method: "POST", body: "{}" });
+    const body = await response.json();
+    // These are explicit pre-inference refusals. The message stays saved and the
+    // conversation offers a deliberate retry after configuration/capacity changes.
+    if ([409, 503].includes(response.status) && record(body)) {
+      const notices: Record<string, string> = { reply_busy: "消息已保存，但另一条回复仍在生成。待它结束后，可点击“请求助手回复”。",
+        reply_capacity_reached: "消息已保存，但本地回复容量已满，未调用模型。",
+        streaming_model_unavailable: "消息已保存，模型尚未就绪或不支持流式回复。请检查模型设置，之后点击“请求助手回复”。" };
+      if (notices[String(body.error)]) return notices[String(body.error)];
+    }
+    if (!response.ok) throw new ConversationRequestError("unknown", response.status);
+    const reply = DesktopReplySchema.parse(body);
+    if (reply.conversationId !== conversationId || reply.messageCommandId !== messageId) throw new ConversationRequestError("invalid_response");
   }
   async restore(conversationId: string, signal?: AbortSignal): Promise<{ conversation: SavedConversation; messages: SavedMessage[] }> {
     requireId(conversationId);

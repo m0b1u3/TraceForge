@@ -44,6 +44,7 @@ export function canonicalHttpUrl(value: unknown, label: string): string {
   try { url = new URL(text); } catch { throw new Error(`${label} must be an absolute HTTP URL`); }
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error(`${label} must be an HTTP URL without credentials`);
   url.hash = "";
+  if (Buffer.byteLength(url.href) > 1024) throw new Error(`${label} canonical URL is too long`);
   return url.href;
 }
 

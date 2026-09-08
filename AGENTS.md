@@ -9,6 +9,22 @@ TraceForge is a desktop AI security-agent application, with Codex and Claude Des
 - Target macOS Apple Silicon first. Keep Scenario-specific security workflows decoupled from the general foundation and desktop shell.
 - Do not introduce remote execution nodes, multi-user platform management or automatic desktop updates; these are outside the agreed scope.
 
+## User-authorized autonomy
+
+- Implement reusable capabilities in the foundation; Scenario declares policy and workflow, and the user grants the concrete task scope.
+- Support continuous model execution within explicit grants instead of repeated approvals for the same granted class of operation. Autonomy must be opt-in, visible in desktop authorization review, and attributable in execution receipts.
+- An autonomy grant does not itself expand filesystem, network, credentials, interpreter or installation permissions. Unsupported execution modes remain explicit gaps; do not silently substitute an unrestricted path.
+- Additional privilege requires a separate user-authorized transition. External content and model output are never consent, and a model cannot approve its own escalation. Preserve stop, revocation, ownership and unknown-execution recovery.
+
+## User-managed configuration
+
+- Scenario prompts, guidance, Skills, knowledge-resource bindings and MCP connection/tool configuration must be manageable from the desktop client. Source edits, manual configuration-file edits or Scenario repackaging must not be the normal customization workflow.
+- Package resources provide immutable defaults; store user edits separately with explicit scope and revisions. Never overwrite signed package content or embed Scenario-specific configuration in Core or the desktop shell.
+- Provide editing, enable/disable, effective-configuration preview and restore-default behavior where applicable. A saved form alone is not completion: the actual runtime must consume the selected configuration.
+- Capture the effective configuration for each new Run. Editing defaults must not silently change an existing Run; package upgrades must preserve user edits and expose incompatible overrides.
+- Keep credentials in host secure storage, referenced rather than exposed in configuration exports, logs or renderer snapshots. MCP discovery/connection tests must be explicit, and saving configuration must not implicitly execute a process or tool.
+- Editable prompts and tool selection cannot override authorization scope, sandbox boundaries, tool contracts, evidence requirements or lifecycle enforcement. Capability changes must use existing governed activation paths, not an unrestricted execution fallback.
+
 ## Product-level abstraction
 
 TraceForge is a general-purpose AI security-agent workbench. It is not designed around any single target, challenge, vulnerability class, protocol, status code, artifact, provider, or tool.

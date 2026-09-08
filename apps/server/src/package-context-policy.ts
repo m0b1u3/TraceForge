@@ -7,6 +7,7 @@ import { PackageContextDiscoverySource } from "./package-context-resources.js";
 import { SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 import type { RunContextPolicy } from "./run-context-policy.js";
 import type { ToolReceiptContext } from "./tool-receipt-context.js";
+import type { DesktopConfigurationStore } from "./desktop-configuration.js";
 
 /** Re-project audit originals; never edit a receipt, old snapshot, or recovery checkpoint. */
 export class PackageContextPolicy implements WorkerModelContextPolicy {
@@ -14,14 +15,21 @@ export class PackageContextPolicy implements WorkerModelContextPolicy {
   private readonly receipts: SqliteToolReceiptStore;
   private readonly distiller = new BoundedOutputDistiller();
   constructor(private readonly sqlite: Database.Database, private readonly resources: PackageContextDiscoverySource,
-    private readonly runContext?: RunContextPolicy, private readonly toolReceipts?: ToolReceiptContext) {
+    private readonly runContext?: RunContextPolicy, private readonly toolReceipts?: ToolReceiptContext,
+    private readonly configuration?: DesktopConfigurationStore) {
     this.bindings = new SqliteToolInvocationBindingStore(sqlite);
     this.receipts = new SqliteToolReceiptStore(sqlite);
   }
 
+  extensionToolAllowed: ((runId: string, source: string) => boolean) | undefined;
+
   async prepare(input: WorkerModelRequest) {
     if (input.transcript.length > 512) throw new Error("Context projection transcript budget exceeded");
     const request = structuredClone(input);
+    if (this.extensionToolAllowed) request.tools = request.tools.filter(tool => this.extensionToolAllowed!(input.assignment.runId,tool.source));
+    if (this.configuration) {
+      request.tools = request.tools.filter(tool => this.configuration!.toolAllowed(input.assignment.runId, tool.source, tool.name));
+    }
     const context = { workerId: input.worker.id, runId: input.assignment.runId, workId: input.assignment.work.id,
       caseId: input.assignment.runContext.caseId, scopeRef: input.assignment.runContext.scopeRef,
       leaseId: input.assignment.leaseId, leaseExpiresAt: input.assignment.leaseExpiresAt,

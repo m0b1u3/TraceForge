@@ -21,6 +21,7 @@
     "@traceforge/execution-node": "workspace:*",
     "@traceforge/llm": "workspace:*",
     "@traceforge/model-runtime": "workspace:*",
+    "@traceforge/resource-runtime": "workspace:*",
     "@traceforge/orchestration-core": "workspace:*",
     "@traceforge/scenario-sdk": "workspace:*",
     "@traceforge/shared": "workspace:*",

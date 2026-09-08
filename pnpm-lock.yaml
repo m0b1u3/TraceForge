@@ -84,6 +84,9 @@ importers:
       '@traceforge/orchestration-core':
         specifier: workspace:*
         version: link:../../packages/orchestration-core
+      '@traceforge/resource-runtime':
+        specifier: workspace:*
+        version: link:../../packages/resource-runtime
       '@traceforge/scenario-sdk':
         specifier: workspace:*
         version: link:../../packages/scenario-sdk
@@ -211,6 +214,19 @@ importers:
   packages/model-runtime: {}
 
   packages/orchestration-core: {}
+
+  packages/resource-runtime:
+    dependencies:
+      parse5:
+        specifier: ^8.0.1
+        version: 8.0.1
+      yauzl:
+        specifier: ^3.4.0
+        version: 3.4.0
+    devDependencies:
+      '@types/yauzl':
+        specifier: ^3.4.0
+        version: 3.4.0
 
   packages/scenario-sdk:
     dependencies:

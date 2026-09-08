@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";
 import type Database from "better-sqlite3";
-import { evolve, type ScenarioEvent, type ScenarioRunState } from "@traceforge/orchestration-core";
+import { evolve, normalizeRetriedInquiries, type ScenarioEvent, type ScenarioRunState } from "@traceforge/orchestration-core";
 
 export const historyHash = (body: string | Buffer) => createHash("sha256").update(body).digest("hex");
 const maximumBytes = 16 * 1024 * 1024, maximumStateBytes = 2 * 1024 * 1024;
@@ -153,7 +153,7 @@ export function readHistoryState(sqlite: Database.Database, runId: string, throu
       const saved = JSON.parse(row.body) as { format: number; reducerVersion: number; runId: string; revision: number; bodyDigest: string; state: ScenarioRunState };
       if (saved.format !== 1 || saved.reducerVersion !== 1 || saved.runId !== runId || saved.revision !== selected.last_revision || saved.bodyDigest !== selected.body_digest
         || saved.state?.id !== runId || saved.state.revision !== saved.revision) throw new Error("Run history snapshot version or binding mismatch");
-      state = saved.state; start = saved.revision;
+      state = normalizeRetriedInquiries(saved.state); start = saved.revision;
     }
     if (end - start > 5000) throw new Error("Run replay tail budget exceeded; archive earlier ranges first");
     let bytes = 0;

@@ -79,6 +79,22 @@ afterEach(() => {
 });
 
 describe("independent Run Planner", () => {
+  it("answers a durable inquiry in one evaluation and queues the original checkpoint without a new Work",async()=>{
+    const f=setup([{action:"answer",workId:"question-work",inquiryId:"question",answer:"Inspect the second candidate using the existing scope",rationale:"Resolve ambiguity"},{action:"wait",rationale:"Work can continue"}]);
+    const command=(command:Parameters<typeof f.runtime.execute>[0]["command"])=>f.runtime.execute({runId:"run_1",commandId:`test:${f.runtime.load("run_1")!.revision}`,expectedRevision:f.runtime.load("run_1")!.revision,command});
+    command({type:"propose_work",proposal:{id:"question-work",kind:"research",title:"Inspect",objective:"Inspect",idempotencyKey:"question-work"},at});
+    command({type:"claim_work",workId:"question-work",leaseId:"question-lease",workerId:"worker",workerRoles:["researcher"],workerCapabilities:capabilities,workerCurrentWork:0,workerMaxConcurrentWork:1,leaseExpiresAt:"2099-01-01T00:00:00.000Z",at});
+    command({type:"checkpoint_work",workId:"question-work",leaseId:"question-lease",checkpointId:"checkpoint",payloadRef:"checkpoint:question",progressSummary:"Question persisted",at});
+    command({type:"block_work",workId:"question-work",leaseId:"question-lease",reason:"Which candidate next?",inquiry:{id:"question",refs:[]},at});
+    expect(f.runtime.load("run_1")!.status).toBe("running");
+    expect(()=>command({type:"continue_work",workId:"question-work",checkpointRef:"checkpoint:question",authorizationRef:"audit",reason:"Continue",at})).toThrow("Pending inquiry");
+    expect(()=>command({type:"retry_blocked_work",workId:"question-work",replacementWorkId:"replacement",idempotencyKey:"replacement",authorizationRef:"audit",reason:"Retry",at})).toThrow("Pending inquiry");
+    expect(()=>command({type:"advance_phase",to:"surface_mapping",at})).toThrow("unsettled work");
+    await f.supervisor.tick();expect(f.model.calls).toBe(1);
+    expect(f.runtime.load("run_1")!.workItems).toMatchObject([{id:"question-work",status:"queued",resumeFromCheckpoint:true,inquiry:{status:"answered"}}]);
+    expect(f.runtime.load("run_1")!.directives.at(-1)).toMatchObject({issuedBy:"planner",targetWorkId:"question-work"});
+    await f.supervisor.tick();await f.supervisor.tick();expect(f.model.calls).toBe(2);
+  });
   it("reevaluates shared work that changes while the model is thinking", async () => {
     const wait = {action:"wait", rationale:"Await active work"} as const;
     const {runtime, model, supervisor, plannerStore} = setup([wait, wait]);

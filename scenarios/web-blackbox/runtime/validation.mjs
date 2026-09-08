@@ -45,6 +45,8 @@ export function canonicalHttpUrl(value, label) {
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
         throw new Error(`${label} must be an HTTP URL without credentials`);
     url.hash = "";
+    if (Buffer.byteLength(url.href) > 1024)
+        throw new Error(`${label} canonical URL is too long`);
     return url.href;
 }
 export function shaBytes(value) { return createHash("sha256").update(value).digest("hex"); }

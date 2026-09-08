@@ -154,6 +154,68 @@ paper 是主阅读面和侧区底色；soft 用于用户消息与轻量辅助区
 
 实现来源：`apps/web/renderer/run-interaction.tsx`、`host-workbench.css`。本批浏览器合成状态截图为 `output/playwright/interaction-desktop.png` 与 `output/playwright/interaction-narrow.png`；未进行真实模型运行，不构成 Electron 原生桌面或真实执行整链验收。
 
+### Host configuration settings · 2026-09-08
+
+宿主设置延续白底“行动谱面”，以“模型连接”和“场景与扩展”分类导航进入配置。分类使用浅灰选中底与细分隔线，首次打开场景分类才读取配置；分类间切换保留已打开的场景编辑状态。设置页隐藏对话输入框，保留全局状态与错误提示。
+
+场景配置容器最大宽度（980px），顶部白底工具栏随滚动保留场景选择、重新读取与保存动作，底部再次提供保存入口。资源区为列表与正文两列：列表宽度（140–220px）、列间距（24px），资源名称下显示类型，选中项为浅灰底。正文先展示摘要、适用角色与阶段，再展示启用开关和指导内容；不可编辑资源显示原因。白底细边文本框圆角（8px），最小高度（280px），可纵向调整大小；辅助修订与状态文字为（13px）。在（700px）及以下改为单列，资源列表横向排列并换行。
+
+“查看包内默认内容”使用原生 details 展开只读正文，浅灰阅读面最大高度（360px），长行折行且可聚焦滚动。“恢复默认内容”先显示行内确认，确认只改变草稿，保存后生效；正文来源明确区分默认内容与用户修改。修订编号、未保存状态和保存回执紧邻编辑动作，文案说明配置用于新 Run（界面称“新任务”），已有任务保持原配置。
+
+MCP 区仅展示宿主已审核连接：连接启用开关下按需展开工具复选列表，并显示已选数量；连接禁用时工具选择不可操作。界面明确此处不创建连接、不启动进程，配置不能扩大授权或绕过沙箱。这是已实现资源编辑与已审核工具选择的组件记录，不表示完整配置管理需求均已完成。
+
+有草稿时禁用场景切换，重新读取须确认丢弃；读取或保存失败保留草稿，以 alert 提示，成功回执使用 status。保存处理中禁用编辑及重复保存；未保存或处理中阻止离开设置，并提示返回场景分类保存或确认丢弃。窗口离开时对未保存草稿触发浏览器提示，这不代表草稿已持久保存。焦点使用（2px）灰色轮廓、偏移（3px），确认区通过上下细线与正文区分。
+
+“我的 Skills 与指导”沿用白色资源列表、正文编辑器与显式保存流程，可新建独立文本 Skill、角色指导和知识资料，编辑名称、类型、正文及启停状态。读取边界选自包内可编辑且声明角色的父资源；角色和阶段选项来自该父资源，阶段不选表示继承全部。没有可继承边界时说明原因并禁用新建。资源列表附类型与启停状态，保持上述两列布局和（700px）单列断点。
+
+正文导入使用文件选择控件，仅接受不超过（64 KiB）的有效 UTF-8 Markdown / TXT；导入不安装或执行脚本。已有正文时先显示“替换正文”行内确认，等待处理期间禁用资源编辑、切换、新建及父级保存、重新读取，并阻止离开设置。启动导入收起删除确认，替换待确认时不能再发起删除。删除使用独立行内确认，导入替换和删除均先改变草稿，保存后影响后续任务，已有任务保留原配置；读取失败通过 alert 说明原因。
+
+实现来源：`apps/web/renderer/configuration-settings.tsx`、`configuration-settings.css`、`user-resources.tsx`、`workbench-settings.tsx`、`host-workbench.tsx`。用户资源浏览器截图为 `output/playwright/user-resources-desktop.png` 与 `output/playwright/user-resources-narrow.png`；上述说明以实际组件为依据，不构成 Electron 原生桌面或真实模型执行整链验收，MCP 新连接编辑仍不在本组件能力内。
+
+### Host MCP connection settings · 2026-09-08
+
+MCP 连接管理扩展既有白色 Operate 设置面，沿用细灰分隔线、浅灰选中项和连接列表／正文两列布局；不新增全局视觉 token。连接列表显示启用状态与草稿修订，正文按连接配置、保存、显式测试发现、工具审核及启用顺序组织。在（700px）及以下正文改为单列，连接列表横向换行，操作按钮保持可换行。
+
+“保存连接”仅保存修订；“测试并发现工具”通过行内确认明确展示将连接的服务或执行的本地程序及文件访问范围。发现后以原生 details 逐项展开工具、可聚焦的输入契约和资源授权选择，再由“审核并启用”确认激活。“当前生效”单独按需展开修订详情，使已保存草稿与实际启用状态可辨。停用和删除保留独立动作与结果回执。
+
+凭证使用仅写入的密码输入框，以已保存／未设置提示替代回显；安全存储不可用时禁用输入，另设清除新修订凭证开关。失败用 alert 保留配置草稿并说明凭证输入已清空，成功用 status 表达对应操作结果；未保存编辑、待确认和处理中状态阻止重复操作及离开设置。
+
+实现来源：`apps/web/renderer/mcp-settings.tsx`、`configuration-settings.css`。此独立连接组件补充上方场景配置内的已审核工具选择；以上为组件实现记录，不构成 Electron 原生桌面或真实服务执行整链验收。
+
+### Host conversation journey · 2026-09-08
+
+宿主新会话延续白色阅读面，空态以“这次想调查什么？”和简短授权说明引导直接输入，并提供配置模型与工具、继续已有会话入口。输入框随正文增高，最高（180px）后内部滚动；Enter 发送、Shift+Enter 换行，输入法组合期间不发送。首次发送创建会话并保存说明，后续仍须明确确认范围与启动调查，不自动执行。
+
+顶部提供新建对话，快捷键为 Cmd/Ctrl+Shift+N；Cmd/Ctrl+K 打开会话记录并聚焦标题搜索，Cmd/Ctrl+逗号进入设置。会话记录以细分隔线列表呈现标题和创建日期，支持标题筛选与无匹配反馈。新建返回输入框；设置未保存或处理中时保留既有离开保护。
+
+未发送文本按会话分别保留为当前窗口会话草稿，新会话也有独立草稿；输入区显示字数与“窗口草稿”，明确关闭前需发送或复制。窗口存储失败通过 alert 提示，有文本且无法保留时阻止会话切换；这不表示跨窗口或应用重启后的持久恢复。发送确认保存后清理对应草稿。
+
+对话正文独立滚动，读者位于末尾附近时跟随新增内容；向上阅读时保持当前位置，并在底部中央显示白底细边的“回到最新内容”按钮。点击后恢复跟随；切换会话或面板会重置位置，对话从末尾显示，其他面板从顶部显示，不声称跨切换记忆阅读位置。
+
+实现来源：`apps/web/renderer/host-workbench.tsx`、`host-workbench.css`、`conversation-drafts.ts`、`conversation-viewport.tsx`。本节仅记录当前组件行为，沿用宿主视觉，不改变独立预览 token，也不构成 Electron 原生桌面或真实执行整链验收。
+
+### Host unified composer and pause / resume · 2026-09-08
+
+统一输入框延续现有白色桌面、浅底圆角输入面与深灰圆形发送按钮。输入框上方以“发送到”下拉框明确本条消息用途：新的调查说明，或补充给指定工作项；选择器的可访问名称为“消息用途”。仅有一个可接收工作项时可预选，多个候选时须明确选择。开始输入后固定接收目标；原任务结束或不可用时显示 alert 并保留草稿，禁止静默转发到其他任务或新的调查说明。
+
+补充模式下，文本框与发送按钮的可访问名称分别为“补充信息”和“发送补充信息”，旁文显示工作项名称及暂停状态。补充保存回执说明其供后续处理使用，不自动恢复调查、重试工具或扩大授权。用途区最高（240px）后内部滚动，白底细边选择器圆角（7px），操作按钮可换行，沿用宿主键盘焦点样式。
+
+运行时显式提供“暂停调查”；暂停后通过“恢复调查”展开名为“恢复调查确认”的行内组，说明恢复可能继续已授权工作，再由“确认恢复”提交或“保持暂停”收起。暂停本身是独立直接动作，恢复须二次确认；补充消息不能代替恢复确认。待处理请求与损坏记录继续禁用重复操作，并提供原请求核对或错误提示。
+
+实现来源：`apps/web/renderer/conversation-composer.tsx`、`run-control.tsx`、`host-workbench.css`。本节仅记录这些组件的当前行为与既有宿主视觉，不重写全局 token，不构成整产品成熟度、Electron 原生桌面或真实执行整链验收。
+
+### Host assistant replies and explicit message routing · 2026-09-08
+
+助手回复延续白色 macOS 风格对话桌面：用户浅灰消息居右，助手开放正文居左，署名旁以轻量状态文字区分正在回复、回复完成、已停止、中断与未完成。正文使用纯文本，保留换行并允许长行任意折行，字号（15px）、行高（1.8）、最大宽度（75ch）；不解析 HTML 或 Markdown，也不添加模拟打字动画。等待真实输出时显示“正在等待模型输出…”。
+
+回复下方提供“停止回复”和“复制回复”，透明底、细灰边、圆角（7px）、最小高度（36px），操作与回执可换行。停止仅针对本条助手回复，与“停止调查”分属不同操作；请求处理中禁用重复点击。停止、中断或失败仍保留已收到正文，并说明不会自动续写或重试，继续需要发送新消息。复制成功使用 status，失败使用 alert 并提示手动复制。完成回执明确本机保存不代表已验证的调查结论；上下文被截短时另行提示较早消息未发送给模型。
+
+本节更新上方统一输入框与新会话条目的消息用途：没有活动调查时默认“与助手对话（不执行工具）”；只有一个可接收工作项时可预选补充目标，有活动调查但目标不唯一时要求明确选择。下拉框同时保留“仅保存调查说明，稍后授权启动”，使模型对话、指定任务补充和仅保存三种用途可辨。输入后固定目标，目标失效时保留草稿并要求重新选择；补充消息仍不自动恢复调查、重试工具或扩大授权。
+
+打开会话、重连及“重新读取回复”只读取保存记录。同步失败保留已显示文字，通过 alert 提供读取恢复入口，不重新请求模型；尚无回复的已保存消息提供显式“请求助手回复”，记录未读完或另一条回复仍生成时禁用。模型未就绪、容量冲突或结果未确认分别显示对应说明，保留原消息。调查授权入口使用默认收起的原生 details：“授权并启动调查”展开后才呈现既有授权卡，容器最大宽度（640px），摘要字号（14px）；聊天回复不代替授权确认。
+
+实现来源：`apps/web/renderer/conversation-replies.tsx`、`conversation-composer.tsx`、`conversation-execution.tsx`、`host-workbench.css`。本批浏览器截图记录路径为 `output/playwright/replies-desktop.png` 与 `output/playwright/replies-narrow.png`；本节按组件实现记录增量，沿用既有窄屏布局与全局 token，不构成 Electron 原生桌面或真实模型执行整链验收。
+
 ### Buttons
 
 主按钮为深底白字，次按钮为白底细边。默认最小高度（40px），图标按钮通常为（40px）正方形。悬停改变底色和边界，按下有中性灰反馈。禁用状态灰底灰字。键盘焦点使用（2px）石板色外轮廓，偏移（4px）。引用按钮为带下划线的文字与方向图标。
@@ -192,3 +254,12 @@ paper 是主阅读面和侧区底色；soft 用于用户消息与轻量辅助区
 - Don't 从已退役的旧 Web 前端继承布局、配色或 API 假设。
 - Don't 把演示确认、消息添加或单条观察呈现为真实执行、模型送达或已验证发现。
 - Don't 将选择页的黑黄外围装饰或草图手绘线条带入此界面。
+# Task autonomy consent — 2026-09-08
+
+Numeric execution budgets use the same Scenario-driven authorization surface, not a new settings dashboard. Show bounded integer inputs and default/range help in the optional disclosure, then display the exact values during explicit review. Editing invalidates review and consent. The form owns vertical label/input/help layout, so it remains readable without a specific parent screen; text areas use the available width and number fields stay compact. Desktop and narrow synthetic screenshots were checked; no actual authorization was submitted.
+
+Model permission requests reuse the paper/ink authorization surface. When a Run pauses with a pending request, show the model's reason, a disclosed comparison of current scope and proposal, and the existing editable Scenario form. Proposal text is not consent. Approval requires the exact reviewed scope and a reason; rejection separately confirms unchanged authorization and continuation. Both actions explicitly say they continue the original Work. Manual scope amendments keep their existing save-without-resume semantics. Persist uncertain decisions before sending, reconcile the original receipt after remount, and keep Stop available. Expired or stale requests never silently become new grants. Impeccable hardening guided these state and recovery choices; desktop and narrow-window synthetic review screenshots showed no horizontal overflow.
+
+Paused tasks expose an explicit permission-change action using the existing Scenario-owned authorization form, prefilled from the current scope. A reason and renewed review are required; the original expiry stays visible. Saving never resumes work. Uncertain requests retain their identity across remounts and block resume until reconciled, while stopping remains available. This is an extension of the current authorization surface, not a new administration screen.
+
+The existing authorization surface now supports data-driven boolean consent fields. They start unchecked, retain the user's draft when returning from review, and are rendered explicitly as allowed/not allowed in the final authorization review. Scenario owns labels and scope meaning; the desktop renders no Scenario-specific policy. This extends the existing paper/ink authorization surface rather than introducing another settings dashboard. Scope consent must never be inferred from submitting a text field or merely opening the form.

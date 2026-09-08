@@ -1,12 +1,13 @@
 import { ConversationClient } from "./conversation-client";
 import type { SavedConversation, SavedMessage } from "./conversation-client";
 
-export type PendingCommand = { kind: "create"; commandId: string; title: string } | { kind: "send"; commandId: string; conversationId: string; text: string };
+export type PendingCommand = { kind: "create"; commandId: string; title: string } | { kind: "send"; commandId: string; conversationId: string; text: string; reply?: boolean } | { kind: "start"; commandId: string; messageCommandId: string; title: string; text: string; reply?: boolean };
 export interface JournalStorage { getItem(key: string): string | null; setItem(key: string, value: string): void }
 const key = "traceforge.desktop.conversation-command.v1";
 export class HostConversationController {
   pending: PendingCommand | null = null;
   busy = false;
+  replyNotice: string | undefined;
   constructor(private client: ConversationClient, private storage: JournalStorage) {
     const raw = storage.getItem(key);
     if (raw === null || raw === "null") return;
@@ -14,8 +15,10 @@ export class HostConversationController {
     const value = JSON.parse(raw);
     if (!value || typeof value.commandId !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(value.commandId) ||
       !(value.kind === "create" && typeof value.title === "string" && value.title.trim() && value.title.length <= 200 ||
-        value.kind === "send" && typeof value.conversationId === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(value.conversationId) && typeof value.text === "string" && value.text.trim() && value.text.length <= 16000)) throw new Error("本地待确认命令损坏，未发出请求。请保留记录后检查。");
+        value.kind === "send" && typeof value.conversationId === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(value.conversationId) && typeof value.text === "string" && value.text.trim() && value.text.length <= 16000 ||
+        value.kind === "start" && typeof value.messageCommandId === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(value.messageCommandId) && value.messageCommandId !== value.commandId && typeof value.title === "string" && value.title.trim() && value.title.length <= 200 && typeof value.text === "string" && value.text.trim() && value.text.length <= 16000)) throw new Error("本地待确认命令损坏，未发出请求。请保留记录后检查。");
     this.pending = value;
+    if (value.reply !== undefined && (value.kind === "create" || typeof value.reply !== "boolean")) throw new Error("Invalid reply intent");
   }
   list() { return this.client.list(); }
   restore(id: string) { return this.client.restore(id); }
@@ -28,7 +31,13 @@ export class HostConversationController {
     this.storage.setItem(key, JSON.stringify(next));
     this.pending = next; this.busy = true;
     try {
-      const result = next.kind === "create" ? await this.client.create(next.commandId, next.title) : await this.client.send(next.conversationId, next.commandId, next.text);
+      // Both identities survive a crash between creation and the first message.
+      // Reconciliation reuses the host's idempotent commands; it never starts a Run.
+      const result = next.kind === "start"
+        ? await this.client.send((await this.client.create(next.commandId, next.title)).id, next.messageCommandId, next.text)
+        : next.kind === "create" ? await this.client.create(next.commandId, next.title) : await this.client.send(next.conversationId, next.commandId, next.text);
+      this.replyNotice = undefined;
+      if (next.kind !== "create" && next.reply && "conversationId" in result) this.replyNotice = await this.client.requestReply(result.conversationId, result.commandId);
       this.storage.setItem(key, "null");
       this.pending = null;
       return result;

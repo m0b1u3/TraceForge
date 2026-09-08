@@ -4,6 +4,13 @@ import { AuthorizationFormSchema, buildAuthorizationScope, type AuthorizationFor
 const form: AuthorizationForm = { version: 1, description: "Reviewed resources", fields: [
   { path: ["scope", "items"], label: "资源", description: "Literal identifiers", type: "string-list", required: true, maximumItems: 2, maximumLength: 100 },
 ] };
+it("never infers boolean consent from prose, arrays or missing input", () => {
+  const policy = AuthorizationFormSchema.parse({ ...form, fields: [{ ...form.fields[0], type: "boolean", required: false }] });
+  expect(buildAuthorizationScope(policy, [])).toEqual({ scope: { items: false } });
+  expect(buildAuthorizationScope(policy, ["true"])).toEqual({ scope: { items: true } });
+  expect(buildAuthorizationScope(policy, ["false"])).toEqual({ scope: { items: false } });
+  expect(() => buildAuthorizationScope(policy, ["yes"])).toThrow();
+});
 it("builds only literal declared values without guessing resource semantics", () => {
   expect(buildAuthorizationScope(form, [" first\r\nsecond "])).toEqual({ scope: { items: ["first", "second"] } });
   expect(() => buildAuthorizationScope(form, [""])).toThrow("请填写");

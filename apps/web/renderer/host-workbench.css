@@ -17,6 +17,13 @@
 .host-workbench .message-user .message-body { background: #f4f4f4; border: 0; border-radius: 16px; padding: 12px 18px; }
 .host-workbench .sender { color: #686868; font-size: 12px; font-weight: 500; }
 .host-workbench .message p { font-size: 15px; line-height: 1.75; }
+.host-workbench .reply-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.8; margin: 12px 0; max-width: 75ch; }
+.host-workbench .reply-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin: 10px 0 24px; }
+.host-workbench .reply-actions button { background: transparent; border: 1px solid #dedede; border-radius: 7px; min-height: 36px; padding: 6px 12px; font-size: 13px; }
+.host-workbench .reply-actions button:hover:not(:disabled) { background: #f4f4f4; }
+.host-workbench .reply-actions > p { flex-basis: 100%; }
+.host-workbench .reply-explanation { color: #656565; }
+.host-workbench .conversation-authorization > summary { cursor: pointer; padding: 10px 0; font-size: 14px; }
 .conversation-authorization { max-width: 640px; margin: 32px 0; }
 .conversation-authorization > p { margin: 12px 0 22px; font-size: 16px; line-height: 1.7; }
 .host-workbench .execution-inline { border: 0; padding: 0; background: transparent; }
@@ -84,6 +91,27 @@
 .host-workbench .interaction-parameters { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: #fff; border: 1px solid #dedede; border-radius: 7px; font-size: 12px; }
 .host-workbench .run-control button { background: transparent; border: 1px solid #dedede; border-radius: 7px; padding: 6px 10px; font-size: 12px; }
 .host-workbench :focus-visible { outline: 2px solid #666; outline-offset: 3px; }
+.host-workbench .host-empty { max-width: 620px; margin: 12vh auto 40px; }
+.host-workbench .host-empty h2 { font-size: clamp(26px, 3vw, 34px); font-weight: 550; letter-spacing: -.03em; margin-bottom: 18px; }
+.host-workbench .host-empty p { color: #626262; line-height: 1.8; max-width: 48ch; }
+.host-welcome-actions, .host-session-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-block: 24px; }
+.host-session-search { display: grid; gap: 8px; margin-block: 24px; font-size: 14px; }
+.host-session-search input { min-width: 0; width: 100%; padding: 12px; border: 1px solid #dedede; border-radius: 8px; background: #fff; font: inherit; }
+.host-workbench .host-session-list { padding: 0; list-style: none; }
+.host-workbench .host-session-list button { display: flex; justify-content: space-between; gap: 20px; width: 100%; text-align: start; padding: 14px 12px; background: transparent; border: 0; border-bottom: 1px solid #ededed; border-radius: 0; }
+.host-session-list button span { min-width: 0; overflow-wrap: anywhere; }
+.host-session-list button small { flex-shrink: 0; color: #626262; font-variant-numeric: tabular-nums; }
+.host-workbench .host-composer textarea { max-height: 180px; overflow-y: auto; }
+.conversation-viewport { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.conversation-viewport .conversation-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.host-workbench .return-latest { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 9px 14px; border: 1px solid #dedede; background: #fff; color: #262626; border-radius: 20px; font-size: 13px; white-space: nowrap; }
+.return-latest svg { width: 16px; height: 16px; }
+.composer-routing { margin-bottom: 12px; max-height: 240px; overflow-y: auto; }
+.composer-routing label { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+.composer-routing select { flex: 1; min-width: 0; max-width: 100%; padding: 8px; background: #fff; border: 1px solid #dedede; border-radius: 7px; font: inherit; }
+.composer-routing p { font-size: 13px; line-height: 1.6; color: #626262; margin: 8px 0; }
+.host-workbench .run-control { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.run-control [role="group"] { flex-basis: 100%; }
 @media (max-width: 650px) {
   .host-workbench { grid-template-columns: 1fr; grid-template-rows: 50px minmax(0, 1fr) 54px; }
   .host-workbench .topbar { height: 50px; padding: 0 14px; gap: 12px; }
@@ -98,3 +126,19 @@
   .host-workbench .composer-footnote span { max-width: 130px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .host-workbench .message-user { max-width: 90%; }
 }
+.host-workbench .permission-change { display: grid; gap: 16px; width: 100%; min-width: 0; flex-basis: 100%; }
+.host-workbench .permission-change > p { margin: 0; line-height: 1.65; }
+.host-workbench .permission-change > label,
+.host-workbench .permission-change .authorization-form label:not(.execution-confirm) { display: grid; gap: 8px; min-width: 0; }
+.host-workbench .permission-change > label input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #dadada; border-radius: 7px; font: inherit; }
+.host-workbench .permission-change .authorization-form textarea { width: 100%; box-sizing: border-box; }
+.host-workbench .permission-change > button { justify-self: start; }
+.host-workbench .permission-change pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+.host-workbench .authorization-form input[type="number"] { width: min(100%, 12rem); padding: 10px 12px; box-sizing: border-box; border: 1px solid #dadada; border-radius: 7px; color: inherit; background: #fff; font: inherit; }
+.host-workbench .authorization-form label:not(.execution-confirm) { display: grid; gap: 8px; min-width: 0; margin-block: 18px; }
+.host-workbench .authorization-form textarea { width: 100%; box-sizing: border-box; }
+.host-workbench .authorization-options > div { display: grid; gap: 4px; }
+.host-workbench .authorization-form label > input[type="checkbox"] { justify-self: start; width: auto; }
+.host-workbench .permission-change h3 { margin: 0; font-size: 18px; }
+.host-workbench .permission-change [role="group"] { display: grid; gap: 12px; }
+.host-workbench .permission-change [role="group"] button { justify-self: start; }

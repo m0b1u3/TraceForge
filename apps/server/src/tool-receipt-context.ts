@@ -73,7 +73,11 @@ export class ToolReceiptContext {
     if(!owner || key!==`${owner.idempotencyKey}:${binding.invocationId}`) throw new Error("Receipt binding mismatch");
     const {scope,package:pkg}=new SqliteScenarioAuthorizationService(this.sqlite,this.packages).requireRun(run);
     if(!scope.allowedActions.includes("tool.recall") || scope.deniedActions.includes("tool.recall")) throw new Error("Receipt read not authorized");
-    for(const [kind,value] of [["tool.receipt",key],["tool.receipt.reader",reader.role],["tool.source",binding.tool.source]])
+    // Explicit namespace grants are still bounded by the Case/Run checks above.
+    // Legacy exact-key policies never gain a namespace fallback after denial.
+    const policy=pkg.authorizationPolicy;
+    const runNamespace="resources" in policy && policy.resources.some(rule=>rule.kind==="tool.receipt.scope");
+    for(const [kind,value] of [runNamespace?["tool.receipt.scope","current-run"]:["tool.receipt",key],["tool.receipt.reader",reader.role],["tool.source",binding.tool.source]])
       if(authorizeScenarioResource(pkg.authorizationPolicy,scope.payload,kind,value)!==value) throw new Error("Receipt scope denied");
     if(this.sqlite.prepare("SELECT 1 FROM tool_receipt_context_withdrawals WHERE receipt_key=?").get(key)) throw new Error("Receipt withdrawn");
     const catalog=this.inventory();

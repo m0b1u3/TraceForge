@@ -1,0 +1,10 @@
+{
+  "name": "@traceforge/resource-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "build": "tsc -p tsconfig.json" },
+  "dependencies": { "yauzl": "^3.4.0", "parse5": "^8.0.1" },
+  "devDependencies": { "@types/yauzl": "^3.4.0" }
+}

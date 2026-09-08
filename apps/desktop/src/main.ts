@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
+import { RequestScheduler } from "./request-scheduler.js";
 import { requireDesktopRenderer } from "./renderer-availability.js";
 import { ModelAccounts, ModelAccountManifestSchema, defaultModelAccounts } from "@traceforge/server/model-settings";
 import { createModelTokenStore } from "./model-token-store.js";
@@ -15,15 +16,24 @@ const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
 let server: FastifyInstance | null = null;
 let quitting = false;
+let createWindow: (() => Promise<void>) | undefined;
+let opening: Promise<void> | undefined;
+function showWindow() {
+  if (quitting) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show(); mainWindow.focus(); return;
+  }
+  if (!opening && createWindow) opening = createWindow().catch(error => {
+    dialog.showErrorBox("TraceForge window unavailable", error instanceof Error ? error.message : String(error));
+  }).finally(() => { opening = undefined; });
+}
 
 const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) app.quit();
 
 app.on("second-instance", () => {
-  if (!mainWindow) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  showWindow();
 });
 
 function desktopLlmSecretStore(path: string): LlmSecretStore {
@@ -93,7 +103,15 @@ async function start(): Promise<void> {
       available: () => safeStorage.isEncryptionAvailable() && !(process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text"),
       encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value),
     }));
+  const mcpSecrets = createModelTokenStore(join(paths.configDirectory,"mcp-secrets.bin"), {
+    available: () => safeStorage.isEncryptionAvailable() && !(process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text"),
+    encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value),
+  }, 2048);
   server = await buildServer(paths.database, paths.mcpConfig, paths.llmConfig, paths.root, webRoot, {
+    desktopResources: { secrets: { async read(ref) { return (await mcpSecrets.read(ref))?.accessToken; },
+      async write(ref,value) { await mcpSecrets.write(ref,{accessToken:value,binding:ref,expiresAt:8640000000000000}); } } },
+    desktopMcp: { secrets: { async read(ref) { return (await mcpSecrets.read(ref))?.accessToken; },
+      async write(ref,value) { await mcpSecrets.write(ref,{accessToken:value,binding:ref,expiresAt:8640000000000000}); } } },
     llmSecretStore: desktopLlmSecretStore(paths.llmSecrets),
     modelAccounts: accounts,
     browserInstallationPath: process.env.TRACEFORGE_BROWSER_INSTALLATION,
@@ -103,29 +121,26 @@ async function start(): Promise<void> {
   if (!address || typeof address === "string") throw new Error("desktop server did not bind a TCP port");
   const managementChannel = foundationHostControl(server).management();
   const localOrigin = `http://127.0.0.1:${address.port}`;
-  session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ["<all_urls>"] }, (details, callback) => {
-    const requestUrl = new URL(details.url);
-    const localApi = requestUrl.origin === localOrigin && requestUrl.pathname.startsWith("/api/");
-    const localWebSocket = requestUrl.protocol === "ws:" && requestUrl.hostname === "127.0.0.1"
-      && requestUrl.port === String(address.port) && requestUrl.pathname === "/ws";
-    callback({ requestHeaders: localApi || localWebSocket
-      ? { ...details.requestHeaders, Authorization: managementChannel.headers().authorization }
-      : details.requestHeaders });
-  });
-
+  // Renderer HTTP/WebSocket requests never receive host credentials. Only the
+  // validated IPC handlers below can use the in-memory management channel.
+  createWindow = async () => {
+  if (quitting || mainWindow && !mainWindow.isDestroyed()) return;
+  const scheduler = new RequestScheduler();
   mainWindow = new BrowserWindow({
     width: 1440, height: 920, minWidth: 1024, minHeight: 700,
-    show: false, backgroundColor: "#11100e",
+    show: false, backgroundColor: "#ffffff",
     webPreferences: {
       preload: join(moduleDirectory, "preload.cjs"), contextIsolation: true,
       nodeIntegration: false, sandbox: true, webSecurity: true,
     },
   });
+  const window = mainWindow;
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   const conversationBridge = createConversationBridge({
+    scheduler,
     webContentsId: mainWindow.webContents.id, origin: localOrigin,
     host: { request: async input => {
       if (!server) throw new Error("Desktop host unavailable");
@@ -148,8 +163,11 @@ async function start(): Promise<void> {
     },
     request: async (url, payload) => {
       if (!server) throw new Error("Desktop host unavailable");
-      const response = await server.inject({ url, method: payload === undefined ? "GET" : "POST", ...(payload === undefined ? {} : { payload: JSON.stringify(payload) }),
+      const response = await scheduler.schedule(payload !== undefined, () => {
+        if (!server) throw new Error("Desktop host unavailable");
+        return server.inject({ url, method: payload === undefined ? "GET" : "POST", ...(payload === undefined ? {} : { payload: JSON.stringify(payload) }),
         headers: { ...managementChannel.headers(), ...(payload === undefined ? {} : { "content-type": "application/json" }) } });
+      }, payload === undefined ? url : undefined);
       return { status: response.statusCode, body: response.json() };
     } });
   ipcMain.handle("models:request", (event, input: unknown) => modelBridge.request({
@@ -161,17 +179,25 @@ async function start(): Promise<void> {
     const destination = new URL(url);
     if (destination.origin !== localOrigin || destination.pathname !== "/") { event.preventDefault(); }
   });
-  mainWindow.once("ready-to-show", () => mainWindow?.show());
-  mainWindow.on("closed", () => { mainWindow = null; });
-  await mainWindow.loadURL(`http://127.0.0.1:${address.port}`);
+  mainWindow.once("ready-to-show", () => { if (!window.isDestroyed() && !quitting) window.show(); });
+  // macOS closes the window, not the application. Retain the window and its
+  // drafts/IPC while hidden; Dock activation restores it without another Server.
+  mainWindow.on("close", event => {
+    if (process.platform === "darwin" && !quitting) { event.preventDefault(); mainWindow?.hide(); }
+  });
+  mainWindow.on("closed", () => { if (mainWindow === window) mainWindow = null; });
+  try { await window.loadURL(localOrigin); }
+  catch (error) { if (!window.isDestroyed()) window.destroy(); throw error; }
+  };
+  await createWindow();
 }
 
-app.whenReady().then(start).catch((error) => {
+app.whenReady().then(() => { if (hasLock) return start(); }).catch((error) => {
   dialog.showErrorBox("TraceForge failed to start", error instanceof Error ? error.stack ?? error.message : String(error));
   app.exit(1);
 });
 
-app.on("activate", () => { if (mainWindow) mainWindow.show(); });
+app.on("activate", showWindow);
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("before-quit", (event) => {
   if (quitting || !server) return;

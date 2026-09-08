@@ -1,5 +1,6 @@
 export type KnowledgeNodeKind =
   | "entity"
+  | "inquiry"
   | "fact"
   | "hypothesis"
   | "evidence"

@@ -5,6 +5,31 @@ const origin = "http://127.0.0.1:41234";
 const sender = { webContentsId: 7, mainFrame: true, url: `${origin}/` };
 const input = { path: "/api/desktop/conversations", method: "GET" };
 describe("narrow desktop conversation bridge", () => {
+  it("allows only explicitly confirmed bounded permission changes on a fixed Run route",()=>{
+    const path="/api/desktop/conversations/first/execution/run/permissions";
+    const body={commandId:"change",runId:"run",expectedRevision:1,expectedScopeRevision:1,scope:{autonomous:true},reason:"Reviewed"};
+    expect(validateConversationRequest({path,method:"GET"})).toEqual({path,method:"GET"});
+    expect(()=>validateConversationRequest({path,method:"POST",body:JSON.stringify(body)})).toThrow();
+    expect(validateConversationRequest({path,method:"POST",body:JSON.stringify({...body,confirmed:true})}).method).toBe("POST");
+    expect(()=>validateConversationRequest({path,method:"POST",body:JSON.stringify({...body,confirmed:true,execute:"shell"})})).toThrow();
+  });
+  it("permits bounded pause and explicitly confirmed resume without policy overrides",()=>{
+    const body={commandId:"first",runId:"run",expectedRevision:1};
+    const path="/api/desktop/conversations/first/execution/resume";
+    expect(()=>validateConversationRequest({path,method:"POST",body:JSON.stringify(body)})).toThrow();
+    expect(validateConversationRequest({path,method:"POST",body:JSON.stringify({...body,confirmed:true})}).path).toBe(path);
+    expect(()=>validateConversationRequest({path,method:"POST",body:JSON.stringify({...body,confirmed:true,scope:"*"})})).toThrow();
+    expect(validateConversationRequest({path:path.replace("resume","pause"),method:"POST",body:JSON.stringify(body)}).method).toBe("POST");
+  });
+  it("allows only bounded declarative configuration edits, never launch code or authority overrides", () => {
+    const path = "/api/desktop/configuration", body = { package: { id: "neutral", version: "1", schemaRevision: 1 }, expectedRevision: 0,
+      resources: [{ id: "guide", enabled: true, content: "User guidance" }], mcp: [] };
+    expect(validateConversationRequest({ path, method: "GET" })).toEqual({ path, method: "GET" });
+    expect(validateConversationRequest({ path, method: "POST", body: JSON.stringify(body) }).path).toBe(path);
+    for (const extra of [{ shell: "execute" }, { scope: "*" }, { expectedRevision: -1 }])
+      expect(() => validateConversationRequest({ path, method: "POST", body: JSON.stringify({ ...body, ...extra }) })).toThrow();
+    expect(() => validateConversationRequest({ path, method: "GET", body: "{}" })).toThrow();
+  });
   it("validates operator commands and forbids arbitrary action input", () => {
     const common = { commandId: "command", runId: "run", workId: "work", expectedRevision: 3 };
     const path = "/api/desktop/conversations/first/execution/approval";

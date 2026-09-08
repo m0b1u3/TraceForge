@@ -86,8 +86,13 @@ export function evolve(state: ScenarioRunState | undefined, event: ScenarioEvent
         || state.workItems.some(w=>(w.status==="queued" && w.leaseId) || w.pendingApproval || ["running","waiting_approval"].includes(w.status)))throw new Error("Invalid preserved-state migration event");
       return {...state,scenarioPackage:{...event.to},definitionVersion:event.toDefinitionVersion,revision,updatedAt:event.at};
     case "work_proposed":
-    case "work_retry_authorized":
       return { ...state, workItems: [...state.workItems, event.work], revision, updatedAt: event.at };
+    case "work_retry_authorized":
+      // Older retry events could copy a pending question into the replacement.
+      // Replaying an explicitly authorized replacement retires that stale question,
+      // without creating a grant, answer, or continuation of the original Work.
+      return {...state,workItems:[...state.workItems.map(work=>work.id===event.sourceWorkId?{...work,inquiry:undefined}:work),
+        {...event.work,inquiry:undefined}],revision,updatedAt:event.at};
     case "work_claimed":
       return updateWork(state, event.workId, (work) => ({
         ...work,
@@ -161,7 +166,15 @@ export function evolve(state: ScenarioRunState | undefined, event: ScenarioEvent
     case "work_failed":
       return updateWork(state, event.workId, (work) => ({ ...work, status: "failed", error: event.error, resumeFromCheckpoint: false, finishedAt: event.at }), event.at);
     case "work_blocked":
-      return updateWork(state, event.workId, (work) => ({ ...work, status: "blocked", error: event.reason, resumeFromCheckpoint: false, finishedAt: event.at }), event.at);
+      return updateWork(state, event.workId, (work) => ({ ...work, status: "blocked", error: event.reason, resumeFromCheckpoint: false, finishedAt: event.at,
+        inquiry:event.inquiry?{...event.inquiry,question:event.reason,status:"pending" as const}:undefined,
+        ...(event.permissionRequest ? { permissionRequest: { ...event.permissionRequest, reason: event.reason, status: "pending" as const } } : {}) }), event.at);
+    case "permission_request_resolved":
+      return updateWork(state, event.workId, work => ({ ...work, permissionRequest: work.permissionRequest ? {
+        ...work.permissionRequest, status: event.approved ? "approved" : "rejected",
+      } : undefined }), event.at);
+    case "inquiry_answered":
+      return updateWork(state,event.workId,work=>({...work,inquiry:{...work.inquiry!,status:"answered",answer:event.answer}}),event.at);
     case "work_cancelled":
       return updateWork(state, event.workId, (work) => {
         const cancelledApproval = work.pendingApproval ? {
@@ -301,6 +314,14 @@ function requireLiveLease(work: ScenarioWorkItem, leaseId: string, at: string): 
   }
 }
 
+/** Compatibility projection for snapshots made before retries retired copied inquiries. */
+export function normalizeRetriedInquiries(state:ScenarioRunState):ScenarioRunState {
+  const retired=new Map(state.workItems.filter(work=>work.inquiry?.status==="pending"&&state.workItems.some(next=>next.retryOf===work.id)).map(work=>[work.id,work.inquiry!.id]));
+  if(!retired.size)return state;
+  return {...state,workItems:state.workItems.map(work=>retired.has(work.id)||(work.retryOf&&retired.get(work.retryOf)===work.inquiry?.id)
+    ? {...work,inquiry:undefined}:work)};
+}
+
 export class ScenarioKernel {
   constructor(readonly definition: ScenarioDefinition) {
     if (!definition.kind.trim()) throw new Error("Scenario kind is required");
@@ -429,6 +450,9 @@ export class ScenarioKernel {
     if (command.type === "resume_run") {
       if (!current) throw new Error("Scenario run has not started");
       if (current.status !== "paused") throw new RunLifecycleConflictError(current.id, current.status, "resume Run");
+      if (current.workItems.some(work => work.status === "blocked" && work.permissionRequest?.status === "pending")) {
+        throw new Error("Resolve the pending permission request before resuming the Run");
+      }
       if (!command.reason.trim()) throw new Error("Resuming a Run requires a reason");
       return [{ type: "run_resumed", reason: command.reason, requestedBy: command.requestedBy, at: command.at }];
     }
@@ -441,7 +465,7 @@ export class ScenarioKernel {
       return [{ type: "run_cancelled", reason: command.reason, at: command.at }];
     }
 
-    const state = command.type === "issue_directive" && command.directive.issuedBy === "operator" && current?.status === "paused"
+    const state = ((command.type === "issue_directive" && command.directive.issuedBy === "operator") || command.type === "resolve_permission_request") && current?.status === "paused"
       ? current : requireActive(current);
     const phase = requirePhase(this.definition, state.activePhaseId);
     switch (command.type) {
@@ -656,10 +680,48 @@ export class ScenarioKernel {
       case "block_work": {
         const work = requireWork(state, command.workId);
         requireLiveLease(work, command.leaseId, command.at);
-        return [{ type: "work_blocked", workId: work.id, leaseId: command.leaseId, reason: command.reason, at: command.at }];
+        if(command.inquiry&&(!work.latestCheckpoint||command.permissionRequest||!command.inquiry.id.trim()||command.inquiry.id.length>512
+          ||state.workItems.some(item=>item.inquiry?.id===command.inquiry!.id)
+          ||command.reason.length>4000||command.inquiry.refs.length>32||command.inquiry.refs.some(ref=>!ref.trim()||ref.length>4096)))throw new Error("Invalid structured inquiry");
+        if (command.permissionRequest && (!work.latestCheckpoint || !command.permissionRequest.id.trim()
+          || command.permissionRequest.id.length > 512 || command.reason.length > 2000
+          || state.workItems.some(candidate => candidate.permissionRequest?.id === command.permissionRequest!.id)
+          || !command.permissionRequest.scope || Array.isArray(command.permissionRequest.scope)
+          || typeof command.permissionRequest.scope !== "object" || JSON.stringify(command.permissionRequest.scope).length > 32768)) {
+          throw new Error("Permission request requires a checkpoint and bounded scope proposal");
+        }
+        return [{ type: "work_blocked", workId: work.id, leaseId: command.leaseId, reason: command.reason,
+          ...(command.inquiry?{inquiry:command.inquiry}:{}),
+          ...(command.permissionRequest ? { permissionRequest: command.permissionRequest } : {}), at: command.at },
+          ...(command.permissionRequest ? [{ type: "run_paused" as const, reason: command.reason, requestedBy: "system" as const, at: command.at }] : [])];
+      }
+      case "answer_inquiry": {
+        const work=requireWork(state,command.workId);
+        if(work.phaseId!==phase.id||work.status!=="blocked"||work.inquiry?.status!=="pending"||work.inquiry.id!==command.inquiryId||!work.latestCheckpoint
+          ||work.permissionRequest?.status==="pending"||work.pendingApproval||state.workItems.some(item=>item.retryOf===work.id)
+          ||!command.answer.trim()||command.answer.length>8000)throw new Error("Inquiry is no longer actionable");
+        return [{type:"inquiry_answered",workId:work.id,inquiryId:command.inquiryId,answer:command.answer,at:command.at},
+          {type:"directive_issued",directive:{id:`inquiry:${command.inquiryId}`,kind:"steer",targetWorkId:work.id,instruction:command.answer,
+            rationale:"Planner reply to a structured inquiry; no permission grant",issuedBy:"planner",createdAt:command.at},at:command.at},
+          {type:"work_continuation_authorized",workId:work.id,checkpointRef:work.latestCheckpoint.payloadRef,authorizationRef:command.inquiryId,reason:"Planner answered inquiry",at:command.at}];
+      }
+      case "resolve_permission_request": {
+        const work = requireWork(state, command.workId);
+        if (state.status !== "paused" || work.status !== "blocked" || work.permissionRequest?.status !== "pending"
+          || work.permissionRequest.id !== command.requestId || !work.latestCheckpoint || !command.reason.trim()
+          || work.pendingApproval || state.workItems.some(candidate => candidate.retryOf === work.id)) {
+          throw new Error("Permission request is no longer actionable");
+        }
+        return [
+          { type: "permission_request_resolved", workId: work.id, requestId: command.requestId, approved: command.approved, reason: command.reason, at: command.at },
+          { type: "work_continuation_authorized", workId: work.id, checkpointRef: work.latestCheckpoint.payloadRef,
+            authorizationRef: command.requestId, reason: command.reason, at: command.at },
+          { type: "run_resumed", reason: "User resolved permission request and confirmed continuation", requestedBy: "operator", at: command.at },
+        ];
       }
       case "continue_work": {
         const work = requireWork(state, command.workId);
+        if(work.inquiry?.status==="pending")throw new Error("Pending inquiry requires a Planner answer or explicit cancellation");
         if (work.status !== "blocked" && work.status !== "failed") throw new Error("Only blocked or failed Work can continue");
         if (work.phaseId !== state.activePhaseId || !phase.allowedWorkKinds.includes(work.kind)) throw new Error("Continuation must remain in the active phase");
         if (!work.latestCheckpoint || work.latestCheckpoint.payloadRef !== command.checkpointRef) throw new Error("Continuation checkpoint changed or is missing");
@@ -670,6 +732,7 @@ export class ScenarioKernel {
       }
       case "retry_blocked_work": {
         const source = requireWork(state, command.workId);
+        if(source.inquiry?.status==="pending")throw new Error("Pending inquiry prevents retry; answer or cancel it first");
         if (source.status !== "blocked") throw new Error("Only blocked Work can be retried");
         if (source.phaseId !== state.activePhaseId || !phase.allowedWorkKinds.includes(source.kind)) throw new Error("Retry must remain in the active phase");
         if (source.attempt >= source.maxAttempts) throw new Error("Work exhausted its attempt limit");
@@ -681,6 +744,7 @@ export class ScenarioKernel {
         if (!command.idempotencyKey.trim() || state.workItems.some((work) => work.idempotencyKey === command.idempotencyKey)) throw new Error("Retry requires a new idempotency key");
         const work: ScenarioWorkItem = {
           ...source, id: command.replacementWorkId, retryOf: source.id, idempotencyKey: command.idempotencyKey,
+          inquiry: undefined,
           status: "queued", workerId: null, leaseId: null, leaseExpiresAt: null,
           latestCheckpoint: null, resumeFromCheckpoint: false, pendingApproval: null, grantedActionKeys: [],
           resultSummary: null, error: null, createdAt: command.at, startedAt: null, finishedAt: null,
@@ -689,7 +753,7 @@ export class ScenarioKernel {
       }
       case "cancel_work": {
         const work = requireWork(state, command.workId);
-        if (terminalWork.has(work.status)) throw new Error(`Work ${work.id} is already ${work.status}`);
+        if (terminalWork.has(work.status) && !(work.status==="blocked" && work.inquiry?.status==="pending")) throw new Error(`Work ${work.id} is already ${work.status}`);
         if (work.status === "running") {
           if (!command.leaseId) throw new Error(`Cancelling running work ${work.id} requires its lease`);
           requireLease(work, command.leaseId);
@@ -716,7 +780,7 @@ export class ScenarioKernel {
         return [{ type: "directive_issued", directive: { ...command.directive, createdAt: command.at }, at: command.at }];
       }
       case "advance_phase": {
-        const unsettled = state.workItems.filter((work) => work.phaseId === phase.id && !terminalWork.has(work.status));
+        const unsettled = state.workItems.filter((work) => work.phaseId === phase.id && (!terminalWork.has(work.status) || work.status === "blocked" && work.inquiry?.status === "pending"));
         if (unsettled.length) {
           throw new Error(`Phase ${phase.id} still has unsettled work: ${unsettled.map((work) => work.id).join(", ")}`);
         }

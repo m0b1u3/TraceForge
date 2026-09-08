@@ -20,7 +20,8 @@ describe("application Scenario package assembly",()=>{
     mkdirSync(join(packageRoot,"skills"));mkdirSync(join(packageRoot,"knowledge"));mkdirSync(configRoot);
     const sourceRoot=join(process.cwd(),"scenarios/web-blackbox");
     const runtimePaths=readdirSync(join(sourceRoot,"runtime")).filter(name=>name.endsWith(".mjs")).sort().map(name=>`runtime/${name}`);
-    const paths=["scenario.json",...runtimePaths,"skills/http-observation.md","knowledge/verification-criteria.md"];
+    const sourceDescriptor=parseScenarioPackageDescriptor(JSON.parse(readFileSync(join(sourceRoot,"scenario.json"),"utf8")));
+    const paths=["scenario.json",...runtimePaths,...sourceDescriptor.resourceManifest!.resources.map(resource=>resource.locator.slice("package://".length))];
     for(const path of paths)writeFileSync(join(packageRoot,path),readFileSync(join(sourceRoot,path)));
     const descriptorBody=readFileSync(join(packageRoot,"scenario.json")),descriptor=parseScenarioPackageDescriptor(JSON.parse(descriptorBody.toString("utf8")));
     const manifest:ScenarioMaterialManifest={format:"traceforge.scenario-material.v1",package:{id:descriptor.id,version:descriptor.version,schemaRevision:descriptor.schemaRevision},
@@ -45,7 +46,7 @@ describe("application Scenario package assembly",()=>{
     try{const headers=foundationHostControl(app).management().headers();
       expect((await app.inject({url:"/api/scenarios/definitions",headers})).json()).toEqual(expect.arrayContaining([expect.objectContaining({kind:"web_blackbox",version:1})]));
       expect((await app.inject({url:"/api/scenarios/package-trust",headers})).json()).toMatchObject({dataDescriptorLoading:true,
-        packages:[{package:{id:"traceforge.web-blackbox",version:"0.4.0"},status:"reviewed_available"}]});
+        packages:[{package:{id:"traceforge.web-blackbox",version:"0.5.6"},status:"reviewed_available"}]});
       expect((await app.inject({url:"/api/execution/identities?caseId=missing",headers})).json()).toEqual([]);
     }finally{await app.close();}
   });

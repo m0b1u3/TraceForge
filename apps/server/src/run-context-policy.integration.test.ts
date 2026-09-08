@@ -56,6 +56,18 @@ async function fixture(shared = true) {
 function provider(evaluate: LlmProvider["extractJson"]): LlmProvider { return { extractJson: evaluate, async runTools() { throw new Error("No tools"); } }; }
 
 describe("Cross-role context provenance", () => {
+  it("retains a durable clue outside the transcript and removes it when its source is withdrawn",async()=>{
+    const f=await fixture(),graphStore=new SqliteEvidenceGraphStore(f.sqlite);
+    const receipt=(await new SqliteToolReceiptStore(f.sqlite).get("effect:read"))!;
+    const graph=graphStore.ensure("case",at);
+    const saved=graphStore.execute({caseId:"case",commandId:"anchor",expectedRevision:graph.revision,command:{type:"add_node",at,node:{id:"early-clue",caseId:"case",runId:"run",kind:"fact",title:"Early clue",summary:"An earlier observation still needs checking",status:"active",confidence:0,source:null,properties:{contextAnchor:{refs:receipt.refs.slice(0,1),priority:80}}}}}).state;
+    expect((await f.policy.prepare({...f.input,graph:saved},"planner")).manifest.contextAnchors.entries).toHaveLength(1);
+    const request={assignment:{runId:"run",work:f.input.run.workItems[0],runContext:{caseId:"case",directives:[]}},transcript:[],steering:[]} as unknown as WorkerModelRequest;
+    expect((await f.policy.projectWorker(request)).request.contextAnchors?.entries[0]?.id).toBe("early-clue");
+    f.store.revoke(contextContentDigest(contextText),"Withdrawn");
+    expect((await f.policy.projectWorker(request)).request.contextAnchors?.entries).toEqual([]);
+    expect(graphStore.ensure("case",at).nodes[0]!.summary).toContain("earlier observation");
+  });
   it.each(["planner", "observer"] as const)("filters withdrawn %s summaries and events without mutating audit originals", async (role) => {
     const f = await fixture(); const before = JSON.stringify(f.input);
     expect(JSON.stringify(await f.policy.prepare(f.input, role))).toContain(contextText);

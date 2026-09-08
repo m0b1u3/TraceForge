@@ -443,11 +443,13 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
     app.post(`/api/scenarios/runs/:runId/work/:workId/${action}`, async (request, reply) => {
       try {
         const { runId, workId } = z.object({ runId: z.string().min(1), workId: z.string().min(1) }).parse(request.params);
-        const body = workerActionBase.extend({ reason: z.string().min(1) }).parse(request.body);
+        const body = workerActionBase.extend({ reason: z.string().min(1),inquiry:z.object({id:z.string().min(1).max(512),refs:z.array(z.string().min(1).max(4096)).max(32)}).strict().optional(), permissionRequest: z.object({
+          id: z.string().min(1).max(512), scope: z.record(z.unknown()).refine(value => Buffer.byteLength(JSON.stringify(value)) <= 32768),
+        }).strict().optional() }).parse(request.body);
         requireWorkerLease(runId, workId, body.workerId, body.leaseId);
         const command: ScenarioCommand = action === "fail"
           ? { type: "fail_work", workId, leaseId: body.leaseId, error: body.reason, at: now() }
-          : { type: "block_work", workId, leaseId: body.leaseId, reason: body.reason, at: now() };
+          : { type: "block_work", workId, leaseId: body.leaseId, reason: body.reason,...(body.inquiry?{inquiry:body.inquiry}:{}), ...(body.permissionRequest ? { permissionRequest: body.permissionRequest } : {}), at: now() };
         return execute(runId, body.commandId, body.expectedRevision, command);
       } catch (error) { return sendError(reply, error); }
     });

@@ -11,6 +11,7 @@ import type {
 } from "./model.js";
 
 const allowedInitialStatuses: Record<KnowledgeNodeKind, KnowledgeNodeStatus[]> = {
+  inquiry:["active","resolved"],
   entity: ["active"],
   fact: ["active"],
   evidence: ["active"],
@@ -22,6 +23,7 @@ const allowedInitialStatuses: Record<KnowledgeNodeKind, KnowledgeNodeStatus[]> =
 };
 
 const allowedTransitions: Record<KnowledgeNodeKind, Partial<Record<KnowledgeNodeStatus, KnowledgeNodeStatus[]>>> = {
+  inquiry:{active:["resolved","invalidated"],resolved:["invalidated"]},
   entity: { active: ["needs_review", "invalidated"], needs_review: ["active", "invalidated"] },
   fact: { active: ["needs_review", "invalidated"], needs_review: ["active", "invalidated"] },
   evidence: { active: ["invalidated"], needs_review: ["active", "invalidated"] },

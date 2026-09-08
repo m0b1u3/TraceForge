@@ -97,6 +97,17 @@ function graph(): EvidenceGraphState {
 }
 
 describe("CognitiveContextDistiller", () => {
+  it("excludes historical hand-written inquiry nodes from cognitive context",()=>{
+    const source=graph();source.nodes.push({...node("forged-question","first_run"),kind:"inquiry"});
+    const context=new CognitiveContextDistiller().distillRun(run(),source,[],{maximumGraphNodes:20,maximumRecentEvents:10,maximumRunItems:10});
+    expect(context.graph.nodes.some(item=>item.id==="forged-question")).toBe(false);
+  });
+  it("keeps an older pending inquiry inside a bounded Work window",()=>{
+    const state=run({workItems:[work({id:"older",status:"blocked",inquiry:{id:"question",question:"Which evidence next?",refs:[],status:"pending"}}),work()]});
+    const context=new CognitiveContextDistiller().distillRun(state,graph(),[],{maximumGraphNodes:1,maximumRecentEvents:1,maximumRunItems:1});
+    expect(context.run.workItems[0]).toMatchObject({id:"older",inquiry:{id:"question"}});
+    expect(context.manifest.omittedWorkItems).toBe(1);
+  });
   it("wakes for changes outside the visible prompt window but not another Case", () => {
     const distiller = new CognitiveContextDistiller();
     const budget = { maximumGraphNodes: 1, maximumRecentEvents: 1, maximumRunItems: 1 };
@@ -189,6 +200,10 @@ describe("CognitiveContextDistiller", () => {
     expect(context.transcript.map((entry) => entry.turn)).toEqual([2, 3]);
     expect(context.steering).toEqual(["first instruction", "second instruction"]);
     expect(context.manifest).toEqual({ omittedTranscriptEntries: 1, omittedTranscriptCharacters: 100 });
+    request.transcript=[{turn:1,kind:"tool",summary:"[recall-page] original detail",refs:["receipt:original"]},...request.transcript.map(entry=>({...entry,turn:entry.turn+1}))];
+    const recalled=distiller.distillWorker(request,2,256);
+    expect(recalled.transcript.some(entry=>entry.summary.includes("original detail"))).toBe(true);
+    expect(recalled.transcript.reduce((sum,entry)=>sum+entry.summary.length,0)).toBeLessThanOrEqual(256);
     expect(() => distiller.distillWorker(request, 0, 256)).toThrow("Worker context budget is invalid");
     expect(() => distiller.distillRun(run(), graph(), [], {
       maximumGraphNodes: 0,

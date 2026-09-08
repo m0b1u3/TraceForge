@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { DesktopDispatchSchema, DesktopAuthorizeSchema, DesktopCancelSchema, DesktopApprovalSchema, DesktopInputSchema, DesktopApprovalReadSchema, type DesktopExecutionReceipt } from "@traceforge/shared/desktop-execution";
+import { DesktopDispatchSchema, DesktopAuthorizeSchema, DesktopCancelSchema, DesktopResumeSchema, DesktopApprovalSchema, DesktopInputSchema, DesktopApprovalReadSchema, type DesktopExecutionReceipt } from "@traceforge/shared/desktop-execution";
 import { SqliteWorkerCheckpointStore } from "./worker-checkpoint-store.js";
 
 export interface DesktopExecutionPort {
@@ -182,19 +182,19 @@ export function registerDesktopExecutionRoutes(app: FastifyInstance, db: Databas
     }
     return reply.code(result.status).send(result.body);
   });
-  app.post(`${path}/cancel`, async (request, reply) => {
+  for (const operation of ["cancel","pause","resume"] as const) app.post(`${path}/${operation}`, async (request, reply) => {
     const params = id.safeParse((request.params as any).conversationId);
-    const body = DesktopCancelSchema.safeParse(request.body);
+    const body = (operation==="resume"?DesktopResumeSchema:DesktopCancelSchema).safeParse(request.body);
     const conversation = params.success ? owner(params.data) : undefined;
-    if (!conversation || !body.success) return reply.code(400).send({ error: "invalid_cancel" });
+    if (!conversation || !body.success) return reply.code(400).send({ error: "invalid_lifecycle_command" });
     const state = await host.request(`/api/scenarios/runs/${body.data.runId}`);
-    if (state.status !== 200 || state.body.caseId !== conversation.caseId) return reply.code(404).send({ error: "run_not_found" });
-    const result = await host.request(`/api/scenarios/runs/${body.data.runId}/cancel`, {
-      commandId: body.data.commandId, expectedRevision: body.data.expectedRevision, reason: "Stopped by local operator" });
+    if (state.status !== 200 || state.body?.id !== body.data.runId || state.body.caseId !== conversation.caseId) return reply.code(404).send({ error: "run_not_found" });
+    const result = await host.request(`/api/scenarios/runs/${body.data.runId}/${operation}`, {
+      commandId: body.data.commandId, expectedRevision: body.data.expectedRevision, reason: `${operation} requested by local operator` });
     if (result.status >= 200 && result.status < 300) {
-      if (result.body?.state?.id !== body.data.runId || result.body?.state?.caseId !== conversation.caseId || result.body?.state?.status !== "cancelled")
-        return reply.code(503).send({ error: "cancel_receipt_unavailable" });
-      return reply.code(result.status).send({ ...result.body, desktopReceipt: receipt(params.data!, body.data.commandId, "cancel", body.data.runId) });
+      if (result.body?.state?.id !== body.data.runId || result.body?.state?.caseId !== conversation.caseId || result.body?.state?.status !== ({cancel:"cancelled",pause:"paused",resume:"running"}[operation]))
+        return reply.code(503).send({ error: "lifecycle_receipt_unavailable" });
+      return reply.code(result.status).send({ ...result.body, desktopReceipt: receipt(params.data!, body.data.commandId, operation, body.data.runId) });
     }
     return reply.code(result.status).send(result.body);
   });

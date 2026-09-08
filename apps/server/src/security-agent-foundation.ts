@@ -6,6 +6,7 @@ import type { ScenarioAgentEvent } from "@traceforge/shared";
 import type { ExecutionNode } from "@traceforge/execution-node";
 import {
   BlackboardChangeBus,
+  needsCognitiveWake,
   ContextCompactionRuntime,
   RunObserverSupervisor,
   RunPlannerSupervisor,
@@ -35,6 +36,7 @@ import { registerRunObserverRoutes, SqliteRunObserverStore } from "./run-observe
 import { registerRunPlannerRoutes, SqliteRunPlannerStore } from "./run-planner.js";
 import { SqliteCognitiveContextCursorStore } from "./cognitive-context-distiller.js";
 import { createInstalledBrowserDeployment } from "./browser-installation.js";
+import { DesktopPermissionChange, registerDesktopPermissionChange } from "./desktop-permission-change.js";
 import { SqliteBrowserArtifactContent } from "./browser-artifact-content.js";
 import { BrowserScratchStore } from "./browser-scratch.js";
 import { registerCognitiveSnapshotRoutes, SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
@@ -88,6 +90,7 @@ import { PackageContextDiscoverySource, SqlitePackageContextStore, type PackageC
 import { createFoundationMcpSource, mcpToolProfileDigest, type FoundationMcpServer } from "./mcp-execution-source.js";
 import { ExtensionAssemblyControl, registerExtensionAssemblyRoutes, type ExtensionAssemblyOptions } from "./extension-assembly.js";
 import { PackageContextPolicy } from "./package-context-policy.js";
+import { DesktopConfigurationStore, registerDesktopConfigurationRoutes } from "./desktop-configuration.js";
 import { createMcpContextLoader, mcpContextProfileDigest, type FoundationMcpContextServer } from "./mcp-context-loader.js";
 import { PackageContextLifecycle, registerContextLifecycleRoutes, type ContextLifecycleAuthorizer } from "./package-context-lifecycle.js";
 import { ContextPackageArchiveControl, registerContextPackageArchiveRoutes, type ContextPackageTransferOptions } from "./context-package-archive.js";
@@ -101,6 +104,7 @@ import { FoundationOfflineMediaControl, registerFoundationOfflineMediaRoutes, ty
 import { FoundationBackupRetentionControl, registerFoundationRetentionRoutes, type FoundationRetentionAuthorizer } from "./foundation-backup-retention.js";
 import type { FoundationRecoveryReadinessOptions } from "./foundation-recovery-readiness.js";
 import { FoundationRecoveryActivationControl, registerFoundationRecoveryActivationRoutes, type FoundationRecoveryActivationOptions } from "./foundation-recovery-activation.js";
+import { DesktopMcpControl, registerDesktopMcpRoutes, type DesktopMcpOptions } from "./desktop-mcp.js";
 import { FoundationDeploymentControl, registerFoundationDeploymentRoutes, type FoundationDeploymentOptions } from "./foundation-deployment.js";
 import { SqliteScenarioArtifactStore, SqliteScenarioStateStore } from "./scenario-runtime-state.js";
 import { assertFoundationRestorePublished, assertNotBackupSource, assertNoIncompleteRestore, readFoundationRestoreFence } from "./db/foundation-restore-fence.js";
@@ -132,6 +136,8 @@ export interface SecurityAgentFoundationOptions {
   contextResourceContents?: readonly PackageContextContent[];
   revokedContextResources?: readonly { digest: string; reason: string }[];
   mcpServers?: readonly FoundationMcpServer[];
+  desktopMcp?: DesktopMcpOptions;
+  desktopResources?: DesktopResourceOptions;
   mcpContextServers?: readonly FoundationMcpContextServer[];
   extensionAssembly?: ExtensionAssemblyOptions;
   contextLifecycleAuthorizer?: ContextLifecycleAuthorizer;
@@ -275,6 +281,10 @@ export function registerSecurityAgentFoundation(
   const scenarioEvents = new SqliteScenarioEventStore(sqlite, changes);
   const workers = new SqliteWorkerRegistry(sqlite);
   const scenarioRuntime = new DurableScenarioRuntime(scenarioEvents, definitions, scenarioPackages);
+  // Permission resolution commits inside the scope/audit transaction. Do not
+  // publish in-process wakeups before its outer commit; durable polling observes it.
+  registerDesktopPermissionChange(app, new DesktopPermissionChange(sqlite, authorization,
+    new DurableScenarioRuntime(new SqliteScenarioEventStore(sqlite), definitions, scenarioPackages)));
   const processCapacity=new ProcessExecutionCapacity(sqlite,new ToolProviderFairScheduler(options.executionSchedulingLimits,
     new SqliteToolProviderSchedulingAuditStore(sqlite)));
   const scenarioProcessSupervision=new SqliteScenarioProcessSupervisionStore(sqlite);
@@ -337,14 +347,22 @@ export function registerSecurityAgentFoundation(
     options.mcpServers ?? [], contextServers, { ...options.extensionAssembly, scenarioProcessLaunches: options.scenarioProcessLaunches,
       managedProviders: new SqliteToolProviderControlStore(sqlite).list() });
   registerExtensionAssemblyRoutes(app, extensionAssembly);
+  const desktopMcp = new DesktopMcpControl(sqlite, scenarioPackages, id => scenarioRuntime.load(id) ?? null, options.desktopMcp,executionNode,processCapacity);
+  extensionAssembly.attachDesktopMcpInventory(() => desktopMcp.assemblyUnits());
+  registerDesktopMcpRoutes(app, desktopMcp);
+  const desktopResources = new DesktopResourceControl(sqlite, resolve(projectRoot, "data", "source-projects"), id => scenarioRuntime.load(id) ?? null, authorization, options.desktopResources);
+  registerDesktopResourceRoutes(app, desktopResources);
+  const desktopConfiguration = new DesktopConfigurationStore(sqlite, scenarioPackages, contextStore, options.mcpServers);
+  registerDesktopConfigurationRoutes(app, desktopConfiguration);
   registerContextLifecycleRoutes(app, new PackageContextLifecycle(sqlite, scenarioPackages, contextStore, options.contextLifecycleAuthorizer));
   if (new Set(contextServers.map((server) => server.source)).size !== contextServers.length) throw new Error("Duplicate MCP context source");
   const contextSource = new PackageContextDiscoverySource(scenarioPackages, contextStore, sqlite, (id) => scenarioRuntime.load(id) ?? null,
     new Map(contextServers.map((server) => [server.source, createMcpContextLoader(server, executionNode,processCapacity,
-      () => extensionAssembly.assertProfileAvailable("mcp_context", server.source, mcpContextProfileDigest(server)))])));
+      () => extensionAssembly.assertProfileAvailable("mcp_context", server.source, mcpContextProfileDigest(server)))])), desktopConfiguration);
   const mcpSources = (options.mcpServers ?? []).map((config) => createFoundationMcpSource(config, executionNode,
     sqlite, scenarioPackages, (id) => scenarioRuntime.load(id) ?? null,processCapacity,
-    () => extensionAssembly.assertProfileAvailable("mcp_tool", config.source, mcpToolProfileDigest(config))));
+    () => extensionAssembly.assertProfileAvailable("mcp_tool", config.source, mcpToolProfileDigest(config)),
+    (run, tool) => desktopConfiguration.assertMcp(run.id, run.scenarioPackage!, config.source, mcpToolProfileDigest(config), tool)));
   const observerStore = new SqliteRunObserverStore(sqlite);
   const cognitiveCursors = new SqliteCognitiveContextCursorStore(sqlite);
   const agentEvents = new SqliteScenarioAgentEventStream(sqlite, options.onAgentEvent);
@@ -362,7 +380,8 @@ export function registerSecurityAgentFoundation(
   const toolReceiptContext = new ToolReceiptContext(sqlite,scenarioPackages,(id)=>scenarioRuntime.load(id)??null,
     ()=>toolInventory?.(),[contextSource.source]);
   const runContext = new RunContextPolicy(sqlite, contextSource, (id) => scenarioRuntime.load(id) ?? null, cognitiveSnapshots,toolReceiptContext);
-  const contextPolicy = new PackageContextPolicy(sqlite, contextSource, runContext,toolReceiptContext);
+  const contextPolicy = new PackageContextPolicy(sqlite, contextSource, runContext,toolReceiptContext, desktopConfiguration);
+  contextPolicy.extensionToolAllowed = (runId,source) => desktopMcp.allowed(runId,source);
   const modelExecutionStore = new SqliteModelExecutionStore(sqlite);
   const modelAdmissionStore = new SqliteModelAdmissionStore(sqlite);
   const modelRoutes = new Map<string, LlmProvider>([["primary", provider], ...(options.modelRoutes?.entries() ?? [])]);
@@ -445,12 +464,14 @@ export function registerSecurityAgentFoundation(
   toolInventory = registerEmbeddedWorkers(
     app, sqlite, provider, projectRoot, providerReady, evidenceGraph, changes,
     cognitiveSnapshots, modelRuntime, lifecycleEvents, definitions, scenarioPackages, executionNode,
-    [...scenarioSources, contextSource,toolReceiptContext],
-    [...customSources, ...(options.toolDiscoverySources ?? []), ...mcpSources],
+    [...scenarioSources, contextSource,toolReceiptContext,desktopResources.source()],
+    [...customSources, ...(options.toolDiscoverySources ?? []), ...mcpSources, ...desktopMcp.sources()],
     options.toolProviderTrustRoots, customProviderFactory, providerCapabilityHost,
     options.toolProviderArchiveImportAuthorizer, options.toolProviderRefreshAuthorizer,
     options.toolInvocationReconciliationAuthorizer, options.toolInvocationReconciliationEvidenceVerifier,
     workRetry, options.toolRecoveryEvidenceAuthority, contextPolicy, compaction,processCapacity,hostControl,authorization,extensionAssembly,
+    runtime => desktopMcp.attach(runtime, () => extensionAssembly.reconcileDesktopMcp(),(id,digest)=>extensionAssembly.assertDesktopMcpAvailable(id,digest)),
+    (context, id) => desktopResources.stage(context, id),
   );
   registerScenarioRunMigrationRoutes(app,new ScenarioRunMigrationControl(sqlite,scenarioPackages,contextStore,
     new SqliteWorkerCheckpointStore(sqlite,new JsonFileCheckpointStore(resolve(projectRoot,"data","worker-checkpoints"))),
@@ -548,8 +569,10 @@ export function registerSecurityAgentFoundation(
         if (work.status === "cancelled") modelRuntime.cancelWork(change.runId, work.id, "Work cancelled by the control plane");
       }
     }
-    observer.wake();
-    planner.wake();
+    if(needsCognitiveWake(change)){
+      observer.wake();
+      planner.wake();
+    }
   });
   const recoveryReport = runRecovery.recoverAll(new Date().toISOString());
   synchronizeAudit();
@@ -579,3 +602,4 @@ export function registerSecurityAgentFoundation(
     await planner.stop();
   });
 }
+import { DesktopResourceControl, registerDesktopResourceRoutes, type DesktopResourceOptions } from "./desktop-resources.js";

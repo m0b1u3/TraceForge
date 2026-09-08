@@ -9,6 +9,7 @@ export * from "./wakeup.js";
 export * from "./loop.js";
 export * from "./compaction.js";
 export * from "./recall.js";
+export * from "./anchors.js";
 export * from "./lineage.js";
 export * from "./run-planning.js";
 export * from "./run-observation.js";
@@ -49,7 +50,11 @@ export interface DistilledWorkerContext {
 
 function visibleNodes(run: ScenarioRunState, graph: EvidenceGraphState): KnowledgeNode[] {
   if (graph.caseId !== run.caseId) throw new Error("Context graph Case mismatch");
-  return graph.nodes.filter((node) => node.caseId === run.caseId && (node.runId === null || node.runId === run.id));
+  // Inquiry nodes project durable Work state; they are not evidence or a second ledger.
+  const inquiries:KnowledgeNode[]=run.workItems.filter(work=>work.inquiry).map(work=>({id:`inquiry:${run.id}:${work.inquiry!.id}`,caseId:run.caseId,runId:run.id,
+    kind:"inquiry",title:"Worker inquiry",summary:work.inquiry!.question,status:work.status==="cancelled"?"invalidated":work.inquiry!.status==="answered"?"resolved":"active",confidence:0,
+    properties:{workId:work.id,...work.inquiry},source:null,version:1,createdAt:work.createdAt,updatedAt:run.updatedAt,invalidatedAt:null,invalidationReason:null}));
+  return [...graph.nodes.filter((node) => node.kind!=="inquiry" && node.caseId === run.caseId && (node.runId === null || node.runId === run.id)),...inquiries];
 }
 
 function semanticRun(run: ScenarioRunState) {
@@ -74,6 +79,7 @@ function semanticRun(run: ScenarioRunState) {
       evidenceRefs: item.evidenceRefs,
       resultSummary: item.resultSummary,
       error: item.error,
+      inquiry:item.inquiry,
     })),
     outputs: run.outputs.map((output) => ({ id: output.id, phaseId: output.phaseId, kind: output.kind, summary: output.summary, refs: output.refs })),
     directives: run.directives.map((directive) => ({
@@ -102,7 +108,9 @@ export class CognitiveContextDistiller {
     const nodes = allNodes.slice(-budget.maximumGraphNodes);
     const nodeIds = new Set(nodes.map((node) => node.id));
     const edges = graph.edges.filter((edge) => nodeIds.has(edge.sourceId) && nodeIds.has(edge.targetId));
-    const workItems = run.workItems.slice(-budget.maximumRunItems);
+    const pendingInquiries=run.workItems.filter(item=>item.status==="blocked"&&item.inquiry?.status==="pending").slice(0,budget.maximumRunItems);
+    const remaining=budget.maximumRunItems-pendingInquiries.length;
+    const workItems = [...pendingInquiries,...(remaining>0?run.workItems.filter(item=>!pendingInquiries.includes(item)).slice(-remaining):[])];
     const outputs = run.outputs.slice(-budget.maximumRunItems);
     const directives = run.directives.slice(-budget.maximumRunItems);
     const recentEvents = events.slice(-budget.maximumRecentEvents);
@@ -144,12 +152,18 @@ export class CognitiveContextDistiller {
     };
   }
 
-  distillWorker(request: WorkerModelRequest, maximumTranscriptEntries = 12, maximumTranscriptCharacters = 24_000): DistilledWorkerContext {
+  distillWorker(request: WorkerModelRequest, maximumTranscriptEntries = 12, maximumTranscriptCharacters = 24_000, maximumRecallCharacters = 8_000): DistilledWorkerContext {
     if (maximumTranscriptEntries < 1 || maximumTranscriptCharacters < 256) throw new Error("Worker context budget is invalid");
     const selected: WorkerTranscriptEntry[] = [];
     let characters = 0;
     let omittedCharacters = 0;
+    // Reserve part of the SAME total budget for the latest original-text page;
+    // ordinary observations cannot evict it. This never makes context unbounded.
+    const recall=[...request.transcript].reverse().find(entry=>entry.kind==="tool"&&entry.summary.startsWith("[recall-page]"));
+    if(!Number.isSafeInteger(maximumRecallCharacters)||maximumRecallCharacters<1)throw new Error("Invalid recall budget");
+    if(recall){const budget=Math.min(maximumRecallCharacters,Math.floor(maximumTranscriptCharacters/3));selected.push({...recall,summary:recall.summary.slice(0,budget)});characters=selected[0]!.summary.length;omittedCharacters+=recall.summary.length-characters;}
     for (const entry of [...request.transcript].reverse()) {
+      if(entry===recall)continue;
       if (selected.length >= maximumTranscriptEntries || characters + entry.summary.length > maximumTranscriptCharacters) {
         omittedCharacters += entry.summary.length;
         continue;
@@ -157,6 +171,7 @@ export class CognitiveContextDistiller {
       selected.unshift(entry);
       characters += entry.summary.length;
     }
+    selected.sort((a,b)=>a.turn-b.turn);
     return {
       run: request.assignment.runContext,
       work: request.assignment.work,

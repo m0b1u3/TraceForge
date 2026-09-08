@@ -8,6 +8,10 @@ export const WEB_BLACKBOX_TEST_PACKAGE = parseScenarioPackageDescriptor(JSON.par
 
 export const WEB_BLACKBOX_SCENARIO = WEB_BLACKBOX_TEST_PACKAGE.definition;
 export const WEB_BLACKBOX_CAPABILITIES = {
+  toolRecall: "tool.recall",
+  contextCatalog: "context.catalog",
+  contextRead: "context.read",
+  contextSearch: "context.search",
   scopeRead: "scope.read",
   evidenceWrite: "evidence.write",
   browserNavigate: "web.surface.explore",

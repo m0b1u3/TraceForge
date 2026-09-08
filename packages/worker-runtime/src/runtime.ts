@@ -253,10 +253,15 @@ export class WorkerHost {
           this.turnCompleted(assignment, turnId, "finish", null);
           return { outcome: "finished", value: { runId: assignment.runId, workId: assignment.work.id, outcome: "completed", turns: turn } };
         }
-        if (decision.type === "block") {
+        if (decision.type === "block" || decision.type === "request_permissions" || decision.type === "inquire") {
           this.prepareBlock(checkpoint, turn, `block:${assignment.leaseId}:model`, decision.reason, "blocked");
+          const pending = checkpoint.pendingControl!;
+          if(decision.type==="inquire"&&pending.type==="block")pending.inquiry={id:pending.commandId,refs:[...decision.refs]};
+          if (decision.type === "request_permissions" && pending.type === "block") pending.permissionRequest = {
+            id: pending.commandId, scope: structuredClone(decision.scope),
+          };
           assignment = await this.persistCheckpoint(assignment, checkpoint, turn, decision.reason, turnId);
-          await this.control.block(assignment, checkpoint.pendingControl!.commandId, decision.reason);
+          await this.control.block(assignment, pending.commandId, decision.reason, pending.type === "block" ? pending.permissionRequest : undefined,pending.type==="block"?pending.inquiry:undefined);
           this.turnCompleted(assignment, turnId, "blocked", assignment.work.latestCheckpoint?.payloadRef ?? null);
           return { outcome: "finished", value: { runId: assignment.runId, workId: assignment.work.id, outcome: "blocked", turns: turn, reason: decision.reason } };
         }
@@ -319,6 +324,7 @@ export class WorkerHost {
           }
           signal.throwIfAborted();
           const distilled = await waitForCancellation(() => this.distiller.distill(result, this.options.maxDistilledCharacters), signal);
+          if(["context.recall","tool.recall"].includes(decision.invocation.tool))distilled.summary=`[recall-page] ${distilled.summary}`;
           this.turnProgress(assignment, turnId, "toolExecuted", `Tool ${decision.invocation.tool} returned ${result.status}`, result.refs);
           this.options.onLifecycleEvent?.({
             type: "tool_completed", assignment, turnId, invocationId: decision.invocation.id,
@@ -441,7 +447,7 @@ export class WorkerHost {
       await this.control.complete(assignment, pending.commandId, pending.summary, pending.outputs);
       return { runId: assignment.runId, workId: assignment.work.id, outcome: "completed", turns: checkpoint.journal.turn };
     }
-    await this.control.block(assignment, pending.commandId, pending.reason);
+    await this.control.block(assignment, pending.commandId, pending.reason, pending.permissionRequest,pending.inquiry);
     return { runId: assignment.runId, workId: assignment.work.id, outcome: "blocked", turns: checkpoint.journal.turn, reason: pending.reason };
   }
 

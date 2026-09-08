@@ -18,6 +18,8 @@ export interface ContextCompactionStore {
   finish(id: string, entries: ContextTextEntry[] | null, error: string | null): void;
 }
 export interface ContextCompactionPolicy {
+  readonly maximumTextCharacters?: number;
+  readonly preservesRecall?: boolean;
   prepare(input: { caseId: string; runId: string; consumer: string; context: Record<string, unknown>; sourceFingerprint: string }): Promise<{
     context: Record<string, unknown>; manifest: Record<string, unknown>;
   }>;
@@ -38,6 +40,8 @@ export const contextFingerprint = (value: unknown): string => createHash("sha256
 
 /** Host preserves the structural document; a compactor can replace text entries only. */
 export class ContextCompactionRuntime implements ContextCompactionPolicy {
+  readonly preservesRecall=true;
+  get maximumTextCharacters():number{return this.limits.maximumTextCharacters;}
   constructor(private readonly store: ContextCompactionStore, private readonly compactor: ContextCompactor = new ExtractiveContextCompactor(),
     private readonly limits = { triggerCharacters: 24000, maximumTextCharacters: 16000, maximumContextBytes: 262144, timeoutMs: 1000 }) {
     if (Object.values(limits).some((n) => !Number.isSafeInteger(n) || n < 1) || limits.maximumContextBytes > 1048576
@@ -53,6 +57,14 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
     // Preserve the newest bounded receipt observation for the next decision.
     // Authorization filtering precedes compaction; recency confers no trust.
     const transcript = Array.isArray(protectedContext.transcript) ? protectedContext.transcript : [];
+    let recallIndex=-1;
+    transcript.forEach((entry,index)=>{if(entry?.kind==="tool"&&typeof entry.summary==="string"&&entry.summary.startsWith("[recall-page]"))recallIndex=index;});
+    const protectedRecall=recallIndex>=0?`/transcript/${recallIndex}/summary`:undefined;
+    const recallCharacters=recallIndex>=0?Math.min(transcript[recallIndex].summary.length,8000,Math.floor(this.limits.maximumTextCharacters/3)):0;
+    if(recallIndex>=0)transcript[recallIndex].summary=transcript[recallIndex].summary.slice(0,recallCharacters);
+    const boundedOriginal=structuredClone(original);
+    if(recallIndex>=0)(boundedOriginal.transcript as any[])[recallIndex].summary=transcript[recallIndex].summary;
+    const remainingTextCharacters=this.limits.maximumTextCharacters-recallCharacters;
     let latestTool = -1;
     transcript.forEach((entry, index) => { if (entry && typeof entry === "object" && entry.kind === "tool") latestTool = index; });
     const latest = transcript[latestTool];
@@ -65,7 +77,7 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
       const record = value as Record<string, unknown>;
       for (const [key, child] of Object.entries(record)) {
         const id = `${path}/${key}`;
-        if (enabled && id !== protectedObservation && typeof child === "string" && ["summary", "resultSummary", "rationale"].includes(key) && child.length > 128) {
+        if (enabled && id !== protectedObservation && id!==protectedRecall && typeof child === "string" && ["summary", "resultSummary", "rationale"].includes(key) && child.length > 128) {
           entries.push({ id, text: child }); record[key] = { contextTextId: id };
         } else extract(child, id, enabled && !["properties", "input", "inputSchema", "schema", "pendingApproval", "approvalHistory", "latestCheckpoint"].includes(key), depth + 1);
       }
@@ -75,15 +87,15 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
     if (entries.length > 512) throw new Error("Compaction text entry budget exceeded");
     const inputFingerprint = contextFingerprint(original), protectedFingerprint = contextFingerprint(protectedContext);
     const sourceIds = entries.map((entry) => entry.id);
-    const baseManifest = { version: 2, protectedObservation, inputFingerprint, protectedFingerprint, sourceFingerprint: input.sourceFingerprint,
+    const baseManifest = { version: 3, protectedObservation, protectedRecall,recallCharacters,remainingTextCharacters,inputFingerprint, protectedFingerprint, sourceFingerprint: input.sourceFingerprint,
       compactorVersion: this.compactor.version, sourceIds, preservedStructure: true, semanticQualityVerified: false };
     const originalFits = Buffer.byteLength(JSON.stringify(original)) <= this.limits.maximumContextBytes;
     if (!entries.length || entries.reduce((sum, entry) => sum + entry.text.length, 0) <= this.limits.triggerCharacters) {
       if (!originalFits) throw new Error("Required context anchors exceed model input budget");
-      return { context: original, manifest: { contextCompaction: { ...baseManifest, status: "not_needed", outputFingerprint: inputFingerprint } } };
+      return { context: boundedOriginal, manifest: { contextCompaction: { ...baseManifest, status: "not_needed", outputFingerprint: contextFingerprint(boundedOriginal) } } };
     }
     const id = contextFingerprint({ caseId: input.caseId, runId: input.runId, consumer: input.consumer,
-      inputFingerprint, sourceFingerprint: input.sourceFingerprint, compactor: this.compactor.version, limits: this.limits, layoutVersion: 2 });
+      inputFingerprint, sourceFingerprint: input.sourceFingerprint, compactor: this.compactor.version, limits: this.limits, layoutVersion: 3 });
     let record = this.store.get(id);
     let replayed = !!record;
     if (!record) {
@@ -93,8 +105,8 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
       const controller = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error("Compaction deadline exceeded")); }, this.limits.timeoutMs); });
-        const result = await Promise.race([Promise.resolve().then(() => this.compactor.compact(structuredClone(entries), this.limits.maximumTextCharacters, controller.signal)), timeout]);
-        validateEntries(result, sourceIds, this.limits.maximumTextCharacters);
+        const result = await Promise.race([Promise.resolve().then(() => this.compactor.compact(structuredClone(entries), remainingTextCharacters, controller.signal)), timeout]);
+        validateEntries(result, sourceIds, remainingTextCharacters);
         this.store.finish(id, result, null);
       } catch { this.store.finish(id, null, "Compaction failed, timed out, or returned incompatible text references"); }
       finally { if (timer) clearTimeout(timer); controller.abort(); }
@@ -103,14 +115,14 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
     if (record.caseId !== input.caseId || record.runId !== input.runId || record.consumer !== input.consumer || record.inputFingerprint !== inputFingerprint
       || record.protectedFingerprint !== protectedFingerprint || record.sourceFingerprint !== input.sourceFingerprint || record.compactorVersion !== this.compactor.version) throw new Error("Compaction cache identity mismatch");
     if (record.status === "completed") {
-      validateEntries(record.entries, sourceIds, this.limits.maximumTextCharacters);
+      validateEntries(record.entries, sourceIds, remainingTextCharacters);
       const context = { ...protectedContext, compactedText: { trust: "untrusted_summary", entries: record.entries } };
       if (Buffer.byteLength(JSON.stringify(context)) <= this.limits.maximumContextBytes) return { context,
         manifest: { contextCompaction: { ...baseManifest, id, status: "completed", replayed, outputFingerprint: contextFingerprint(context) } } };
     }
     if (!originalFits) throw new Error("Compaction unavailable and original exceeds safe context budget");
-    return { context: original, manifest: { contextCompaction: { ...baseManifest, id, status: "fallback", replayed,
-      reason: record.status === "prepared" ? "interrupted_or_in_progress" : "summary_unavailable_or_oversized", outputFingerprint: inputFingerprint } } };
+    return { context: boundedOriginal, manifest: { contextCompaction: { ...baseManifest, id, status: "fallback", replayed,
+      reason: record.status === "prepared" ? "interrupted_or_in_progress" : "summary_unavailable_or_oversized", outputFingerprint: contextFingerprint(boundedOriginal) } } };
   }
 }
 

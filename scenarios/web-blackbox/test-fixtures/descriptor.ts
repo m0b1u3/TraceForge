@@ -8,6 +8,10 @@ const installation = parseScenarioPackageDescriptor(JSON.parse(
 
 export const WEB_BLACKBOX_SCENARIO = installation.definition;
 export const WEB_BLACKBOX_CAPABILITIES = {
+  toolRecall: "tool.recall",
+  contextCatalog: "context.catalog",
+  contextRead: "context.read",
+  contextSearch: "context.search",
   scopeRead: "scope.read",
   evidenceWrite: "evidence.write",
   browserNavigate: "web.surface.explore",

@@ -7,7 +7,23 @@ const contract = { version: 1, description: "合成范围表单", fields: [
   { path: ["items"], label: "资源", description: "每行一个资源", type: "string-list", required: true, maximumItems: 4, maximumLength: 200 },
 ] };
 let dispose: (() => void) | undefined;
+it("shows an explicit integer budget in review and submits it only after confirmation",async()=>{
+  const f=await render({version:1,description:"Budget",fields:[{path:["budget"],label:"请求额度",description:"任务累计上限",type:"integer",required:false,minimum:1,maximum:100,defaultValue:6}]});
+  expect(f.node.querySelector<HTMLInputElement>('input[type="number"]')!.value).toBe("6");
+  await f.click("核对授权");expect(f.node.textContent).toContain("请求额度");expect(f.register).not.toHaveBeenCalled();
+  await act(async()=>f.node.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());await f.click("确认登记授权");
+  expect(f.register).toHaveBeenCalledWith({budget:6},expect.any(String));
+});
 afterEach(() => { act(() => dispose?.()); document.body.replaceChildren(); });
+it("defaults autonomy off, reviews explicit choice and preserves it when returning to edit", async () => {
+  const f = await render({ ...contract, fields: [{ path: ["autonomous"], label: "允许任务内自主执行", description: "仅本次工作目录", type: "boolean", required: false }] });
+  expect(f.node.querySelector<HTMLInputElement>("input")!.checked).toBe(false);
+  await f.click("核对授权"); expect(f.node.textContent).toContain("未允许，仍需逐次审批");
+  await f.click("返回修改"); await act(async () => f.node.querySelector<HTMLInputElement>("input")!.click());
+  await f.click("核对授权"); expect(f.node.textContent).toContain("已允许"); expect(f.register).not.toHaveBeenCalled();
+  await act(async () => f.node.querySelector<HTMLInputElement>("input")!.click()); await f.click("确认登记授权");
+  expect(f.register).toHaveBeenCalledWith({ autonomous: true }, expect.any(String));
+});
 async function render(value: unknown = contract, disabled = false, policy: unknown = { allowedActions: ["resource.read"], deniedActions: [], resources: [] }) {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const register = vi.fn(async () => true), node = document.createElement("div"); document.body.append(node);

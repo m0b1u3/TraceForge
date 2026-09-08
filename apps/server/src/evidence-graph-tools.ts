@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import type { EvidenceGraphCommand, EvidenceSource, KnowledgeNode } from "@traceforge/evidence-graph";
+import {projectCaseHistory} from "@traceforge/evidence-graph";
 import type { ExecutionToolAdapter, ToolExecutionResult } from "@traceforge/worker-runtime";
 import { EvidenceGraphRevisionConflictError, SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
 
@@ -9,14 +10,15 @@ export const KNOWLEDGE_GRAPH_CAPABILITIES = {
   write: "knowledge.graph.write",
 } as const;
 
-const kind = z.enum(["entity", "fact", "hypothesis", "evidence", "task", "validation_conclusion", "finding", "limitation"]);
+const kind = z.enum(["entity", "fact", "hypothesis", "evidence", "task", "validation_conclusion", "finding", "limitation", "inquiry"]);
+const writableKind=kind.exclude(["inquiry"]);
 const status = z.enum(["active", "candidate", "validating", "verified", "refuted", "blocked", "resolved", "needs_review", "invalidated"]);
 const relation = z.enum(["supports", "refutes", "derived_from", "generated_by", "validates", "targets", "depends_on", "impacts", "limits", "supersedes"]);
 const mutation = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("add_node"),
     node: z.object({
-      id: z.string().min(1), kind, title: z.string().min(1), summary: z.string().min(1), status,
+      id: z.string().min(1), kind:writableKind, title: z.string().min(1), summary: z.string().min(1), status,
       confidence: z.number().min(0).max(1), properties: z.record(z.unknown()).default({}),
       source: z.object({ type: z.enum(["tool_result", "traffic", "artifact"]), ref: z.string().min(1) }).nullable().default(null),
     }),
@@ -35,11 +37,12 @@ export class EvidenceGraphSnapshotTool implements ExecutionToolAdapter {
   readonly source = "traceforge.builtin";
   readonly version = "1.0.0";
   readonly priority = 100;
-  readonly description = "Read a bounded, typed snapshot of the assigned Case Evidence Graph, including lifecycle state and traceable relations.";
+  readonly description = "Read the current Run and shared Case graph. Set history=true to search prior Run verified findings, resolved conclusions and active limitations; historical context is never current evidence or permission.";
   readonly inputSchema = {
     type: "object",
     properties: {
-      limit: { type: "integer", minimum: 1, maximum: 200 },
+      history:{type:"boolean"},query:{type:"string",maxLength:512},
+      limit: { type: "integer", minimum: 1, maximum: 100 },
       kinds: { type: "array", items: { enum: kind.options }, uniqueItems: true },
       statuses: { type: "array", items: { enum: status.options }, uniqueItems: true },
     },
@@ -54,9 +57,11 @@ export class EvidenceGraphSnapshotTool implements ExecutionToolAdapter {
   constructor(private readonly store: SqliteEvidenceGraphStore, private readonly now: () => string = () => new Date().toISOString()) {}
 
   async execute(input: unknown, context: ToolContext): Promise<ToolExecutionResult> {
-    const parsed = z.object({ limit: z.number().int().min(1).max(200).default(100), kinds: z.array(kind).optional(), statuses: z.array(status).optional() }).parse(input ?? {});
+    const parsed = z.object({ history:z.boolean().default(false),query:z.string().max(512).default(""),limit: z.number().int().min(1).max(100).default(100), kinds: z.array(kind).optional(), statuses: z.array(status).optional() }).strict().parse(input ?? {});
     const state = this.store.ensure(context.caseId, this.now());
+    if(parsed.history){const entries=projectCaseHistory(state,context,parsed.query,Math.min(parsed.limit,100));return {status:"succeeded",summary:`Loaded ${entries.length} historical conclusions; none verifies the current Run`,raw:JSON.stringify({caseId:context.caseId,history:entries,trust:"historical_context"}),refs:entries.map(item=>item.reference),retryable:false};}
     const nodes = state.nodes
+      .filter(node=>node.runId===null||node.runId===context.runId)
       .filter((node) => (!parsed.kinds || parsed.kinds.includes(node.kind)) && (!parsed.statuses || parsed.statuses.includes(node.status)))
       .slice(-parsed.limit);
     const ids = new Set(nodes.map((node) => node.id));
@@ -87,7 +92,7 @@ export class EvidenceGraphMutateTool implements ExecutionToolAdapter {
           node: {
             type: "object", required: ["id", "kind", "title", "summary", "status", "confidence", "properties", "source"], additionalProperties: false,
             properties: {
-              id: { type: "string", minLength: 1 }, kind: { enum: kind.options }, title: { type: "string", minLength: 1 },
+              id: { type: "string", minLength: 1 }, kind: { enum: writableKind.options }, title: { type: "string", minLength: 1 },
               summary: { type: "string", minLength: 1 }, status: { enum: status.options }, confidence: { type: "number", minimum: 0, maximum: 1 },
               properties: { type: "object", additionalProperties: true },
               source: {

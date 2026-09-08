@@ -53,6 +53,10 @@ export function assertDeclarativeOutputContract(contract: ScenarioOutputContract
 export function parseDeclarativeScope(policy: ScenarioScopePolicyV1, input: unknown) {
   validatePolicy(policy);
   const payload = cloneJson(input, policy.payload.maximumBytes, policy.payload.maximumDepth, "Scenario scope payload");
+  if(policy.form)for(const field of AuthorizationFormSchema.parse(policy.form).fields){
+    const value=readPath(payload,field.path);
+    if(field.type==="integer"&&value!==undefined&&(!Number.isSafeInteger(value)||typeof value!=="number"||value<field.minimum!||value>field.maximum!))throw new Error(`Invalid authorization budget: ${field.label}`);
+  }
   return { payload, allowedActions: [...policy.allowedActions], deniedActions: [...policy.deniedActions] };
 }
 
@@ -136,8 +140,8 @@ function validatePolicy(policy: ScenarioScopePolicyV1): void {
     if (Object.keys(form.actionLabels ?? {}).some(action => ![...policy.allowedActions, ...policy.deniedActions].includes(action)))
       throw new Error("Authorization form labels must refer to declared actions");
     const paths = policy.resources.flatMap(rule => rule.payloadPath ? [rule.payloadPath] : rule.payloadPrefixPath ? [rule.payloadPrefixPath] : []);
-    if (form.fields.some(field => !paths.some(path => JSON.stringify(path) === JSON.stringify(field.path)))
-      || paths.some(path => !form.fields.some(field => JSON.stringify(field.path) === JSON.stringify(path))))
+    if (form.fields.filter(field => field.type === "string-list").some(field => !paths.some(path => JSON.stringify(path) === JSON.stringify(field.path)))
+      || paths.some(path => !form.fields.some(field => field.type === "string-list" && JSON.stringify(field.path) === JSON.stringify(path))))
       throw new Error("Authorization form must cover exactly the policy's dynamic resource paths");
   }
 }

@@ -196,9 +196,11 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
     });
 
     const hasDurableGrant = request.assignment.work.grantedActionKeys.includes(request.idempotencyKey);
+    let approvalReason: string | undefined;
     if ((tool.risk === "privileged" || tool.risk === "destructive") && !hasDurableGrant) {
       const approval = await waitForCancellation(() => this.approvals.authorize({ worker: request.worker, assignment: request.assignment, tool, invocation: request.invocation }), request.signal);
       request.signal?.throwIfAborted();
+      if (approval.decision === "approved") approvalReason = approval.reason;
       if (approval.decision !== "approved") {
         const result: ToolExecutionResult = {
           status: approval.decision === "pending" ? "approval_required" : "failed",
@@ -264,7 +266,7 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
     else if (result.retryable) this.registry.recordFailure(tool.name, result.summary);
     result = {
       ...result,
-      metadata: { ...result.metadata, effectivePermissions },
+      metadata: { ...result.metadata, effectivePermissions, ...(approvalReason ? { approvalReason } : {}) },
     };
     try { await this.receipts.put(request.idempotencyKey, result); }
     catch (error) {

@@ -191,10 +191,10 @@ export class OpenAICompatibleProvider implements LlmProvider {
       const stream = await this.client.chat.completions.create({
         ...this.parameters(), model: this.opts.model,
         messages: msgs as never,
-        tools: args.tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
+        ...(args.tools.length ? { tools: args.tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })) } : {}),
         stream: true,
         stream_options: { include_usage: true },
-      }, handlers.signal ? { signal: handlers.signal } : undefined);
+      }, { signal: handlers.signal, maxRetries: 0 });
       for await (const chunk of stream) {
         chunks.push(chunk as OpenAIStreamChunk);
         const c = chunk as OpenAIStreamChunk;
@@ -203,9 +203,12 @@ export class OpenAICompatibleProvider implements LlmProvider {
         if (delta) handlers.onTextDelta?.(delta);
       }
       const turn = assembleOpenAIStreamChoice(chunks);
+      const finish = chunks.flatMap(chunk => chunk.choices ?? []).map(choice => choice.finish_reason).filter(Boolean).at(-1);
+      if (finish !== "stop" && finish !== "tool_calls") throw new Error("Incomplete model stream");
       emitUsage(handlers.onUsage, usage);
       return turn;
-    }, { signal: handlers.signal, onRetry: mapRetry(handlers.onRetry) });
+    // Once a stream has begun, replaying the request may duplicate both text and cost.
+    }, { maxAttempts: 1, signal: handlers.signal });
   }
 
   private toOpenAIMessages(args: RunToolsArgs): Array<Record<string, unknown>> {

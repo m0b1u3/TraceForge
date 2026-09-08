@@ -62,7 +62,7 @@ export async function buildServer(
   projectRoot = PROJECT_ROOT,
   webRoot?: string,
   hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"|"deployment"|"browserDeployment"|"browserInstallation">
-    & { llmSecretStore?: LlmSecretStore; browserInstallationPath?: string; modelAccounts?: ModelAccounts } = {},
+    & { llmSecretStore?: LlmSecretStore; browserInstallationPath?: string; modelAccounts?: ModelAccounts; desktopMcp?: SecurityAgentFoundationOptions["desktopMcp"]; desktopResources?: SecurityAgentFoundationOptions["desktopResources"] } = {},
 ) {
   const { llmSecretStore: suppliedLlmSecretStore, browserInstallationPath, modelAccounts, ...foundationHostOptions } = hostOptions;
   if (browserInstallationPath !== undefined) {

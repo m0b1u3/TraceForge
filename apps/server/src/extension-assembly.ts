@@ -87,6 +87,7 @@ export class ExtensionAssemblyControl {
   private manifest: AssemblyManifest;
   private activation: { generation: number; digest: string; previousDigest: string | null; createdAt: string };
   private managedProviderInventory: (() => readonly ToolProviderInstallation[]) | undefined;
+  private desktopMcpInventory: (() => readonly { id: string; digest: string }[]) | undefined;
   private archiveMutation = false;
 
   constructor(
@@ -146,6 +147,17 @@ export class ExtensionAssemblyControl {
     const activation = this.persist(next);
     this.manifest = next;
     this.activation = activation;
+  }
+
+  attachDesktopMcpInventory(load: () => readonly { id: string; digest: string }[]): void {
+    if (this.desktopMcpInventory) throw new Error("Desktop MCP inventory already attached");
+    this.desktopMcpInventory = load;
+    this.reconcileDesktopMcp();
+  }
+  reconcileDesktopMcp(): void { this.reconcileManagedProviders(this.managedProviderInventory?.() ?? this.options.managedProviders ?? []); }
+  assertDesktopMcpAvailable(id: string, value: string): void {
+    this.verifyStored();
+    if(!this.manifest.units.some(unit=>unit.id===`desktop-mcp:${id}`&&unit.identityDigest===value))throw new Error("Desktop MCP is not in the active extension assembly");
   }
 
   assertProfileAvailable(kind: "mcp_tool" | "mcp_context", source: string, value: string): void {
@@ -383,6 +395,7 @@ export class ExtensionAssemblyControl {
 
   private composeManifest(installations: readonly ToolProviderInstallation[]): AssemblyManifest {
     const units = [...this.baseManifest.units];
+    for (const item of this.desktopMcpInventory?.() ?? []) units.push({ id: `desktop-mcp:${item.id}`, kind: "mcp_tool_profile", package: null, identityDigest: item.digest, dependencies: [] });
     const identities = new Set<string>();
     for (const installation of installations) {
       const { manifest, manifestFingerprint, signerId, signature, state, stateReason } = structuredClone(installation);

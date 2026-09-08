@@ -54,6 +54,8 @@ class MemoryCheckpoints implements WorkerCheckpointStore {
 }
 
 class FakeControl implements WorkerControlPlaneClient {
+  inquiry?: {id:string;refs:string[]};
+  permissionRequest?: { id: string; scope: Record<string, unknown> };
   completed?: { summary: string; outputs: WorkerOutputDraft[] };
   blocked?: string;
   failed?: string;
@@ -78,7 +80,7 @@ class FakeControl implements WorkerControlPlaneClient {
   async complete(_value: WorkerAssignment, _commandId: string, summary: string, outputs: WorkerOutputDraft[]) { this.completed = { summary, outputs }; }
   async requestApproval(_value: WorkerAssignment, input: Parameters<WorkerControlPlaneClient["requestApproval"]>[1]) { this.approval = input; }
   async fail(_value: WorkerAssignment, _commandId: string, reason: string) { this.failed = reason; }
-  async block(_value: WorkerAssignment, _commandId: string, reason: string) { this.blocked = reason; }
+  async block(_value: WorkerAssignment, _commandId: string, reason: string, request?: { id: string; scope: Record<string, unknown> }, inquiry?: {id:string;refs:string[]}) { this.blocked = reason; this.permissionRequest = request; this.inquiry=inquiry; }
   private bump(value: WorkerAssignment) { return { ...value, work: { ...value.work }, runRevision: value.runRevision + 1 }; }
 }
 
@@ -93,6 +95,30 @@ const resolvedCatalog = (tools: Awaited<ReturnType<ExecutionToolGateway["catalog
 });
 
 describe("WorkerHost", () => {
+  it("checkpoints and replays a planning inquiry without requesting permissions or repeating inference", async () => {
+    const control=new FakeControl(), checkpoints=new MemoryCheckpoints();let calls=0;
+    const model:WorkerModel={async decide(){calls++;return {type:"inquire",reason:"Which observation should be followed?",refs:["knowledge-node:first"]};}};
+    const gateway:ExecutionToolGateway={async catalog(){return resolvedCatalog([]);},async execute(){throw new Error("must not dispatch");}};
+    const host=()=>new WorkerHost(worker,control,model,gateway,continueObserver,checkpoints,new BoundedOutputDistiller());
+    expect((await host().execute(assignment())).outcome).toBe("blocked");
+    expect(checkpoints.document!.pendingControl).toMatchObject({type:"block",inquiry:{refs:["knowledge-node:first"]}});
+    const inquiry=structuredClone(control.inquiry);
+    expect((await host().execute(control.current)).outcome).toBe("blocked");
+    expect(calls).toBe(1);expect(control.inquiry).toEqual(inquiry);expect(control.permissionRequest).toBeUndefined();
+  });
+  it("persists a model permission proposal before dispatch and replays it without another inference or tool effect", async () => {
+    const control = new FakeControl(), checkpoints = new MemoryCheckpoints();
+    let calls = 0;
+    const model: WorkerModel = { async decide() { calls++; return { type: "request_permissions", reason: "Need another resource", scope: { targets: ["second"] } }; } };
+    const gateway: ExecutionToolGateway = { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("must not dispatch"); } };
+    const runtime = new WorkerHost(worker, control, model, gateway, continueObserver, checkpoints, new BoundedOutputDistiller());
+    expect((await runtime.execute(assignment())).outcome).toBe("blocked");
+    expect(checkpoints.document!.pendingControl).toMatchObject({ type: "block", permissionRequest: { scope: { targets: ["second"] } } });
+    const original = structuredClone(control.permissionRequest);
+    const restarted = new WorkerHost(worker, control, model, gateway, continueObserver, checkpoints, new BoundedOutputDistiller());
+    expect((await restarted.execute(control.current)).outcome).toBe("blocked");
+    expect(calls).toBe(1); expect(control.permissionRequest).toEqual(original);
+  });
   it("cancels uncooperative inference and ignores its late action", async () => {
     const control = new FakeControl(); let release!: (value: WorkerDecision) => void; let started!: () => void;
     const ready = new Promise<void>((r) => { started = r; }); let observed: AbortSignal | undefined;

@@ -7,6 +7,7 @@ import { authorizeScenarioResource, type ScenarioPackageRegistry } from "@tracef
 import { ExecutionNodeToolProviderClient, type ExecutionNodeToolProviderOptions, type ExecutionToolAdapter,
   type ExecutionToolDiscoverySource, type McpToolPolicy, type ToolExecutionContext, toolInvocationInputFingerprint } from "@traceforge/worker-runtime";
 import type { ProcessExecutionCapacity, ProcessCapacityLease } from "./process-execution-capacity.js";
+import { parseMcpInputPolicy, validateMcpPolicyInput, authorizeMcpPolicyInput, type McpInputPolicy } from "./mcp-input-policy.js";
 
 export interface FoundationMcpServer {
   source: string;
@@ -19,9 +20,11 @@ export interface FoundationMcpServer {
   process: Omit<ExecutionNodeToolProviderOptions, "node" | "mcp" | "capabilityHost" | "expectedProviderId" | "expectedProviderVersion" | "beforeProcessStart">;
   tools: Array<McpToolPolicy & {
     authorizationAction: string;
-    validateInput(input: unknown): void;
+    validateInput?(input: unknown): void;
     /** Trusted adapter must enforce target/resource restrictions; schema validity alone is not authorization. */
-    authorizeInput(scopePayload: unknown, input: unknown): void;
+    authorizeInput?(scopePayload: unknown, input: unknown): void;
+    /** Serializable alternative; execution/sandbox policy remains host-reviewed and independent. */
+    inputPolicy?: McpInputPolicy;
   }>;
 }
 
@@ -32,14 +35,16 @@ export function mcpToolProfileDigest(config: FoundationMcpServer): `sha256:${str
     reviewVersion: config.reviewVersion,
     packages: [...config.packages].sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right))),
     process,
-    tools: config.tools.map(({ remoteName, authorizationAction, tool }) => ({ remoteName, authorizationAction, tool })),
+    tools: config.tools.map(({ remoteName, authorizationAction, tool, inputPolicy }) => ({ remoteName, authorizationAction, tool,
+      ...(inputPolicy ? { inputPolicy: parseMcpInputPolicy(inputPolicy) } : {}) })),
   })}`;
 }
 
 /** Each discovery/call has its own isolated process. No cross-Run session or raw stdio fallback. */
 export function createFoundationMcpSource(config: FoundationMcpServer, node: ExecutionNode | undefined,
   sqlite: Database.Database, packages: ScenarioPackageRegistry, loadRun: (id: string) => ScenarioRunState | null,
-  capacity?: ProcessExecutionCapacity, assertProfileAvailable: () => void = () => undefined): ExecutionToolDiscoverySource {
+  capacity?: ProcessExecutionCapacity, assertProfileAvailable: () => void = () => undefined,
+  assertRunToolAvailable: (run: ScenarioRunState, tool: string) => void = () => undefined): ExecutionToolDiscoverySource {
   if (!node) throw new Error("MCP requires a controlled Execution Node");
   const allowedPackageKeys = new Set(config.packages.map((binding) => canonicalJson(binding)));
   if (!config.source.trim() || !config.serverName.trim() || !config.serverVersion.trim()
@@ -50,7 +55,9 @@ export function createFoundationMcpSource(config: FoundationMcpServer, node: Exe
       return !packages.list().some((candidate) => canonicalJson(packages.bindingFor(candidate)) === canonicalJson(binding));
     })
     || config.tools.some((p) => p.tool.source !== config.source || !p.authorizationAction.trim()
-    || typeof p.validateInput !== "function" || typeof p.authorizeInput !== "function")) throw new Error("Invalid MCP host policy");
+    || (p.inputPolicy ? p.validateInput !== undefined || p.authorizeInput !== undefined
+      : typeof p.validateInput !== "function" || typeof p.authorizeInput !== "function"))) throw new Error("Invalid MCP host policy");
+  const inputPolicies = new Map(config.tools.filter(p => p.inputPolicy).map(p => [p.tool.name, parseMcpInputPolicy(p.inputPolicy)]));
   const { diagnosticWriter, ...serializableProcess } = config.process;
   const processOptions = { ...structuredClone(serializableProcess), diagnosticWriter };
   const profileDigest = mcpToolProfileDigest(config);
@@ -86,16 +93,19 @@ export function createFoundationMcpSource(config: FoundationMcpServer, node: Exe
         const policy = tools.find((p) => p.tool.name === tool.name)!;
         const authorize = () => {
           assertProfileAvailable();
-          policy.validateInput(input);
+          const inputPolicy = inputPolicies.get(tool.name);
+          if (inputPolicy) validateMcpPolicyInput(inputPolicy, input); else policy.validateInput!(input);
           const run = loadRun(context.runId); const work = run?.workItems.find((w) => w.id === context.workId);
           if (!run?.scenarioPackage || run.status !== "running" || run.caseId !== context.caseId || run.scopeRef !== context.scopeRef
             || !work || work.status !== "running" || work.workerId !== context.workerId || work.leaseId !== context.leaseId
             || !work.leaseExpiresAt || !(Date.parse(work.leaseExpiresAt) > Date.now()) || context.signal?.aborted) throw new Error("Inactive MCP Work");
+          assertRunToolAvailable(run, tool.name);
           const {scope,package:pkg} = new SqliteScenarioAuthorizationService(sqlite,packages).requireRun(run);
           if (!allowedPackageKeys.has(canonicalJson(packages.bindingFor(pkg)))
             || !scope.allowedActions.includes(policy.authorizationAction) || scope.deniedActions.includes(policy.authorizationAction)
             || authorizeScenarioResource(pkg.authorizationPolicy,scope.payload,"mcp.tool",policy.remoteName) !== policy.remoteName) throw new Error("MCP action not authorized");
-          policy.authorizeInput(scope.payload, input);
+          if (inputPolicy) authorizeMcpPolicyInput(inputPolicy, input, (kind, value) => authorizeScenarioResource(pkg.authorizationPolicy, scope.payload, kind, value));
+          else policy.authorizeInput!(scope.payload, input);
         };
         try { authorize(); }
         catch { return { status: "failed", summary: "MCP request rejected by host input or authorization policy", raw: "", refs: [], retryable: false }; }

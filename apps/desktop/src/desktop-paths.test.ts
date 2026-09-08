@@ -15,11 +15,12 @@ describe("desktop data lifecycle", () => {
     expect(existsSync(paths.mcpConfig)).toBe(false);
   });
 
-  it("keeps the control credential in Electron main and injects it only for the local server", () => {
+  it("keeps management credentials inside fixed host IPC and never attaches them to renderer networking", () => {
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "main.ts"), "utf8");
     expect(source).toContain("foundationHostControl(server).management()");
-    expect(source).toContain('requestUrl.origin === localOrigin && requestUrl.pathname.startsWith("/api/")');
-    expect(source).toContain('requestUrl.protocol === "ws:"');
+    expect(source).not.toContain("onBeforeSendHeaders");
+    expect(source).toContain("server.inject(");
+    expect(source).toContain("createConversationBridge(");
     expect(source).not.toMatch(/loadURL\([^)]*(?:authorization|tfh_)/i);
   });
 });

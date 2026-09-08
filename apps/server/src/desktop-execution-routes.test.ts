@@ -48,9 +48,9 @@ async function fixture() {
 async function waitingFixture() {
   const f = await fixture();
   await f.call(`${f.base}/execution/authorize`, f.authorization);
+  await f.call("/api/scenarios/workers", { id: "worker", roles: ["researcher"], capabilities: Object.values(WEB_BLACKBOX_CAPABILITIES), maxConcurrentWork: 1 });
   const runId = (await f.call(`${f.base}/execution`, f.command)).json().runId;
   const state = async () => (await f.call(`/api/scenarios/runs/${runId}`)).json();
-  await f.call("/api/scenarios/workers", { id: "worker", roles: ["researcher"], capabilities: Object.values(WEB_BLACKBOX_CAPABILITIES), maxConcurrentWork: 1 });
   const proposed = await f.call(`/api/scenarios/runs/${runId}/work`, { commandId: "propose", expectedRevision: (await state()).revision,
     proposal: { id: "work", kind: "research", title: "Collect observations", objective: "Collect authorized observations", idempotencyKey: "effect" } });
   expect(proposed.statusCode).toBe(200);
@@ -67,6 +67,19 @@ async function waitingFixture() {
   expect(requested.statusCode, requested.body).toBe(200);
   return { ...f, runId, state, inputRef };
 }
+it("pauses and explicitly resumes through the desktop bridge without granting scope",async()=>{
+  const f=await waitingFixture(),before=await f.state();
+  const pause={commandId:"pause-desktop",runId:f.runId,expectedRevision:before.revision};
+  const paused=await f.call(`${f.base}/execution/pause`,pause);
+  expect(paused.statusCode,paused.body).toBe(200);expect(paused.json().desktopReceipt.operation).toBe("pause");
+  expect((await f.call(`${f.base}/execution/pause`,pause)).statusCode).toBe(200);
+  const state=await f.state();expect(state.status).toBe("paused");expect(state.scopeRef).toBe(before.scopeRef);
+  const resume={commandId:"resume-desktop",runId:f.runId,expectedRevision:state.revision};
+  expect((await f.call(`${f.base}/execution/resume`,resume)).statusCode).toBe(400);
+  const restored=await f.call(`${f.base}/execution/resume`,{...resume,confirmed:true});
+  expect(restored.statusCode,restored.body).toBe(200);expect(restored.json().desktopReceipt.operation).toBe("resume");
+  expect((await f.state()).status).toBe("running");expect((await f.state()).scopeRef).toBe(before.scopeRef);
+});
 it("replays approved and rejected operator decisions after response loss without granting twice", async () => {
   for (const approved of [true, false]) {
     const f = await waitingFixture();
@@ -180,7 +193,7 @@ it("projects the installed form and registers its literal scope before explicit 
   const f = await fixture();
   const catalog = (await f.call(`${f.base}/execution`)).json(), definition = catalog.definitions[0];
   const form = AuthorizationFormSchema.parse(definition.authorizationForm);
-  const scope = buildAuthorizationScope(form, ["https://first.example/exact", "", ""]);
+  const scope = buildAuthorizationScope(form, form.fields.map(field => field.type === "integer" ? String(field.defaultValue) : field.path[0] === "targets" ? "https://first.example/exact" : ""));
   expect(definition.authorizationReview.allowedActions).toContain("scope.read");
   expect((await f.call(`${f.base}/execution/authorize`, { ...f.authorization, scope })).statusCode).toBe(201);
   const registered = (await f.call(`${f.base}/execution`)).json();

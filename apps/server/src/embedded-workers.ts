@@ -1,11 +1,12 @@
 import { resolve } from "node:path";
+import { RunToolPolicy } from "./run-tool-policy.js";
 import { readRunForensics } from "./scenario-run-disposal.js";
 import type Database from "better-sqlite3";
 import type { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
 import type { ContextCompactionPolicy } from "@traceforge/cognitive-runtime";
 import type { FastifyInstance } from "fastify";
 import type { LlmProvider } from "@traceforge/llm";
-import type { ExecutionNode } from "@traceforge/execution-node";
+import { EXECUTION_PROTOCOL_VERSION, type ExecutionNode } from "@traceforge/execution-node";
 import {
   DurableScenarioRuntime,
   ScenarioDefinitionRegistry,
@@ -26,11 +27,14 @@ import {
   PolicyExecutionToolGateway,
   ToolProviderFairScheduler,
   WorkerSupervisor,
+  RunWorkspace,
   type ExecutionToolAdapter,
   type ExecutionToolDiscoverySource,
   type ProviderCapabilityHost,
   type ToolProviderRecoverySnapshot,
   type WorkerModelContextPolicy,
+  type ToolExecutionContext,
+  type WorkspaceProject,
 } from "@traceforge/worker-runtime";
 import { StructuredWorkerModel } from "@traceforge/cognitive-runtime";
 import { ExecutionNodeProcessTool, SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
@@ -123,6 +127,8 @@ class EmbeddedScenarioWorkerPool {
     private readonly compaction?: ContextCompactionPolicy,
     private readonly hostControl?: FoundationHostControl,
     private readonly authorization?: SqliteScenarioAuthorizationService,
+    private readonly workspace?: RunWorkspace,
+    private readonly plannerReady:()=>boolean=()=>false,
   ) {}
 
   reconcile(): Promise<void> {
@@ -193,7 +199,23 @@ class EmbeddedScenarioWorkerPool {
   }
 
   private createSupervisor(workerId: string, definition: ScenarioDefinition, pool: ScenarioWorkerPoolDefinition): {supervisor:WorkerSupervisor;revoke:()=>void} {
-    const model = new StructuredWorkerModel(this.provider, undefined, this.cognitiveSnapshots, undefined, this.modelRuntime, this.contextPolicy, this.compaction);
+    const contextPolicy: WorkerModelContextPolicy = {
+      prepare: async request => {
+        const projection = this.contextPolicy ? await this.contextPolicy.prepare(request) : { request, manifest: {} };
+        projection.request={...projection.request,plannerAvailable:definition.agentTopology.planner.enabled&&this.plannerReady()};
+        const run = new SqliteScenarioEventStore(this.sqlite).loadState(request.assignment.runId);
+        const current = run && this.authorization?.requireRun(run);
+        if (current && current.scope.payload && typeof current.scope.payload === "object" && !Array.isArray(current.scope.payload)
+          && "form" in current.package.authorizationPolicy && current.package.authorizationPolicy.form) {
+          projection.request = { ...projection.request, permissionContext: {
+            scope: current.scope.payload as Record<string, unknown>, form: current.package.authorizationPolicy.form, expiresAt: current.row.expires_at,
+          } };
+        }
+        return projection;
+      },
+      recordDecision: this.contextPolicy?.recordDecision?.bind(this.contextPolicy),
+    };
+    const model = new StructuredWorkerModel(this.provider, undefined, this.cognitiveSnapshots, undefined, this.modelRuntime, contextPolicy, this.compaction);
     const receipts = new SqliteToolReceiptStore(this.sqlite);
     const worker: WorkerDescriptor = {
       id: workerId,
@@ -206,9 +228,10 @@ class EmbeddedScenarioWorkerPool {
     if(!this.hostControl)throw new Error("Embedded Workers require host-scoped control channels");
     const channel=this.hostControl.worker(worker,definition.kind,definition.version);
     const control=new HttpWorkerControlPlaneClient(serverBaseUrl(this.app),channel.fetch);
+    const toolPolicy = new RunToolPolicy(definition, this.authorization, this.workspace, executorPlatform());
     const gateway = new PolicyExecutionToolGateway(
       this.toolRuntime.registry,
-      { async authorize(input) { return { decision: "pending", approvalRef: `approval:${input.invocation.id}` }; } },
+      { async authorize(input) { return toolPolicy.approval(input.assignment, input.tool) ?? { decision: "pending", approvalRef: `approval:${input.invocation.id}` }; } },
       receipts,
       {
         allowedRisks: ["read_only", "bounded_write", "privileged", "destructive"],
@@ -221,37 +244,7 @@ class EmbeddedScenarioWorkerPool {
             || !work.leaseExpiresAt || !(Date.parse(work.leaseExpiresAt)>Date.now()))throw new Error("Tool dispatch requires current Work ownership");
           this.authorization.requireRun(state);
         },
-        permissionLayers: () => {
-          const platform = executorPlatform();
-          return [
-            {
-              source: "platform",
-              profile: {
-                version: 1,
-                platform,
-                filesystem: {
-                  read: [{ path: this.projectRoot, scope: "tree" }],
-                  write: [{ path: this.projectRoot, scope: "tree" }],
-                  deny: [],
-                },
-                network: "brokered",
-                process: { access: "sandboxed", interactive: false, background: false },
-                secrets: "plaintext",
-              },
-            },
-            {
-              source: `scenario:${definition.kind}@${definition.version}`,
-              profile: {
-                version: 1,
-                platform,
-                filesystem: { read: [], write: [], deny: [] },
-                network: "brokered",
-                process: { access: "deny", interactive: false, background: false },
-                secrets: "handles_only",
-              },
-            },
-          ];
-        },
+        permissionLayers: ({ assignment, tool }) => toolPolicy.layers(assignment, tool),
       },
       this.toolRuntime,
       this.invocationBindings,
@@ -346,17 +339,33 @@ export function registerEmbeddedWorkers(
   hostControl?: FoundationHostControl,
   authorization?: SqliteScenarioAuthorizationService,
   extensionAssembly?: ExtensionAssemblyControl,
+  onToolRuntime?: (runtime: ExecutionToolDiscoveryRuntime) => void,
+  workspaceProject?: (context: ToolExecutionContext, id: string) => Promise<WorkspaceProject>,
 ): () => ReturnType<ExecutionToolDiscoveryRuntime["snapshot"]> {
+  const workspace = executionNode && authorization ? new RunWorkspace(resolve(projectRoot, "data", "run-workspaces"),
+    new ExecutionNodeProcessTool(executionNode, processCapacity), (context, action) => {
+      const state = new DurableScenarioRuntime(new SqliteScenarioEventStore(sqlite), definitions, bindingValidator).load(context.runId);
+      const work = state?.workItems.find(item => item.id === context.workId);
+      if (!state || state.status !== "running" || state.caseId !== context.caseId || state.scopeRef !== context.scopeRef
+        || work?.status !== "running" || work.workerId !== context.workerId || work.leaseId !== context.leaseId
+        || !work.leaseExpiresAt || Date.parse(work.leaseExpiresAt) <= Date.now()) throw new Error("Workspace requires current Work ownership");
+      authorization.requireRun(state);
+      authorization.requireAction(context.scopeRef, context.caseId, action);
+    }, async () => {
+      await executionNode.handshake({ clientId: "run-workspace", protocol: EXECUTION_PROTOCOL_VERSION, requiredCapabilities: ["process.spawn", "process.stdio"] });
+    }, workspaceProject) : undefined;
   const builtinTools: ExecutionToolAdapter[] = [
     new EvidenceGraphSnapshotTool(evidenceGraph),
     new EvidenceGraphMutateTool(sqlite, evidenceGraph),
     ...(executionNode ? [new ExecutionNodeProcessTool(executionNode,processCapacity)] : []),
+    ...(workspace?.tools() ?? []),
   ];
   const toolRuntime = new ExecutionToolDiscoveryRuntime([
     { source: "traceforge.builtin", async discover() { return builtinTools; } },
     ...scenarioToolSources,
     ...externalToolSources,
   ], 30_000, 3, () => new Date(), new SqliteExecutionToolDiscoveryStateStore(sqlite));
+  onToolRuntime?.(toolRuntime);
   let startupState: "not_started" | "starting" | "ready" | "failed" | "stopping" | "stopped" = "not_started";
   registerExecutionToolRuntimeRoutes(app, toolRuntime, () => startupState);
   const providerRecoveryState = new SqliteToolProviderRecoveryStateStore(sqlite);
@@ -461,7 +470,7 @@ export function registerEmbeddedWorkers(
   registerToolProviderRefreshRoutes(app, providerRefresh);
   const pool = new EmbeddedScenarioWorkerPool(
     app, sqlite, provider, projectRoot, cognitiveSnapshots, modelRuntime, agentEvents, toolRuntime, definitions, bindingValidator,
-    invocationBindings, contextPolicy, compaction,hostControl,authorization,
+    invocationBindings, contextPolicy, compaction,hostControl,authorization,workspace,providerReady,
   );
   let listening = false;
   let startup: Promise<void> | undefined;

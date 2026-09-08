@@ -87,6 +87,8 @@ export type ScenarioOutputDraft = Omit<ScenarioOutput, "phaseId" | "producedByWo
 };
 
 export interface ScenarioWorkItem {
+  inquiry?: { id: string; question: string; refs: string[]; status: "pending" | "answered"; answer?: string };
+  permissionRequest?: { id: string; reason: string; scope: Record<string, unknown>; status: "pending" | "approved" | "rejected" };
   /** Previous blocked Work; retries preserve its immutable event history. */
   retryOf?: string;
   id: string;
@@ -163,6 +165,15 @@ export interface ScenarioDefinition {
   version: number;
   title: string;
   authorizationActions: string[];
+  /** Declarative ceilings; only the Host materializes filesystem/process grants. */
+  toolPolicies?: Array<{
+    source: string;
+    capability: string;
+    authorizationAction: string;
+    profile: "run-workspace" | "brokered-host";
+    /** Explicit boolean in the user-approved Scope payload; absent means ask. */
+    autonomousScopeFlag?: string;
+  }>;
   requiredCapabilities: string[];
   workKinds: ScenarioWorkKindDefinition[];
   initialPhaseId: string;
@@ -176,7 +187,7 @@ export interface RunDirective {
   targetWorkId: string;
   instruction: string;
   rationale: string;
-  issuedBy: "observer" | "operator";
+  issuedBy: "observer" | "operator" | "planner";
   createdAt: string;
 }
 
@@ -266,7 +277,9 @@ export type ScenarioCommand =
   | { type: "resolve_work_approval"; workId: string; approvalId: string; approved: boolean; reason: string; at: string }
   | { type: "complete_work"; workId: string; leaseId: string; summary: string; outputs: ScenarioOutputDraft[]; at: string }
   | { type: "fail_work"; workId: string; leaseId: string; error: string; at: string }
-  | { type: "block_work"; workId: string; leaseId: string; reason: string; at: string }
+  | { type: "block_work"; workId: string; leaseId: string; reason: string; inquiry?: { id:string; refs:string[] }; permissionRequest?: { id: string; scope: Record<string, unknown> }; at: string }
+  | { type: "answer_inquiry"; workId:string; inquiryId:string; answer:string; at:string }
+  | { type: "resolve_permission_request"; workId: string; requestId: string; approved: boolean; reason: string; at: string }
   | { type: "retry_blocked_work"; workId: string; replacementWorkId: string; idempotencyKey: string; authorizationRef: string; reason: string; at: string }
   | { type: "continue_work"; workId: string; checkpointRef: string; authorizationRef: string; reason: string; at: string }
   | { type: "cancel_work"; workId: string; leaseId?: string; reason: string; at: string }
@@ -289,7 +302,9 @@ export type ScenarioEvent =
   | { type: "work_approval_resolved"; workId: string; approvalId: string; approved: boolean; reason: string; at: string }
   | { type: "work_completed"; workId: string; leaseId: string; summary: string; outputs: ScenarioOutput[]; at: string }
   | { type: "work_failed"; workId: string; leaseId: string; error: string; at: string }
-  | { type: "work_blocked"; workId: string; leaseId: string; reason: string; at: string }
+  | { type: "work_blocked"; workId: string; leaseId: string; reason: string; inquiry?: { id:string; refs:string[] }; permissionRequest?: { id: string; scope: Record<string, unknown> }; at: string }
+  | { type: "inquiry_answered"; workId:string; inquiryId:string; answer:string; at:string }
+  | { type: "permission_request_resolved"; workId: string; requestId: string; approved: boolean; reason: string; at: string }
   | { type: "work_retry_authorized"; sourceWorkId: string; work: ScenarioWorkItem; authorizationRef: string; reason: string; at: string }
   | { type: "work_continuation_authorized"; workId: string; checkpointRef: string; authorizationRef: string; reason: string; at: string }
   | { type: "work_cancelled"; workId: string; reason: string; at: string }

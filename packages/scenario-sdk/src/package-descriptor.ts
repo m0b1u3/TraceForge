@@ -43,14 +43,28 @@ export function parseScenarioPackageDescriptor(input: unknown): ScenarioPackageI
     runtime: value.runtime as NonNullable<ScenarioPackageInstallation["runtime"]>,
   };
   new ScenarioDefinitionRegistry([installation.definition]);
+  for (const rule of installation.definition.toolPolicies ?? []) {
+    if (rule.autonomousScopeFlag && !value.authorizationPolicy.form?.fields.some((field: { type: string; path: string[] }) => field.type === "boolean" && field.path.length === 1 && field.path[0] === rule.autonomousScopeFlag)) throw new Error("Autonomous tool policy requires an explicit boolean authorization field");
+  }
   return deepFreeze(installation);
 }
 
 function validateDefinition(value: unknown): void {
   object(value, "Scenario Definition");
-  exact(value,["kind","version","title","authorizationActions","requiredCapabilities","workKinds","initialPhaseId","agentTopology","phases"]);
+  exact(value,["kind","version","title","authorizationActions","toolPolicies","requiredCapabilities","workKinds","initialPhaseId","agentTopology","phases"]);
   boundedText(value.kind,128,"Scenario kind");positive(value.version,1_000_000,"Scenario Definition version");boundedText(value.title,512,"Scenario title");
   strings(value.authorizationActions,256,128,"Scenario authorization actions");strings(value.requiredCapabilities,256,128,"Scenario required capabilities");
+  if (value.toolPolicies !== undefined) {
+    array(value.toolPolicies, 256, "Scenario tool policies"); const identities = new Set<string>();
+    for (const rule of value.toolPolicies) {
+      object(rule, "Tool policy"); exact(rule, ["source", "capability", "authorizationAction", "profile", "autonomousScopeFlag"]);
+      for (const key of ["source", "capability", "authorizationAction"]) boundedText(rule[key], 128, `Tool policy ${key}`);
+      if (!(value.authorizationActions as string[]).includes(rule.authorizationAction as string)) throw new Error("Tool policy uses undeclared authorization action");
+      if (!["run-workspace", "brokered-host"].includes(String(rule.profile))) throw new Error("Unsupported tool permission profile");
+      if (rule.autonomousScopeFlag !== undefined && (typeof rule.autonomousScopeFlag !== "string" || !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(rule.autonomousScopeFlag) || ["constructor", "prototype", "__proto__"].includes(rule.autonomousScopeFlag))) throw new Error("Invalid autonomous Scope flag");
+      const identity = JSON.stringify([rule.source, rule.capability]); if (identities.has(identity)) throw new Error("Duplicate tool policy"); identities.add(identity);
+    }
+  }
   boundedText(value.initialPhaseId,128,"Scenario initial phase");array(value.workKinds,256,"Scenario Work kinds");
   for(const item of value.workKinds){object(item,"Scenario Work kind");exact(item,["id","defaultWorkerRoles","maximumActiveItems","minimumHypothesisRefs","completion"]);
     boundedText(item.id,128,"Scenario Work kind id");strings(item.defaultWorkerRoles,64,128,"Scenario Worker roles");

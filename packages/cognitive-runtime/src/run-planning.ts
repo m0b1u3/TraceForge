@@ -30,6 +30,7 @@ const proposal = z.object({
 });
 
 const plannerDecision = z.discriminatedUnion("action", [
+  z.object({action:z.literal("answer"),workId:z.string().min(1),inquiryId:z.string().min(1),answer:z.string().trim().min(1).max(8000),rationale:z.string().min(1)}).strict(),
   z.object({ action: z.literal("wait"), rationale: z.string().min(1) }),
   z.object({
     action: z.literal("plan"),
@@ -73,6 +74,7 @@ export interface CognitiveRunContextPolicyPort extends RunContextProjectionPort 
 const decisionSchema = {
   type: "object",
   oneOf: [
+    {properties:{action:{const:"answer"},workId:{type:"string"},inquiryId:{type:"string"},answer:{type:"string",maxLength:8000},rationale:{type:"string"}},required:["action","workId","inquiryId","answer","rationale"],additionalProperties:false},
     { properties: { action: { const: "wait" }, rationale: { type: "string" } }, required: ["action", "rationale"], additionalProperties: false },
     {
       properties: {
@@ -117,6 +119,7 @@ export class StructuredRunPlannerModel implements RunPlannerModel {
         "You plan bounded Work Packages; you never execute tools, send requests, invent evidence, or declare a Finding verified.",
         "Use only supplied identifiers and capabilities. Preserve distinct hypotheses and propose validation only for a traceable Hypothesis.",
         "Avoid duplicate Work. Cancel or reprioritize only queued Work when the supplied state justifies it.",
+        "Prioritize pending Work inquiries. Use action answer with the exact workId and inquiryId to provide actionable guidance; this continues that Work without granting permissions or verifying findings. Do not replace a waiting inquiry with duplicate Work.",
         "Plan for the active Scenario phase and its objective. Concrete attack or analysis techniques come only from the Scenario Profile, never from product-wide assumptions.",
         "Return only the requested JSON and never expose private chain-of-thought.",
       ].join("\n"),
@@ -129,12 +132,17 @@ export class StructuredRunPlannerModel implements RunPlannerModel {
         },
         graph: context.graph, recentEvents: context.recentEvents, contextManifest: context.manifest,
       }),
-      schema: decisionSchema,
+      schema: snapshot.run.workItems.some(work=>work.status==="blocked"&&work.inquiry?.status==="pending")
+        ? {...decisionSchema,oneOf:[decisionSchema.oneOf[0]]} : decisionSchema,
     };
     const compacted = await this.compaction?.prepare({ caseId: snapshot.run.caseId, runId: snapshot.run.id, consumer: "planner",
       context: JSON.parse(request.user), sourceFingerprint: context.manifest.contextLineage?.fingerprint ?? context.semanticFingerprint });
     const manifest = { ...context.manifest, ...compacted?.manifest };
     if (compacted) request.user = JSON.stringify({ ...compacted.context, contextManifest: manifest });
+    // Keep one actionable inquiry readable even when prose compaction removes its question.
+    const pendingInquiry=context.run.workItems.find(work=>work.status==="blocked"&&work.inquiry?.status==="pending");
+    if(pendingInquiry)request.user=JSON.stringify({...JSON.parse(request.user),pendingInquiry:{workId:pendingInquiry.id,
+      inquiryId:pendingInquiry.inquiry!.id,question:pendingInquiry.inquiry!.question,refs:pendingInquiry.inquiry!.refs,trust:"untrusted_planning_question_not_permission"}});
     const beforeDispatch = this.contextPolicy ? () => this.contextPolicy!.assertSnapshotCurrent(snapshot.contextId) : undefined;
     return this.evaluations.run({
       snapshot: {
@@ -243,7 +251,8 @@ export class RunPlannerSupervisor {
     }
     if (evaluation.applied) return;
     if (this.contextPolicy) await this.contextPolicy.recordDerivations(evaluation.id, evaluation.decision.action === "plan"
-      ? evaluation.decision.proposals.map((_, index) => ({ kind: "work", id: `planner-work-${evaluation!.id}-${index}` })) : []);
+      ? evaluation.decision.proposals.map((_, index) => ({ kind: "work", id: `planner-work-${evaluation!.id}-${index}` }))
+      : evaluation.decision.action==="answer"?[{kind:"directive",id:`inquiry:${evaluation.decision.inquiryId}`}]:[]);
     const currentRun = this.runtime.load(run.id);
     const currentGraph = this.graphs.ensure(run.caseId, this.now());
     if (!currentRun || planningFingerprint(currentRun, currentGraph, config.maximumGraphNodes, config.maximumRunItems)
@@ -257,6 +266,12 @@ export class RunPlannerSupervisor {
   }
 
   private validateDecision(decision: RunPlannerDecision, run: ScenarioRunState, definition: ScenarioDefinition, graph: EvidenceGraphState): void {
+    if(decision.action!=="answer"&&run.workItems.some(work=>work.status==="blocked"&&work.inquiry?.status==="pending"))throw new Error("Planner must answer the pending inquiry before planning new Work");
+    if(decision.action==="answer"){
+      const work=run.workItems.find(item=>item.id===decision.workId);
+      if(work?.status!=="blocked"||work.inquiry?.status!=="pending"||work.inquiry.id!==decision.inquiryId)throw new Error("Planner inquiry is stale");
+      return;
+    }
     if (decision.action === "wait") return;
     const config = definition.agentTopology.planner;
     if (decision.proposals.length > config.maximumProposalsPerEvaluation) throw new Error(`Planner proposed ${decision.proposals.length} Work Packages; maximum is ${config.maximumProposalsPerEvaluation}`);
@@ -299,6 +314,10 @@ export class RunPlannerSupervisor {
   private applyDecision(runId: string, evaluationId: string, observedPhaseId: string, decision: RunPlannerDecision): number {
     let state = this.runtime.load(runId);
     if (!state || state.status !== "running" || state.activePhaseId !== observedPhaseId || decision.action === "wait") return state?.revision ?? 0;
+    if(decision.action==="answer")return this.applyCommand(runId,`planner:${evaluationId}:answer`,current=>{
+      const work=current.workItems.find(item=>item.id===decision.workId);
+      return work?.inquiry?.status==="pending"&&work.inquiry.id===decision.inquiryId?{type:"answer_inquiry",workId:work.id,inquiryId:decision.inquiryId,answer:decision.answer,at:this.now()}:undefined;
+    }).revision;
     for (const [index, cancellation] of decision.cancellations.entries()) state = this.applyCommand(runId, `planner:${evaluationId}:cancel:${index}`, (current) => {
       const work = current.workItems.find((candidate) => candidate.id === cancellation.workId);
       return work?.status === "queued" ? { type: "cancel_work" as const, workId: work.id, reason: `Planner: ${cancellation.reason}`, at: this.now() } : undefined;
@@ -325,6 +344,7 @@ export class RunPlannerSupervisor {
     if (!state || state.status !== "running" || state.activePhaseId !== observedPhaseId) return state?.revision;
     const definition = this.definitions.require(state.definitionKind, state.definitionVersion);
     const phase = definition.phases.find((candidate) => candidate.id === state.activePhaseId)!;
+    if(state.workItems.some(work=>work.inquiry?.status==="pending"&&work.status==="blocked"))return undefined;
     if (state.workItems.some((work) => work.phaseId === phase.id && !["completed", "blocked", "failed", "cancelled"].includes(work.status))) return undefined;
     const transition = phase.transitions.find((candidate) => transitionAllowed(state, candidate).allowed);
     if (!transition) return undefined;

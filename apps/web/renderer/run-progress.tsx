@@ -30,7 +30,7 @@ function description(event: ScenarioAgentEvent) {
   if (item.type === "modelAdmission") return `模型资源 · ${statusLabel(item.status)}`;
   return item.summary;
 }
-export function RunProgress({ bridge, conversationId, runId }: { bridge: DesktopConversations; conversationId: string; runId: string }) {
+export function RunProgress({ bridge, conversationId, runId, terminal = false }: { bridge: DesktopConversations; conversationId: string; runId: string; terminal?: boolean }) {
   const [events, setEvents] = useState<ScenarioAgentEvent[]>([]), [error, setError] = useState(false), [retry, setRetry] = useState(0);
   const [older, setOlder] = useState(false);
   useEffect(() => {
@@ -47,10 +47,12 @@ export function RunProgress({ bridge, conversationId, runId }: { bridge: Desktop
         collected = [...collected, ...page.events].slice(-100);
         setEvents(collected); setOlder(cursor > 100); setError(false);
       } catch { if (active) setError(true); }
-      if (active) timer = setTimeout(poll, more ? 100 : document.hidden ? 15000 : 2000);
+      // Drain every retained page before stopping terminal polling. A slow final
+      // audit event can still be picked up by a low-frequency reconciliation.
+      if (active) timer = setTimeout(poll, more ? 100 : terminal ? 60000 : document.hidden ? 15000 : 2000);
     };
     void poll(); return () => { active = false; clearTimeout(timer); };
-  }, [bridge, conversationId, runId, retry]);
+  }, [bridge, conversationId, runId, retry, terminal]);
   return <section className="run-progress" aria-label="执行进展">
     <p className="local-receipt" role="status">{events.length ? description(events[events.length - 1]!) : "正在等待执行事件…"}</p>
     {error && <p role="alert">进展读取中断，已显示记录保留；不会重跑操作。<button onClick={() => setRetry(value => value + 1)}>重新读取进展</button></p>}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ScenarioKernel } from "./kernel.js";
+import { ScenarioKernel, evolve, normalizeRetriedInquiries } from "./kernel.js";
 import type { ScenarioDefinition } from "./model.js";
 import { ScenarioDefinitionRegistry } from "./runtime.js";
 import { CapabilityScheduler } from "./scheduler.js";
@@ -45,6 +45,28 @@ const definition: ScenarioDefinition = {
 };
 
 describe("ScenarioDefinitionRegistry", () => {
+  it("fences pending inquiries and permits explicit cancellation of legacy stranded questions",()=>{
+    const at="2026-09-08T00:00:00.000Z",d=structuredClone(definition);d.phases[0]!.transitions=[{to:"complete",allOf:[]}];
+    const kernel=new ScenarioKernel(d);
+    let state=kernel.execute(undefined,{type:"start_run",runId:"run",caseId:"case",goal:"Review",scopeRef:"scope",scenarioPackage:{id:"fixture",version:"1",schemaRevision:1},availableCapabilities:["fixture.scope.read"],at}).state;
+    state=kernel.execute(state,{type:"propose_work",proposal:{id:"work",kind:"candidate_review",title:"Review",objective:"Review",idempotencyKey:"one"},at}).state;
+    state.workItems[0]={...state.workItems[0]!,status:"blocked",inquiry:{id:"question",question:"Which next?",refs:[],status:"pending"},latestCheckpoint:{id:"cp",workId:"work",leaseId:"old",payloadRef:"cp",progressSummary:"Saved",createdAt:at}};
+    expect(()=>kernel.execute(state,{type:"continue_work",workId:"work",checkpointRef:"cp",authorizationRef:"grant",reason:"Continue",at})).toThrow("Pending inquiry");
+    expect(()=>kernel.execute(state,{type:"retry_blocked_work",workId:"work",replacementWorkId:"retry",idempotencyKey:"retry",authorizationRef:"grant",reason:"Retry",at})).toThrow("Pending inquiry");
+    const ordinary=evolve(state,{type:"work_blocked",workId:"work",leaseId:"old",reason:"Different blocker",at});
+    expect(ordinary.workItems[0]!.inquiry).toBeUndefined();
+    const replayed=evolve(state,{type:"work_retry_authorized",sourceWorkId:"work",work:{...state.workItems[0]!,id:"retry",retryOf:"work",idempotencyKey:"retry",status:"queued"},authorizationRef:"old-grant",reason:"Previously authorized retry",at});
+    expect(replayed.workItems.every(work=>work.inquiry===undefined)).toBe(true);
+    // Reconstruct the old bug: retry duplicated the pending inquiry into a replacement.
+    state.workItems.push({...state.workItems[0]!,id:"retry",retryOf:"work",idempotencyKey:"retry",status:"queued"});
+    const snapshot=normalizeRetriedInquiries(state);
+    expect(snapshot.workItems.every(work=>work.inquiry===undefined)).toBe(true);
+    expect(state.workItems[0]!.inquiry?.status).toBe("pending"); // Stored snapshot remains untouched.
+    state=kernel.execute(state,{type:"cancel_work",workId:"work",reason:"Explicit recovery",at}).state;
+    state=kernel.execute(state,{type:"cancel_work",workId:"retry",reason:"Explicit recovery",at}).state;
+    expect(()=>kernel.execute(state,{type:"answer_inquiry",workId:"work",inquiryId:"question",answer:"Late answer",at})).toThrow();
+    expect(kernel.execute(state,{type:"advance_phase",to:"complete",at}).state.status).toBe("completed");
+  });
   it.each([false, true])("schedules exhausted work only with an authorized checkpoint continuation: %s", (resumeFromCheckpoint) => {
     const at = "2026-08-28T00:00:00.000Z";
     const kernel = new ScenarioKernel(definition);

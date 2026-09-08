@@ -1,9 +1,13 @@
 import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, requiredText, sha, shaBytes, succeeded, unique } from "./validation.mjs";
+import { readInventories, surfaceKey } from "./surface-inventory.mjs";
+import { budgets, BudgetExhausted } from "./budgets.mjs";
+import { observationHighlights } from "./observations.mjs";
 const key = "web.investigation.v1";
 // Scenario-owned experiment ledger, not a Work scheduler. Work allocation stays in Core.
 export async function investigation(action, input, context, capability, dispatch) {
-    const write = action !== "report";
-    await capability("traceforge.scenario.authorization@1", "require", { action: action === "report" ? "report.write" : "evidence.write" }, "workflow-permission");
+    const limits = await budgets(capability);
+    const write = !["report", "snapshot"].includes(action);
+    await capability("traceforge.scenario.authorization@1", "require", { action: action === "report" ? "report.write" : action === "snapshot" ? "scope.read" : "evidence.write" }, "workflow-permission");
     const loaded = await capability("traceforge.scenario.state@1", "read", { operation: "read", key }, "workflow-read");
     let revision = loaded.output?.revision ?? 0;
     let state = loaded.output == null ? { version: 1, candidates: [], active: null } : restore(loaded.output.value);
@@ -20,18 +24,19 @@ export async function investigation(action, input, context, capability, dispatch
         exact(input, ["candidateId", "statement", "basisRefs", "surfaceSessionId"]);
         const id = requiredText(input.candidateId, "Candidate id"), statement = requiredText(input.statement, "Candidate statement");
         const basisRefs = refs(input.basisRefs);
+        const inventoryKey = surfaceKey(input.surfaceSessionId === undefined ? null : requiredText(input.surfaceSessionId, "Surface Session"));
         const existing = state.candidates.find(item => item.id === id);
         if (existing) {
-            if (existing.statement !== statement || JSON.stringify(existing.basisRefs) !== JSON.stringify(basisRefs) || existing.scopeRef !== context.scopeRef)
+            if (existing.statement !== statement || JSON.stringify(existing.basisRefs) !== JSON.stringify(basisRefs) || existing.scopeRef !== context.scopeRef
+                || (existing.surfaceKey ?? "web.surface.v1") !== inventoryKey)
                 throw new Error("Candidate id already binds other material");
             if (!existing.registered)
                 throw new Error("Hypothesis registration outcome is unconfirmed; inspect the graph before continuing");
             return candidateResult(existing);
         }
-        if (state.candidates.length >= 16)
-            throw new Error("Investigation candidate budget exhausted; report current coverage");
-        const surfaceKey = input.surfaceSessionId === undefined ? "web.surface.v1" : `web.surface.v1:${sha(requiredText(input.surfaceSessionId, "Surface Session")).slice(0, 16)}`;
-        const surface = await capability("traceforge.scenario.state@1", "read", { operation: "read", key: surfaceKey }, "workflow-surface");
+        if (state.candidates.length >= limits.hypotheses)
+            throw new Error("Investigation candidate budget exhausted; request additional authorization or report current coverage");
+        const surface = await capability("traceforge.scenario.state@1", "read", { operation: "read", key: inventoryKey }, "workflow-surface");
         const observations = surface.output?.value?.observations;
         if (!Array.isArray(observations))
             throw new Error("Explore authorized surface before registering a hypothesis");
@@ -44,7 +49,7 @@ export async function investigation(action, input, context, capability, dispatch
             }, `workflow-basis:${sha(observation.url)}`);
         }
         const candidate = { registered: false, reviewRecorded: false, id, hypothesisId: `web-hypothesis:${sha(`${context.caseId}:${context.runId}:${id}`)}`, statement, basisRefs,
-            fingerprint: null, workId: null, scopeRef: requiredText(context.scopeRef, "Scope"), pending: null, observations: [], status: "queued", assessment: null, review: null };
+            fingerprint: null, workId: null, scopeRef: requiredText(context.scopeRef, "Scope"), surfaceKey: inventoryKey, pending: null, observations: [], status: "queued", assessment: null, review: null };
         state.candidates.push(candidate);
         await save();
         await recordCandidate(candidate, capability);
@@ -52,7 +57,7 @@ export async function investigation(action, input, context, capability, dispatch
         await save();
         return candidateResult(state.candidates.find(item => item.id === id));
     }
-    if (action === "report") {
+    if (action === "report" || action === "snapshot") {
         exact(input, []);
         const groups = { supportedCandidates: [], refutedCandidates: [], unresolved: [] };
         for (const candidate of state.candidates) {
@@ -65,17 +70,20 @@ export async function investigation(action, input, context, capability, dispatch
             else
                 groups.unresolved.push(row);
         }
-        const surface = await capability("traceforge.scenario.state@1", "read", { operation: "read", key: "web.surface.v1" }, "report-surface");
-        const snapshot = surface.output?.value;
-        const reportRefs = unique(state.candidates.flatMap(candidate => [...(candidate.registered ? [`knowledge-node:${candidate.hypothesisId}`] : []), ...candidate.basisRefs,
-            ...candidate.observations.flatMap(item => item.refs), ...(candidate.reviewRecorded ? [`knowledge-node:web-review:${sha(candidate.hypothesisId)}`] : [])]));
-        return succeeded("Black-box investigation report assembled; no verified findings inferred", {
-            outputKind: "report", schemaVersion: 1, ...groups, verifiedFindings: [], verifiedFindingCoverage: "not_loaded", activeCandidateId: state.active,
+        const coverage = await readInventories(capability, state.candidates.flatMap(candidate => candidate.surfaceKey ? [candidate.surfaceKey] : []));
+        const anonymous = coverage.inventories.find(item => item.mode === "anonymous");
+        const reportRefs = unique([...state.candidates.flatMap(candidate => [...(candidate.registered ? [`knowledge-node:${candidate.hypothesisId}`] : []), ...candidate.basisRefs,
+                ...candidate.observations.flatMap(item => item.refs), ...(candidate.reviewRecorded ? [`knowledge-node:web-review:${sha(candidate.hypothesisId)}`] : [])]),
+            ...coverage.inventories.flatMap(item => item.observations.flatMap((observation) => [observation.networkReceipt, ...observation.evidenceRefs]))]);
+        return succeeded(action === "report" ? "Black-box investigation report assembled; no verified findings inferred" : "Investigation handoff loaded without executing or scheduling work", {
+            outputKind: action === "report" ? "report" : "coverage_assessment", schemaVersion: 1, ...groups, verifiedFindings: [], verifiedFindingCoverage: "not_loaded", activeCandidateId: state.active,
+            handoff: handoff(state, coverage.inventories),
             referenceListTruncated: reportRefs.length > 512,
             coverage: { candidateCount: state.candidates.length, reviewedCount: state.candidates.filter(item => item.reviewRecorded).length,
-                anonymousVisited: snapshot?.visited?.length ?? 0, anonymousQueued: snapshot?.queue?.length ?? 0, anonymousSkipped: snapshot?.skipped ?? [], anonymousPending: snapshot?.pending ?? null,
+                anonymousVisited: anonymous?.visitedCount ?? 0, anonymousQueued: anonymous?.queuedCount ?? 0, anonymousSkipped: anonymous?.skipped ?? [], anonymousPending: anonymous?.pending ?? null,
+                inventories: coverage.inventories, catalogAvailable: coverage.catalogAvailable,
                 complete: false },
-            limitations: ["Bounded HTTP coverage only; authenticated surfaces are separate inventories. Counts are retained checkpoints, not exhaustive coverage.",
+            limitations: [...coverage.limitations, "Browser-only observations and manually issued HTTP requests are not enumerated by the surface ledger; reconcile their receipts separately.",
                 "Supported/refuted labels are review assessments, not lifecycle-verified Findings. No difference is not a proof of safety.",
                 "Queued, stopped, unreviewed and interrupted candidates remain explicit; report generation does not finish Work or advance phases."],
         }, reportRefs.slice(0, 512));
@@ -104,6 +112,10 @@ export async function investigation(action, input, context, capability, dispatch
             throw new Error("Review contains unknown evidence references");
         if (outcome !== "inconclusive" && !candidate.observations.some(item => item.refs.some(ref => references.includes(ref))))
             throw new Error("Review must cite experiment observations");
+        if (outcome !== "inconclusive" && !["baseline:", "candidate:"].every(stage => candidate.observations
+            .some(item => item.stage.startsWith(stage) && item.refs.some(ref => references.includes(ref))))) {
+            throw new Error("Review must cite both baseline and candidate observations");
+        }
         const review = { outcome, causalMechanism: requiredText(input.causalMechanism, "Causal mechanism or missing link"),
             expectedBoundary: requiredText(input.expectedBoundary, "Expected boundary or missing rule"), securityImpact: requiredText(input.securityImpact, "Impact or missing evidence"),
             alternatives: requiredText(input.alternatives, "Alternative explanations"), refs: references };
@@ -133,8 +145,10 @@ export async function investigation(action, input, context, capability, dispatch
     if (action !== "advance")
         throw new Error("Unknown investigation operation");
     exact(input, ["candidateId", "plan", "maxRequests"]);
-    const plan = parsePlan(input.plan), fingerprint = sha(JSON.stringify(plan));
-    const budget = boundedInteger(input.maxRequests ?? 6, 1, 6, "Workflow request budget");
+    const plan = parsePlan(input.plan), fingerprint = sha(JSON.stringify(input.plan.candidates === undefined && input.plan.stopOn === undefined && input.plan.expectedSignals === undefined ? { prepare: plan.prepare, baseline: plan.baseline, candidate: plan.candidates[0], rounds: plan.rounds, changedCondition: plan.changedCondition } : plan));
+    if (plan.candidates.length > limits.variants)
+        throw new Error("Authorized variant budget exceeded");
+    const budget = boundedInteger(input.maxRequests ?? limits.requestsPerCall, 1, limits.requestsPerCall, "Workflow request budget");
     const workId = requiredText(context.workId, "Validation Work id");
     if (candidate.fingerprint !== null && candidate.fingerprint !== fingerprint)
         throw new Error("Validation plan cannot change during continuation");
@@ -144,8 +158,12 @@ export async function investigation(action, input, context, capability, dispatch
         throw new Error("Another validation candidate is active");
     if (candidate.pending !== null || ["observed", "stopped", "reviewed"].includes(candidate.status))
         return candidateResult(candidate);
+    const inventoryState = await readInventories(capability, candidate.surfaceKey ? [candidate.surfaceKey] : []);
+    if (inventoryState.inventories.some(item => item.pending !== null)) {
+        throw new Error("A surface request outcome is unconfirmed; reconcile it before dispatching validation");
+    }
     // Validate all exact targets before a possibly mutating preparation, then recheck at each dispatch.
-    for (const url of unique([...plan.prepare.map(step => step.request.url), plan.baseline.url, plan.candidate.url])) {
+    for (const url of unique([...plan.prepare.map(step => step.request.url), plan.baseline.url, ...plan.candidates.map(item => item.url)])) {
         await capability("traceforge.scenario.authorization@1", "authorize_resource", {
             action: "web.request.replay", resourceKind: "network.url", value: url,
         }, `workflow-preflight:${sha(url)}`);
@@ -157,9 +175,10 @@ export async function investigation(action, input, context, capability, dispatch
     await save();
     candidate = state.candidates.find(item => item.id === candidateId);
     const sequence = [...plan.prepare.map((step, i) => ({ stage: `prepare:${i}`, ...step })),
-        ...Array.from({ length: plan.rounds * 2 }, (_, i) => ({ stage: `${i % 2 === 0 ? "baseline" : "candidate"}:${Math.floor(i / 2)}`,
-            request: i % 2 === 0 ? plan.baseline : plan.candidate, expectedStatuses: [] }))];
-    for (let used = 0; used < budget && candidate.observations.length < sequence.length; used++) {
+        ...plan.candidates.flatMap((variant, variantIndex) => Array.from({ length: plan.rounds * 2 }, (_, i) => ({ stage: `${i % 2 === 0 ? "baseline" : "candidate"}:${Math.floor(i / 2) + variantIndex * plan.rounds}`,
+            request: i % 2 === 0 ? plan.baseline : variant, expectedStatuses: [] })))];
+    const deadline = Date.now() + 90000;
+    for (let used = 0; used < budget && candidate.observations.length < sequence.length && Date.now() < deadline; used++) {
         const step = sequence[candidate.observations.length];
         await capability("traceforge.scenario.authorization@1", "authorize_resource", {
             action: "web.request.replay", resourceKind: "network.url", value: step.request.url,
@@ -167,7 +186,17 @@ export async function investigation(action, input, context, capability, dispatch
         candidate.pending = step.stage;
         await save();
         candidate = state.candidates.find(item => item.id === candidateId);
-        const response = await dispatch(step.request, `workflow:${candidate.hypothesisId}:${step.stage}`);
+        let response;
+        try {
+            response = await dispatch(step.request, `workflow:${candidate.hypothesisId}:${step.stage}`);
+        }
+        catch (error) {
+            if (error instanceof BudgetExhausted) {
+                candidate.pending = null;
+                await save();
+            }
+            throw error;
+        }
         const body = plainObject(JSON.parse(response.raw), "Workflow response"), bytes = Buffer.from(requiredBase64(body.bodyBase64), "base64");
         const observation = { stage: step.stage, status: boundedInteger(body.status, 100, 599, "HTTP status"),
             bytes: boundedInteger(body.responseBytes, 0, 1024 * 1024, "HTTP response bytes"), digest: shaBytes(bytes), truncated: body.bodyTruncated !== false,
@@ -184,9 +213,14 @@ export async function investigation(action, input, context, capability, dispatch
             candidate.status = "stopped";
             candidate.assessment = "precondition_failed";
         }
-        else if (candidate.observations.length === sequence.length) {
-            candidate.status = "observed";
-            candidate.assessment = assess(candidate.observations.filter(item => !item.stage.startsWith("prepare:")));
+        else {
+            const observations = candidate.observations.filter(item => !item.stage.startsWith("prepare:"));
+            candidate.variantAssessments = Array.from({ length: Math.floor(observations.length / (plan.rounds * 2)) }, (_, variantIndex) => ({ variantIndex, assessment: assess(observations.slice(variantIndex * plan.rounds * 2, (variantIndex + 1) * plan.rounds * 2)) }));
+            const latest = candidate.variantAssessments.at(-1), pair = observations.slice(-2), signalMatch = pair.length === 2 && plan.expectedSignals.some(signal => signal === "statusChanged" ? pair[0].status !== pair[1].status : signal === "bytesChanged" ? pair[0].bytes !== pair[1].bytes : pair[0].digest !== pair[1].digest);
+            if (candidate.observations.length === sequence.length || (plan.stopOn === "repeatable_difference" && observations.length % (plan.rounds * 2) === 0 && latest?.assessment === "repeatable_difference" && signalMatch)) {
+                candidate.status = "observed";
+                candidate.assessment = candidate.variantAssessments.some(item => item.assessment === "repeatable_difference") ? "repeatable_difference" : latest?.assessment ?? "insufficient_observations";
+            }
         }
         await save();
         candidate = state.candidates.find(item => item.id === candidateId);
@@ -195,9 +229,25 @@ export async function investigation(action, input, context, capability, dispatch
     }
     return candidateResult(candidate);
 }
+function handoff(state, inventories) {
+    const uncertain = state.candidates.filter(item => !item.registered || item.pending !== null || (item.review !== null && !item.reviewRecorded));
+    const pendingInventories = inventories.filter(item => item.pending !== null).map(item => item.key);
+    const active = state.candidates.find(item => item.id === state.active);
+    const queued = state.candidates.filter(item => item.registered && item.status === "queued");
+    const nextAction = uncertain.length || pendingInventories.length ? "reconcile_unknown_outcomes"
+        : active?.status === "running" ? "continue_original_validation_work"
+            : active ? "review_active_candidate"
+                : queued.length ? "schedule_one_validation_work"
+                    : state.candidates.length ? "synthesize_evidence_and_limitations"
+                        : inventories.some(item => item.retainedObservationCount > 0) ? "assess_surface_and_register_hypotheses" : "map_authorized_surface";
+    return { nextAction, advisoryOnly: true, candidateId: active?.id ?? queued[0]?.id ?? null, originalWorkId: active?.workId ?? null,
+        queuedCandidateIds: queued.map(item => item.id), uncertainCandidateIds: uncertain.map(item => item.id), pendingInventories,
+        requiresGraphReview: true, requiresOperatorOrHostReconciliation: uncertain.length > 0 || pendingInventories.length > 0,
+        instruction: "This is a Scenario handoff, not a scheduling command or permission grant. Core owns Work and phase transitions; preserve every queued hypothesis." };
+}
 function parsePlan(value) {
     const plan = plainObject(value, "Validation plan");
-    exact(plan, ["prepare", "baseline", "candidate", "rounds", "changedCondition"]);
+    exact(plan, ["prepare", "baseline", "candidate", "candidates", "rounds", "changedCondition", "stopOn", "expectedSignals"]);
     const changedCondition = requiredText(plan.changedCondition, "Controlled change rationale");
     if (!Array.isArray(plan.prepare) || plan.prepare.length > 4)
         throw new Error("At most four preconditions are supported");
@@ -208,11 +258,22 @@ function parsePlan(value) {
             throw new Error("Preconditions need bounded expected statuses");
         return { request: parseRequest(step.request, true), purpose: requiredText(step.request.purpose, "Precondition purpose"), expectedStatuses: unique(step.expectedStatuses.map(status => boundedInteger(status, 100, 599, "Expected status"))) };
     });
-    const baseline = parseRequest(plan.baseline, false), candidate = parseRequest(plan.candidate, false);
-    const changed = ["url", "method", "sessionId", "headers"].filter(key => JSON.stringify(baseline[key]) !== JSON.stringify(candidate[key]));
-    if (changed.length !== 1)
-        throw new Error("Change exactly one comparison request dimension");
-    return { prepare, baseline, candidate, rounds: boundedInteger(plan.rounds ?? 2, 2, 3, "Comparison rounds"), changedCondition };
+    if (plan.candidate !== undefined && plan.candidates !== undefined)
+        throw new Error("Choose candidate or candidates");
+    const variants = plan.candidates ?? [plan.candidate];
+    if (!Array.isArray(variants) || !variants.length || variants.length > 16)
+        throw new Error("Invalid variant matrix");
+    const baseline = parseRequest(plan.baseline, false), candidates = variants.map(value => parseRequest(value, false));
+    const dimension = ["url", "method", "sessionId", "headers"].find(key => JSON.stringify(baseline[key]) !== JSON.stringify(candidates[0][key]));
+    for (const candidate of candidates) {
+        const changed = ["url", "method", "sessionId", "headers"].filter(key => JSON.stringify(baseline[key]) !== JSON.stringify(candidate[key]));
+        if (changed.length !== 1 || changed[0] !== dimension)
+            throw new Error("All variants must change exactly the same comparison request dimension");
+    }
+    const stopOn = plan.stopOn ?? "never", expectedSignals = plan.expectedSignals ?? ["statusChanged", "bodyChanged", "bytesChanged"];
+    if (!["never", "repeatable_difference"].includes(stopOn) || !Array.isArray(expectedSignals) || !expectedSignals.length || expectedSignals.length > 3 || expectedSignals.some(v => !["statusChanged", "bodyChanged", "bytesChanged"].includes(v)))
+        throw new Error("Invalid experiment signals or stop condition");
+    return { prepare, baseline, candidates, rounds: boundedInteger(plan.rounds ?? 2, 2, 3, "Comparison rounds"), changedCondition, stopOn, expectedSignals };
 }
 function parseRequest(value, prepare) {
     const request = plainObject(value, "Planned request");
@@ -297,11 +358,11 @@ function refs(value) {
 }
 function restore(value) {
     const state = plainObject(value, "Investigation state");
-    if (state.version !== 1 || !Array.isArray(state.candidates) || state.candidates.length > 16
+    if (state.version !== 1 || !Array.isArray(state.candidates) || state.candidates.length > 128
         || (state.active !== null && !state.candidates.some(item => item.id === state.active)))
         throw new Error("Invalid investigation checkpoint");
     for (const candidate of state.candidates) {
-        if (!Array.isArray(candidate.observations) || candidate.observations.length > 10
+        if (!Array.isArray(candidate.observations) || candidate.observations.length > 100
             || !["queued", "running", "observed", "stopped", "reviewed"].includes(candidate.status))
             throw new Error("Invalid candidate checkpoint");
     }
@@ -316,6 +377,7 @@ async function recordCandidate(candidate, capability) {
 }
 function candidateResult(candidate) {
     return succeeded(`Candidate ${candidate.id}: ${candidate.pending === null ? candidate.status : "interrupted"}`, {
+        contextHighlights: observationHighlights(candidate.observations),
         ...candidate, status: candidate.pending === null ? candidate.status : "interrupted", findingVerified: false,
         outputKind: candidate.pending !== null || candidate.status === "stopped" ? "limitation" : candidate.status === "queued" ? "hypothesis"
             : candidate.reviewRecorded ? candidate.review?.outcome === "inconclusive" ? "limitation" : "validation_conclusion" : "surface_observation",

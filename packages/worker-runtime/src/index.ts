@@ -22,3 +22,4 @@ export * from "./supervisor.js";
 export * from "./governed-execution.js";
 export * from "./scenario-process-runtime.js";
 export { waitForCancellation } from "./cancellation.js";
+export { RunWorkspace, workspaceAction, type WorkspaceProject } from "./run-workspace.js";

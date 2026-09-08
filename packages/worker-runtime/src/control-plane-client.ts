@@ -86,8 +86,8 @@ export class HttpWorkerControlPlaneClient implements WorkerControlPlaneClient {
     await this.command(assignment, "fail", { commandId, reason });
   }
 
-  async block(assignment: WorkerAssignment, commandId: string, reason: string): Promise<void> {
-    await this.command(assignment, "block", { commandId, reason });
+  async block(assignment: WorkerAssignment, commandId: string, reason: string, permissionRequest?: { id: string; scope: Record<string, unknown> }, inquiry?:{id:string;refs:string[]}): Promise<void> {
+    await this.command(assignment, "block", { commandId, reason, ...(permissionRequest ? { permissionRequest } : {}),...(inquiry?{inquiry}:{}) });
   }
 
   private command(assignment: WorkerAssignment, action: string, body: Record<string, unknown>): Promise<CommandResponse> {

@@ -17,6 +17,14 @@ function input() { return { caseId: "case", runId: "run", consumer: "worker", so
     { turn: 3, kind: "tool", receiptKey: "newest-receipt", refs: [], summary: "Current bounded observation" }],
 } }; }
 describe("Bounded context compaction lifecycle", () => {
+  it("reserves recall from the actual text budget even after newer ordinary observations",async()=>{
+    const source=input();source.context.transcript[0].summary="[recall-page]"+"R".repeat(1200);
+    const runtime=new ContextCompactionRuntime(new Store(),undefined,{...limits,maximumTextCharacters:900});
+    const result=await runtime.prepare(source);
+    expect((result.context.transcript as any[])[0].summary).toHaveLength(300);
+    expect(result.manifest.contextCompaction).toMatchObject({recallCharacters:300,remainingTextCharacters:600});
+    expect((result.context.compactedText as any).entries.reduce((n:number,e:any)=>n+e.text.length,0)).toBeLessThanOrEqual(600);
+  });
   it("keeps new receipt detail exact, then permits its compression after a newer observation", async () => {
     const source = input(); source.context.transcript[2].summary = "prefix ".repeat(70) + "middle detail" + " suffix".repeat(70);
     const runtime = new ContextCompactionRuntime(new Store(), undefined, limits);

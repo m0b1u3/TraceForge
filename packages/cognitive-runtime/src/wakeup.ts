@@ -16,6 +16,10 @@ export type BlackboardChange =
     };
 
 export type BlackboardChangeListener = (change: BlackboardChange) => void;
+/** Lease/checkpoint bookkeeping does not change cognitive intent or evidence. */
+export function needsCognitiveWake(change:BlackboardChange):boolean {
+  return change.kind==="graph"||change.eventTypes.some(type=>!["work_checkpointed","work_lease_renewed","work_claimed"].includes(type));
+}
 
 /**
  * In-process hint channel for committed Blackboard changes. Durable stores remain

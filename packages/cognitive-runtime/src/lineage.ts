@@ -64,6 +64,7 @@ export function projectRunContextLineage(input: RunContextInput, facts: {
   request.run.workItems = request.run.workItems.map((work) => workIds.has(work.id) ? {
     ...work, title: CONTEXT_WITHHELD_TEXT, objective: CONTEXT_WITHHELD_TEXT, resultSummary: null, error: null, latestCheckpoint: null,
     pendingApproval: null, approvalHistory: [],
+    inquiry:undefined,
   } : work);
   request.run.outputs = request.run.outputs.map((output) => workIds.has(output.producedByWorkId) ? { ...output, summary: CONTEXT_WITHHELD_TEXT } : output);
   request.run.directives = request.run.directives.filter((directive) => !directiveIds.has(directive.id));

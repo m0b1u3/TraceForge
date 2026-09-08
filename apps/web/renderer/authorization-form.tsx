@@ -6,24 +6,37 @@ import { AuthorizationFormSchema, AuthorizationReviewSchema, buildAuthorizationS
  * Primary fields lead; optional fields disclose; review replaces editing.
  * Scope strings are literals. Scenario supplies copy; this renderer grants nothing.
  * Registration never starts a Run. Changes replace the review, not its consent. */
-export function AuthorizationForm({ contract, policy, disabled, register }: {
+export function AuthorizationForm({ contract, policy, disabled, register, initialScope, expiresAt, submitLabel = "确认登记授权", continuesWork = false }: {
   contract: unknown; policy: unknown; disabled: boolean;
   register(scope: Record<string, unknown>, expiresAt: string): Promise<boolean>;
+  initialScope?: Record<string,unknown>;
+  expiresAt?: string;
+  submitLabel?: string;
+  continuesWork?: boolean;
 }) {
   const parsed = AuthorizationFormSchema.safeParse(contract);
   const rules = AuthorizationReviewSchema.safeParse(policy);
-  const [inputs, setInputs] = useState<string[]>([]), [error, setError] = useState("");
+  const [inputs, setInputs] = useState<string[]>(() => parsed.success ? parsed.data.fields.map(field => {
+    let value:unknown=initialScope; for(const part of field.path)value=value&&typeof value==="object"?(value as Record<string,unknown>)[part]:undefined;
+    return field.type==="integer"?String(value??field.defaultValue):field.type==="boolean" ? String(value===true) : Array.isArray(value)&&value.every(item=>typeof item==="string")?value.join("\n"):"";
+  }) : []), [error, setError] = useState("");
   const [review, setReview] = useState<{ scope: Record<string, unknown>; expiresAt: string } | null>(null);
   const [accepted, setAccepted] = useState(false);
   if (!parsed.success || !rules.success) return <p role="alert">此场景的授权表单或规则格式不受支持，请联系场景维护者。未登记任何授权。</p>;
   const form = parsed.data;
   const renderField = (field: typeof form.fields[number], index: number) => <label key={JSON.stringify(field.path)}>
     <span className="authorization-field-title">{field.label}{field.required && <span className="authorization-help">必填</span>}</span>
-    <textarea rows={2} value={inputs[index] ?? ""} maxLength={32768} onChange={event => {
+    {field.type === "integer" ? <input type="number" min={field.minimum} max={field.maximum} step={1} value={inputs[index]??String(field.defaultValue)} onChange={event=>{
+      setInputs(previous=>{const next=[...previous];next[index]=event.target.value;return next;});setReview(null);setAccepted(false);setError("");
+    }}/> : field.type === "boolean" ? <input type="checkbox" checked={inputs[index] === "true"} onChange={event => {
+      setInputs(previous => { const next = [...previous]; next[index] = String(event.target.checked); return next; });
+      setReview(null); setAccepted(false); setError("");
+    }} /> : <textarea rows={2} value={inputs[index] ?? ""} maxLength={32768} onChange={event => {
       setInputs(previous => { const next = [...previous]; next[index] = event.target.value; return next; });
       setReview(null); setAccepted(false); setError("");
-    }} />
+    }} />}
     <span className="authorization-help">{field.description}</span>
+    {field.type==="integer"&&<span className="authorization-help">允许 {field.minimum}–{field.maximum}，默认 {field.defaultValue}</span>}
   </label>;
   return <div className="authorization-form">
     <h3 className="authorization-card-title"><Shield aria-hidden="true" />{review ? "确认访问范围" : "设置访问范围"}</h3>
@@ -35,9 +48,9 @@ export function AuthorizationForm({ contract, policy, disabled, register }: {
         <summary><CaretRight className="disclosure-caret" aria-hidden="true" />更多范围选项</summary>
         <div>{form.fields.map((field, index) => field.advanced && !field.required ? renderField(field, index) : null)}</div>
       </details>}
-      <div className="authorization-footer"><span className="authorization-help">有效一小时 · 不会自动启动</span>
+      <div className="authorization-footer"><span className="authorization-help">{expiresAt ? "保持原授权有效期" : "有效一小时"} · {continuesWork ? "确认后继续原工作" : "不会自动启动"}</span>
       <button className="primary" onClick={() => {
-        try { setReview({ scope: buildAuthorizationScope(form, inputs), expiresAt: new Date(Date.now() + 3600000).toISOString() }); setAccepted(false); setError(""); }
+        try { setReview({ scope: buildAuthorizationScope(form, inputs), expiresAt: expiresAt ?? new Date(Date.now() + 3600000).toISOString() }); setAccepted(false); setError(""); }
         catch (value) { setError(value instanceof Error ? value.message : "无法生成授权，请检查输入。"); }
       }}>核对授权</button>
       </div></>}
@@ -45,6 +58,8 @@ export function AuthorizationForm({ contract, policy, disabled, register }: {
         <dl>{form.fields.map(field => {
           let value: unknown = review.scope;
           for (const part of field.path) value = (value as Record<string, unknown>)[part];
+          if (field.type === "integer") return <React.Fragment key={JSON.stringify(field.path)}><dt>{field.label}</dt><dd>{String(value)}</dd></React.Fragment>;
+          if (field.type === "boolean") return <React.Fragment key={JSON.stringify(field.path)}><dt>{field.label}</dt><dd>{value === true ? "已允许" : "未允许，仍需逐次审批"}</dd></React.Fragment>;
           if (!(value as string[]).length) return null;
           return <React.Fragment key={JSON.stringify(field.path)}><dt>{field.label}</dt><dd>
             {(value as string[]).map((item, index) => <div key={index}>{item}</div>)}</dd></React.Fragment>;
@@ -65,9 +80,9 @@ export function AuthorizationForm({ contract, policy, disabled, register }: {
         <button className="primary" disabled={!accepted} onClick={async () => {
           if (Date.parse(review.expiresAt) <= Date.now()) { setReview(null); setAccepted(false); setError("本次核对已过期，请重新核对授权。"); return; }
           if (await register(review.scope, review.expiresAt)) { setReview(null); setAccepted(false); setInputs([]); }
-        }}>确认登记授权</button>
+        }}>{submitLabel}</button>
         </div>
-        <p className="authorization-help authorization-expiry">有效至 {new Date(review.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · 不会自动启动</p>
+        <p className="authorization-help authorization-expiry">有效至 {new Date(review.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {continuesWork ? "确认后继续原工作" : "不会自动启动"}</p>
       </section>}
     </fieldset>
     {error && <p role="alert">{error}</p>}

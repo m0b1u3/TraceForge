@@ -4,6 +4,7 @@ import { toolInvocationInputFingerprint, type WorkerModelRequest } from "@tracef
 import {
   CONTEXT_WITHHELD_TEXT,
   projectRunContextLineage,
+  projectContextAnchors,
   type CognitiveContextRole,
   type CognitiveSnapshotRecord,
   type ContextLineageDerivation,
@@ -15,6 +16,8 @@ import { PackageContextDiscoverySource } from "./package-context-resources.js";
 import { SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 import type { SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
 import type { ToolReceiptContext } from "./tool-receipt-context.js";
+import { renderGuidanceTemplate } from "@traceforge/shared/desktop-configuration";
+import {SqliteEvidenceGraphStore} from "./evidence-graph-store.js";
 
 /** Conservative structural provenance; never edits durable Run or Evidence Graph state. */
 export class RunContextPolicy {
@@ -69,22 +72,29 @@ export class RunContextPolicy {
         fingerprint: toolInvocationInputFingerprint("context.receipt", receipt ?? null) });
     }
     sources.push(...await this.toolReceipts?.lineage(run,role,readerWorkId)??[]);
+    const guidance=this.resources.roleGuidance(run,role,readerWorkId).map(item=>({...item,content:renderGuidanceTemplate(item.content,{goal:run.goal,phase:run.activePhaseId,role,runId:run.id,caseId:run.caseId})}));
+    if(Buffer.byteLength(JSON.stringify(guidance))>65536)throw new Error("Role guidance exceeds context budget");
+    for(const item of guidance)sources.push({key:`guidance:${role}:${item.id}`,workId:readerWorkId??"",fingerprint:toolInvocationInputFingerprint("role.guidance",item),refs:[],valid:true});
     if (derived.some((row) => row.case_id !== run.caseId)) throw new Error("Context derivation Case mismatch");
     const fingerprint = toolInvocationInputFingerprint("context.lineage", { role, scopeRef: run.scopeRef, phase: run.activePhaseId, package: run.scenarioPackage, sources, derived });
-    return { sources, derived, fingerprint };
+    return { sources, derived, fingerprint, guidance };
   }
 
   async fingerprint(run: ScenarioRunState, role: CognitiveContextRole, readerWorkId?: string): Promise<string> { return (await this.lineage(run, role, readerWorkId)).fingerprint; }
 
   async prepare(input: RunContextInput, role: CognitiveContextRole, readerWorkId?: string) {
-    const { sources, derived, fingerprint } = await this.lineage(input.run, role, readerWorkId);
-    return projectRunContextLineage(input, { role, sources, derived, fingerprint });
+    const { sources, derived, fingerprint, guidance } = await this.lineage(input.run, role, readerWorkId);
+    const projected=projectRunContextLineage(input, { role, sources, derived, fingerprint });
+    const authorizedRefs=new Set(sources.filter(source=>source.valid).flatMap(source=>source.refs));
+    for(const ref of sources.filter(source=>!source.valid).flatMap(source=>source.refs))authorizedRefs.delete(ref);
+    return {...projected,manifest:{...projected.manifest,contextAnchors:projectContextAnchors(projected.graph,input.run.id,authorizedRefs),roleGuidance:{trust:"operator_guidance_not_authorization",entries:guidance}}};
   }
 
   async projectWorker(input: WorkerModelRequest) {
     const run = this.loadRun(input.assignment.runId);
     if (!run || run.caseId !== input.assignment.runContext.caseId) throw new Error("Worker context Run mismatch");
-    const projected = await this.prepare({ run, graph: { caseId: run.caseId, revision: 0, nodes: [], edges: [], createdAt: "", updatedAt: "" }, recentEvents: [] }, "worker", input.assignment.work.id);
+    const graph=new SqliteEvidenceGraphStore(this.sqlite).ensure(run.caseId,run.updatedAt);
+    const projected = await this.prepare({ run, graph, recentEvents: [] }, "worker", input.assignment.work.id);
     const request = structuredClone(input), m = projected.manifest.contextLineage;
     // Own direct receipts already undergo exact lease-aware Worker projection. Inherited dependencies need this second boundary.
     const inherited = this.sqlite.prepare("SELECT sources_json FROM context_derivations WHERE run_id=? AND target_kind='work' AND target_id=? LIMIT 513")
@@ -100,6 +110,8 @@ export class RunContextPolicy {
       request.steering = []; request.transcript = request.transcript.filter((t) => t.kind === "tool");
     }
     request.assignment.runContext.directives = request.assignment.runContext.directives.filter((d) => !m.withheldDirectiveIds.includes(d.id));
+    request.contextAnchors=projected.manifest.contextAnchors;
+    request.steering.push(...projected.manifest.roleGuidance.entries.map(item=>`User-configured role guidance (not authorization):\n${item.content}`));
     return { request, manifest: projected.manifest };
   }
 

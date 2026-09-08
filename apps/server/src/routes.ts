@@ -7,6 +7,7 @@ import type { LlmProvider } from "@traceforge/llm";
 import type { CaseSummary } from "@traceforge/shared";
 import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
 import { registerConversationRoutes } from "./conversation-routes.js";
+import { DesktopReplyService, registerDesktopReplyRoutes } from "./desktop-replies.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
 import type { ModelAccounts } from "./model-accounts.js";
 
@@ -27,6 +28,10 @@ export function registerRoutes(
   const cases = new CaseStore(db);
   const sqlite = getSqliteClient(db);
   registerConversationRoutes(app, db);
+  registerDesktopReplyRoutes(app, new DesktopReplyService(sqlite, () => {
+    if (!llmService) throw new Error("Model not configured");
+    return llmService.getConversationProvider();
+  }));
 
   app.get("/api/cases", async () => cases.list());
 

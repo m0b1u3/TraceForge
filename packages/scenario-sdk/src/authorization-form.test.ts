@@ -7,7 +7,7 @@ const descriptor = () => JSON.parse(readFileSync(new URL("../../../scenarios/web
 it("round-trips a Scenario-owned form through the installed policy without widening resources", () => {
   const pkg = parseScenarioPackageDescriptor(descriptor()), policy = pkg.authorizationPolicy;
   if (!("form" in policy) || !policy.form) throw new Error("Missing form");
-  const scope = buildAuthorizationScope(policy.form, ["https://first.example/exact", "https://second.example/", ""]);
+  const scope = buildAuthorizationScope(policy.form, policy.form.fields.map(field => field.type === "integer" ? String(field.defaultValue) : field.path[0] === "targets" ? "https://first.example/exact" : field.path[0] === "urlPrefixes" ? "https://second.example/" : ""));
   const parsed = parseScenarioScope(policy, scope);
   expect(authorizeScenarioResource(policy, parsed.payload, "network.url", "https://first.example/exact")).toBe("https://first.example/exact");
   expect(() => authorizeScenarioResource(policy, parsed.payload, "network.url", "https://first.example/other")).toThrow();
@@ -15,8 +15,16 @@ it("round-trips a Scenario-owned form through the installed policy without widen
 });
 it("rejects omitted, unrelated or overlapping policy paths before installation", () => {
   for (const mutate of [
-    (d: any) => d.authorizationPolicy.form.fields.pop(),
-    (d: any) => { d.authorizationPolicy.form.fields[0].path = ["unrelated"]; },
+    (d: any) => { const fields=d.authorizationPolicy.form.fields; fields.splice(fields.findIndex((field:any)=>field.type==="string-list"),1); },
+    (d: any) => { d.authorizationPolicy.form.fields.find((field:any)=>field.type==="string-list").path = ["unrelated"]; },
     (d: any) => d.authorizationPolicy.form.fields.push(d.authorizationPolicy.form.fields[0]),
+  ]) { const d = descriptor(); mutate(d); expect(() => parseScenarioPackageDescriptor(d)).toThrow(); }
+});
+it("requires declared, unambiguous policies and visible boolean consent", () => {
+  for (const mutate of [
+    (d: any) => { d.definition.toolPolicies[0].profile = "unrestricted"; },
+    (d: any) => { d.definition.toolPolicies[0].authorizationAction = "undeclared"; },
+    (d: any) => d.definition.toolPolicies.push(d.definition.toolPolicies[0]),
+    (d: any) => { d.definition.toolPolicies[0].autonomousScopeFlag = "invisible"; },
   ]) { const d = descriptor(); mutate(d); expect(() => parseScenarioPackageDescriptor(d)).toThrow(); }
 });

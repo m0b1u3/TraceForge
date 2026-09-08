@@ -9,6 +9,10 @@
     "./model-protocol": "./src/model-protocol.ts",
     "./desktop-evidence": "./src/desktop-evidence.ts",
     "./desktop-execution": "./src/desktop-execution.ts",
+    "./desktop-replies": "./src/desktop-replies.ts",
+    "./desktop-configuration": "./src/desktop-configuration.ts",
+    "./desktop-mcp": "./src/desktop-mcp.ts",
+    "./desktop-resources": "./src/desktop-resources.ts",
     "./authorization-form": "./src/authorization-form.ts",
     "./scenario-agent-events": "./src/scenario-agent-events.ts",
     "./proxy": "./src/proxy.ts"

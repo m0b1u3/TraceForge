@@ -1,0 +1,71 @@
+import Database from "better-sqlite3";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { ZipFile } from "yazl";
+import { afterEach, expect, it, vi } from "vitest";
+import { DesktopResourceControl } from "./desktop-resources.js";
+import type { PublicFetch } from "@traceforge/resource-runtime";
+import type { ScenarioRunState } from "@traceforge/orchestration-core";
+import type { ToolExecutionContext } from "@traceforge/worker-runtime";
+import type { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
+
+const cleanup: Array<() => void> = [];
+afterEach(() => cleanup.splice(0).reverse().forEach(fn => fn()));
+async function setup() {
+  const root = mkdtempSync(join(tmpdir(), "traceforge-resources-")), db = new Database(":memory:");
+  cleanup.push(() => { db.close(); rmSync(root, { recursive: true, force: true }); });
+  db.exec("CREATE TABLE scenario_event_streams(run_id TEXT PRIMARY KEY)");
+  const zip = new ZipFile(), chunks: Buffer[] = [];
+  const bytes = new Promise<Buffer>(resolve => { zip.outputStream.on("data", chunk => chunks.push(chunk)); zip.outputStream.on("end", () => resolve(Buffer.concat(chunks))); });
+  zip.addBuffer(Buffer.from("Read before executing"), "repo/README.md"); zip.addBuffer(Buffer.from("printf example"), "repo/run.sh"); zip.end(); const archive = await bytes;
+  const transport = vi.fn<PublicFetch>(async (url, options) => { options?.authorizeUrl?.(url); return { url, status: 200, contentType: "text/plain", bytes: url.includes("/commits/") ? Buffer.from(JSON.stringify({ sha: "a".repeat(40) })) : url.includes("codeload.github.com") ? archive : Buffer.from(JSON.stringify({ web: { results: [] }, results: [] })) }; });
+  const secrets = new Map<string, string>(), authorization = { requireRun: vi.fn(), requireAction: vi.fn(), authorizeResource: vi.fn() };
+  const context = { runId: "first", caseId: "case", scopeRef: "scope", workId: "work", workerId: "worker", leaseId: "lease" } as ToolExecutionContext;
+  const run = { caseId: "case", scopeRef: "scope", status: "running", workItems: [{ id: "work", status: "running", workerId: "worker", leaseId: "lease", leaseExpiresAt: new Date(Date.now() + 120000).toISOString() }] } as ScenarioRunState;
+  const control = new DesktopResourceControl(db, root, () => run, authorization as unknown as SqliteScenarioAuthorizationService, { transport, secrets: { async read(ref) { return secrets.get(ref); }, async write(ref, value) { secrets.set(ref, value); } } });
+  const tools = await control.source().discover();
+  const invoke = (name: string, input: unknown, ctx = context) => tools.find(tool => tool.name === name)!.execute(input, ctx);
+  const pin = (id: string) => db.prepare("INSERT INTO scenario_event_streams VALUES(?)").run(id);
+  return { root, db, control, transport, secrets, context, run, authorization, invoke, pin };
+}
+it("defaults to unconfigured, saves without requests, hides credentials and pins search configuration", async () => {
+  const f = await setup();
+  expect(f.control.snapshot().configuration.provider).toBe("disabled"); f.pin("old");
+  await expect(f.control.operate({ operation: "search", kind: "web", query: "manual", confirmed: true })).rejects.toThrow("not configured");
+  const saved = await f.control.operate({ operation: "configure", expectedRevision: 0, configuration: { provider: "brave", endpoint: "https://search.example.org/web" }, credential: "private-test-key" });
+  expect(f.transport).not.toHaveBeenCalled(); expect(JSON.stringify(saved)).not.toContain("private-test-key");
+  f.pin("first"); await f.invoke("web_search", { query: "manual" }); expect(f.transport.mock.calls[0][1]?.headers).toMatchObject({ "X-Subscription-Token": "private-test-key" });
+  await expect(f.invoke("web_search", { query: "manual" }, { ...f.context, runId: "old" })).rejects.toThrow("not configured");
+  await f.control.operate({ operation: "configure", expectedRevision: 1, configuration: { provider: "brave", endpoint: "https://other.example.org/web" } });
+  expect(f.control.snapshot().credentialConfigured).toBe(false);
+  await f.invoke("web_search", { query: "manual" }); expect(f.transport.mock.calls.at(-1)?.[0]).toContain("search.example.org");
+  await expect(f.control.operate({ operation: "configure", expectedRevision: 0, configuration: { provider: "disabled", endpoint: "" } })).rejects.toThrow("changed");
+});
+it("acquires without execution, pins reviewed usage, rejects tampering and does not revive revoked Run versions", async () => {
+  const f = await setup(), acquire = { operation: "acquire", commandId: "project", repository: "example/project", ref: "main", confirmed: true };
+  await f.control.operate(acquire); await f.control.operate(acquire); expect(f.transport).toHaveBeenCalledTimes(2);
+  expect(f.control.snapshot().projects[0]).toMatchObject({ enabled: false, usage: "", entryScript: "" });
+  await expect(f.control.operate({ operation: "enable", id: "project", expectedRevision: 1, enabled: true, confirmed: true })).rejects.toThrow("Review");
+  await f.control.operate({ operation: "prepare", id: "project", expectedRevision: 1, usage: "First usage", entryScript: "bash run.sh", confirmed: true });
+  await f.control.operate({ operation: "enable", id: "project", expectedRevision: 2, enabled: true, confirmed: true }); f.pin("first");
+  await f.control.operate({ operation: "prepare", id: "project", expectedRevision: 3, usage: "Second usage", entryScript: "bash run.sh next", confirmed: true });
+  expect(await f.control.stage(f.context, "project")).toMatchObject({ usage: "First usage", entryScript: "bash run.sh" });
+  expect(f.transport).toHaveBeenCalledTimes(2);
+  await f.control.operate({ operation: "enable", id: "project", expectedRevision: 4, enabled: false, confirmed: true });
+  await f.control.operate({ operation: "enable", id: "project", expectedRevision: 5, enabled: true, confirmed: true });
+  await expect(f.control.stage(f.context, "project")).rejects.toThrow("not enabled"); f.pin("second");
+  expect(await f.control.stage({ ...f.context, runId: "second" }, "project")).toMatchObject({ usage: "Second usage" });
+  writeFileSync(join(f.root, `${f.control.snapshot().projects[0].digest}.zip`), "changed");
+  await expect(f.control.stage({ ...f.context, runId: "second" }, "project")).rejects.toThrow("integrity");
+});
+it("requires explicit management confirmation and current Run ownership and resource scope", async () => {
+  const f = await setup();
+  await expect(f.control.operate({ operation: "fetch", url: "https://docs.example.org/" })).rejects.toThrow();
+  expect(f.transport).not.toHaveBeenCalled();
+  f.authorization.authorizeResource.mockImplementation(() => { throw new Error("Outside resource scope"); });
+  await expect(f.invoke("web_fetch", { url: "https://docs.example.org/" })).rejects.toThrow("Outside resource scope");
+  expect(f.transport).not.toHaveBeenCalled();
+  f.run.status = "stopped" as ScenarioRunState["status"];
+  await expect(f.invoke("github_search", { query: "manual" })).rejects.toThrow("ownership");
+});

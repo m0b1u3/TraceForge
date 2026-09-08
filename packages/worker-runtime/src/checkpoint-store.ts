@@ -50,6 +50,13 @@ export function validateWorkerCheckpoint(value: unknown): WorkerCheckpointDocume
       throw new Error("Invalid pending checkpoint invocation");
     }
     const control = d.pendingControl;
+    if(control?.type==="block"&&control.inquiry&&(!isString(control.inquiry.id)||!strings(control.inquiry.refs)||control.inquiry.refs.length>32||control.permissionRequest))throw new Error("Invalid pending inquiry");
+    if (control?.type === "block" && control.permissionRequest) requireJson(control.permissionRequest.scope);
+    if (control?.type === "block" && control.permissionRequest && (!isString(control.permissionRequest.id)
+      || !control.permissionRequest.scope || typeof control.permissionRequest.scope !== "object"
+      || Array.isArray(control.permissionRequest.scope) || JSON.stringify(control.permissionRequest.scope).length > 32768)) {
+      throw new Error("Invalid pending permission request");
+    }
     if (control && (!isString(control.leaseId) || !isString(control.commandId)
       || (control.type === "block" ? !isString(control.reason)
         : control.type !== "complete" || typeof control.summary !== "string" || !Array.isArray(control.outputs)

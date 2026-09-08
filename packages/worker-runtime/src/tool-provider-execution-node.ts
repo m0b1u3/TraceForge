@@ -139,6 +139,17 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     return result.map(validateToolProviderSpec);
   }
 
+  async inspectMcpCatalog(signal?: AbortSignal) {
+    if(!this.options.mcp?.inspection)throw new Error("Not an MCP inspection session");
+    await this.listTools(signal);
+    if(!(this.decoder instanceof McpProtocol)||!this.decoder.inspectedCatalog)throw new Error("MCP inspection unavailable");
+    return structuredClone(this.decoder.inspectedCatalog);
+  }
+  bindInspectedMcpTools(tools: McpProtocolOptions["tools"]):void {
+    if(!(this.decoder instanceof McpProtocol))throw new Error("Not an MCP session");
+    this.decoder.bindInspectedTools(tools);
+  }
+
   async callTool(tool: string, input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
     const { signal: _signal, ...rpcContext } = context;
     return validateToolProviderResult(await this.request("tools.call", { tool, input, context: rpcContext }, context));

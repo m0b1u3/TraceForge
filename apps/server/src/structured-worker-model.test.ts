@@ -40,6 +40,32 @@ function provider(result: unknown): LlmProvider {
 }
 
 describe("StructuredWorkerModel", () => {
+  it("does not suspend for a Planner reported unavailable",async()=>{
+    const input=request();input.plannerAvailable=false;
+    const model=new StructuredWorkerModel(provider({type:"inquire",reason:"Which next?",refs:[]}));
+    expect(await model.decide(input)).toMatchObject({type:"block",reason:expect.stringContaining("Planner is unavailable")});
+  });
+  it("bounds recall before compaction and preserves a post-compaction excerpt",async()=>{
+    const input=request();input.transcript=[{turn:1,kind:"tool",summary:"[recall-page]"+"R".repeat(20000),refs:["receipt:first"]},
+      ...Array.from({length:10},(_,i)=>({turn:i+2,kind:"tool" as const,summary:"N".repeat(6000),refs:[]}))];
+    const compact={maximumTextCharacters:4800,async prepare(value:{context:unknown}){
+      const context=value.context as {transcript:Array<{summary:string}>};
+      expect(context.transcript).toHaveLength(11); // Preserve ordinary sources for the compactor's archive/omission accounting.
+      expect(context.transcript.find(e=>e.summary.startsWith("[recall-page]"))!.summary).toHaveLength(1600);
+      return {context:{},manifest:{}};
+    }} as unknown as NonNullable<ConstructorParameters<typeof StructuredWorkerModel>[6]>;
+    const model=new StructuredWorkerModel({async extractJson(value){expect(JSON.parse(value.user).recalledText[0].summary).toHaveLength(1600);return {type:"complete",summary:"Done",outputs:[]};}},undefined,undefined,undefined,undefined,undefined,compact);
+    await model.decide(input);
+  });
+  it("exposes the current declarative scope and parses a permission proposal without granting it", async () => {
+    const input=request(); input.permissionContext={scope:{targets:["first"]},form:{fields:[{path:["targets"],type:"string-list"}]},expiresAt:"2099-01-01T00:00:00.000Z"};
+    const model=new StructuredWorkerModel({async extractJson(value){
+      expect(JSON.parse(value.user).authorization).toEqual(input.permissionContext);
+      expect(value.system).toContain("it grants nothing");
+      return {type:"request_permissions",reason:"Need another resource",scope:{targets:["first","second"]}};
+    }});
+    expect(await model.decide(input)).toMatchObject({type:"request_permissions",scope:{targets:["first","second"]}});
+  });
   it("refuses a stale prepared projection before calling the provider", async () => {
     let checks = 0; let calls = 0;
     const model = new StructuredWorkerModel({ async extractJson() { calls++; return { type: "complete", summary: "Done", outputs: [] }; } },

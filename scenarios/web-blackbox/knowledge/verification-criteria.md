@@ -1,5 +1,7 @@
 # Verification criteria
 
+The inventory catalog and investigation snapshot are navigation aids, not security conclusions. Cataloged Session coverage must be reported separately from anonymous coverage. Missing old inventories, omitted observations, queue drops, document-hint limits and browser-only work remain coverage gaps. A passive form hint neither proves successful authentication nor authorizes form submission.
+
 The HTTP workflow separates retained surface facts, registered hypotheses, preparation observations, baseline/candidate observations, review assessments and final report material. None of the first five automatically creates a verified Finding. Preconditions are explicit continuation checks, not assertions that an application completed the intended business operation. Preparation is performed once; changing server state or Session cookies between rounds can confound later results.
 
 Report every registered candidate, including queued, stopped, interrupted, inconclusive and graph-write-uncertain entries. Report coverage as bounded retained observations, not a security score or an exhaustive scan. Refuted/supported review labels do not silently transition graph Hypotheses or Findings. The reporter must obtain actual lifecycle-verified findings from the graph, cite their source chain and distinguish them from this ledger's assessments. Unknown request outcomes survive process restarts and inconclusive reviews; they cannot authorize starting the next candidate or repeating a mutating request.

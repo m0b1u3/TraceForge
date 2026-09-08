@@ -10,6 +10,8 @@ export interface McpToolPolicy {
   arguments?: Record<string, string>;
 }
 export interface McpProtocolOptions {
+  /** Host-only inspection session. It can initialize/list but can never encode a tool call. */
+  inspection?: boolean;
   serverName: string;
   serverVersion: string;
   tools: readonly McpToolPolicy[];
@@ -19,12 +21,15 @@ export interface McpProtocolOptions {
 
 /** A pinned MCP profile, carried exclusively over Execution Node stdio. */
 export class McpProtocol {
+  inspectedCatalog?: { serverName:string; serverVersion:string; tools:Array<{name:string;inputSchema:Record<string,unknown>}> };
+  private inspectedIdentity?: {serverName:string;serverVersion:string};
   private buffered = Buffer.alloc(0);
   private readonly requests = new Map<string, ToolProviderRpcRequest>();
   private responses: Buffer[] = [];
   private readonly options: McpProtocolOptions;
   constructor(options: McpProtocolOptions, private readonly maximumBytes: number) {
     this.options = structuredClone(options);
+    if(options.inspection && (options.tools.length || options.catalog && options.catalog!=="tools"))throw new Error("MCP inspection cannot carry callable tools");
     if (!options.serverName.trim() || !options.serverVersion.trim() || options.tools.length > 128
       || new Set(options.tools.map((t) => t.tool.name)).size !== options.tools.length
       || new Set(options.tools.map((t) => t.remoteName)).size !== options.tools.length) throw new Error("Invalid MCP policy");
@@ -40,6 +45,7 @@ export class McpProtocol {
       params = { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "traceforge", version: "1" } };
     } else if (request.method === "tools.list") { method = `${this.options.catalog ?? "tools"}/list`; params = {}; }
     else if (request.method === "tools.call") {
+      if(this.options.inspection)throw new Error("MCP inspection cannot invoke tools");
       const call = request.params as { tool: string; input: unknown };
       const policy = this.options.tools.find((p) => p.tool.name === call.tool);
       if (!policy) throw new Error("MCP tool is not allowlisted");
@@ -54,6 +60,13 @@ export class McpProtocol {
   }
 
   initialized(): Buffer { return this.frame({ jsonrpc: "2.0", method: "notifications/initialized" }); }
+  bindInspectedTools(tools: readonly McpToolPolicy[]):void {
+    if(!this.options.inspection || !this.inspectedCatalog)throw new Error("MCP inspection has not completed");
+    if(tools.length>128 || new Set(tools.map(t=>t.remoteName)).size!==tools.length || new Set(tools.map(t=>t.tool.name)).size!==tools.length)throw new Error("Invalid inspected MCP tool selection");
+    for(const {remoteName,tool} of tools){const remote=this.inspectedCatalog.tools.find(t=>t.name===remoteName);
+      if(!remote||executionToolContractFingerprint({...tool,inputSchema:remote.inputSchema})!==executionToolContractFingerprint(tool))throw new Error("MCP review differs from inspected catalog");}
+    this.options.tools=structuredClone(tools);this.options.serverName=this.inspectedCatalog.serverName;this.options.serverVersion=this.inspectedCatalog.serverVersion;this.options.inspection=false;
+  }
   takeResponses(): Buffer[] { const frames = this.responses; this.responses = []; return frames; }
 
   push(chunk: Buffer): unknown[] {
@@ -95,9 +108,11 @@ export class McpProtocol {
     let result: unknown;
     if (request.method === "provider.handshake") {
       if (!record(raw) || raw.protocolVersion !== "2025-03-26" || !record(raw.serverInfo)
-        || raw.serverInfo.name !== this.options.serverName || raw.serverInfo.version !== this.options.serverVersion
+        || (!this.options.inspection && (raw.serverInfo.name !== this.options.serverName || raw.serverInfo.version !== this.options.serverVersion))
+        || typeof raw.serverInfo.name!=="string" || !raw.serverInfo.name || raw.serverInfo.name.length>256 || typeof raw.serverInfo.version!=="string" || !raw.serverInfo.version || raw.serverInfo.version.length>256
         || !record(raw.capabilities) || !record(raw.capabilities[this.options.catalog ?? "tools"])) throw new Error("MCP initialization identity or protocol mismatch");
-      result = { providerId: this.options.serverName, providerVersion: this.options.serverVersion, protocolVersion: TOOL_PROVIDER_RPC_VERSION };
+      this.inspectedIdentity={serverName:raw.serverInfo.name,serverVersion:raw.serverInfo.version};
+      result = { providerId: raw.serverInfo.name, providerVersion: raw.serverInfo.version, protocolVersion: TOOL_PROVIDER_RPC_VERSION };
     } else if (request.method === "tools.list") {
       const catalog = this.options.catalog ?? "tools";
       const items = record(raw) ? raw[catalog] : undefined;
@@ -126,6 +141,12 @@ export class McpProtocol {
         }
         return structuredClone(tool);
       });
+      if(this.options.inspection) {
+        this.inspectedCatalog={...this.inspectedIdentity!,tools:[...discovered.entries()].map(([name,item])=>{
+          if(!name||name.length>256||!record(item.inputSchema)||item.inputSchema.type!=="object")throw new Error("Invalid MCP inspection schema");
+          return {name,inputSchema:structuredClone(item.inputSchema)};
+        })};
+      }
     } else if (this.options.catalog === "resources" || this.options.catalog === "prompts") {
       const call = request.params as { tool: string };
       const policy = this.options.tools.find((p) => p.tool.name === call.tool)!;

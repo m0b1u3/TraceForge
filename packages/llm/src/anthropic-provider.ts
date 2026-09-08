@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { proxyFetch } from "@traceforge/shared/proxy";
-import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall, UsageSnapshot } from "./provider.js";
+import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall, UsageSnapshot, StreamToolsHandlers } from "./provider.js";
 import { withRetry } from "./retry.js";
 
 export interface AnthropicOptions {
@@ -40,6 +40,26 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   async runTools(args: RunToolsArgs): Promise<RunTurn> {
+    const res = await withRetry("anthropic.runTools", () => this.client.messages.create(this.toolParameters(args)), { onRetry: mapRetry(args.onRetry) });
+    emitUsage(args.onUsage, res.usage);
+    return anthropicTurn(res);
+  }
+
+  async streamTools(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn> {
+    const stream = this.client.messages.stream(this.toolParameters(args), { signal: handlers.signal, maxRetries: 0 });
+    try {
+      // Consume native protocol events; never simulate streaming from a completed response.
+      for await (const event of stream) {
+        if (event.type === "content_block_delta" && event.delta.type === "text_delta") handlers.onTextDelta?.(event.delta.text);
+      }
+      const message = await stream.finalMessage();
+      if (!["end_turn", "stop_sequence", "tool_use"].includes(message.stop_reason ?? "")) throw new Error("Incomplete model stream");
+      emitUsage(handlers.onUsage, message.usage);
+      return anthropicTurn(message);
+    } catch (error) { stream.abort(); throw error; }
+  }
+
+  private toolParameters(args: RunToolsArgs): Anthropic.MessageCreateParamsNonStreaming {
     // 用 Anthropic 原生 tool-calling：tools 参数 + tool_use/tool_result 块。
     // SDK 类型对 thinking:adaptive 不全，整体断言兜底（同 extractJson）。
     // Anthropic 协议：一条 assistant 里的 N 个 tool_use，必须紧跟"一条" user 消息且其中含全部 N 个
@@ -79,16 +99,18 @@ export class AnthropicProvider implements LlmProvider {
       tools: args.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })),
       messages: anthropicMessages,
     } as unknown as Anthropic.MessageCreateParamsNonStreaming;
-    const res = await withRetry("anthropic.runTools", () => this.client.messages.create(params), { onRetry: mapRetry(args.onRetry) });
-    let text = "";
-    const toolCalls: ToolCall[] = [];
-    for (const block of res.content) {
-      if (block.type === "text") text += block.text;
-      else if (block.type === "tool_use") toolCalls.push({ id: block.id, name: block.name, input: block.input });
-    }
-    emitUsage(args.onUsage, res.usage);
-    return { text, toolCalls, done: res.stop_reason !== "tool_use" };
+    return params;
   }
+}
+
+function anthropicTurn(res: Anthropic.Message): RunTurn {
+  let text = "";
+  const toolCalls: ToolCall[] = [];
+  for (const block of res.content) {
+    if (block.type === "text") text += block.text;
+    else if (block.type === "tool_use") toolCalls.push({ id: block.id, name: block.name, input: block.input });
+  }
+  return { text, toolCalls, done: res.stop_reason !== "tool_use" };
 }
 
 function emitUsage(

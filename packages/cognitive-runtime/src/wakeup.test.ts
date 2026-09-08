@@ -1,12 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   BlackboardChangeBus,
+  needsCognitiveWake,
   CognitiveWakeGate,
   type CognitiveContextCursorAdvance,
   type CognitiveContextCursorPort,
 } from "./wakeup.js";
 
 const at = "2026-08-28T03:00:00.000Z";
+it("ignores lease bookkeeping but wakes for blocking, answers and graph changes",()=>{
+  const change={kind:"run" as const,runId:"run",caseId:"case",revision:1,eventTypes:["work_checkpointed","work_claimed"],at};
+  expect(needsCognitiveWake(change)).toBe(false);
+  for(const type of ["work_blocked","inquiry_answered","directive_issued","run_resumed"])expect(needsCognitiveWake({...change,eventTypes:[type]})).toBe(true);
+  expect(needsCognitiveWake({kind:"graph",caseId:"case",revision:1,eventTypes:["node_added"],at})).toBe(true);
+});
 
 class MemoryCursorPort implements CognitiveContextCursorPort {
   readonly values = new Map<string, string>();

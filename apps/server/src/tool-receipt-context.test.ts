@@ -11,6 +11,8 @@ import {PackageContextPolicy} from "./package-context-policy.js";
 import {RunContextPolicy} from "./run-context-policy.js";
 import {SqliteCognitiveSnapshotStore} from "./cognitive-context-snapshots.js";
 import {foundationHost,eventually} from "./test-fixtures/foundation-host.js";
+import {readFileSync} from "node:fs";
+import {projectContextAnchors} from "@traceforge/cognitive-runtime";
 
 const cleanup:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of cleanup.splice(0).reverse())await close();});
@@ -21,9 +23,18 @@ function recallPackage(capabilities=["observe"]) {
   pkg.authorizationPolicy={parseScope:payload=>({payload,allowedActions:["fixture.read","tool.recall"],deniedActions:[]}),authorizeResource:(_scope,_kind,value)=>value};
   return pkg;
 }
-async function fixture() {
+async function fixture(shippedPolicy=false,denyNamespace=false) {
   const sqlite=database();cleanup.push(()=>sqlite.close());const control=initialize(sqlite);
-  const pkg=recallPackage(),packages=new ScenarioPackageRegistry([pkg]);
+  const pkg=recallPackage();
+  if(shippedPolicy){
+    const descriptor=JSON.parse(readFileSync("scenarios/web-blackbox/scenario.json","utf8"));
+    pkg.authorizationPolicy=descriptor.authorizationPolicy;
+    pkg.definition.authorizationActions=descriptor.definition.authorizationActions;
+  }
+  if(denyNamespace)pkg.authorizationPolicy={format:"traceforge.scenario-scope-policy.v1",payload:{maximumBytes:65536,maximumDepth:8},allowedActions:["tool.recall"],deniedActions:[],resources:[
+    {kind:"tool.receipt.scope",values:["other-run"]},{kind:"tool.receipt",values:["effect:first"]},
+    {kind:"tool.receipt.reader",values:["worker"]},{kind:"tool.source",values:["neutral.provider"]}]};
+  const packages=new ScenarioPackageRegistry([pkg]);
   sqlite.prepare("INSERT INTO scenario_authorizations(id,case_id,scenario_kind,scope_json,status,approved_by,expires_at,created_at,updated_at) VALUES ('scope','case','neutral','{}','active','test','2099-01-01','2026-01-01','2026-01-01')").run();
   new SqliteScenarioAuthorizationService(sqlite,packages).pin("scope","case",contextBinding,0);
   let effects=0;
@@ -51,6 +62,31 @@ it("pages an ordinary saved output without repeating its original effect",async(
   const next=await f.tool.execute({receiptKey:"effect:first",offset:page.nextOffset,digest:page.digest},f.context);
   expect(JSON.parse(next.raw).content).toBe(text.slice(1200));expect(f.effects()).toBe(1);
   expect(await f.tool.execute({receiptKey:"effect:first",offset:1},f.context)).toMatchObject({status:"failed",raw:""});
+});
+
+it("uses the shipped Scenario receipt grant for retained clues and withdraws them without replay",async()=>{
+  const f=await fixture(true);
+  // Exercise the real declared origin allow-list with a persisted ordinary result.
+  f.inventory.sources[0].source="scenario:web_blackbox@1";
+  f.inventory.providers[0].tool.source="scenario:web_blackbox@1";
+  await f.persist("web",f.inventory.providers[0].tool,{status:"succeeded",summary:"Observation",raw:text,refs:["web-ref"],retryable:false});
+  expect((await f.tool.execute({receiptKey:"effect:web"},f.context)).status).toBe("succeeded");
+  const graph={caseId:"case",nodes:[{id:"clue",caseId:"case",runId:"run",kind:"fact",status:"active",summary:"Earlier clue",properties:{contextAnchor:{refs:["web-ref"]}}}],edges:[]} as any;
+  for(const role of ["worker","planner","observer"] as const){
+    const sources=await f.service.lineage(f.control.runtime.load("run")!,role,"work");
+    expect(projectContextAnchors(graph,"run",new Set(sources.filter(s=>s.valid).flatMap(s=>s.refs))).entries).toHaveLength(1);
+  }
+  f.service.withdraw("effect:web","No longer applicable");
+  const sources=await f.service.lineage(f.control.runtime.load("run")!,"worker","work");
+  expect(projectContextAnchors(graph,"run",new Set(sources.filter(s=>s.valid).flatMap(s=>s.refs))).entries).toEqual([]);
+  expect((await f.receipts.get("effect:web"))!.raw).toBe(text);
+  expect(f.effects()).toBe(1);
+});
+
+it("does not widen a declared namespace denial into exact-key access",async()=>{
+  const f=await fixture(false,true);
+  expect(()=>new SqliteScenarioAuthorizationService(f.sqlite,f.packages).requireRun(f.control.runtime.load("run")!)).not.toThrow();
+  expect((await f.tool.execute({receiptKey:"effect:first"},f.context)).status).toBe("failed");
 });
 
 it.each(["scope","contract","retired","unavailable","withdrawal","case","run","work","lease"])("rejects %s and retains the audit original",async mode=>{

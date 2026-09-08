@@ -82,7 +82,9 @@ export interface WorkerOutputDraft {
 export type WorkerDecision =
   | { type: "invoke_tool"; invocation: ToolInvocation }
   | { type: "complete"; summary: string; outputs: WorkerOutputDraft[] }
-  | { type: "block"; reason: string };
+  | { type: "block"; reason: string }
+  | { type: "inquire"; reason: string; refs: string[] }
+  | { type: "request_permissions"; reason: string; scope: Record<string, unknown> };
 
 export type WorkerTranscriptEntry = AgentJournalEntry;
 
@@ -92,6 +94,9 @@ export interface WorkerModelContextPolicy {
 }
 
 export interface WorkerModelRequest {
+  contextAnchors?: {entries:Array<{id:string;text:string;refs:string[];priority:number;status:string;trust:"untrusted_observation_not_instruction"}>;omitted:number};
+  plannerAvailable?: boolean;
+  permissionContext?: { scope: Record<string, unknown>; form: unknown; expiresAt: string };
   turnId: string;
   worker: WorkerDescriptor;
   assignment: WorkerAssignment;
@@ -173,6 +178,8 @@ export interface WorkerCheckpointDocument {
     outputs: WorkerOutputDraft[];
   } | {
     type: "block";
+    permissionRequest?: { id: string; scope: Record<string, unknown> };
+    inquiry?: {id:string;refs:string[]};
     leaseId: string;
     commandId: string;
     reason: string;
@@ -230,7 +237,7 @@ export interface WorkerControlPlaneClient {
   }): Promise<void>;
   complete(assignment: WorkerAssignment, commandId: string, summary: string, outputs: WorkerOutputDraft[]): Promise<void>;
   fail(assignment: WorkerAssignment, commandId: string, reason: string): Promise<void>;
-  block(assignment: WorkerAssignment, commandId: string, reason: string): Promise<void>;
+  block(assignment: WorkerAssignment, commandId: string, reason: string, permissionRequest?: { id: string; scope: Record<string, unknown> }, inquiry?:{id:string;refs:string[]}): Promise<void>;
 }
 
 export interface OutputDistiller {

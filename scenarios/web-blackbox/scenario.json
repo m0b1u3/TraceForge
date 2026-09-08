@@ -1,11 +1,21 @@
 {
   "format": "traceforge.scenario-package.v1",
-  "package": { "id": "traceforge.web-blackbox", "version": "0.4.0", "schemaRevision": 1 },
+  "package": { "id": "traceforge.web-blackbox", "version": "0.5.6", "schemaRevision": 1 },
   "definition": {
     "kind": "web_blackbox",
     "version": 1,
     "title": "Web black-box security investigation",
-    "authorizationActions": ["scope.read", "web.request.replay", "web.session.use", "web.traffic.read", "evidence.write", "report.write"],
+    "authorizationActions": ["tool.recall", "scope.read", "web.request.replay", "web.session.use", "web.traffic.read", "evidence.write", "report.write", "workspace.read", "workspace.write", "workspace.execute", "research.search", "research.repositories", "research.fetch", "tools.use"],
+    "toolPolicies": [
+      { "source": "traceforge.builtin", "capability": "workspace.read", "authorizationAction": "workspace.read", "profile": "run-workspace" },
+      { "source": "traceforge.builtin", "capability": "workspace.list", "authorizationAction": "workspace.read", "profile": "run-workspace" },
+      { "source": "traceforge.builtin", "capability": "workspace.search", "authorizationAction": "workspace.read", "profile": "run-workspace" },
+      { "source": "traceforge.builtin", "capability": "workspace.write", "authorizationAction": "workspace.write", "profile": "run-workspace" },
+      { "source": "traceforge.builtin", "capability": "workspace.edit", "authorizationAction": "workspace.write", "profile": "run-workspace" },
+      { "source": "traceforge.builtin", "capability": "workspace.remove", "authorizationAction": "workspace.write", "profile": "run-workspace", "autonomousScopeFlag": "autonomousWorkspace" },
+      { "source": "traceforge.builtin", "capability": "workspace.execute", "authorizationAction": "workspace.execute", "profile": "run-workspace", "autonomousScopeFlag": "autonomousWorkspace" },
+      { "source": "traceforge.builtin", "capability": "workspace.stage", "authorizationAction": "tools.use", "profile": "run-workspace", "autonomousScopeFlag": "autonomousWorkspace" }
+    ],
     "requiredCapabilities": ["scope.read", "evidence.write"],
     "workKinds": [
       { "id": "research", "defaultWorkerRoles": ["researcher"] },
@@ -18,19 +28,19 @@
       "planner": { "enabled": true, "pollIntervalMs": 30000, "maximumGraphNodes": 200, "maximumRecentEvents": 40, "maximumRunItems": 100, "maximumProposalsPerEvaluation": 4 },
       "observer": { "enabled": true, "pollIntervalMs": 30000, "maximumGraphNodes": 200, "maximumRecentEvents": 40, "maximumRunItems": 100 },
       "workerPools": [
-        { "id": "web-research", "role": "researcher", "workKinds": ["research"], "activation": "resident", "minimumInstances": 1, "maximumInstances": 4, "maxConcurrentWork": 1, "capabilities": ["scope.read", "web.hypothesis.register", "web.request.replay", "web.surface.explore", "web.session.use", "web.traffic.read", "evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
-        { "id": "web-validation", "role": "validator", "workKinds": ["validation"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["scope.read", "web.validation.execute", "web.validation.review", "web.request.replay", "web.validation.compare", "web.surface.explore", "web.session.use", "web.traffic.read", "evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
-        { "id": "web-review", "role": "reviewer", "workKinds": ["review"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["web.validation.review", "evidence.write", "knowledge.graph.read", "knowledge.graph.write"] },
-        { "id": "web-report", "role": "reporter", "workKinds": ["report"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["web.report.build", "report.write", "knowledge.graph.read"] }
+        { "id": "web-research", "role": "researcher", "workKinds": ["research"], "activation": "resident", "minimumInstances": 1, "maximumInstances": 4, "maxConcurrentWork": 1, "capabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "scope.read", "web.investigation.snapshot", "web.hypothesis.register", "web.request.replay", "web.surface.explore", "web.session.use", "web.traffic.read", "evidence.write", "knowledge.graph.read", "knowledge.graph.write", "web.browser.inspect", "web.browser.read", "workspace.read", "workspace.list", "workspace.search", "workspace.write", "workspace.edit", "workspace.remove", "workspace.execute", "workspace.stage", "research.search", "research.repositories", "research.fetch", "tools.use"] },
+        { "id": "web-validation", "role": "validator", "workKinds": ["validation"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "scope.read", "web.investigation.snapshot", "web.validation.execute", "web.validation.review", "web.request.replay", "web.validation.compare", "web.surface.explore", "web.session.use", "web.traffic.read", "evidence.write", "knowledge.graph.read", "knowledge.graph.write", "web.browser.inspect", "web.browser.read", "workspace.read", "workspace.list", "workspace.search", "workspace.write", "workspace.edit", "workspace.remove", "workspace.execute", "workspace.stage", "research.search", "research.repositories", "research.fetch", "tools.use"] },
+        { "id": "web-review", "role": "reviewer", "workKinds": ["review"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "scope.read", "web.investigation.snapshot", "web.validation.review", "evidence.write", "knowledge.graph.read", "knowledge.graph.write", "web.browser.read"] },
+        { "id": "web-report", "role": "reporter", "workKinds": ["report"], "activation": "on_demand", "minimumInstances": 0, "maximumInstances": 1, "maxConcurrentWork": 1, "capabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "scope.read", "web.investigation.snapshot", "web.report.build", "report.write", "knowledge.graph.read"] }
       ]
     },
     "phases": [
-      { "id": "scope_setup", "title": "Scope and execution setup", "objective": "Bind the authorized target scope and record available capabilities and limitations.", "allowedWorkKinds": ["research", "review"], "maxParallelWork": 1, "requiredCapabilities": ["scope.read"], "transitions": [{ "to": "surface_mapping", "allOf": [{ "kind": "scope_snapshot" }, { "kind": "capability_inventory" }] }] },
-      { "id": "surface_mapping", "title": "Authorized surface mapping", "objective": "Collect attributable observations through bounded host-brokered requests and assess coverage.", "allowedWorkKinds": ["research", "review"], "maxParallelWork": 4, "requiredCapabilities": ["web.surface.explore"], "transitions": [{ "to": "hypothesis_planning", "allOf": [{ "kind": "surface_observation" }, { "kind": "coverage_assessment" }] }] },
-      { "id": "hypothesis_planning", "title": "Hypothesis planning", "objective": "Preserve distinct candidates, rank evidence gaps, and propose bounded validation work.", "allowedWorkKinds": ["research", "review"], "maxParallelWork": 3, "requiredCapabilities": ["evidence.write"], "transitions": [{ "to": "validation", "allOf": [{ "kind": "hypothesis" }] }, { "to": "synthesis", "allOf": [{ "kind": "coverage_assessment" }], "noneOf": [{ "kind": "hypothesis" }] }] },
-      { "id": "validation", "title": "Causal validation", "objective": "Execute one validation task at a time and record causal evidence, impact, refutation, or limitations.", "allowedWorkKinds": ["research", "validation", "review"], "maxParallelWork": 3, "requiredCapabilities": ["evidence.write"], "transitions": [{ "to": "synthesis", "anyOf": [{ "kind": "validation_conclusion" }, { "kind": "limitation" }], "noOutstandingWorkKinds": ["validation"] }] },
-      { "id": "synthesis", "title": "Evidence and coverage review", "objective": "Review attribution, conflicts, unresolved hypotheses, limitations, and complete evidence chains.", "allowedWorkKinds": ["review"], "maxParallelWork": 1, "requiredCapabilities": ["evidence.write"], "transitions": [{ "to": "reporting", "allOf": [{ "kind": "evidence_review" }] }] },
-      { "id": "reporting", "title": "Report assembly", "objective": "Separate verified findings, rejected candidates, unresolved work, scope, and limitations.", "allowedWorkKinds": ["report"], "maxParallelWork": 1, "requiredCapabilities": ["report.write"], "transitions": [{ "to": "complete", "allOf": [{ "kind": "report" }] }] }
+      { "id": "scope_setup", "title": "Scope and execution setup", "objective": "Bind the authorized target scope and record available capabilities and limitations.", "allowedWorkKinds": ["research", "review"], "maxParallelWork": 1, "requiredCapabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "scope.read"], "transitions": [{ "to": "surface_mapping", "allOf": [{ "kind": "scope_snapshot" }, { "kind": "capability_inventory" }] }] },
+      { "id": "surface_mapping", "title": "Authorized surface mapping", "objective": "Collect attributable observations through bounded host-brokered requests and assess coverage.", "allowedWorkKinds": ["research", "review"], "maxParallelWork": 4, "requiredCapabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "web.surface.explore"], "transitions": [{ "to": "hypothesis_planning", "allOf": [{ "kind": "surface_observation" }, { "kind": "coverage_assessment" }] }] },
+      { "id": "hypothesis_planning", "title": "Hypothesis planning", "objective": "Preserve distinct candidates, rank evidence gaps, and propose bounded validation work.", "allowedWorkKinds": ["research", "review"], "maxParallelWork": 3, "requiredCapabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "evidence.write"], "transitions": [{ "to": "validation", "allOf": [{ "kind": "hypothesis" }] }, { "to": "synthesis", "allOf": [{ "kind": "coverage_assessment" }], "noneOf": [{ "kind": "hypothesis" }] }] },
+      { "id": "validation", "title": "Causal validation", "objective": "Execute one validation task at a time and record causal evidence, impact, refutation, or limitations.", "allowedWorkKinds": ["research", "validation", "review"], "maxParallelWork": 3, "requiredCapabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "evidence.write"], "transitions": [{ "to": "synthesis", "anyOf": [{ "kind": "validation_conclusion" }, { "kind": "limitation" }], "noOutstandingWorkKinds": ["validation"] }] },
+      { "id": "synthesis", "title": "Evidence and coverage review", "objective": "Review attribution, conflicts, unresolved hypotheses, limitations, and complete evidence chains.", "allowedWorkKinds": ["review"], "maxParallelWork": 1, "requiredCapabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "evidence.write"], "transitions": [{ "to": "reporting", "allOf": [{ "kind": "evidence_review" }] }] },
+      { "id": "reporting", "title": "Report assembly", "objective": "Separate verified findings, rejected candidates, unresolved work, scope, and limitations.", "allowedWorkKinds": ["report"], "maxParallelWork": 1, "requiredCapabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "report.write"], "transitions": [{ "to": "complete", "allOf": [{ "kind": "report" }] }] }
     ]
   },
   "authorizationPolicy": {
@@ -38,20 +48,32 @@
     "form": {
       "version": 1,
       "description": "指定本次调查可以访问的范围。只有你确认后，授权才会生效。",
-      "actionLabels": { "scope.read": "读取授权范围", "web.request.replay": "发送受控请求", "web.session.use": "使用已授权身份", "web.traffic.read": "读取流量记录", "evidence.write": "保存证据", "report.write": "生成报告" },
+      "actionLabels": { "tool.recall": "回读本次任务已保存的工具结果（不重新执行）", "scope.read": "读取授权范围", "web.request.replay": "发送受控请求", "web.session.use": "使用已授权身份", "web.traffic.read": "读取流量记录", "evidence.write": "保存证据", "report.write": "生成报告", "workspace.read": "读取本次任务工作目录", "workspace.write": "修改本次任务工作目录", "workspace.execute": "离线运行任务脚本（仍需审批）", "research.search": "查询公开网页搜索服务", "research.repositories": "搜索公开 GitHub 项目", "research.fetch": "读取授权的公开资料网页", "tools.use": "读取并装配已启用的源码工具" },
       "fields": [
+        { "path": ["budgets", "urls"], "label": "每个发现会话的 URL 上限", "description": "控制发现范围；不会增加目标授权。", "type": "integer", "required": false, "advanced": true, "minimum": 1, "maximum": 512, "defaultValue": 64 },
+        { "path": ["budgets", "hypotheses"], "label": "任务假设上限", "description": "保留的独立假设数量；仍逐一验证。", "type": "integer", "required": false, "advanced": true, "minimum": 1, "maximum": 128, "defaultValue": 16 },
+        { "path": ["budgets", "variants"], "label": "单个实验的变体上限", "description": "同一假设内顺序执行的对照变体。", "type": "integer", "required": false, "advanced": true, "minimum": 1, "maximum": 16, "defaultValue": 1 },
+        { "path": ["budgets", "requestsPerCall"], "label": "单次实验调用的请求上限", "description": "每条请求仍独立检查授权并记录回执。", "type": "integer", "required": false, "advanced": true, "minimum": 1, "maximum": 100, "defaultValue": 6 },
+        { "path": ["budgets", "totalRequests"], "label": "任务 HTTP 工具累计请求上限", "description": "包括发现、会话和验证请求；未知结果也占用额度。不包含浏览器内部子资源。", "type": "integer", "required": false, "advanced": true, "minimum": 1, "maximum": 4096, "defaultValue": 128 },
+        { "path": ["autonomousWorkspace"], "label": "允许任务内自主执行", "description": "允许模型在本次授权的 Run 工作目录中连续运行离线脚本、装配已启用源码和删除单个文件，不再逐次审批。不会开放联网、用户目录、凭证或宿主安装；不勾选则仍逐次审批。", "type": "boolean", "required": false },
+        { "path": ["researchUrlPrefixes"], "label": "公开资料网页前缀", "description": "每行一个允许读取的 HTTPS 文档前缀。独立于调查目标，不授予内网或身份访问权限；留空则不能抓取资料页。", "type": "string-list", "required": false, "advanced": true, "maximumItems": 64, "maximumLength": 4096 },
         { "path": ["targets"], "label": "精确地址", "description": "每行一个完整 URL，按原文精确匹配。不会自动包含同站点其他地址。", "type": "string-list", "required": false, "maximumItems": 128, "maximumLength": 4096 },
         { "path": ["urlPrefixes"], "label": "允许的地址前缀", "description": "每行一个前缀，按原文开头匹配。站点根范围须包含末尾 /，例如 https://example.org/；不要使用裸域名或通配符。留空不授予前缀范围。", "type": "string-list", "required": false, "advanced": true, "maximumItems": 128, "maximumLength": 4096 },
         { "path": ["identityHandles"], "label": "允许使用的身份句柄", "description": "每行一个宿主已保存的身份句柄，不要输入密码或令牌。留空不授予身份使用权限。", "type": "string-list", "required": false, "advanced": true, "maximumItems": 128, "maximumLength": 4096 }
       ]
     },
-    "allowedActions": ["scope.read", "web.request.replay", "web.session.use", "web.traffic.read", "evidence.write", "report.write"],
+    "allowedActions": ["tool.recall", "scope.read", "web.request.replay", "web.session.use", "web.traffic.read", "evidence.write", "report.write", "workspace.read", "workspace.write", "workspace.execute", "research.search", "research.repositories", "research.fetch", "tools.use"],
     "deniedActions": [],
     "payload": { "maximumBytes": 65536, "maximumDepth": 8 },
     "resources": [
+      { "kind": "tool.receipt.scope", "values": ["current-run"] },
+      { "kind": "tool.receipt.reader", "values": ["worker", "planner", "observer"] },
+      { "kind": "tool.source", "values": ["scenario:web_blackbox@1", "traceforge.builtin"] },
+      { "kind": "research.url", "payloadPrefixPath": ["researchUrlPrefixes"] },
       { "kind": "network.url", "payloadPath": ["targets"] },
       { "kind": "network.url", "payloadPrefixPath": ["urlPrefixes"] },
-      { "kind": "identity.handle", "payloadPath": ["identityHandles"] }
+      { "kind": "identity.handle", "payloadPath": ["identityHandles"] },
+      { "kind": "context.resource", "values": ["web.http-observation", "web.verification-criteria", "web.investigation-planning", "web.hypothesis-validation", "web.review-and-report", "web.vulnerability-techniques"] }
     ]
   },
   "outputContracts": [
@@ -66,11 +88,11 @@
     { "kind": "report", "version": 1, "format": "traceforge.scenario-output-contract.v1", "maximumSummaryBytes": 65536, "maximumRefs": 512 }
   ],
   "resourceManifest": {
-    "revision": 1,
+    "revision": 7,
     "resources": [
       {
         "id": "web.http-observation", "kind": "skill", "version": 1,
-        "locator": "package://skills/http-observation.md", "digest": "sha256:e894aba9329e7d4cffe55b6174cf21392d43ad3f3f60c151d7534463f1fb9ac0",
+        "locator": "package://skills/http-observation.md", "digest": "sha256:0e69b2762f310b4d94ecebb3bf308bf1dac83d60be97999e37dc0f56d0d8266d",
         "context": {
           "type": "skill", "summary": "End-to-end bounded HTTP investigation: discovery, hypotheses, validation, review and report", "authorizationAction": "scope.read",
           "requiredCapabilities": [], "phaseIds": ["scope_setup", "surface_mapping", "hypothesis_planning", "validation", "synthesis", "reporting"], "references": ["web.verification-criteria"],
@@ -85,20 +107,129 @@
       },
       {
         "id": "web.verification-criteria", "kind": "knowledge", "version": 1,
-        "locator": "package://knowledge/verification-criteria.md", "digest": "sha256:69382db6731dcd669378d289c98a51aa69fe0a86a51d3f1397c4c926b120fe5a",
+        "locator": "package://knowledge/verification-criteria.md", "digest": "sha256:f4baa93d2574666072b52775fe164bd3844c126c3514a9342c0cb9491606384d",
         "context": {
           "type": "knowledge", "summary": "Evidence threshold for security conclusions", "authorizationAction": "scope.read",
           "requiredCapabilities": [], "phaseIds": ["hypothesis_planning", "validation", "synthesis", "reporting"], "references": ["web.http-observation"],
           "readerRoles": ["worker", "planner", "observer"]
+        }
+      },
+      {
+        "id": "web.investigation-planning",
+        "kind": "skill",
+        "version": 5,
+        "locator": "package://skills/investigation-planning.md",
+        "digest": "sha256:2ebda8abac9bb1b0020e056bbd9152471531a14a0d132999a1e3a768ee5a5adc",
+        "context": {
+          "type": "skill",
+          "summary": "Goal-driven phase planning, bounded discovery, separate hypotheses and durable handoff",
+          "authorizationAction": "scope.read",
+          "requiredCapabilities": [],
+          "phaseIds": [
+            "scope_setup",
+            "surface_mapping",
+            "hypothesis_planning",
+            "validation",
+            "synthesis",
+            "reporting"
+          ],
+          "references": [
+            "web.http-observation",
+            "web.verification-criteria"
+          ],
+          "readerRoles": [
+            "worker",
+            "planner",
+            "observer"
+          ]
+        }
+      },
+      {
+        "id": "web.hypothesis-validation",
+        "kind": "skill",
+        "version": 1,
+        "locator": "package://skills/hypothesis-validation.md",
+        "digest": "sha256:aee798b5b1206ea43f58b2641795269784ce23067696652ad789f0b41b1d4576",
+        "context": {
+          "type": "skill",
+          "summary": "Falsifiable controls, preparation effects, continuation and causal review",
+          "authorizationAction": "scope.read",
+          "requiredCapabilities": [],
+          "phaseIds": [
+            "hypothesis_planning",
+            "validation"
+          ],
+          "references": [
+            "web.http-observation",
+            "web.verification-criteria"
+          ],
+          "readerRoles": [
+            "worker",
+            "planner",
+            "observer"
+          ]
+        }
+      },
+      {
+        "id": "web.review-and-report",
+        "kind": "skill",
+        "version": 1,
+        "locator": "package://skills/review-and-report.md",
+        "digest": "sha256:0946aed8db7f99fb38f2e6439e78e179649d483fc3cf8d5608a83e5210d32d82",
+        "context": {
+          "type": "skill",
+          "summary": "Independent evidence review, lifecycle thresholds and honest final reporting",
+          "authorizationAction": "scope.read",
+          "requiredCapabilities": [],
+          "phaseIds": [
+            "synthesis",
+            "reporting"
+          ],
+          "references": [
+            "web.http-observation",
+            "web.verification-criteria"
+          ],
+          "readerRoles": [
+            "worker",
+            "planner",
+            "observer"
+          ]
+        }
+      },
+      {
+        "id": "web.vulnerability-techniques",
+        "kind": "knowledge",
+        "version": 1,
+        "locator": "package://knowledge/vulnerability-techniques.md",
+        "digest": "sha256:ccf7182e83bab3a2b84fc7fcc4b0da261d8e5a8f6ba9a8286b172ffdc205a996",
+        "context": {
+          "type": "knowledge",
+          "summary": "Detail-driven black-box techniques: fingerprinting, JavaScript endpoint analysis, unauthorized-access and injection probes, business-logic assumption violations, bounded fuzzing only",
+          "authorizationAction": "scope.read",
+          "requiredCapabilities": [],
+          "phaseIds": [
+            "surface_mapping",
+            "hypothesis_planning",
+            "validation"
+          ],
+          "references": [
+            "web.verification-criteria",
+            "web.hypothesis-validation"
+          ],
+          "readerRoles": [
+            "worker",
+            "planner",
+            "observer"
+          ]
         }
       }
     ]
   },
   "runtime": {
     "protocol": "traceforge-scenario-process-rpc", "protocolVersion": 1,
-    "id": "traceforge.web-blackbox", "version": "0.4.0", "source": "scenario:web_blackbox@1",
+    "id": "traceforge.web-blackbox", "version": "0.5.6", "source": "scenario:web_blackbox@1",
     "entrypoint": "package://runtime/main.mjs",
-    "providedCapabilities": ["scope.read", "web.hypothesis.register", "web.validation.execute", "web.validation.review", "web.report.build", "web.request.replay", "web.validation.compare", "web.surface.explore", "web.session.use", "web.traffic.read", "web.browser.inspect", "web.browser.read"],
+    "providedCapabilities": ["web.investigation.snapshot", "scope.read", "web.hypothesis.register", "web.validation.execute", "web.validation.review", "web.report.build", "web.request.replay", "web.validation.compare", "web.surface.explore", "web.session.use", "web.traffic.read", "web.browser.inspect", "web.browser.read"],
     "hostCapabilities": ["traceforge.scenario.authorization@1", "traceforge.scenario.execution@1", "traceforge.scenario.artifacts@1", "traceforge.scenario.state@1", "traceforge.scenario.evidence@1", "traceforge.scenario.sessions@1", "traceforge.scenario.traffic@1", "traceforge.scenario.browser@1"]
   }
 }

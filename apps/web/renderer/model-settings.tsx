@@ -7,7 +7,7 @@ import type { ModelConfigInput, ModelSettingsBridge, ModelSettingsSnapshot } fro
 const labels: Record<string, string> = { deepseek: "DeepSeek", xai: "xAI / Grok API", kimi: "Kimi", glm: "GLM", custom: "自定义 / 兼容端点" };
 const empty: ModelConfigInput = { provider: "openai", model: "", baseUrl: "", jsonMode: "json_object", authMode: "api_key" };
 
-export function ModelSettings({ bridge }: { bridge?: ModelSettingsBridge }) {
+export function ModelSettings({ bridge, onDirty }: { bridge?: ModelSettingsBridge; onDirty?: (dirty:boolean)=>void }) {
   const [client] = useState(() => bridge ? new ModelSettingsClient(bridge) : null);
   const [snapshot, setSnapshot] = useState<ModelSettingsSnapshot | null>(null);
   const [form, setForm] = useState<ModelConfigInput>(empty);
@@ -24,6 +24,8 @@ export function ModelSettings({ bridge }: { bridge?: ModelSettingsBridge }) {
   const [accountBusy, setAccountBusy] = useState(false);
   const locked = useRef(false);
   const alive = useRef(true);
+  useEffect(()=>{onDirty?.(dirty||!!busy||accountBusy||confirmReload);},[dirty,busy,accountBusy,confirmReload,onDirty]);
+  useEffect(()=>{if(!dirty&&!busy&&!accountBusy)return;const warn=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue="";};window.addEventListener("beforeunload",warn);return()=>window.removeEventListener("beforeunload",warn);},[dirty,busy,accountBusy]);
   useEffect(() => { alive.current = true; void load(); return () => { alive.current = false; }; }, []);
 
   function accept(value: ModelSettingsSnapshot) {

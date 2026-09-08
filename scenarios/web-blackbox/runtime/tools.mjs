@@ -1,13 +1,20 @@
 import { exploreSurface } from "./surface.mjs";
 import { compareHttp } from "./comparison.mjs";
 import { investigation } from "./workflow.mjs";
+import { reserveRequest } from "./budgets.mjs";
+import { observationHighlights, observationTerms } from "./observations.mjs";
 import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, requiredText, sha, stringRecord, succeeded } from "./validation.mjs";
 export async function callTool(request, host) {
     const params = plainObject(request.params, "Tool call"), context = plainObject(params.context, "Tool context");
     if (typeof context.idempotencyKey !== "string" || !context.idempotencyKey)
         throw new Error("Tool context idempotency key is required");
-    const capability = (name, action, input, suffix) => host.capability(request.id, context, name, action, input, suffix);
-    const operations = { "web.hypothesis.register": "register", "web.validation.execute": "advance", "web.validation.review": "review", "web.report.build": "report" };
+    const rawCapability = (name, action, input, suffix) => host.capability(request.id, context, name, action, input, suffix);
+    const capability = async (name, action, input, suffix) => {
+        if (name === "traceforge.scenario.execution@1" && ["request_http", "request_http_session"].includes(action))
+            await reserveRequest(rawCapability, `${context.idempotencyKey}:${suffix}`);
+        return rawCapability(name, action, input, suffix);
+    };
+    const operations = { "web.investigation.snapshot": "snapshot", "web.hypothesis.register": "register", "web.validation.execute": "advance", "web.validation.review": "review", "web.report.build": "report" };
     if (typeof params.tool === "string" && operations[params.tool]) {
         return investigation(operations[params.tool], plainObject(params.input, "Workflow input"), context, capability, (input, suffix) => {
             const scoped = (name, action, value, child) => capability(name, action, value, `${suffix}:${child}`);
@@ -76,7 +83,8 @@ export async function callTool(request, host) {
     throw new Error(`Unknown Web black-box tool ${String(params.tool)}`);
 }
 async function requestHttp(input, capability) {
-    exact(input, ["url", "method", "headers", "bodyBase64", "timeoutMs", "responseLimitBytes"]);
+    exact(input, ["url", "method", "headers", "bodyBase64", "timeoutMs", "responseLimitBytes", "interestTerms"]);
+    const terms = observationTerms(input.interestTerms);
     if (typeof input.url !== "string" || !input.url.trim())
         throw new Error("HTTP URL is required");
     const method = input.method === undefined ? "GET" : requiredText(input.method, "HTTP method").toUpperCase();
@@ -88,10 +96,11 @@ async function requestHttp(input, capability) {
     const execution = await capability("traceforge.scenario.execution@1", "request_http", {
         authorizationAction: "web.request.replay", url: authorization.output.canonicalValue, method, headers, bodyBase64, timeoutMs, responseLimitBytes,
     }, "http-execution");
-    return succeeded(`HTTP ${method} completed with status ${execution.output.status}`, execution.output, [...authorization.refs, ...execution.refs]);
+    return succeeded(`HTTP ${method} completed with status ${execution.output.status}`, { ...execution.output, contextHighlights: observationHighlights([execution.output], terms) }, [...authorization.refs, ...execution.refs]);
 }
 async function requestSession(input, capability) {
-    exact(input, ["sessionId", "url", "method", "headers", "bodyBase64", "secretBody", "captures", "timeoutMs", "responseLimitBytes"]);
+    exact(input, ["sessionId", "url", "method", "headers", "bodyBase64", "secretBody", "captures", "timeoutMs", "responseLimitBytes", "interestTerms"]);
+    const terms = observationTerms(input.interestTerms);
     if (input.bodyBase64 !== undefined && input.secretBody !== undefined)
         throw new Error("Session HTTP body forms are mutually exclusive");
     const sessionId = requiredText(input.sessionId, "Session id"), url = canonicalHttpUrl(input.url, "Session HTTP URL");
@@ -106,5 +115,5 @@ async function requestSession(input, capability) {
         timeoutMs: boundedInteger(input.timeoutMs ?? 15_000, 1, 120_000, "HTTP timeout"),
         responseLimitBytes: boundedInteger(input.responseLimitBytes ?? 256 * 1024, 1, 1024 * 1024, "HTTP response limit"),
     }, `session-http:${sha(url)}`);
-    return succeeded(`Authenticated HTTP ${method} completed with status ${execution.output.status}`, execution.output, [...authorization.refs, ...execution.refs]);
+    return succeeded(`Authenticated HTTP ${method} completed with status ${execution.output.status}`, { ...execution.output, contextHighlights: observationHighlights([execution.output], terms) }, [...authorization.refs, ...execution.refs]);
 }

@@ -7,6 +7,7 @@ import { toolInvocationInputFingerprint, type ExecutionToolAdapter, type Executi
 import type { PackageContextRemoteLoader } from "./mcp-context-loader.js";
 import { SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
+import type { DesktopConfigurationStore } from "./desktop-configuration.js";
 
 export interface PackageContextContent {
   package: ScenarioPackageBinding;
@@ -105,7 +106,8 @@ export class PackageContextDiscoverySource implements ExecutionToolDiscoverySour
   readonly source = "foundation.context";
   constructor(private readonly packages: ScenarioPackageRegistry, private readonly store: SqlitePackageContextStore,
     private readonly sqlite: Database.Database, private readonly loadRun: (id: string) => ScenarioRunState | null,
-    private readonly remoteLoaders: ReadonlyMap<string, PackageContextRemoteLoader> = new Map()) {}
+    private readonly remoteLoaders: ReadonlyMap<string, PackageContextRemoteLoader> = new Map(),
+    private readonly configuration?: DesktopConfigurationStore) {}
 
   async discover(): Promise<ExecutionToolAdapter[]> {
     const available=this.packages.list().filter(p=>this.packages.bindingStatus(this.packages.bindingFor(p),p.definition.kind,p.definition.version).status==="available");
@@ -182,6 +184,10 @@ export class PackageContextDiscoverySource implements ExecutionToolDiscoverySour
 
   private select(run: ScenarioRunState & { scenarioPackage: NonNullable<ScenarioRunState["scenarioPackage"]> },
     work: ScenarioRunState["workItems"][number], role: "worker" | "planner" | "observer", phaseId: string, capabilities: string[]) {
+    return { ...this.selectResources(run,role,phaseId,capabilities), work };
+  }
+  private selectResources(run: ScenarioRunState & { scenarioPackage: NonNullable<ScenarioRunState["scenarioPackage"]> },
+    role: "worker" | "planner" | "observer", phaseId: string, capabilities: string[]) {
     const pkg = this.packages.requireBinding(run.scenarioPackage, run.definitionKind, run.definitionVersion);
     const {scope,package:policyPackage} = new SqliteScenarioAuthorizationService(this.sqlite,this.packages).requireRun(run);
     const allowed = (resource: ScenarioPackageResource): boolean => {
@@ -205,13 +211,28 @@ export class PackageContextDiscoverySource implements ExecutionToolDiscoverySour
         return true;
       } catch { return false; }
     };
-    const candidates = (pkg.resourceManifest?.resources ?? []).filter(allowed);
+    const candidates = (pkg.resourceManifest?.resources ?? []).filter(allowed)
+      .map(r => this.configuration ? this.configuration.resource(run.id, run.scenarioPackage, r) : r)
+      .filter((r): r is ScenarioPackageResource => r !== null);
+    candidates.push(...(this.configuration?.userResources(run.id, run.scenarioPackage, candidates) ?? [])
+      .filter(r => r.context!.readerRoles!.includes(role) && (!r.context!.phaseIds.length || r.context!.phaseIds.includes(phaseId))));
     const active = new Set(candidates.map((r) => r.id));
     const conflicts = new Set<string>();
     for (const r of candidates) for (const id of r.context!.conflictsWith ?? []) {
       if (active.has(id)) { conflicts.add(r.id); conflicts.add(id); }
     }
-    return { run: { ...run, scenarioPackage: run.scenarioPackage }, work, scope, resources: candidates.filter((r) => !conflicts.has(r.id)), conflicts };
+    return { run: { ...run, scenarioPackage: run.scenarioPackage }, scope, resources: candidates.filter((r) => !conflicts.has(r.id)), conflicts };
+  }
+
+  roleGuidance(run: ScenarioRunState, role: "worker" | "planner" | "observer", workId?: string) {
+    if (!run.scenarioPackage || run.status!=="running" || !this.configuration) return [];
+    const work=run.workItems.find(w=>w.id===workId);
+    if(role==="worker"&&!work)return [];
+    const selection=this.selectResources({...run,scenarioPackage:run.scenarioPackage},role,work?.phaseId??run.activePhaseId,work?.requiredCapabilities??run.availableCapabilities);
+    const ids=this.configuration.promptIds(run.id,run.scenarioPackage);
+    const result=selection.resources.filter(r=>ids.includes(r.id)).map(r=>({id:r.id,digest:r.digest,content:this.readContent(run.id,run.scenarioPackage!,r)}));
+    if(Buffer.byteLength(JSON.stringify(result))>65536)throw new Error("Role guidance exceeds context budget");
+    return result;
   }
 
   /** Validate an immutable host receipt against today's exact package, scope and lifecycle. */
@@ -246,7 +267,7 @@ export class PackageContextDiscoverySource implements ExecutionToolDiscoverySour
         const entries = resources.map((r) => {
           const summary = `${r.id} ${r.context!.summary}`.normalize("NFKC").toLowerCase();
           let body = "";
-          try { body = this.store.read(run.scenarioPackage, r).normalize("NFKC").toLowerCase(); } catch { /* Remote text is searched only after an explicit read. */ }
+          try { body = this.readContent(run.id, run.scenarioPackage, r).normalize("NFKC").toLowerCase(); } catch { /* Remote text is searched only after an explicit read. */ }
           return { resource: r, score: terms.reduce((sum, term) => sum + (summary.includes(term) ? 3 : body.includes(term) ? 1 : 0), 0),
             matches: terms.every((term) => summary.includes(term) || body.includes(term)) };
         }).filter((e) => e.matches).sort((a, b) => b.score - a.score || a.resource.id.localeCompare(b.resource.id));
@@ -269,7 +290,7 @@ export class PackageContextDiscoverySource implements ExecutionToolDiscoverySour
         content = await this.remoteLoaders.get(resource.context!.external.source)!.read(resource, context, authorize);
         authorize();
         this.store.install(this.packages, [{ package: run.scenarioPackage, resourceId: resource.id, content }]);
-      } else content = this.store.read(run.scenarioPackage, resource);
+      } else content = this.readContent(run.id, run.scenarioPackage, resource);
       if (offset > content.length) throw new Error("Context offset exceeds content");
       let end = Math.min(offset + 1200, content.length);
       const page = () => ({ ...provenance, id: resource.id, version: resource.version, digest: resource.digest, type: resource.context!.type,
@@ -298,7 +319,7 @@ export class PackageContextDiscoverySource implements ExecutionToolDiscoverySour
       const contract = resource?.context?.skill;
       if (!resource || !contract) throw new Error("Skill unavailable");
       // The exact instruction text must be available before a Skill can be prepared.
-      this.store.read(run.scenarioPackage, resource);
+      this.readContent(run.id, run.scenarioPackage, resource);
       const contractFingerprint = toolInvocationInputFingerprint("context.skill", contract);
       const provenance = { package: run.scenarioPackage, caseId: run.caseId, runId: run.id, workId: work.id,
         id: resource.id, digest: resource.digest, version: resource.version, trust: "untrusted_context", contractFingerprint };
@@ -323,6 +344,10 @@ export class PackageContextDiscoverySource implements ExecutionToolDiscoverySour
     } catch {
       return { status: "failed", summary: "Skill request rejected: contract, preparation, or authorization invalid", raw: "", refs: [], retryable: false };
     }
+  }
+
+  private readContent(runId: string, binding: ScenarioPackageBinding, resource: ScenarioPackageResource): string {
+    return this.configuration ? this.configuration.read(runId, binding, resource) : this.store.read(binding, resource);
   }
 
   async close(): Promise<void> { await Promise.all([...this.remoteLoaders.values()].map((loader) => loader.close())); }

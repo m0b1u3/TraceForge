@@ -36,7 +36,7 @@ function ApprovalChoice({ approval, workTitle, revision, disabled, submit, bridg
   </section>;
 }
 /** User intent is a durable command, never a side effect of receiving an event. */
-export function RunInteraction({ bridge, conversationId, run }: { bridge: DesktopConversations; conversationId: string; run: ConversationRun }) {
+export function RunInteraction({ bridge, conversationId, run, hideInput=false }: { bridge: DesktopConversations; conversationId: string; run: ConversationRun; hideInput?:boolean }) {
   const controller = useMemo(() => new ExecutionController(bridge, localStorage, conversationId), [bridge, conversationId]);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [error, setError] = useState("");
   const [workId, setWorkId] = useState(""), [instruction, setInstruction] = useState("");
@@ -61,13 +61,13 @@ export function RunInteraction({ bridge, conversationId, run }: { bridge: Deskto
     finally { setBusy(false); }
   }
   return <div className="run-interaction">
-    {!!run.directives?.some(item => item.issuedBy === "operator") && <details><summary><CaretRight className="disclosure-caret" aria-hidden="true" />已保存的补充信息</summary>
+    {!!run.directives?.some(item => item.issuedBy === "operator") && <details open={hideInput}><summary><CaretRight className="disclosure-caret" aria-hidden="true" />已保存的补充信息</summary>
       {run.directives.filter(item => item.issuedBy === "operator").map(item => <p key={item.id}>{item.instruction}<small className="local-receipt"> · {run.workItems.find(work => work.id === item.targetWorkId)?.title ?? item.targetWorkId}</small></p>)}
     </details>}
     {active && run.workItems.map(work => work.pendingApproval && !submitted.includes(work.pendingApproval.id) ? <ApprovalChoice key={work.pendingApproval.id}
       approval={work.pendingApproval} workTitle={work.title} bridge={bridge} conversationId={conversationId} runId={run.runId} revision={run.revision} disabled={disabled || run.status !== "running"}
       submit={(approved, reason) => send("approval", { workId: work.id, approvalId: work.pendingApproval!.id, approved, reason, ...(approved ? { reviewedInputRef: work.pendingApproval!.inputRef } : {}) })} /> : null)}
-    {active && available.length > 0 && <details className="interaction-input"><summary><CaretRight className="disclosure-caret" aria-hidden="true" />补充信息</summary>
+    {!hideInput&&active && available.length > 0 && <details className="interaction-input"><summary><CaretRight className="disclosure-caret" aria-hidden="true" />补充信息</summary>
       {run.status === "paused" && <p className="local-receipt">调查已暂停，可以保存补充信息；审批需恢复运行后重新核对。</p>}
       <p className="local-receipt">补充内容会进入所选工作项的上下文，不是新增授权，也不会自动恢复或重试工具。不要在这里输入密码或令牌。</p>
       <label>对应工作项<select value={workId} disabled={disabled} onChange={event => setWorkId(event.target.value)}><option value="">选择工作项</option>{available.map(work => <option key={work.id} value={work.id}>{work.title}</option>)}</select></label>

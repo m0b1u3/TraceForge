@@ -8,7 +8,7 @@ import {
   SqliteEvidenceGraphStore,
 } from "./evidence-graph-store.js";
 import { registerEvidenceGraphRoutes } from "./evidence-graph-routes.js";
-import { EvidenceGraphMutateTool } from "./evidence-graph-tools.js";
+import { EvidenceGraphMutateTool, EvidenceGraphSnapshotTool } from "./evidence-graph-tools.js";
 import { SqliteScenarioArtifactStore } from "./scenario-runtime-state.js";
 
 const open: Database.Database[] = [];
@@ -28,6 +28,17 @@ afterEach(() => {
 });
 
 describe("durable Evidence Graph", () => {
+  it("rejects Worker-created inquiries and enforces the advertised history limit",async()=>{
+    const {sqlite,store}=setup();const context={caseId:"case_1",runId:"run_1",workId:"work",idempotencyKey:"audit"} as Parameters<EvidenceGraphMutateTool["execute"]>[1];
+    const tool=new EvidenceGraphMutateTool(sqlite,store,()=>at);
+    expect(JSON.stringify(tool.inputSchema)).not.toContain('"inquiry"');
+    await expect(tool.execute({type:"add_node",node:{id:"fake",kind:"inquiry",title:"Question",summary:"Question",status:"active",confidence:0,properties:{},source:null}},context)).rejects.toThrow();
+    expect(store.ensure("case_1",at).nodes).toHaveLength(0);
+    const read=new EvidenceGraphSnapshotTool(store,()=>at);
+    expect(read.inputSchema.properties.limit.maximum).toBe(100);
+    await expect(read.execute({history:true,limit:101},context)).rejects.toThrow();
+    expect((await read.execute({history:true,limit:100},context)).status).toBe("succeeded");
+  });
   it("replays commands, rejects stale writes, and atomically projects invalidation propagation", () => {
     const { sqlite, store } = setup();
     let state = store.ensure("case_1", at);

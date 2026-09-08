@@ -1,6 +1,6 @@
 export const PROTOCOL_VERSION = 1;
 export const PACKAGE_ID = "traceforge.web-blackbox";
-export const PACKAGE_VERSION = "0.4.0";
+export const PACKAGE_VERSION = "0.5.6";
 export const SOURCE = "scenario:web_blackbox@1";
 const comparisonRequest = { type: "object", additionalProperties: false, required: ["url"], properties: {
         url: { type: "string" }, method: { enum: ["GET", "HEAD"] }, sessionId: { type: "string" },
@@ -15,6 +15,12 @@ const workflowRequest = { type: "object", additionalProperties: false, required:
     } };
 const evidenceRefs = { type: "array", minItems: 1, maxItems: 32, items: { type: "string" } };
 export const tools = Object.freeze([
+    {
+        name: "web.investigation.snapshot", source: SOURCE, version: PACKAGE_VERSION, priority: 100,
+        description: "Read preserved hypotheses, anonymous/Session coverage, unknown effects and an advisory handoff. No requests, approvals, scheduling or finding verification.",
+        inputSchema: { type: "object", additionalProperties: false }, providedCapabilities: ["web.investigation.snapshot"], dependencyCapabilities: [],
+        permissionRequirements: {}, risk: "read_only", timeoutMs: 10000,
+    },
     {
         name: "web.browser.read", source: SOURCE, version: PACKAGE_VERSION, priority: 85,
         description: "Read a bounded chunk of a retained Browser artifact from this Run; does not launch a browser or contact the target.",
@@ -40,11 +46,12 @@ export const tools = Object.freeze([
         name: "web.validation.execute", source: SOURCE, version: PACKAGE_VERSION, priority: 99,
         description: "Execute a hypothesis-bound HTTP workflow: explicit preconditions, repeated comparison, durable continuation and unknown-effect fencing.",
         inputSchema: { type: "object", additionalProperties: false, required: ["candidateId", "plan"], properties: {
-                candidateId: { type: "string" }, maxRequests: { type: "integer", minimum: 1, maximum: 6 },
-                plan: { type: "object", additionalProperties: false, required: ["prepare", "baseline", "candidate", "changedCondition"], properties: {
+                candidateId: { type: "string" }, maxRequests: { type: "integer", minimum: 1, maximum: 100 },
+                plan: { type: "object", additionalProperties: false, required: ["prepare", "baseline", "changedCondition"], properties: {
+                        expectedSignals: { type: "array", minItems: 1, maxItems: 3, items: { enum: ["statusChanged", "bodyChanged", "bytesChanged"] } }, stopOn: { enum: ["never", "repeatable_difference"] },
                         prepare: { type: "array", maxItems: 4, items: { type: "object", additionalProperties: false, required: ["request", "expectedStatuses"], properties: {
                                     request: workflowRequest, expectedStatuses: { type: "array", minItems: 1, maxItems: 8, items: { type: "integer", minimum: 100, maximum: 599 } },
-                                } } }, baseline: workflowRequest, candidate: workflowRequest, changedCondition: { type: "string" }, rounds: { type: "integer", minimum: 2, maximum: 3 },
+                                } } }, baseline: workflowRequest, candidate: workflowRequest, candidates: { type: "array", minItems: 1, maxItems: 16, items: workflowRequest }, changedCondition: { type: "string" }, rounds: { type: "integer", minimum: 2, maximum: 3 },
                     } },
             } }, providedCapabilities: ["web.validation.execute"], dependencyCapabilities: [], permissionRequirements: { network: "brokered", secrets: "handles_only" }, risk: "bounded_write", timeoutMs: 125000,
     },
@@ -65,9 +72,10 @@ export const tools = Object.freeze([
     {
         name: "web.validation.compare", source: SOURCE, version: PACKAGE_VERSION, priority: 97,
         description: "Repeat a single-dimension HTTP comparison with evidence and resumable checkpoints; differences never verify findings.",
-        inputSchema: { type: "object", additionalProperties: false, required: ["experimentId", "hypothesisId", "baseline", "candidate"], properties: {
+        inputSchema: { type: "object", additionalProperties: false, required: ["experimentId", "hypothesisId", "baseline"], properties: {
                 experimentId: { type: "string" }, hypothesisId: { type: "string" }, baseline: comparisonRequest, candidate: comparisonRequest,
-                rounds: { type: "integer", minimum: 2, maximum: 3 }, maxRequests: { type: "integer", minimum: 1, maximum: 6 },
+                candidates: { type: "array", minItems: 1, maxItems: 16, items: comparisonRequest }, expectedSignals: { type: "array", minItems: 1, maxItems: 3, items: { enum: ["statusChanged", "bodyChanged", "bytesChanged"] } }, stopOn: { enum: ["never", "repeatable_difference"] },
+                rounds: { type: "integer", minimum: 2, maximum: 3 }, maxRequests: { type: "integer", minimum: 1, maximum: 100 },
             } }, providedCapabilities: ["web.validation.compare"], dependencyCapabilities: [],
         permissionRequirements: { network: "brokered", secrets: "handles_only" }, risk: "bounded_write", timeoutMs: 125_000,
     },
@@ -85,7 +93,7 @@ export const tools = Object.freeze([
             type: "object", additionalProperties: false, required: ["url"], properties: {
                 url: { type: "string" }, method: { type: "string" }, headers: { type: "object", additionalProperties: { type: "string" } },
                 bodyBase64: { type: "string" }, timeoutMs: { type: "integer", minimum: 1, maximum: 120000 },
-                responseLimitBytes: { type: "integer", minimum: 1, maximum: 4194304 },
+                responseLimitBytes: { type: "integer", minimum: 1, maximum: 4194304 }, interestTerms: { type: "array", maxItems: 8, items: { type: "string", minLength: 1, maxLength: 64 } },
             },
         },
         providedCapabilities: ["web.request.replay"], dependencyCapabilities: [],
@@ -112,7 +120,7 @@ export const tools = Object.freeze([
                 timeoutMs: { type: "integer", minimum: 1, maximum: 120000 },
                 secretBody: { type: "object", additionalProperties: false, required: ["format", "fields"], properties: { format: { enum: ["form", "json"] }, fields: { type: "object" } } },
                 captures: { type: "array", maxItems: 16, items: { type: "object", additionalProperties: false, required: ["name", "start", "end", "maximumBytes"], properties: { name: { type: "string" }, start: { type: "string" }, end: { type: "string" }, maximumBytes: { type: "integer", minimum: 1, maximum: 8192 } } } },
-                responseLimitBytes: { type: "integer", minimum: 1, maximum: 1048576 },
+                responseLimitBytes: { type: "integer", minimum: 1, maximum: 1048576 }, interestTerms: { type: "array", maxItems: 8, items: { type: "string", minLength: 1, maxLength: 64 } },
             } }, providedCapabilities: ["web.session.use", "web.request.replay"], dependencyCapabilities: [],
         permissionRequirements: { network: "brokered", secrets: "handles_only" }, risk: "bounded_write", timeoutMs: 125_000,
     },
@@ -128,7 +136,7 @@ export const tools = Object.freeze([
         inputSchema: { type: "object", additionalProperties: false, required: ["seeds"], properties: {
                 seeds: { type: "array", minItems: 0, maxItems: 16, items: { type: "string" } },
                 headers: { type: "object", additionalProperties: { type: "string" } }, maxRequests: { type: "integer", minimum: 1, maximum: 8 },
-                maxLinksPerPage: { type: "integer", minimum: 1, maximum: 64 }, responseLimitBytes: { type: "integer", minimum: 1024, maximum: 1048576 },
+                maxLinksPerPage: { type: "integer", minimum: 1, maximum: 64 }, responseLimitBytes: { type: "integer", minimum: 1024, maximum: 1048576 }, interestTerms: { type: "array", maxItems: 8, items: { type: "string", minLength: 1, maxLength: 64 } },
                 sessionId: { type: "string" },
             } }, providedCapabilities: ["web.surface.explore"], dependencyCapabilities: [],
         permissionRequirements: { network: "brokered" }, risk: "bounded_write", timeoutMs: 125_000,

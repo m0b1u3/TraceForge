@@ -181,6 +181,12 @@ export class LlmConfigService {
   }
 
   getProvider(): LlmProvider { return this.holder; }
+  /** Snapshot for a single text generation; configuration edits affect subsequent requests only. */
+  getConversationProvider(): LlmProvider {
+    const provider = this.currentProviders.get("primary");
+    if (!provider) throw new Error("Model not configured");
+    return provider;
+  }
   getModelRoutes(): ReadonlyMap<string, LlmProvider> {
     return new Map(this.configuredRouteIds.map((routeId) => [routeId, new ProviderHolder(() => {
       const provider = this.currentProviders.get(routeId);

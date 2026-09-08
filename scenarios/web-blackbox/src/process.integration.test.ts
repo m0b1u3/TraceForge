@@ -16,8 +16,9 @@ const context:ToolExecutionContext={workerId:"worker",caseId:"case",runId:"run",
   effectivePermissions:{version:1,platform:process.platform==="win32"?"windows":process.platform==="darwin"?"darwin":"linux",
     filesystem:{read:[],write:[],deny:[]},network:"brokered",process:{access:"deny",interactive:false,background:false},secrets:"deny",sources:["test"]}};
 
-interface SurfaceStorage {state:{revision:number;value:unknown}|null; failRequest?:boolean; unstable?:boolean; truncated?:boolean; deny?:boolean}
+interface SurfaceStorage {state:{revision:number;value:unknown}|null; records?:Map<string,{revision:number;value:unknown}>; failRequest?:boolean; unstable?:boolean; truncated?:boolean; deny?:boolean}
 function runtime(calls:Array<{capability:string;action:string;input:unknown}>,storage:SurfaceStorage={state:null}){
+  storage.records ??= new Map();
   const handlers:ScenarioPackageCapabilityHandler[]=[{ capability: SCENARIO_PROCESS_HOST_CAPABILITIES.browser, actions: ["inspect"], async execute() { throw new Error("Browser deployment unavailable in HTTP fixture"); } },{
     capability:SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,actions:["require","authorize_resource"],async execute(input){
       const resource="resourceKind" in (input as object);calls.push({capability:SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,action:resource?"authorize_resource":"require",input});
@@ -40,8 +41,11 @@ function runtime(calls:Array<{capability:string;action:string;input:unknown}>,st
   },{
     capability:SCENARIO_PROCESS_HOST_CAPABILITIES.state,actions:["read","compare_and_set"],async execute(input){
       const operation=(input as {operation:string}).operation;calls.push({capability:SCENARIO_PROCESS_HOST_CAPABILITIES.state,action:operation,input});
-      if(operation==="read")return {output:storage.state,refs:[]};const value=input as {expectedRevision:number;value:unknown};
-      if(value.expectedRevision!==(storage.state?.revision??0))throw new Error("revision conflict");storage.state={revision:value.expectedRevision+1,value:value.value};return {output:storage.state,refs:[]};},
+      const value=input as {key:string;expectedRevision:number;value:unknown};
+      if(operation==="read")return {output:storage.records!.get(value.key)??null,refs:[]};
+      if(value.expectedRevision!==(storage.records!.get(value.key)?.revision??0))throw new Error("revision conflict");
+      const stored={revision:value.expectedRevision+1,value:value.value};storage.records!.set(value.key,stored);
+      if(value.key!=="web.surface.catalog.v1")storage.state=stored;return {output:stored,refs:[]};},
   },{
     capability:SCENARIO_PROCESS_HOST_CAPABILITIES.sessions,actions:["list_identities","open","list","close"],async execute(input){
       const operation=(input as {operation:string}).operation;calls.push({capability:SCENARIO_PROCESS_HOST_CAPABILITIES.sessions,action:operation,input});
@@ -120,12 +124,12 @@ describe("Web black-box Scenario Process",()=>{
     }finally{await source.close();}
   });
   it("loads the package as a pure-data descriptor with local Skill and Knowledge",()=>{
-    expect(descriptor).toMatchObject({id:"traceforge.web-blackbox",version:"0.4.0",
+    expect(descriptor).toMatchObject({id:"traceforge.web-blackbox",version:"0.5.6",
       runtime:{hostCapabilities:expect.arrayContaining([SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,SCENARIO_PROCESS_HOST_CAPABILITIES.execution,
         SCENARIO_PROCESS_HOST_CAPABILITIES.artifacts,SCENARIO_PROCESS_HOST_CAPABILITIES.state,SCENARIO_PROCESS_HOST_CAPABILITIES.evidence,
         SCENARIO_PROCESS_HOST_CAPABILITIES.sessions,SCENARIO_PROCESS_HOST_CAPABILITIES.traffic])}});
     expect(Object.hasOwn(descriptor,"createToolSources")).toBe(false);
-    expect(descriptor.resourceManifest?.resources.map(item=>item.context?.type)).toEqual(["skill","knowledge"]);
+    expect(descriptor.resourceManifest?.resources.map(item=>item.context?.type)).toEqual(["skill","knowledge","skill","skill","skill","knowledge"]);
     const scope=parseScenarioScope(descriptor.authorizationPolicy,{targets:["https://exact.example/health"],urlPrefixes:["https://authorized.example/"]});
     expect(authorizeScenarioResource(descriptor.authorizationPolicy,scope.payload,"network.url","https://exact.example/health"))
       .toBe("https://exact.example/health");
@@ -150,16 +154,17 @@ describe("Web black-box Scenario Process",()=>{
     try{let explore=(await source.discover()).find(tool=>tool.name==="web.surface.explore")!;
       const first=await explore.execute({seeds:["https://authorized.example/"],maxRequests:1},context),firstOutput=JSON.parse(first.raw);
       expect(first).toMatchObject({status:"succeeded",summary:"Explored 1 authorized URL(s); 1 remain queued"});
-      expect(firstOutput).toMatchObject({coverage:{visitedCount:1,queuedCount:1,observationCount:1,budgetExhausted:true},resume:{revision:2}});
+      expect(firstOutput).toMatchObject({coverage:{visitedCount:1,queuedCount:1,observationCount:1,budgetExhausted:true},resume:{revision:3}});
       expect(firstOutput.observations[0]).toMatchObject({url:"https://authorized.example/",status:200,
         discoveredUrls:["https://authorized.example/next"],externalOrigins:["https://outside.example"]});
       await source.close?.();source=runtime(calls,storage);explore=(await source.discover()).find(tool=>tool.name==="web.surface.explore")!;
       const resumed=await explore.execute({seeds:[],maxRequests:1},{...context,idempotencyKey:"effect-resumed"}),resumedOutput=JSON.parse(resumed.raw);
       expect(resumed).toMatchObject({status:"succeeded",summary:"Explored 1 authorized URL(s); 0 remain queued"});
-      expect(resumedOutput).toMatchObject({coverage:{visitedCount:2,queuedCount:0,observationCount:2,budgetExhausted:false},resume:{revision:4}});
+      expect(resumedOutput).toMatchObject({coverage:{visitedCount:2,queuedCount:0,observationCount:2,budgetExhausted:false},resume:{revision:6}});
       expect(calls.filter(item=>item.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.artifacts)).toHaveLength(2);
       expect(calls.filter(item=>item.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.evidence)).toHaveLength(2);
-      expect(calls.filter(item=>item.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.state&&item.action==="compare_and_set")).toHaveLength(4);
+      // Seven workflow/inventory checkpoints plus two durable HTTP reservations.
+      expect(calls.filter(item=>item.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.state&&item.action==="compare_and_set")).toHaveLength(9);
     }finally{await source.close?.();}
   });
   it("uses identity handles for authenticated requests and reads only redacted Traffic descriptors",async()=>{
