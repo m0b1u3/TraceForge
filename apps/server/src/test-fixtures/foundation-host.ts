@@ -27,8 +27,9 @@ export interface FoundationHost {
 
 export async function foundationHost(options: { root?: string; discoveryGate?: Promise<void>; ready?: () => boolean;
   model?: LlmProvider["extractJson"]; modelTimeoutMs?: number; observationToken?: string; objective?: string;
+  contextLimits?: LlmProvider["contextLimits"];
   input?: Record<string, unknown>; failResultCheckpoint?: boolean; empty?: boolean;
-  initialWork?: boolean;
+  initialWork?: boolean; longTaskScope?: Record<string, unknown>; toolTimeoutMs?: number;
   foundation?: Partial<SecurityAgentFoundationOptions> } = {}): Promise<FoundationHost> {
   const root = options.root ?? await mkdtemp(join(tmpdir(), "traceforge-host-"));
   const sqlite: Database.Database = getSqliteClient(createDb(join(root, "state.db")));
@@ -41,10 +42,12 @@ export async function foundationHost(options: { root?: string; discoveryGate?: P
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) },
     attestation: { sandboxed: false, backend: "local-test-only", network: "deny" }, allowUnsandboxedDevelopment: true, requestTimeoutMs: 2000 });
   const source = new RpcExecutionToolDiscoverySource("fixture.host", rpc);
-  const neutral = { ...definition, requiredCapabilities: ["fixture.read"], authorizationActions: ["fixture.read"],
+  const actions = options.longTaskScope ? ["fixture.read", "scope.read", ...(options.longTaskScope.maximumScriptSeconds ? ["workspace.execute"] : [])] : ["fixture.read"];
+  const neutral = { ...definition, requiredCapabilities: ["fixture.read"], authorizationActions: actions,
     phases: definition.phases.map((p) => ({ ...p, requiredCapabilities: ["fixture.read"] })),
     agentTopology: { ...definition.agentTopology, workerPools: definition.agentTopology.workerPools.map((p) => ({ ...p, capabilities: ["fixture.read"] })) } };
   const provider: LlmProvider = {
+    contextLimits: options.contextLimits,
     async runTools() { throw new Error("Unexpected model tool execution bypass"); },
     async extractJson(args) {
       const context = JSON.parse(args.user); requests.push(context);
@@ -67,12 +70,12 @@ export async function foundationHost(options: { root?: string; discoveryGate?: P
     allowLegacyScenarioContractDevelopment: true,
     scenarioPackageTrust:{allowUnreviewedDevelopmentPackages:true},
     scenarioPackageRegistry: new ScenarioPackageRegistry(options.empty ? [] : [{ id: "neutral", version: "1.0.0", schemaRevision: 1,
-      definition: neutral, outputSchemas: [{ kind: "decision", version: 1, validate() {} }], authorizationPolicy: { parseScope: (payload) => ({ payload, allowedActions: ["fixture.read"], deniedActions: [] }) }, createToolSources: () => [] }]),
+      definition: neutral, outputSchemas: [{ kind: "decision", version: 1, validate() {} }], authorizationPolicy: { parseScope: (payload) => ({ payload, allowedActions: actions, deniedActions: [] }) }, createToolSources: () => [] }]),
     modelPolicies: { worker: { maximumAttemptsPerRoute: 1, timeoutMs: options.modelTimeoutMs ?? 300, maximumRunTokens: 10000000 } },
     workContinuationAuthorizer: { async authorize() { return { decision: "allowed", authorizationRef: "fixture-only", expiresAt: "2099-01-01T00:00:00.000Z" }; } },
     toolDiscoverySources: options.empty ? [] : [{ source: "fixture.host", async discover() {
       await options.discoveryGate;
-      return (await source.discover()).map((tool) => ({ ...tool, async execute(...args: Parameters<typeof tool.execute>) { calls++; return tool.execute(...args); } }));
+      return (await source.discover()).map((tool) => ({ ...tool, ...(options.toolTimeoutMs ? { timeoutMs: options.toolTimeoutMs } : {}), async execute(...args: Parameters<typeof tool.execute>) { calls++; return tool.execute(...args); } }));
     }, async close() { await source.close(); } }],
     ...options.foundation,
   });
@@ -94,7 +97,7 @@ export async function foundationHost(options: { root?: string; discoveryGate?: P
   };
   return { root, app, sqlite, rpc, requests, management, calls: () => calls, request,
     async start(id = "run") {
-      await request("/api/scenarios/authorizations", { id: `${id}:scope`, caseId: "case", scenarioKind: "neutral", scope: {}, approvedBy: "test", expiresAt: "2099-01-01T00:00:00.000Z" });
+      await request("/api/scenarios/authorizations", { id: `${id}:scope`, caseId: "case", scenarioKind: "neutral", scope: options.longTaskScope ?? {}, approvedBy: "test", expiresAt: "2099-01-01T00:00:00.000Z" });
       await request("/api/scenarios/runs", { commandId: `${id}:start`, runId: id, caseId: "case", goal: options.objective ?? "Observe", scopeRef: `${id}:scope`, scenarioKind: "neutral", definitionVersion: 1 });
       if(options.initialWork===false)return;
       await request(`/api/scenarios/runs/${id}/work`, { commandId: `${id}:propose`, expectedRevision: 1,

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import {workDirectionSignature,holdsWorkDirection} from "./work-direction.js";
 import { z } from "zod";
 import type { EvidenceGraphState, KnowledgeNode } from "@traceforge/evidence-graph";
 import {
@@ -283,7 +284,7 @@ export class RunPlannerSupervisor {
     const knownHypotheses = new Set(visibleNodes.filter((node) => node.kind === "hypothesis" && node.status !== "invalidated").map((node) => node.id));
     const knownRefs = new Set([run.scopeRef, ...run.outputs.flatMap((output) => output.refs), ...visibleNodes.flatMap((node) => [node.id, `knowledge-node:${node.id}`])]);
     const available = new Set(run.availableCapabilities);
-    const signatures = new Set(run.workItems.filter((work) => !["completed", "blocked", "failed", "cancelled"].includes(work.status)).map((work) => this.workSignature(work.kind, work.title, work.objective)));
+    const signatures = new Set(run.workItems.filter((work) => holdsWorkDirection(work.status)).map((work) => this.workSignature(work.kind, work.title, work.objective)));
     for (const item of decision.proposals) {
       if (!phase.allowedWorkKinds.includes(item.kind)) throw new Error(`Planner proposed ${item.kind} outside phase ${phase.id}`);
       const unknownHypotheses = item.hypothesisIds.filter((id) => !knownHypotheses.has(id));
@@ -330,7 +331,7 @@ export class RunPlannerSupervisor {
     for (const [index, item] of decision.proposals.entries()) state = this.applyCommand(runId, `planner:${evaluationId}:proposal:${index}`, (current) => {
       if (current.activePhaseId !== observedPhaseId) return undefined;
       const signature = this.workSignature(item.kind, item.title, item.objective);
-      if (current.workItems.some((work) => !["completed", "blocked", "failed", "cancelled"].includes(work.status)
+      if (current.workItems.some((work) => holdsWorkDirection(work.status)
         && this.workSignature(work.kind, work.title, work.objective) === signature)) return undefined;
       return { type: "propose_work" as const, proposal: { id: `planner-work-${evaluationId}-${index}`, kind: item.kind, title: item.title,
         objective: item.objective, priority: item.priority, requiredCapabilities: item.requiredCapabilities, hypothesisIds: item.hypothesisIds,
@@ -365,7 +366,7 @@ export class RunPlannerSupervisor {
   }
 
   private workSignature(kind: WorkKind, title: string, objective: string): string {
-    return `${kind}:${title.trim().toLowerCase()}:${objective.trim().toLowerCase()}`;
+    return workDirectionSignature(kind,objective);
   }
 
   private minimumPollInterval(): number {

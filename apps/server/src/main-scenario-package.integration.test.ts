@@ -46,7 +46,7 @@ describe("application Scenario package assembly",()=>{
     try{const headers=foundationHostControl(app).management().headers();
       expect((await app.inject({url:"/api/scenarios/definitions",headers})).json()).toEqual(expect.arrayContaining([expect.objectContaining({kind:"web_blackbox",version:1})]));
       expect((await app.inject({url:"/api/scenarios/package-trust",headers})).json()).toMatchObject({dataDescriptorLoading:true,
-        packages:[{package:{id:"traceforge.web-blackbox",version:"0.5.6"},status:"reviewed_available"}]});
+        packages:[{package:{id:"traceforge.web-blackbox",version:"0.5.13"},status:"reviewed_available"}]});
       expect((await app.inject({url:"/api/execution/identities?caseId=missing",headers})).json()).toEqual([]);
     }finally{await app.close();}
   });

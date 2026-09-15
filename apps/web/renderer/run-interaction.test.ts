@@ -20,6 +20,17 @@ async function mount(request = vi.fn(async (input: { path: string; method: "GET"
 }
 async function fill(node: HTMLTextAreaElement, value: string) { await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(node, value); node.dispatchEvent(new Event("input", { bubbles: true })); }); }
 const button = (node: Element, text: string) => Array.from(node.querySelectorAll("button")).find(item => item.textContent === text)!;
+it("requires current-checkpoint confirmation to continue and preserves the same request after disconnection", async () => {
+  const {node,request,render}=await mount();
+  const stopped:ConversationRun={...run,workItems:[{id:"work",title:"Saved work",status:"failed",error:"<b>model unavailable</b>",continuation:{state:"review",checkpointRef:`checkpoint://sha256-${"a".repeat(64)}.json`}}]};
+  await render(stopped);expect(request).not.toHaveBeenCalled();expect(node.querySelector("b")).toBeNull();
+  await act(async()=>button(node,"检查并继续这项工作").click());expect(button(node,"确认继续")).toBeTruthy();
+  await render({...stopped,revision:4});expect(button(node,"确认继续")).toBeUndefined();
+  await act(async()=>button(node,"检查并继续这项工作").click());
+  await act(async()=>button(node,"确认继续").click());
+  expect(JSON.parse(request.mock.calls[0][0].body!)).toMatchObject({confirmed:true,workId:"work",expectedRevision:4,checkpointRef:stopped.workItems[0].continuation!.checkpointRef});
+  await act(async()=>button(node,"核对待处理请求").click());expect(request.mock.calls[1]).toEqual(request.mock.calls[0]);
+});
 it("requires explicit approval and resets consent when revision or decision text changes", async () => {
   const { node, request, render } = await mount();
   expect(request).not.toHaveBeenCalled(); expect(node.querySelector("b")).toBeNull();

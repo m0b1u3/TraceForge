@@ -130,3 +130,13 @@ describe.skipIf(process.env.TRACEFORGE_TEST_MACOS_SEATBELT !== "1")("real macOS 
     expect(await f.sandbox(script, [f.outside])).toMatch(/^(EPERM|EACCES)$/);
   }));
 });
+it("allows only a host-bound TCP proxy port for brokered permissions", () => {
+  const profile = compileMacosSeatbeltPolicy({ ...permissions(), network: "brokered" }, "/fixture/node", "/fixture", undefined, 54321).profile;
+  expect(profile).toContain('(deny network*)');
+  expect(profile).toContain('(allow network-outbound (remote tcp "localhost:54321"))');
+  expect(profile.match(/allow network/g)).toHaveLength(1);
+  expect(() => compileMacosSeatbeltPolicy({ ...permissions(), network: "brokered" }, "/fixture/node", "/fixture")).toThrow("host-bound port");
+  for (const port of [0, -1, 65536, 1.5, NaN])
+    expect(() => compileMacosSeatbeltPolicy({ ...permissions(), network: "brokered" }, "/fixture/node", "/fixture", undefined, port)).toThrow();
+  expect(() => compileMacosSeatbeltPolicy(permissions(), "/fixture/node", "/fixture", undefined, 54321)).toThrow();
+});

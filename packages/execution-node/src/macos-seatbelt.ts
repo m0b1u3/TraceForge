@@ -21,10 +21,12 @@ export interface MacosSystemServicePolicy {
   standardIoDevices?: boolean;
 }
 export function compileMacosSeatbeltPolicy(permissions: EffectivePermissionProfile, executable: string, cwd: string,
-  services?: MacosSystemServicePolicy): MacosSeatbeltPolicy {
+  services?: MacosSystemServicePolicy, brokerPort?: number): MacosSeatbeltPolicy {
   if (permissions.platform !== "darwin" || permissions.process.access !== "sandboxed") throw new Error("macOS policy requires darwin sandboxed permissions");
-  if (permissions.network !== "deny") throw new Error("macOS Seatbelt policy only supports network deny; use the host Broker");
-  if (permissions.process.interactive || permissions.process.background) throw new Error("macOS interactive/background execution is not accepted");
+  if (permissions.network !== "deny" && permissions.network !== "brokered") throw new Error("macOS Seatbelt requires network deny or a host-bound Broker");
+  if (permissions.network === "brokered" ? !Number.isSafeInteger(brokerPort) || brokerPort! < 1 || brokerPort! > 65535 : brokerPort !== undefined)
+    throw new Error("macOS brokered execution requires an exclusive host-bound port; deny cannot supply a port");
+  if (permissions.process.background) throw new Error("macOS detached background execution is not accepted");
   const path = (value: string) => {
     if (!isAbsolute(value) || normalize(value) !== value || /[\x00-\x1f\x7f]/.test(value) || value.length > 4096) throw new Error("macOS policy requires canonical absolute paths");
     return JSON.stringify(value);
@@ -40,6 +42,9 @@ export function compileMacosSeatbeltPolicy(permissions: EffectivePermissionProfi
   const lines = ["(version 1)", "(deny default)", '(import "/System/Library/Sandbox/Profiles/dyld-support.sb")',
     "(allow process-exec)", "(allow process-fork)", "(allow sysctl-read)",
     "(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid))"];
+  // The host creates the controlling terminal before sandbox entry. No extra
+  // device paths or ability to escape the owned process group are granted.
+  if (permissions.process.interactive) lines.push('(allow file-ioctl (regex #"^/dev/ttys[0-9]+$"))');
   if (services) {
     if (services.standardIoDevices) {
       lines.push('(allow file-read* file-write-data (require-all (literal "/dev/null" "/dev/zero") (vnode-type CHARACTER-DEVICE)))');
@@ -73,6 +78,9 @@ export function compileMacosSeatbeltPolicy(permissions: EffectivePermissionProfi
   for (const grant of permissions.filesystem.write) lines.push(`(allow file-write* ${filter(grant)})`);
   for (const grant of permissions.filesystem.deny) lines.push(`(deny file-read* file-write* file-map-executable ${filter(grant)})`);
   lines.push("(deny network*)");
+  // Verified on Apple Silicon: numeric loopback hosts are rejected by Seatbelt.
+  // This permits only TCP to this localhost port, not general loopback or DNS.
+  if (brokerPort !== undefined) lines.push(`(allow network-outbound (remote tcp "localhost:${brokerPort}"))`);
   const profile = lines.join("\n");
   if (Buffer.byteLength(profile) > 65536) throw new Error("macOS policy exceeds byte capacity");
   return { profile, permissionFingerprint: permissionProfileFingerprint(permissions), resourceLimitsApplied: false, processTreeCleanupProven: false };

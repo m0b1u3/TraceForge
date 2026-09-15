@@ -1,6 +1,7 @@
 import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, requiredText, sha, shaBytes, succeeded } from "./validation.mjs";
 import { budgets, BudgetExhausted } from "./budgets.mjs";
 import { observationHighlights } from "./observations.mjs";
+import { experimentFields, changedDimensions } from "./request-fields.mjs";
 // This is Web experiment policy. Core only supplies authorization, CAS state and evidence ports.
 export async function compareHttp(input, capability, request) {
     exact(input, ["experimentId", "hypothesisId", "baseline", "candidate", "candidates", "rounds", "maxRequests", "expectedSignals", "stopOn"]);
@@ -14,12 +15,12 @@ export async function compareHttp(input, capability, request) {
         throw new Error(`Variant budget exceeded (1–${limits.variants})`);
     const baseline = parseRequest(input.baseline), candidates = variants.map(parseRequest), candidate = candidates[0];
     for (const item of candidates)
-        if (["url", "method", "sessionId"].filter(key => baseline[key] !== item[key]).length !== 1)
+        if (changedDimensions(baseline, item).length !== 1)
             throw new Error("Comparison requires exactly one changed request dimension per variant");
-    const dimensions = ["url", "method", "sessionId"].filter(key => baseline[key] !== candidate[key]);
+    const dimensions = changedDimensions(baseline, candidate);
     if (dimensions.length !== 1)
         throw new Error("Comparison requires exactly one changed request dimension");
-    if (candidates.some(item => baseline[dimensions[0]] === item[dimensions[0]]))
+    if (candidates.some(item => changedDimensions(baseline, item)[0] !== dimensions[0]))
         throw new Error("All variants must vary the same request dimension");
     const rounds = boundedInteger(input.rounds ?? 2, 2, 3, "Comparison rounds");
     const maxRequests = boundedInteger(input.maxRequests ?? Math.min(rounds * 2 * candidates.length, limits.requestsPerCall), 1, limits.requestsPerCall, "Comparison request budget");
@@ -104,12 +105,11 @@ export async function compareHttp(input, capability, request) {
 }
 function parseRequest(value) {
     const request = plainObject(value, "Comparison request");
-    exact(request, ["url", "method", "sessionId"]);
-    const method = requiredText(request.method ?? "GET", "Comparison method").toUpperCase();
-    if (method !== "GET" && method !== "HEAD")
-        throw new Error("Comparison supports GET and HEAD only");
+    exact(request, ["url", "method", "sessionId", "headers", "bodyBase64"]);
+    const fields = experimentFields(request), method = fields.method;
     return { url: canonicalHttpUrl(request.url, "Comparison URL"), method,
-        sessionId: request.sessionId == null ? null : requiredText(request.sessionId, "Comparison Session") };
+        sessionId: request.sessionId == null ? null : requiredText(request.sessionId, "Comparison Session"),
+        ...(Object.keys(fields.headers).length ? { headers: fields.headers } : {}), ...(fields.bodyBase64 === undefined ? {} : { bodyBase64: fields.bodyBase64 }) };
 }
 function restore(value, fingerprint, maximum) {
     const state = plainObject(value, "Comparison state");

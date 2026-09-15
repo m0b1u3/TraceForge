@@ -1,5 +1,8 @@
 import { resolve } from "node:path";
+import { ConversationWorkspaces } from "./conversation-workspaces.js";
+import { executionDisplay } from "@traceforge/worker-runtime";
 import { RunToolPolicy } from "./run-tool-policy.js";
+import { DesktopApprovalPreference } from "./desktop-approval-preference.js";
 import { readRunForensics } from "./scenario-run-disposal.js";
 import type Database from "better-sqlite3";
 import type { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
@@ -28,6 +31,7 @@ import {
   ToolProviderFairScheduler,
   WorkerSupervisor,
   RunWorkspace,
+  workspaceExecutionSeconds,
   type ExecutionToolAdapter,
   type ExecutionToolDiscoverySource,
   type ProviderCapabilityHost,
@@ -129,6 +133,7 @@ class EmbeddedScenarioWorkerPool {
     private readonly authorization?: SqliteScenarioAuthorizationService,
     private readonly workspace?: RunWorkspace,
     private readonly plannerReady:()=>boolean=()=>false,
+    private readonly workspaceJobs?: WorkspaceJobs,
   ) {}
 
   reconcile(): Promise<void> {
@@ -228,13 +233,17 @@ class EmbeddedScenarioWorkerPool {
     if(!this.hostControl)throw new Error("Embedded Workers require host-scoped control channels");
     const channel=this.hostControl.worker(worker,definition.kind,definition.version);
     const control=new HttpWorkerControlPlaneClient(serverBaseUrl(this.app),channel.fetch);
-    const toolPolicy = new RunToolPolicy(definition, this.authorization, this.workspace, executorPlatform());
+    const approvalPreference = new DesktopApprovalPreference(this.sqlite);
+    const toolPolicy = new RunToolPolicy(definition, this.authorization, this.workspace, executorPlatform(),
+      () => approvalPreference.read().routineApprovalRequired);
     const gateway = new PolicyExecutionToolGateway(
       this.toolRuntime.registry,
       { async authorize(input) { return toolPolicy.approval(input.assignment, input.tool) ?? { decision: "pending", approvalRef: `approval:${input.invocation.id}` }; } },
       receipts,
       {
         allowedRisks: ["read_only", "bounded_write", "privileged", "destructive"],
+        requiresApproval: ({ assignment, tool }) => toolPolicy.requiresApproval(assignment, tool),
+        approvalPolicyRef: () => `desktop-approval:${approvalPreference.read().revision}`,
         assertAuthorized: ({assignment,worker}) => {
           if(!this.authorization)return;
           const state=new DurableScenarioRuntime(new SqliteScenarioEventStore(this.sqlite),this.definitions,this.bindingValidator).load(assignment.runId);
@@ -259,6 +268,20 @@ class EmbeddedScenarioWorkerPool {
         resolve(this.projectRoot, "data", "worker-checkpoints", worker.id))),
       new BoundedOutputDistiller(),
       {
+        repeatableReadCapabilities: ["workspace.poll"],
+        completionBlockReason: assignment => this.workspaceJobs?.pending(assignment.runId, assignment.work.id)
+          ? "An owned script is unfinished or uncertain. Poll its handle and confirm its terminal result before completing this Work; unknown execution requires reconciliation." : undefined,
+        longTaskPolicy: assignment => {
+          if (!this.authorization) return undefined;
+          let grant;
+          try { grant = this.authorization.requireAction(assignment.runContext.scopeRef, assignment.runContext.caseId, "scope.read"); }
+          catch { return undefined; } // Existing Scenarios need not declare this optional capability.
+          const payload = grant.scopePayload as Record<string, unknown>;
+          if (payload?.continuousExecution !== true) return undefined;
+          const turns = payload.maximumWorkTurns ?? 240, minutes = payload.maximumWorkMinutes ?? 120;
+          if (typeof turns !== "number" || typeof minutes !== "number" || !Number.isSafeInteger(minutes)) throw new Error("Invalid long task authorization budgets");
+          return { segmentTurns: 24, maximumTurns: turns, maximumDurationMs: minutes * 60000 };
+        },
         onLifecycleEvent: (event) => {
           if (event.type === "turn_progress") {
             this.agentEvents.append({
@@ -280,13 +303,19 @@ class EmbeddedScenarioWorkerPool {
             type: "toolCall" as const,
             id: event.invocationId,
             tool: event.tool,
-            status: event.type === "tool_started" ? "inProgress" as const : event.status,
+            status: event.type === "tool_started" || event.type === "tool_progress" ? "inProgress" as const : event.status,
             risk: event.risk,
-            summary: event.type === "tool_started" ? null : event.summary,
-            refs: event.type === "tool_started" ? [] : event.refs,
+            summary: event.type === "tool_completed" ? executionDisplay(event.summary, 4000).text : null,
+            refs: event.type === "tool_completed" ? event.refs : [],
+            ...(event.type === "tool_started" ? { inputPreview: executionDisplay(event.input).text, rationale: executionDisplay(event.rationale ?? "", 2000).text, dispatchState: "requested" as const } : {
+              outputPreview: executionDisplay(event.output ?? "", 12000).text,
+              ...(event.type === "tool_progress" && event.command ? { commandPreview: executionDisplay(event.command).text } : {}),
+              previewTruncated: executionDisplay(event.output ?? "", 12000).truncated,
+              dispatchState: event.type === "tool_progress" ? "dispatched" as const : event.replayed ? "replayed" as const : event.status === "waitingApproval" ? "requested" as const : "returned" as const,
+            }),
           };
           this.agentEvents.append({
-            method: event.type === "tool_started" ? "item/started" : "item/completed",
+            method: event.type === "tool_started" ? "item/started" : event.type === "tool_progress" ? "item/updated" : "item/completed",
             runId: event.assignment.runId,
             caseId: event.assignment.runContext.caseId,
             workId: event.assignment.work.id,
@@ -342,8 +371,17 @@ export function registerEmbeddedWorkers(
   onToolRuntime?: (runtime: ExecutionToolDiscoveryRuntime) => void,
   workspaceProject?: (context: ToolExecutionContext, id: string) => Promise<WorkspaceProject>,
 ): () => ReturnType<ExecutionToolDiscoveryRuntime["snapshot"]> {
+  let workspaceJobs: WorkspaceJobs | undefined;
+  const conversationWorkspaces = new ConversationWorkspaces(sqlite,projectRoot);
+  const workspaceProcess = executionNode ? new ExecutionNodeProcessTool(executionNode, processCapacity, undefined, undefined, {
+    started: (context, access) => workspaceJobs?.started(context, access), output: (context, text) => workspaceJobs?.output(context, text),
+  }) : undefined;
   const workspace = executionNode && authorization ? new RunWorkspace(resolve(projectRoot, "data", "run-workspaces"),
-    new ExecutionNodeProcessTool(executionNode, processCapacity), (context, action) => {
+    { ...workspaceProcess!, execute: async (input, context) => {
+      const result = await workspaceProcess!.execute(input, context);
+      const networkReceipts = readWorkspaceNetworkReceipts(sqlite, context);
+      return networkReceipts.length ? { ...result, metadata: { ...result.metadata, networkReceipts } } : result;
+    } }, (context, action) => {
       const state = new DurableScenarioRuntime(new SqliteScenarioEventStore(sqlite), definitions, bindingValidator).load(context.runId);
       const work = state?.workItems.find(item => item.id === context.workId);
       if (!state || state.status !== "running" || state.caseId !== context.caseId || state.scopeRef !== context.scopeRef
@@ -353,12 +391,53 @@ export function registerEmbeddedWorkers(
       authorization.requireAction(context.scopeRef, context.caseId, action);
     }, async () => {
       await executionNode.handshake({ clientId: "run-workspace", protocol: EXECUTION_PROTOCOL_VERSION, requiredCapabilities: ["process.spawn", "process.stdio"] });
-    }, workspaceProject) : undefined;
+    }, workspaceProject, context => workspaceExecutionSeconds(authorization.requireAction(context.scopeRef, context.caseId, "workspace.execute").scopePayload),
+    (caseId,runId) => conversationWorkspaces.key(caseId,runId)) : undefined;
+  if (workspace && executionNode && authorization) workspaceJobs = new WorkspaceJobs(sqlite, workspace, (context, start) => {
+    const state = new DurableScenarioRuntime(new SqliteScenarioEventStore(sqlite), definitions, bindingValidator).load(context.runId);
+    const work = state?.workItems.find(item => item.id === context.workId);
+    if (!state || state.status !== "running" || state.scopeRef !== context.scopeRef || state.caseId !== context.caseId
+      || work?.status !== "running" || work.leaseId !== context.leaseId || work.workerId !== context.workerId
+      || !work.leaseExpiresAt || Date.parse(work.leaseExpiresAt) <= Date.now()) throw new Error("Script ownership is no longer active");
+    authorization.requireRun(state);
+    const grant = authorization.requireAction(context.scopeRef, context.caseId, "workspace.execute");
+    if (start && (grant.scopePayload as Record<string, unknown>)?.asynchronousWorkspace !== true) throw new Error("Asynchronous script execution requires explicit consent");
+  }, access => executionNode.terminateProcess({ ...access, operationId: `workspace-stop:${access.processId}`, force: true }),
+    (key, handle) => {
+      try {
+        if (!sqlite.prepare("SELECT 1 FROM tool_invocation_executions WHERE idempotency_key=? AND status='completed'").get(key)) return false;
+        const row = readExecutionRow<{ result_json: string }>(sqlite, "receipt", key);
+        if (!row) return false;
+        const receipt = JSON.parse(row.result_json), view = JSON.parse(receipt.raw);
+        return receipt.status === "succeeded" && view.handle === handle && view.hasMoreOutput === false && !!view.terminalResult;
+      } catch { return false; }
+    }, async (access, context, input) => {
+      const operationId = `workspace-input:${context.idempotencyKey}`;
+      if (input.interrupt) await executionNode.signalProcess({ ...access, operationId, signal: "interrupt" });
+      else if (input.columns !== undefined) await executionNode.resizeProcessTerminal({ ...access, operationId, columns: input.columns, rows: input.rows! });
+      else await executionNode.writeProcessInput({ ...access, operationId, dataBase64: Buffer.from(input.text ?? "").toString("base64"), closeAfterWrite: input.eof === true });
+    }, (context, view) => {
+      const output = executionDisplay(view.output, 12000);
+      agentEvents.append({
+        method: view.terminal ? "item/completed" : "item/updated",
+        caseId: context.caseId, runId: context.runId, workId: context.workId,
+        turnId: `workspace-process:${view.handle}`, role: "worker",
+        params: { item: {
+          type: "toolCall", id: view.handle, tool: "workspace process", risk: "privileged",
+          status: view.terminal ? view.terminal.status === "succeeded" ? "completed" : "failed" : "inProgress",
+          commandPreview: executionDisplay(view.command).text, outputPreview: output.text,
+          previewTruncated: output.truncated, dispatchState: view.terminal ? "returned" : "dispatched",
+          summary: view.terminal ? executionDisplay(view.terminal.summary, 4000).text : null,
+          refs: view.terminal?.refs ?? [],
+        } },
+      });
+    });
   const builtinTools: ExecutionToolAdapter[] = [
     new EvidenceGraphSnapshotTool(evidenceGraph),
     new EvidenceGraphMutateTool(sqlite, evidenceGraph),
     ...(executionNode ? [new ExecutionNodeProcessTool(executionNode,processCapacity)] : []),
     ...(workspace?.tools() ?? []),
+    ...(workspaceJobs?.tools() ?? []),
   ];
   const toolRuntime = new ExecutionToolDiscoveryRuntime([
     { source: "traceforge.builtin", async discover() { return builtinTools; } },
@@ -470,7 +549,7 @@ export function registerEmbeddedWorkers(
   registerToolProviderRefreshRoutes(app, providerRefresh);
   const pool = new EmbeddedScenarioWorkerPool(
     app, sqlite, provider, projectRoot, cognitiveSnapshots, modelRuntime, agentEvents, toolRuntime, definitions, bindingValidator,
-    invocationBindings, contextPolicy, compaction,hostControl,authorization,workspace,providerReady,
+    invocationBindings, contextPolicy, compaction,hostControl,authorization,workspace,providerReady,workspaceJobs,
   );
   let listening = false;
   let startup: Promise<void> | undefined;
@@ -543,8 +622,12 @@ export function registerEmbeddedWorkers(
     // Do not let a late startup activation recreate a Provider after the runtime was closed.
     await startup;
     await pool.stop();
+    await workspaceJobs?.close();
     await toolRuntime.close();
     startupState = "stopped";
   });
   return () => toolRuntime.snapshot();
 }
+import { readWorkspaceNetworkReceipts } from "./workspace-network-host.js";
+import { WorkspaceJobs } from "./workspace-jobs.js";
+import { readExecutionRow } from "./db/execution-archive.js";

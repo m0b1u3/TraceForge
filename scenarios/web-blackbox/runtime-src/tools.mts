@@ -48,7 +48,7 @@ export async function callTool(request: RpcRequest, host: ScenarioRpcHost): Prom
   }
   if (params.tool === "web.validation.compare") return compareHttp(plainObject(params.input, "Comparison input"), capability, (spec, step) => {
     const scoped: Capability = (name, action, input, suffix) => capability(name, action, input, `comparison-request:${step}:${suffix}`);
-    const input = { url: spec.url, method: spec.method, responseLimitBytes: 1024 * 1024 };
+    const input = { url: spec.url, method: spec.method, ...((spec.headers===undefined)?{}:{headers:spec.headers}),...((spec.bodyBase64===undefined)?{}:{bodyBase64:spec.bodyBase64}),responseLimitBytes: 1024 * 1024 };
     return spec.sessionId === null ? requestHttp(input, scoped) : requestSession({ ...input, sessionId: spec.sessionId }, scoped);
   });
   if (params.tool === "web.session.catalog") {

@@ -3,6 +3,11 @@ import { discoverModels } from "./model-catalog.js";
 
 const config = { provider: "responses" as const, model: "unused", baseUrl: "https://models.example/v1", credentialRef: "first", authMode: "bearer" as const };
 describe("model discovery", () => {
+  it("does not send a cancelled discovery or guess models", async () => {
+    const abort = new AbortController(); abort.abort(); const fetch = vi.fn();
+    await expect(discoverModels(config, { fetch }, abort.signal)).rejects.toMatchObject({code:"unavailable"});
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("resolves bound credentials, only reads metadata and deduplicates IDs", async () => {
     const requests: Request[] = [];
     const result = await discoverModels(config, { credentials: { resolve: async () => ({ value: "fixture-token", baseUrl: config.baseUrl }) }, fetch: async (input, init) => {

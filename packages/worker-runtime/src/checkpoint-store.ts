@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
+import { validateLongTaskPolicy } from "./long-task.js";
 import { migrateLegacyAgentExecutionJournal, validateAgentExecutionJournal, type AgentExecutionJournal } from "@traceforge/agent-runtime";
 import type { CurrentWorkerCheckpointDocument, WorkerCheckpointDocument, WorkerCheckpointStore } from "./model.js";
 
@@ -24,6 +25,14 @@ function requireJson(value: unknown, depth = 0): void {
 export function validateWorkerCheckpoint(value: unknown): WorkerCheckpointDocument {
   if (!value || typeof value !== "object") throw new Error("Invalid checkpoint document");
   const d = value as WorkerCheckpointDocument;
+  if (d.completedHistory && (d.version !== 3 || !/^[a-f0-9]{64}$/.test(d.completedHistory.head) || !Number.isSafeInteger(d.completedHistory.entries) || d.completedHistory.entries < 1)) throw new Error("Invalid completed invocation history");
+  if (d.history && (d.version !== 3 || !/^[a-f0-9]{64}$/.test(d.history.head) || !Number.isSafeInteger(d.history.entries) || d.history.entries < 1)) throw new Error("Invalid checkpoint history");
+  if (d.longTask) {
+    validateLongTaskPolicy(d.longTask.policy);
+    const guard = d.longTask.loopGuard;
+    if (guard && (typeof guard.fingerprint !== "string" || !Number.isSafeInteger(guard.repeats) || guard.repeats < 1)) throw new Error("Invalid long task loop guard");
+    if (d.version !== 3 || !Number.isFinite(Date.parse(d.longTask.startedAt))) throw new Error("Invalid long task checkpoint");
+  }
   if (![1, 2, 3].includes(d.version) || ![d.workerId, d.runId, d.workId, d.leaseId, d.savedAt].every(isString)
     || !Number.isFinite(Date.parse(d.savedAt))) {
     throw new Error("Invalid checkpoint document");

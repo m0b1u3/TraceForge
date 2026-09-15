@@ -26,7 +26,7 @@ describe("local Execution Node lifecycle", () => {
     const status = await preflightLocalExecutionNode({ projectRoot: process.cwd(), env: {
       TRACEFORGE_MACOS_SANDBOX_HELPER: join(process.cwd(), "packages/execution-node/native/darwin-arm64/traceforge-macos-sandbox"),
     } });
-    expect(status).toMatchObject({ state: "ready", processReady: true, terminalReady: false, resourcePolicy: "sampled_terminate", backend: "traceforge-macos-native", helper: { releaseManifest: "verified" } });
+    expect(status).toMatchObject({ state: "ready", processReady: true, terminalReady: true, resourcePolicy: "sampled_terminate", backend: "traceforge-macos-native", helper: { releaseManifest: "verified" } });
   });
   it("verifies packaged material, recovers residues and reports a secret-free ready status", async () => {
     const f = fixture(); const status = await preflightLocalExecutionNode({ projectRoot: f.root, platform: "linux", architecture: "x64", env: f.env, execute: f.execute, now: () => "2026-09-02T00:00:00.000Z" });

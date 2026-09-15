@@ -88,13 +88,13 @@ export async function preflightLocalExecutionNode(options: PreflightOptions): Pr
       // Execute the actual supervisor and Seatbelt, not a self-declared feature list.
       const probe = await runMacosOwnedExecution({ requestId: "host-preflight", attribution: { caseId: "host-preflight", runId: "host-preflight", workId: "host-preflight",
         workerId: "host", scopeRef: "host", leaseId: "host", leaseExpiresAt: new Date(Date.now() + 10000).toISOString(), actionId: "probe", idempotencyKey: "probe" },
-        executable: "/usr/bin/true", arguments: [], workingDirectory: "/usr/bin", environment: {}, stdin: "closed", timeoutMs: 3000, outputLimitBytes: 4096,
+        executable: "/bin/sh", arguments: ["-c", "test -t 0 && test -t 1"], workingDirectory: "/usr/bin", environment: {}, stdin: "closed", terminal: { columns: 80, rows: 24 }, timeoutMs: 3000, outputLimitBytes: 4096,
         resources: { cpuTimeMs: 1000, memoryBytes: 134217728, maximumProcesses: 8, writeBytes: 0 },
-        permissions: { version: 1, platform: "darwin", network: "deny", process: { access: "sandboxed", interactive: false, background: false }, secrets: "deny", sources: ["host-preflight"],
-          filesystem: { read: [{ path: "/usr/bin", scope: "tree" }], write: [], deny: [] } },
+        permissions: { version: 1, platform: "darwin", network: "deny", process: { access: "sandboxed", interactive: true, background: false }, secrets: "deny", sources: ["host-preflight"],
+          filesystem: { read: [{ path: "/usr/bin", scope: "tree" }, { path: "/bin", scope: "tree" }], write: [], deny: [] } },
       }, { path: executablePath, sha256: digest(bytes) }, AbortSignal.timeout(8000));
       if (!probe.cleanupConfirmed || probe.exitCode !== 0 || probe.reason !== "exited") throw new Error("Native probe failed");
-      return { schemaVersion: 1, state: "ready", platform, architecture, processReady: true, terminalReady: false,
+      return { schemaVersion: 1, state: "ready", platform, architecture, processReady: true, terminalReady: true,
         backend: "traceforge-macos-native", resourcePolicy: "sampled_terminate",
         helper: { source: "configured", executable: basename(executablePath), releaseManifest: "verified", measurement: digest(bytes) },
         startupCleanup: null, checkedAt, reasonCode: null, recoveryHint: null, executablePath, helperSize: bytes.length, linuxRuntime: null };

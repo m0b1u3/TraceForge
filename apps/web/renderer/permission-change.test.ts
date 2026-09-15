@@ -46,8 +46,8 @@ it("reviews existing scope, persists an uncertain request and reconciles the sam
   try{
     await act(async()=>mount());expect(posts).toHaveLength(0);await click("变更任务授权");
     const reason=node.querySelector("input")!;await act(async()=>{reason.value="Reviewed change";Simulate.change(reason);});
-    expect(node.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(false);
-    await act(async()=>node.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());await click("核对授权");expect(posts).toHaveLength(0);
+    expect(node.querySelector<HTMLInputElement>('input[type="checkbox"]:not([role="switch"])')!.checked).toBe(false);
+    await act(async()=>node.querySelector<HTMLInputElement>('input[type="checkbox"]:not([role="switch"])')!.click());await click("核对授权");expect(posts).toHaveLength(0);
     await act(async()=>node.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());await click("确认变更授权");
     expect(posts).toHaveLength(1);expect(posts[0].scope).toEqual({autonomous:true});expect(localStorage.length).toBe(1);
     act(()=>root.unmount());root=createRoot(node);await act(async()=>mount());expect(posts).toHaveLength(1);

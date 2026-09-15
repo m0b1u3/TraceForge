@@ -5,6 +5,7 @@ import {
   CONTEXT_WITHHELD_TEXT,
   projectRunContextLineage,
   projectContextAnchors,
+  projectSharedProgress,
   type CognitiveContextRole,
   type CognitiveSnapshotRecord,
   type ContextLineageDerivation,
@@ -41,14 +42,25 @@ export class RunContextPolicy {
   }
 
   private async lineage(run: ScenarioRunState, role: CognitiveContextRole, readerWorkId?: string) {
-    const rows = this.sqlite.prepare(`SELECT idempotency_key,work_id,case_id FROM tool_invocation_bindings
-      WHERE run_id=? AND tool_source=? ORDER BY idempotency_key LIMIT 257`).all(run.id, this.resources.source) as Array<{ idempotency_key: string; work_id: string; case_id: string }>;
+    const query = this.sqlite.prepare(`SELECT idempotency_key,work_id,case_id FROM tool_invocation_bindings
+      WHERE run_id=? AND tool_source=? AND idempotency_key>? ORDER BY idempotency_key LIMIT 64`);
+    const source = this.resources.source;
+    function* sourceRows() {
+      let after = "";
+      for (;;) {
+        const page = query.all(run.id, source, after) as Array<{ idempotency_key: string; work_id: string; case_id: string }>;
+        yield* page;
+        if (page.length < 64) break;
+        after = page[page.length - 1].idempotency_key;
+      }
+    }
     const derived = this.sqlite.prepare("SELECT target_kind,target_id,snapshot_id,sources_json,case_id FROM context_derivations WHERE run_id=? ORDER BY target_kind,target_id,snapshot_id LIMIT 513")
       .all(run.id) as Array<ContextLineageDerivation & { case_id: string }>;
-    if (rows.length > 256 || derived.length > 512 || run.workItems.length > 512 || run.outputs.length > 512 || run.directives.length > 512) throw new Error("Run context lineage budget exceeded");
+    if (derived.length > 512 || run.workItems.length > 512 || run.outputs.length > 512 || run.directives.length > 512) throw new Error("Run context lineage budget exceeded");
     const receipts = new SqliteToolReceiptStore(this.sqlite), sources: ContextLineageSource[] = [];
     const selections = new Map<string, ReturnType<PackageContextDiscoverySource["selectionForReader"]> | null>();
-    for (const row of rows) {
+    let sourceBytes = 2;
+    for (const row of sourceRows()) {
       if (row.case_id !== run.caseId) throw new Error("Context receipt Case mismatch");
       const selectionWorkId = role === "worker" ? readerWorkId ?? row.work_id : run.workItems[0]?.id ?? row.work_id;
       if (!selections.has(selectionWorkId)) {
@@ -70,6 +82,8 @@ export class RunContextPolicy {
       }
       sources.push({ key: row.idempotency_key, workId: row.work_id, valid, refs: receipt?.refs ?? [],
         fingerprint: toolInvocationInputFingerprint("context.receipt", receipt ?? null) });
+      sourceBytes += Buffer.byteLength(JSON.stringify(sources[sources.length - 1])) + 1;
+      if (sourceBytes > 262144) throw new Error("Run context lineage byte budget exceeded");
     }
     sources.push(...await this.toolReceipts?.lineage(run,role,readerWorkId)??[]);
     const guidance=this.resources.roleGuidance(run,role,readerWorkId).map(item=>({...item,content:renderGuidanceTemplate(item.content,{goal:run.goal,phase:run.activePhaseId,role,runId:run.id,caseId:run.caseId})}));
@@ -87,7 +101,7 @@ export class RunContextPolicy {
     const projected=projectRunContextLineage(input, { role, sources, derived, fingerprint });
     const authorizedRefs=new Set(sources.filter(source=>source.valid).flatMap(source=>source.refs));
     for(const ref of sources.filter(source=>!source.valid).flatMap(source=>source.refs))authorizedRefs.delete(ref);
-    return {...projected,manifest:{...projected.manifest,contextAnchors:projectContextAnchors(projected.graph,input.run.id,authorizedRefs),roleGuidance:{trust:"operator_guidance_not_authorization",entries:guidance}}};
+    return {...projected,manifest:{...projected.manifest,sharedProgress:projectSharedProgress(projected.run),contextAnchors:projectContextAnchors(projected.graph,input.run.id,authorizedRefs),roleGuidance:{trust:"operator_guidance_not_authorization",entries:guidance}}};
   }
 
   async projectWorker(input: WorkerModelRequest) {
@@ -111,6 +125,7 @@ export class RunContextPolicy {
     }
     request.assignment.runContext.directives = request.assignment.runContext.directives.filter((d) => !m.withheldDirectiveIds.includes(d.id));
     request.contextAnchors=projected.manifest.contextAnchors;
+    request.sharedProgress=projected.manifest.sharedProgress;
     request.steering.push(...projected.manifest.roleGuidance.entries.map(item=>`User-configured role guidance (not authorization):\n${item.content}`));
     return { request, manifest: projected.manifest };
   }

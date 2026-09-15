@@ -2,6 +2,7 @@ import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, r
 import { readInventories, surfaceKey } from "./surface-inventory.mjs";
 import { budgets, BudgetExhausted } from "./budgets.mjs";
 import { observationHighlights } from "./observations.mjs";
+import { experimentFields, changedDimensions } from "./request-fields.mjs";
 const key = "web.investigation.v1";
 // Scenario-owned experiment ledger, not a Work scheduler. Work allocation stays in Core.
 export async function investigation(action, input, context, capability, dispatch) {
@@ -264,9 +265,9 @@ function parsePlan(value) {
     if (!Array.isArray(variants) || !variants.length || variants.length > 16)
         throw new Error("Invalid variant matrix");
     const baseline = parseRequest(plan.baseline, false), candidates = variants.map(value => parseRequest(value, false));
-    const dimension = ["url", "method", "sessionId", "headers"].find(key => JSON.stringify(baseline[key]) !== JSON.stringify(candidates[0][key]));
+    const dimension = changedDimensions(baseline, candidates[0])[0];
     for (const candidate of candidates) {
-        const changed = ["url", "method", "sessionId", "headers"].filter(key => JSON.stringify(baseline[key]) !== JSON.stringify(candidate[key]));
+        const changed = changedDimensions(baseline, candidate);
         if (changed.length !== 1 || changed[0] !== dimension)
             throw new Error("All variants must change exactly the same comparison request dimension");
     }
@@ -278,23 +279,12 @@ function parsePlan(value) {
 function parseRequest(value, prepare) {
     const request = plainObject(value, "Planned request");
     exact(request, ["url", "method", "sessionId", "headers", "bodyBase64", "secretBody", "captures", "purpose"]);
-    const method = requiredText(request.method ?? "GET", "Method").toUpperCase();
-    if (!(prepare ? ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] : ["GET", "HEAD"]).includes(method))
-        throw new Error("Unsupported workflow method");
+    const fields = experimentFields(request), method = fields.method;
     if (prepare)
         requiredText(request.purpose, "Precondition purpose and expected side effects");
-    if (!prepare && ["bodyBase64", "secretBody", "captures", "purpose"].some(key => request[key] !== undefined))
+    if (!prepare && ["secretBody", "captures", "purpose"].some(key => request[key] !== undefined))
         throw new Error("Comparison requests cannot have preparation fields");
-    const headers = request.headers === undefined ? {} : plainObject(request.headers, "Headers");
-    if (Object.keys(headers).length > 16)
-        throw new Error("Too many headers");
-    const normalized = {};
-    for (const name of Object.keys(headers).sort()) {
-        const lower = name.toLowerCase();
-        if (!/^[a-z0-9-]+$/.test(lower) || ["authorization", "proxy-authorization", "cookie", "set-cookie", "host"].includes(lower) || lower in normalized)
-            throw new Error("Use Host Sessions for credentials; header is invalid");
-        normalized[lower] = requiredText(headers[name], "Header value");
-    }
+    const normalized = fields.headers;
     if (request.bodyBase64 !== undefined && (requiredBase64(request.bodyBase64).length > 87384 || request.secretBody !== undefined))
         throw new Error("Invalid or oversized precondition body");
     if ((request.secretBody !== undefined || request.captures !== undefined) && request.sessionId === undefined)

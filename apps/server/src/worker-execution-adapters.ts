@@ -4,6 +4,7 @@ import { ToolInvocationRecoveryRequiredError, validateToolProviderResult, toolIn
   workerCheckpointJournal } from "@traceforge/worker-runtime";
 import { z } from "zod";
 import { reserveToolReceipt } from "./db/execution-storage.js";
+import { WorkerCompletedHistory } from "./worker-completed-history.js";
 import type { ExecutionNode, ProcessAccess } from "@traceforge/execution-node";
 import type {
   ExecutionToolAdapter,
@@ -122,22 +123,25 @@ export class SqliteToolInvocationBindingStore implements ToolInvocationBindingSt
 
   /** Every ledger entry must be represented before the model may choose a new action. */
   validateCheckpoint(assignment: WorkerAssignment, checkpoint: WorkerCheckpointDocument): void {
-    const rows = this.sqlite.prepare(`SELECT idempotency_key FROM tool_invocation_bindings
-      WHERE run_id = ? AND work_id = ? LIMIT 10001`).all(assignment.runId, assignment.work.id) as Array<{ idempotency_key: string }>;
-    if (rows.length > 10000) throw new ToolInvocationRecoveryRequiredError("Work invocation history exceeds continuation limit");
+    const history = checkpoint.completedHistory ? new WorkerCompletedHistory(this.sqlite) : undefined;
+    history?.verify(checkpoint);
     const completed = new Set(workerCheckpointJournal(checkpoint).completedIntentIds);
-    const found = new Set<string>();
-    for (const row of rows) {
+    let found = 0, after = "";
+    const query = this.sqlite.prepare(`SELECT idempotency_key FROM tool_invocation_bindings
+      WHERE run_id=? AND work_id=? AND idempotency_key>? ORDER BY idempotency_key LIMIT 128`);
+    for (;;) {
+      const rows = query.all(assignment.runId, assignment.work.id, after) as Array<{ idempotency_key: string }>;
+      for (const row of rows) {
       const binding = this.get(row.idempotency_key)!;
       if (binding.attribution.caseId !== assignment.runContext.caseId
         || binding.idempotencyKey !== `${assignment.work.idempotencyKey}:${binding.invocationId}`) {
         throw new ToolInvocationRecoveryRequiredError("Checkpoint invocation ownership mismatch");
       }
-      if (completed.has(binding.invocationId)) {
+      if (completed.has(binding.invocationId) || history?.has(checkpoint, binding.invocationId)) {
         if (!this.hasReceipt(binding.idempotencyKey) && !this.noEffectAudit(binding.idempotencyKey)) {
           throw new ToolInvocationRecoveryRequiredError("Checkpoint claims a completed invocation without a confirmed outcome");
         }
-        found.add(binding.invocationId);
+        found++;
       } else if (checkpoint.pendingInvocation?.invocation.id !== binding.invocationId) {
         throw new ToolInvocationRecoveryRequiredError("Invocation ledger contains an action absent from the checkpoint");
       } else {
@@ -147,8 +151,11 @@ export class SqliteToolInvocationBindingStore implements ToolInvocationBindingSt
           attribution: binding.attribution });
         if (pending.contractFingerprint !== binding.tool.contractFingerprint) throw new ToolInvocationRecoveryRequiredError("Pending invocation contract mismatch");
       }
+      }
+      if (rows.length < 128) break;
+      after = rows[rows.length - 1].idempotency_key;
     }
-    if (found.size !== completed.size) throw new ToolInvocationRecoveryRequiredError("Checkpoint completed invocation has no durable binding");
+    if (found !== completed.size + (checkpoint.completedHistory?.entries ?? 0)) throw new ToolInvocationRecoveryRequiredError("Checkpoint completed invocation has no durable binding");
   }
 
   private noEffectAudit(key: string): string | undefined {
@@ -367,10 +374,11 @@ const processInput = z.object({
   workingDirectory: z.string().min(1),
   environment: z.record(z.string()).default({}),
   stdin: z.string().optional(),
-  timeoutMs: z.number().int().min(1).max(300_000).default(60_000),
+  terminal: z.object({ columns: z.number().int().min(1).max(500), rows: z.number().int().min(1).max(500) }).strict().optional(),
+  timeoutMs: z.number().int().min(1).max(3_600_000).default(60_000),
   outputLimitBytes: z.number().int().min(1).max(4 * 1024 * 1024).default(64 * 1024),
   resources: z.object({
-    cpuTimeMs: z.number().int().min(1).max(300_000).default(60_000),
+    cpuTimeMs: z.number().int().min(1).max(3_600_000).default(60_000),
     memoryBytes: z.number().int().min(16 * 1024 * 1024).max(2 * 1024 * 1024 * 1024).default(512 * 1024 * 1024),
     maximumProcesses: z.number().int().min(1).max(64).default(8),
     writeBytes: z.number().int().min(1).max(1024 * 1024 * 1024).default(256 * 1024 * 1024),
@@ -391,13 +399,14 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
       workingDirectory: { type: "string", description: "Absolute working directory covered by the effective filesystem profile" },
       environment: { type: "object", additionalProperties: { type: "string" } },
       stdin: { type: "string" },
-      timeoutMs: { type: "integer", minimum: 1, maximum: 300_000 },
+      terminal: { type: "object", additionalProperties: false, required: ["columns", "rows"], properties: { columns: { type: "integer", minimum: 1, maximum: 500 }, rows: { type: "integer", minimum: 1, maximum: 500 } } },
+      timeoutMs: { type: "integer", minimum: 1, maximum: 3_600_000 },
       outputLimitBytes: { type: "integer", minimum: 1, maximum: 4 * 1024 * 1024 },
       resources: {
         type: "object",
         description: "Mandatory process-tree CPU, memory, process-count, and write-volume limits.",
         properties: {
-          cpuTimeMs: { type: "integer", minimum: 1, maximum: 300_000, default: 60_000 },
+          cpuTimeMs: { type: "integer", minimum: 1, maximum: 3_600_000, default: 60_000 },
           memoryBytes: { type: "integer", minimum: 16 * 1024 * 1024, maximum: 2 * 1024 * 1024 * 1024, default: 512 * 1024 * 1024 },
           maximumProcesses: { type: "integer", minimum: 1, maximum: 64, default: 8 },
           writeBytes: { type: "integer", minimum: 1, maximum: 1024 * 1024 * 1024, default: 256 * 1024 * 1024 },
@@ -412,11 +421,12 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
   readonly dependencyCapabilities: string[] = [];
   readonly permissionRequirements = { process: "sandboxed" as const };
   readonly risk = "privileged" as const;
-  readonly timeoutMs = 310_000;
+  readonly timeoutMs = 3_630_000;
 
   constructor(private readonly node: ExecutionNode,private readonly capacity?:import("./process-execution-capacity.js").ProcessExecutionCapacity,
     private readonly accounting?: Pick<import("./process-execution-capacity.js").ProcessCapacityInput,"source"|"version"|"operation"|"kind"|"parentInvocationKey">,
-    private readonly authorize?:()=>void) {}
+    private readonly authorize?:()=>void,
+    private readonly lifecycle?: { started(context: ToolExecutionContext, access: ProcessAccess): void; output(context: ToolExecutionContext, text: string): void }) {}
 
   async execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
     context.signal?.throwIfAborted();
@@ -431,7 +441,7 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
           if(["exited","failed"].includes(result.process.state))terminal=true;return result;};
         const value=Reflect.get(target,key);return typeof value==="function"?value.bind(target):value;
       }});
-      try{return await new ExecutionNodeProcessTool(node).execute(input,context);}finally{admission.finish(terminal);}
+      try{return await new ExecutionNodeProcessTool(node, undefined, undefined, undefined, this.lifecycle).execute(input,context);}finally{admission.finish(terminal);}
     }
     let access: ProcessAccess | undefined;
     let stopping: Promise<void> | undefined;
@@ -447,6 +457,7 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
     });
     const execution = this.executeProcess(input, context, (started) => {
       access = started;
+      this.lifecycle?.started(context, started);
       // startProcess may resolve after the caller already timed out.
       if (context.signal?.aborted) stop();
       context.signal?.throwIfAborted();
@@ -480,6 +491,7 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
     const leaseRemainingMs = Date.parse(context.leaseExpiresAt) - Date.now();
     if (leaseRemainingMs <= 0) throw new Error(`Execution lease ${context.leaseId} has expired`);
     const timeoutMs = Math.min(parsed.timeoutMs, leaseRemainingMs);
+    context.onProgress?.({ phase: "command", text: JSON.stringify({ executable: parsed.executable, arguments: parsed.arguments, workingDirectory: parsed.workingDirectory }, null, 2) });
     const started = await this.node.startProcess({
       requestId: `process:${context.idempotencyKey}`,
       attribution: {
@@ -497,7 +509,8 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
       arguments: parsed.arguments,
       workingDirectory: parsed.workingDirectory,
       environment: parsed.environment,
-      stdin: parsed.stdin === undefined ? "closed" : "pipe",
+      stdin: parsed.terminal || parsed.stdin !== undefined ? "pipe" : "closed",
+      terminal: parsed.terminal,
       timeoutMs,
       outputLimitBytes: parsed.outputLimitBytes,
       resources: parsed.resources,
@@ -510,7 +523,7 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
         processId: started.process.id,
         adoptionToken: started.adoptionToken,
         dataBase64: Buffer.from(parsed.stdin).toString("base64"),
-        closeAfterWrite: true,
+        closeAfterWrite: !parsed.terminal,
       });
     }
     const output: Buffer[] = [];
@@ -556,9 +569,11 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
         }
         outputBytes += data.length;
         output.push(data);
+        this.lifecycle?.output(context, data.toString("utf8"));
+        context.onProgress?.({ phase: "output", text: data.toString("utf8") });
       }
     } while ((descriptor.state !== "exited" && descriptor.state !== "failed") || cursor < descriptor.lastEventSequence);
-    if (descriptor.state === "failed" || descriptor.exitCode === null) {
+    if (descriptor.state === "failed" || (descriptor.exitCode === null && !descriptor.exitSignal)) {
       throw new Error("Execution transport failed without a confirmed result; outcome requires reconciliation");
     }
     const raw = Buffer.concat(output).toString("utf8");
@@ -567,7 +582,7 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
       status: succeeded ? "succeeded" : "failed",
       summary: succeeded
         ? `Process completed with exit code 0`
-        : `Process exited with code ${descriptor.exitCode}`,
+        : descriptor.exitSignal ? `Process terminated by ${descriptor.exitSignal}` : `Process exited with code ${descriptor.exitCode}`,
       raw,
       refs: [`execution-process:${descriptor.id}`],
       retryable: false,

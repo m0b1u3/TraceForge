@@ -27,7 +27,7 @@ export class ModelGateway implements ModelCredentialResolver {
     return createProvider(config, { ...this.dependencies, credentials: this });
   }
   beginLogin(id: string, signal?: AbortSignal) { return this.account(id).begin(signal); }
-  discoverModels(config: LlmEndpointConfig) { return discoverModels(config, { ...this.dependencies, credentials: this }); }
+  discoverModels(config: LlmEndpointConfig, signal?: AbortSignal) { return discoverModels(config, { ...this.dependencies, credentials: this }, signal); }
   pollLogin(id: string, pendingId: string, signal?: AbortSignal) { return this.account(id).poll(pendingId, id, signal); }
   cancelLogin(id: string, pendingId: string) { this.account(id).cancel(pendingId); }
   cancelAllLogins() { for (const account of this.accounts.values()) account.cancelAll(); }

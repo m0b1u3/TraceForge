@@ -1,7 +1,14 @@
 import type {JournalStorage} from "./host-conversation-controller";
 const key="traceforge.desktop.session-drafts.v1";
-/** Window-session drafts, not credential storage. Bound total text and never evict silently. */
+/** Local drafts, not credential storage. Bound total text and never evict silently. */
 export class ConversationDrafts {
+  static persistent(storage: JournalStorage, previous: JournalStorage) {
+    if (storage.getItem(key) === null) {
+      const old = previous.getItem(key);
+      if (old !== null) { new ConversationDrafts(previous); storage.setItem(key, old); }
+    }
+    return new ConversationDrafts(storage);
+  }
   private values: Record<string,string> = Object.create(null);
   constructor(private storage:JournalStorage){
     const raw=storage.getItem(key);if(!raw)return;

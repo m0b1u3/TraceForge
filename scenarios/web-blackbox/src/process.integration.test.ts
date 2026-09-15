@@ -124,7 +124,7 @@ describe("Web black-box Scenario Process",()=>{
     }finally{await source.close();}
   });
   it("loads the package as a pure-data descriptor with local Skill and Knowledge",()=>{
-    expect(descriptor).toMatchObject({id:"traceforge.web-blackbox",version:"0.5.6",
+    expect(descriptor).toMatchObject({id:"traceforge.web-blackbox",version:"0.5.13",
       runtime:{hostCapabilities:expect.arrayContaining([SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,SCENARIO_PROCESS_HOST_CAPABILITIES.execution,
         SCENARIO_PROCESS_HOST_CAPABILITIES.artifacts,SCENARIO_PROCESS_HOST_CAPABILITIES.state,SCENARIO_PROCESS_HOST_CAPABILITIES.evidence,
         SCENARIO_PROCESS_HOST_CAPABILITIES.sessions,SCENARIO_PROCESS_HOST_CAPABILITIES.traffic])}});

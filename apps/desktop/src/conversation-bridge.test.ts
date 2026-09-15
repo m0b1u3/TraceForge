@@ -4,6 +4,12 @@ import { createConversationBridge, validateConversationRequest } from "./convers
 const origin = "http://127.0.0.1:41234";
 const sender = { webContentsId: 7, mainFrame: true, url: `${origin}/` };
 const input = { path: "/api/desktop/conversations", method: "GET" };
+it("allows only a narrow live approval preference operation", () => {
+  const path = "/api/desktop/approval-preference";
+  expect(validateConversationRequest({ path, method: "GET" })).toEqual({ path, method: "GET" });
+  expect(validateConversationRequest({ path, method: "POST", body: JSON.stringify({ expectedRevision: 0, routineApprovalRequired: false }) }).method).toBe("POST");
+  expect(() => validateConversationRequest({ path, method: "POST", body: JSON.stringify({ expectedRevision: 0, routineApprovalRequired: false, bypassSandbox: true }) })).toThrow();
+});
 describe("narrow desktop conversation bridge", () => {
   it("allows only explicitly confirmed bounded permission changes on a fixed Run route",()=>{
     const path="/api/desktop/conversations/first/execution/run/permissions";

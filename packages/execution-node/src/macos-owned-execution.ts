@@ -6,6 +6,7 @@ import type { StartProcessRequest, ResourceLimitKind } from "./protocol.js";
 import { compileMacosSeatbeltPolicy, type MacosSystemServicePolicy } from "./macos-seatbelt.js";
 import { SampledResourceBudget } from "./sampled-resource-budget.js";
 import { allowsFileSystemPath } from "@traceforge/orchestration-core";
+import { sandboxEnvironmentArguments, type MacosExecutionBinding } from "./macos-execution-binding.js";
 
 export interface MacosOwnedExecutionResult {
   resourcePolicy: "sampled_terminate";
@@ -19,21 +20,29 @@ export interface MacosOwnedExecutionResult {
   omittedOutputBytes: number;
 }
 
-/** Bounded stdio execution path. Not yet a ProcessLauncher: no PTY/adoption or
- * fabricated hard-limit attestation. The native parent owns the group lifetime. */
+/** Bounded stdio/PTY transport. The native parent owns the process group and
+ * terminal; resource supervision is sampled, not a hard-limit attestation. */
 export async function runMacosOwnedExecution(request: StartProcessRequest, helper: { path: string; sha256: string },
   signal: AbortSignal, ports?: {
-    ready(pid: number, input: Writable | null): void;
+    ready(pid: number, input: Writable | null, control: Writable): void;
     output(stream: "stdout" | "stderr", bytes: Buffer): void;
     resourceLimit(resource: ResourceLimitKind): void;
-  }, services?: MacosSystemServicePolicy): Promise<MacosOwnedExecutionResult> {
+  }, services?: MacosSystemServicePolicy, binding?: MacosExecutionBinding): Promise<MacosOwnedExecutionResult> {
+  if (binding) {
+    signal = AbortSignal.any([signal, binding.signal]);
+    binding.assertCurrent();
+  }
   signal.throwIfAborted();
-  if (process.platform !== "darwin" || process.arch !== "arm64" || request.terminal || (!ports && request.stdin !== "closed")) throw new Error("macOS execution requires Apple Silicon stdio");
-  if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > 300000
+  if (process.platform !== "darwin" || process.arch !== "arm64" || (!ports && request.stdin !== "closed")) throw new Error("macOS execution requires Apple Silicon");
+  if (request.terminal && (!request.permissions.process.interactive || ![request.terminal.columns, request.terminal.rows].every(n => Number.isSafeInteger(n) && n >= 1 && n <= 500))) throw new Error("Invalid or unauthorized macOS terminal");
+  if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > 3600000
     || !Number.isSafeInteger(request.outputLimitBytes) || request.outputLimitBytes < 1 || request.outputLimitBytes > 4194304) throw new Error("Invalid macOS execution bounds");
   // No loader injection into the unsandboxed supervisor itself.
   if (Object.keys(request.environment).length) throw new Error("macOS supervisor currently requires an empty environment");
-  const profile = compileMacosSeatbeltPolicy(request.permissions, request.executable, request.workingDirectory, services);
+  const environment = sandboxEnvironmentArguments(binding?.environment ?? {});
+  if (environment.length && !allowsFileSystemPath(request.permissions, "read", "/usr/bin/env"))
+    throw new Error("Host environment requires an explicit sandbox env executable grant");
+  const profile = compileMacosSeatbeltPolicy(request.permissions, request.executable, request.workingDirectory, services, binding?.brokerPort);
   for (const trusted of [helper.path, "/usr/bin/sandbox-exec", "/System/Library/Sandbox/Profiles/dyld-support.sb"]) {
     if (allowsFileSystemPath(request.permissions, "write", trusted)) throw new Error("macOS execution must not modify its supervisor or system policy");
   }
@@ -43,8 +52,10 @@ export async function runMacosOwnedExecution(request: StartProcessRequest, helpe
     || createHash("sha256").update(await readFile(helper.path)).digest("hex") !== helper.sha256) throw new Error("macOS supervisor identity mismatch");
   const budget = new SampledResourceBudget(request.resources, 4096);
   signal.throwIfAborted();
+  binding?.assertCurrent();
   return new Promise((resolve, reject) => {
-    const child = spawn(helper.path, [profile.profile, request.executable, ...request.arguments], {
+    const command = environment.length ? ["/usr/bin/env", "-i", ...environment, request.executable, ...request.arguments] : [request.executable, ...request.arguments];
+    const child = spawn(helper.path, [profile.profile, ...(request.terminal ? ["--pty", `${request.terminal.columns},${request.terminal.rows}`] : []), ...command], {
       cwd: request.workingDirectory, env: {}, stdio: [request.stdin === "closed" ? "ignore" : "pipe", "pipe", "pipe", "pipe", "pipe"],
     });
     let reason: MacosOwnedExecutionResult["reason"] = "exited", limit: ResourceLimitKind | null = null;
@@ -88,7 +99,7 @@ export async function runMacosOwnedExecution(request: StartProcessRequest, helpe
           if (terminal) throw Error("Telemetry after terminal");
           const frame = JSON.parse(line);
           if (frame.type === "ready" && !ready && Number.isSafeInteger(frame.pid) && frame.pid > 1) {
-            ready = true; ports?.ready(frame.pid, child.stdin);
+            ready = true; ports?.ready(frame.pid, child.stdin, child.stdio[4] as Writable);
           }
           else if (frame.type === "sample" && ready && frame.valid === true && Array.isArray(frame.processes)) {
             const decision = budget.observe(performance.now(), frame.processes);

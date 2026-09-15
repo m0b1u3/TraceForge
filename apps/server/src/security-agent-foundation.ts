@@ -3,11 +3,14 @@ import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { LlmProvider } from "@traceforge/llm";
 import type { ScenarioAgentEvent } from "@traceforge/shared";
+import { resolveContextBudget } from "@traceforge/shared/model-context";
 import type { ExecutionNode } from "@traceforge/execution-node";
 import {
   BlackboardChangeBus,
   needsCognitiveWake,
   ContextCompactionRuntime,
+  RollingContextCompaction,
+  SemanticContextCompactor,
   RunObserverSupervisor,
   RunPlannerSupervisor,
   StructuredRunObserverModel,
@@ -37,6 +40,7 @@ import { registerRunPlannerRoutes, SqliteRunPlannerStore } from "./run-planner.j
 import { SqliteCognitiveContextCursorStore } from "./cognitive-context-distiller.js";
 import { createInstalledBrowserDeployment } from "./browser-installation.js";
 import { DesktopPermissionChange, registerDesktopPermissionChange } from "./desktop-permission-change.js";
+import { DesktopApprovalPreference, registerDesktopApprovalPreference } from "./desktop-approval-preference.js";
 import { SqliteBrowserArtifactContent } from "./browser-artifact-content.js";
 import { BrowserScratchStore } from "./browser-scratch.js";
 import { registerCognitiveSnapshotRoutes, SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
@@ -149,6 +153,8 @@ export interface SecurityAgentFoundationOptions {
   governanceHistoryAuthorizer?: GovernanceHistoryAuthorizer;
   workRetryAuthorizer?: ScenarioWorkRetryAuthorizer;
   workContinuationAuthorizer?: ScenarioWorkContinuationAuthorizer;
+  /** Host-local operator port; never exposed to Worker or model capabilities. */
+  onOperatorContinuationReady?: (continueWork: ScenarioWorkContinuationControl["continue"]) => void;
   scenarioPackageRegistry?: ScenarioPackageRegistry;
   /** Load immutable, data-only scenario.json descriptors from scenarioPackageTrust.installations. */
   loadScenarioPackageDescriptors?: boolean;
@@ -354,6 +360,7 @@ export function registerSecurityAgentFoundation(
   registerDesktopResourceRoutes(app, desktopResources);
   const desktopConfiguration = new DesktopConfigurationStore(sqlite, scenarioPackages, contextStore, options.mcpServers);
   registerDesktopConfigurationRoutes(app, desktopConfiguration);
+  registerDesktopApprovalPreference(app, new DesktopApprovalPreference(sqlite));
   registerContextLifecycleRoutes(app, new PackageContextLifecycle(sqlite, scenarioPackages, contextStore, options.contextLifecycleAuthorizer));
   if (new Set(contextServers.map((server) => server.source)).size !== contextServers.length) throw new Error("Duplicate MCP context source");
   const contextSource = new PackageContextDiscoverySource(scenarioPackages, contextStore, sqlite, (id) => scenarioRuntime.load(id) ?? null,
@@ -375,12 +382,17 @@ export function registerSecurityAgentFoundation(
   cognitiveSnapshots.recoverPrepared(new Date().toISOString());
   const compactionStore = new SqliteContextCompactionStore(sqlite);
   compactionStore.recoverPrepared();
-  const compaction = new ContextCompactionRuntime(compactionStore, options.contextCompactor);
   let toolInventory: ReturnType<typeof registerEmbeddedWorkers> | undefined;
   const toolReceiptContext = new ToolReceiptContext(sqlite,scenarioPackages,(id)=>scenarioRuntime.load(id)??null,
     ()=>toolInventory?.(),[contextSource.source]);
   const runContext = new RunContextPolicy(sqlite, contextSource, (id) => scenarioRuntime.load(id) ?? null, cognitiveSnapshots,toolReceiptContext);
   const contextPolicy = new PackageContextPolicy(sqlite, contextSource, runContext,toolReceiptContext, desktopConfiguration);
+  const contextJournal = new SqliteWorkerCheckpointStore(sqlite, new JsonFileCheckpointStore(resolve(projectRoot, "data", "worker-checkpoints")));
+  contextPolicy.archivedTranscript = async request => {
+    const ref = request.assignment.work.latestCheckpoint?.payloadRef;
+    return ref ? contextJournal.archivedEntries(ref, { caseId: request.assignment.runContext.caseId,
+      runId: request.assignment.runId, workId: request.assignment.work.id }) : [];
+  };
   contextPolicy.extensionToolAllowed = (runId,source) => desktopMcp.allowed(runId,source);
   const modelExecutionStore = new SqliteModelExecutionStore(sqlite);
   const modelAdmissionStore = new SqliteModelAdmissionStore(sqlite);
@@ -399,6 +411,26 @@ export function registerSecurityAgentFoundation(
   };
   const modelAdmissions = new ModelAdmissionController(modelResourcePolicy, modelAdmissionStore, undefined, undefined, undefined, lifecycleEvents);
   const modelRuntime = new ModelExecutionRuntime(modelRoutes, modelPolicies, modelExecutionStore, modelAdmissions, undefined, undefined, lifecycleEvents);
+  const semanticCompactor = options.contextCompactor ?? new SemanticContextCompactor({
+    async extractJson(request, context) {
+      if (!context || !["worker", "planner", "observer"].includes(context.consumer)) throw new Error("Missing compaction ownership");
+      return modelRuntime.extractJson({ role: context.consumer as CognitiveModelRole, snapshotId: `compaction:${context.id}`,
+        runId: context.runId, caseId: context.caseId, ...(context.workId ? { workId: context.workId } : {}) }, request);
+    },
+  }, compactionStore.summaryCache, 16000);
+  const compaction = new RollingContextCompaction(semanticCompactor, compactionStore.summaryCache, consumer => {
+    const policy = modelPolicies[consumer as CognitiveModelRole];
+    if (!policy) throw new Error("Unknown context consumer");
+    const limits = policy.routeIds.flatMap(id => { const route = modelRoutes.get(id); return route ? [route.contextLimits ?? {}] : []; });
+    // Any configured failover must be able to accept this same prepared request.
+    // The role's independent spending ceiling is not removed by a large window.
+    const candidates = limits.map(limit => ({ ...limit, maximumInputTokens: policy.maximumEstimatedCallTokens }));
+    if (!candidates.length) throw new Error("No available model context metadata");
+    // Compare each route's usable input. Combining one route's small window
+    // with another route's large output reservation can create an invalid model.
+    return candidates.reduce((smallest, candidate) => resolveContextBudget(candidate).input < resolveContextBudget(smallest).input ? candidate : smallest);
+  }, consumer => modelPolicies[consumer as CognitiveModelRole].timeoutMs, (maximumTextCharacters, timeoutMs) => new ContextCompactionRuntime(compactionStore, semanticCompactor,
+    { triggerCharacters: 1, maximumTextCharacters, maximumContextBytes: 1048576, timeoutMs }));
   const observer = new RunObserverSupervisor(
     scenarioRuntime,
     definitions,
@@ -456,6 +488,17 @@ export function registerSecurityAgentFoundation(
   registerScenarioWorkContinuationRoutes(app, new ScenarioWorkContinuationControl(sqlite, definitions,
     new SqliteWorkerCheckpointStore(sqlite, new JsonFileCheckpointStore(resolve(projectRoot, "data", "worker-checkpoints"))),
     scenarioPackages, options.workContinuationAuthorizer, changes));
+  if (options.onOperatorContinuationReady) {
+    const operatorContinuation = new ScenarioWorkContinuationControl(sqlite, definitions,
+      new SqliteWorkerCheckpointStore(sqlite, new JsonFileCheckpointStore(resolve(projectRoot, "data", "worker-checkpoints"))),
+      scenarioPackages, options.workContinuationAuthorizer ?? { async authorize(input) {
+        if (input.actor !== "desktop-operator") return { decision: "denied" };
+        const scope = sqlite.prepare("SELECT status,expires_at,case_id FROM scenario_authorizations WHERE id=?").get(input.run.scopeRef) as { status: string; expires_at: string; case_id: string } | undefined;
+        if (!scope || scope.status !== "active" || scope.case_id !== input.run.caseId || !Number.isFinite(Date.parse(scope.expires_at)) || Date.parse(scope.expires_at) <= Date.now()) return { decision: "denied" };
+        return { decision: "allowed", authorizationRef: `desktop-continuation:${input.checkpointRef}`, expiresAt: scope.expires_at };
+      } }, changes);
+    options.onOperatorContinuationReady(operatorContinuation.continue.bind(operatorContinuation));
+  }
   registerCognitiveSnapshotRoutes(app, cognitiveSnapshots, provider, providerReady, undefined, undefined,
     (snapshot) => contextPolicy.assertReplayAllowed(snapshot));
   registerModelExecutionRoutes(app, modelExecutionStore);

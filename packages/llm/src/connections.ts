@@ -1,14 +1,7 @@
 import type { LlmEndpointConfig } from "./config.js";
-import type { ModelProtocol, ModelSupplier } from "@traceforge/shared/model-protocol";
+import { MODEL_SUPPLIERS } from "./suppliers.js";
+export { MODEL_SUPPLIERS } from "./suppliers.js";
 export type { ModelSupplier } from "@traceforge/shared/model-protocol";
-
-/** Vendor metadata is separate from wire protocols and from cognitive/execution policy. */
-export const MODEL_SUPPLIERS = Object.freeze({
-  deepseek: { protocol: "openai", baseUrl: "https://api.deepseek.com", jsonMode: "json_object" },
-  xai: { protocol: "openai", baseUrl: "https://api.x.ai/v1", jsonMode: "json_schema" },
-  kimi: { protocol: "openai", baseUrl: "https://api.moonshot.cn/v1", jsonMode: "json_object" },
-  glm: { protocol: "openai", baseUrl: "https://open.bigmodel.cn/api/paas/v4", jsonMode: "json_object" },
-} as const satisfies Record<ModelSupplier, { protocol: ModelProtocol; baseUrl: string; jsonMode: "json_schema" | "json_object" }>);
 
 export interface ModelCredential {
   value: string;
@@ -32,7 +25,7 @@ export function normalizeModelConnection(config: LlmEndpointConfig): LlmEndpoint
   const baseUrl = config.baseUrl ?? preset?.baseUrl ?? (config.provider === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1");
   validateEndpoint(baseUrl);
   if (config.credentialRef && config.apiKey) throw new Error("Choose either a credential reference or an API key");
-  return { ...config, baseUrl, jsonMode: config.jsonMode ?? preset?.jsonMode };
+  return { ...config, baseUrl, jsonMode: config.jsonMode ?? (preset?.protocol === config.provider ? preset.jsonMode : undefined) };
 }
 
 export function validateEndpoint(value: string): URL {

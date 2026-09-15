@@ -6,13 +6,14 @@ import { AuthorizationFormSchema, AuthorizationReviewSchema, buildAuthorizationS
  * Primary fields lead; optional fields disclose; review replaces editing.
  * Scope strings are literals. Scenario supplies copy; this renderer grants nothing.
  * Registration never starts a Run. Changes replace the review, not its consent. */
-export function AuthorizationForm({ contract, policy, disabled, register, initialScope, expiresAt, submitLabel = "确认登记授权", continuesWork = false }: {
+export function AuthorizationForm({ contract, policy, disabled, register, initialScope, expiresAt, submitLabel = "确认登记授权", continuesWork = false, startsWork = false }: {
   contract: unknown; policy: unknown; disabled: boolean;
   register(scope: Record<string, unknown>, expiresAt: string): Promise<boolean>;
   initialScope?: Record<string,unknown>;
   expiresAt?: string;
   submitLabel?: string;
   continuesWork?: boolean;
+  startsWork?: boolean;
 }) {
   const parsed = AuthorizationFormSchema.safeParse(contract);
   const rules = AuthorizationReviewSchema.safeParse(policy);
@@ -48,7 +49,7 @@ export function AuthorizationForm({ contract, policy, disabled, register, initia
         <summary><CaretRight className="disclosure-caret" aria-hidden="true" />更多范围选项</summary>
         <div>{form.fields.map((field, index) => field.advanced && !field.required ? renderField(field, index) : null)}</div>
       </details>}
-      <div className="authorization-footer"><span className="authorization-help">{expiresAt ? "保持原授权有效期" : "有效一小时"} · {continuesWork ? "确认后继续原工作" : "不会自动启动"}</span>
+      <div className="authorization-footer"><span className="authorization-help">{expiresAt ? "保持原授权有效期" : "有效一小时"} · {startsWork ? "确认后执行本条任务" : continuesWork ? "确认后继续原工作" : "不会自动启动"}</span>
       <button className="primary" onClick={() => {
         try { setReview({ scope: buildAuthorizationScope(form, inputs), expiresAt: expiresAt ?? new Date(Date.now() + 3600000).toISOString() }); setAccepted(false); setError(""); }
         catch (value) { setError(value instanceof Error ? value.message : "无法生成授权，请检查输入。"); }
@@ -82,7 +83,7 @@ export function AuthorizationForm({ contract, policy, disabled, register, initia
           if (await register(review.scope, review.expiresAt)) { setReview(null); setAccepted(false); setInputs([]); }
         }}>{submitLabel}</button>
         </div>
-        <p className="authorization-help authorization-expiry">有效至 {new Date(review.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {continuesWork ? "确认后继续原工作" : "不会自动启动"}</p>
+        <p className="authorization-help authorization-expiry">有效至 {new Date(review.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {startsWork ? "确认后执行本条任务" : continuesWork ? "确认后继续原工作" : "不会自动启动"}</p>
       </section>}
     </fieldset>
     {error && <p role="alert">{error}</p>}

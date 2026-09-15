@@ -95,6 +95,114 @@ const resolvedCatalog = (tools: Awaited<ReturnType<ExecutionToolGateway["catalog
 });
 
 describe("WorkerHost", () => {
+  it.each(["read_only", "privileged"] as const)("only exempts Host-selected read-only status polling from identical-action guard (%s)", async risk => {
+    const control = new FakeControl(), checkpoints = new MemoryCheckpoints(); let calls = 0, effects = 0;
+    const gateway: ExecutionToolGateway = { async catalog() { return resolvedCatalog([{ name: "status", source: "fixture", version: "1", priority: 1, description: "Status", inputSchema: {}, providedCapabilities: ["fixture.poll"], dependencyCapabilities: [], permissionRequirements: {}, risk, timeoutMs: 1000 }]); },
+      async execute() { effects++; return { status: "succeeded", summary: "Waiting", raw: "Waiting", refs: [], retryable: false }; } };
+    const model: WorkerModel = { async decide() { calls++; return calls <= 5 ? { type: "invoke_tool", invocation: { id: `poll-${calls}`, tool: "status", input: {}, rationale: "Check pending operation" } } : { type: "complete", summary: "Done", outputs: [] }; } };
+    const result = await new WorkerHost(worker, control, model, gateway, new LoopGuardObserver(), checkpoints, new BoundedOutputDistiller(), { repeatableReadCapabilities: ["fixture.poll"] }).execute(assignment());
+    expect(result.outcome).toBe(risk === "read_only" ? "completed" : "blocked");
+    expect(effects).toBe(risk === "read_only" ? 5 : 1);
+  });
+  it("does not complete while the Host still owns unfinished effects", async () => {
+    const control = new FakeControl(), checkpoints = new MemoryCheckpoints(); let checks = 0;
+    const gateway: ExecutionToolGateway = { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("unexpected"); } };
+    const model: WorkerModel = { async decide() { return { type: "complete", summary: "Done", outputs: [] }; } };
+    const result = await new WorkerHost(worker, control, model, gateway, continueObserver, checkpoints, new BoundedOutputDistiller(), {
+      completionBlockReason: () => ++checks === 1 ? "Collect the pending process result first" : undefined,
+    }).execute(assignment());
+    expect(result.outcome).toBe("completed"); expect(checks).toBe(2);
+    expect(checkpoints.document!.journal!.steering).toContain("Collect the pending process result first");
+  });
+  it("resumes an interrupted segment without repeating committed tools", async () => {
+    const control = new FakeControl(), checkpoints = new MemoryCheckpoints(); let effects = 0;
+    const gateway: ExecutionToolGateway = { async catalog() { return resolvedCatalog([{ name: "observe", source: "test", version: "1", priority: 1, description: "Observe", inputSchema: {}, providedCapabilities: [], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1000 }]); },
+      async execute() { effects++; return { status: "succeeded", summary: "Processed", raw: "Processed", refs: [], retryable: false }; } };
+    const model: WorkerModel = { async decide(request) { const count = request.transcript.filter(e => e.kind === "tool").length;
+      return count < 4 ? { type: "invoke_tool", invocation: { id: `item-${count}`, tool: "observe", input: { item: count }, rationale: "Next item" } } : { type: "complete", summary: "Done", outputs: [] }; } };
+    const options = { maxTurns: 2, longTaskPolicy: () => ({ segmentTurns: 2, maximumTurns: 8, maximumDurationMs: 60000 }) };
+    const first = new WorkerHost(worker, control, model, gateway, new LoopGuardObserver(), checkpoints, new BoundedOutputDistiller(), {
+      ...options, onLifecycleEvent: e => { if (e.type === "turn_progress" && e.summary.startsWith("Execution segment")) first.cancelAll("Host restarted"); },
+    });
+    expect((await first.execute(assignment())).outcome).toBe("lease_lost"); expect(effects).toBe(2);
+    expect((await new WorkerHost(worker, control, model, gateway, new LoopGuardObserver(), checkpoints, new BoundedOutputDistiller(), options).execute(control.current)).outcome).toBe("completed");
+    expect(effects).toBe(4);
+  });
+  it("preserves repeated-action protection across Host restarts", async () => {
+    const control = new FakeControl(), checkpoints = new MemoryCheckpoints(); let effects = 0;
+    const model = { async decide(): Promise<WorkerDecision> { return { type: "invoke_tool", invocation: { id: "same", tool: "observe", input: {}, rationale: "Same action" } }; } };
+    const gateway: ExecutionToolGateway = { async catalog() { return resolvedCatalog([{ name: "observe", source: "test", version: "1", priority: 1, description: "Observe", inputSchema: {}, providedCapabilities: [], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1000 }]); },
+      async execute() { effects++; return { status: "succeeded", summary: "Processed", raw: "Processed", refs: [], retryable: false }; } };
+    const options = { longTaskPolicy: () => ({ segmentTurns: 1, maximumTurns: 8, maximumDurationMs: 60000 }) };
+    const first = new WorkerHost(worker, control, model, gateway, new LoopGuardObserver(), checkpoints, new BoundedOutputDistiller(), {
+      ...options, onLifecycleEvent: e => { if (e.type === "turn_progress" && e.summary.startsWith("Execution segment")) first.cancelAll(); },
+    });
+    await first.execute(assignment());
+    const result = await new WorkerHost(worker, control, model, gateway, new LoopGuardObserver(), checkpoints, new BoundedOutputDistiller(), options).execute(control.current);
+    expect(result.reason).toContain("repeated identical action"); expect(effects).toBe(1);
+    expect(checkpoints.document!.longTask!.loopGuard!.repeats).toBe(4);
+  });
+  it.each(["expired", "revoked"])("retains progress when long task is %s", async mode => {
+    const control = new FakeControl(), checkpoints = new MemoryCheckpoints();
+    const gateway: ExecutionToolGateway = { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("unexpected"); } };
+    const policy = { segmentTurns: 2, maximumTurns: 8, maximumDurationMs: 60000 };
+    await new WorkerHost(worker, control, new SequenceModel([{ type: "block", reason: "Dependency unavailable" }]), gateway, continueObserver, checkpoints, new BoundedOutputDistiller(), { longTaskPolicy: () => policy }).execute(assignment());
+    checkpoints.document!.pendingControl = null;
+    if (mode === "expired") checkpoints.document!.longTask!.startedAt = "2020-01-01T00:00:00.000Z";
+    const result = await new WorkerHost(worker, control, new SequenceModel([]), gateway, continueObserver, checkpoints, new BoundedOutputDistiller(), { longTaskPolicy: () => mode === "revoked" ? undefined : policy }).execute(control.current);
+    expect(result.outcome).toBe("blocked"); expect(result.reason).toContain(mode === "expired" ? "duration exhausted" : "authorization changed");
+    expect(control.failed).toBeUndefined();
+  });
+  it("continues across segments on the same durable Work and replays completion without effects", async () => {
+    const control = new FakeControl(), checkpoints = new MemoryCheckpoints(); let effects = 0, calls = 0;
+    const gateway: ExecutionToolGateway = { async catalog() { return resolvedCatalog([{ name: "observe", source: "test", version: "1", priority: 1, description: "Observe", inputSchema: {}, providedCapabilities: [], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1000 }]); },
+      async execute() { effects++; return { status: "succeeded", summary: `Item ${effects} processed`, raw: `Item ${effects}`, refs: [], retryable: false }; } };
+    const model: WorkerModel = { async decide() { calls++; return calls <= 5 ? { type: "invoke_tool", invocation: { id: `item-${calls}`, tool: "observe", input: { item: calls }, rationale: "Process next item" } } : { type: "complete", summary: "Five items processed", outputs: [] }; } };
+    const events: WorkerLifecycleEvent[] = [];
+    const host = () => new WorkerHost(worker, control, model, gateway, continueObserver, checkpoints, new BoundedOutputDistiller(), {
+      maxTurns: 2, longTaskPolicy: () => ({ segmentTurns: 2, maximumTurns: 8, maximumDurationMs: 60000 }), onLifecycleEvent: event => events.push(event),
+    });
+    expect((await host().execute(assignment())).outcome).toBe("completed");
+    expect(effects).toBe(5); expect(calls).toBe(6); expect(control.blocked).toBeUndefined();
+    expect(checkpoints.document?.longTask?.policy.maximumTurns).toBe(8);
+    expect(events.filter(e => e.type === "turn_progress" && e.summary.startsWith("Execution segment"))).toHaveLength(2);
+    expect((await host().execute(control.current)).outcome).toBe("completed"); expect(effects).toBe(5); expect(calls).toBe(6);
+  });
+  it("does not reset long-task duration or accept increased budgets on restart", async () => {
+    const control = new FakeControl(), checkpoints = new MemoryCheckpoints();
+    const model = new SequenceModel([{ type: "block", reason: "Dependency unavailable" }]);
+    const gateway: ExecutionToolGateway = { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("unexpected"); } };
+    const policy = { segmentTurns: 2, maximumTurns: 8, maximumDurationMs: 60000 };
+    await new WorkerHost(worker, control, model, gateway, continueObserver, checkpoints, new BoundedOutputDistiller(), { longTaskPolicy: () => policy }).execute(assignment());
+    const document = checkpoints.document!; document.pendingControl = null;
+    const firstStart = document.longTask!.startedAt;
+    const result = await new WorkerHost(worker, control, model, gateway, continueObserver, checkpoints, new BoundedOutputDistiller(), {
+      longTaskPolicy: () => ({ ...policy, maximumTurns: 100 }),
+    }).execute(control.current);
+    expect(result.outcome).toBe("blocked"); expect(result.reason).toContain("authorization changed"); expect(document.longTask!.startedAt).toBe(firstStart);
+  });
+  it.each([false,true])("persists a read-only budget conclusion and never dispatches its action (invalid=%s)",async(invalid)=>{
+    const control=new FakeControl(),checkpoints=new MemoryCheckpoints();let calls=0,effects=0;let prepared:WorkerCheckpointDocument|undefined;
+    const model:WorkerModel={async decide(request){calls++;
+      if(request.executionMode==="conclude"){
+        expect(checkpoints.document!.pendingControl).toMatchObject({type:"block"});expect(request.tools).toEqual([]);
+        prepared=structuredClone(checkpoints.document);
+        return invalid?{type:"invoke_tool",invocation:{id:"forbidden",tool:"observe",input:{},rationale:"continue"}}:{type:"block",reason:"First observation retained; next direction still unresolved"};
+      }
+      return {type:"invoke_tool",invocation:{id:"first",tool:"observe",input:{},rationale:"Observe"}};
+    }};
+    const gateway:ExecutionToolGateway={async catalog(){return resolvedCatalog([{name:"observe",source:"test",version:"1",priority:1,description:"Observe",inputSchema:{},providedCapabilities:[],dependencyCapabilities:[],permissionRequirements:{},risk:"read_only",timeoutMs:1000}]);},
+      async execute(){effects++;return {status:"succeeded",summary:"First result",raw:"First result",refs:["first-ref"],retryable:false};}};
+    const host=()=>new WorkerHost(worker,control,model,gateway,continueObserver,checkpoints,new BoundedOutputDistiller(),{maxTurns:1});
+    expect((await host().execute(assignment())).outcome).toBe("blocked");expect(effects).toBe(1);expect(calls).toBe(2);
+    expect(control.blocked).toContain("budget exhausted");
+    if(!invalid)expect(control.blocked).toContain("next direction");
+    const saved=control.blocked;expect((await host().execute(control.current)).outcome).toBe("blocked");
+    expect(calls).toBe(2);expect(effects).toBe(1);expect(control.blocked).toBe(saved);
+    checkpoints.document=prepared;
+    expect((await host().execute(control.current)).outcome).toBe("blocked");expect(calls).toBe(2);expect(effects).toBe(1);
+    expect(control.blocked).not.toContain("next direction");
+  });
   it("checkpoints and replays a planning inquiry without requesting permissions or repeating inference", async () => {
     const control=new FakeControl(), checkpoints=new MemoryCheckpoints();let calls=0;
     const model:WorkerModel={async decide(){calls++;return {type:"inquire",reason:"Which observation should be followed?",refs:["knowledge-node:first"]};}};

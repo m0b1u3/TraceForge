@@ -9,7 +9,8 @@ type Attribution = { runId: string; runContext: { caseId: string; scopeRef: stri
  * in Tool Gateway. No provider can opt itself into automatic approval. */
 export class RunToolPolicy {
   constructor(private readonly definition: ScenarioDefinition, private readonly authorization: SqliteScenarioAuthorizationService | undefined,
-    private readonly workspace: RunWorkspace | undefined, private readonly platform: PermissionProfile["platform"]) {}
+    private readonly workspace: RunWorkspace | undefined, private readonly platform: PermissionProfile["platform"],
+    private readonly liveInquiryMode?: () => boolean) {}
 
   private rule(tool: ExecutionToolSpec) {
     const rules = this.definition.toolPolicies?.filter(rule => rule.source === tool.source && tool.providedCapabilities.includes(rule.capability)) ?? [];
@@ -20,6 +21,17 @@ export class RunToolPolicy {
     if (!this.definition.authorizationActions.includes(action) || !this.authorization) throw new Error("Tool action is not declared or authorized");
     return this.authorization.requireAction(assignment.runContext.scopeRef, assignment.runContext.caseId, action);
   }
+  private inquiryMode(assignment: Attribution): boolean | undefined {
+    if (this.liveInquiryMode) return this.liveInquiryMode();
+    const payload = this.authorization?.requireScope(assignment.runContext.scopeRef, assignment.runContext.caseId).scope.payload;
+    if (!payload || typeof payload !== "object" || !Object.hasOwn(payload, "routineApprovalRequired")) return undefined;
+    const value = (payload as Record<string, unknown>).routineApprovalRequired;
+    if (typeof value !== "boolean") throw new Error("Invalid routine approval preference");
+    return value;
+  }
+  requiresApproval(assignment: Attribution, tool: ExecutionToolSpec): boolean {
+    return this.inquiryMode(assignment) === true && tool.risk === "bounded_write";
+  }
   layers(assignment: Attribution, tool: ExecutionToolSpec): Array<{ source: string; profile: PermissionProfile }> {
     const rule = this.rule(tool), action = workspaceAction(tool.name);
     // Old packages keep their prior workspace behavior, never gain autonomy.
@@ -28,7 +40,15 @@ export class RunToolPolicy {
       if (!action || tool.source !== "traceforge.builtin" || !this.workspace) return this.denied();
       let enabled = true;
       try { this.approvedAction(assignment, action); if (rule) this.approvedAction(assignment, rule.authorizationAction); } catch { enabled = false; }
-      return [{ source: `run-workspace:${assignment.runId}`, profile: this.workspace.profile(assignment.runContext.caseId, assignment.runId, tool.name, enabled) }];
+      let network = false;
+      if (rule && action === "workspace.execute") {
+        try { this.approvedAction(assignment, "workspace.network"); network = true; } catch { /* Old scopes stay offline. */ }
+      }
+      let interactive = false;
+      if (rule && action === "workspace.execute") {
+        try { interactive = (this.approvedAction(assignment, action).scopePayload as Record<string, unknown>)?.interactiveWorkspace === true; } catch { /* Old scopes stay non-interactive. */ }
+      }
+      return [{ source: `run-workspace:${assignment.runId}`, profile: this.workspace.profile(assignment.runContext.caseId, assignment.runId, tool.name, enabled, network, interactive) }];
     }
     if (rule) this.approvedAction(assignment, rule.authorizationAction);
     // Host broker tools receive handles and broker access, not arbitrary process
@@ -40,6 +60,21 @@ export class RunToolPolicy {
   }
   approval(assignment: Attribution, tool: ExecutionToolSpec) {
     const rule = this.rule(tool);
+    // This is a concrete, visible Scope grant for ongoing input to an already
+    // owned process, not the desktop's blanket routine-approval preference.
+    // Asking again would release the Work lease and terminate that process.
+    if (tool.name === "workspace_input" && tool.source === "traceforge.builtin"
+      && rule?.profile === "run-workspace" && rule.capability === "workspace.input"
+      && rule.authorizationAction === "workspace.execute") {
+      try {
+        const grant = this.approvedAction(assignment, "workspace.execute");
+        if ((grant.scopePayload as Record<string, unknown>)?.interactiveWorkspace === true)
+          return { decision: "approved" as const, reason: `User Scope ${assignment.runContext.scopeRef} explicitly grants continuous input to its owned workspace terminal` };
+      } catch { /* No grant or revoked Scope: ordinary rejection still applies. */ }
+    }
+    // An explicit desktop mode supersedes legacy blanket autonomy. High-risk
+    // tools still need a real invocation grant in both modes.
+    if (this.inquiryMode(assignment) !== undefined) return undefined;
     // Only implemented Run-owned mutations are eligible. Other privileged tools
     // still ask, even if a package attaches a similarly named consent field.
     if (!rule?.autonomousScopeFlag || rule.profile !== "run-workspace" || tool.source !== "traceforge.builtin" || !workspaceAction(tool.name)) return undefined;

@@ -419,7 +419,7 @@ export class LocalExecutionNode implements ExecutionNode {
     const maximumProcesses = options.maximumProcesses ?? 32;
     const maximumOutputBytesPerProcess = options.maximumOutputBytesPerProcess ?? 4 * 1024 * 1024;
     const maximumRetainedEventsPerProcess = options.maximumRetainedEventsPerProcess ?? 4096;
-    const maximumCpuTimeMsPerProcess = options.maximumCpuTimeMsPerProcess ?? 300_000;
+    const maximumCpuTimeMsPerProcess = options.maximumCpuTimeMsPerProcess ?? 3_600_000;
     const maximumMemoryBytesPerProcess = options.maximumMemoryBytesPerProcess ?? 2 * 1024 * 1024 * 1024;
     const maximumProcessesPerExecution = options.maximumProcessesPerExecution ?? 64;
     const maximumWriteBytesPerProcess = options.maximumWriteBytesPerProcess ?? 1024 * 1024 * 1024;

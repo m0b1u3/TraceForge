@@ -10,6 +10,8 @@ import type { StartProcessRequest } from "./protocol.js";
 import { runMacosOwnedExecution } from "./macos-owned-execution.js";
 import { MacosProcessLauncher } from "./macos-process-launcher.js";
 import { LocalExecutionNode } from "./runtime.js";
+import { createServer } from "node:http";
+import { openProcessNetworkEndpoint } from "./process-network-endpoint.js";
 const execute = promisify(execFile);
 describe.skipIf(process.env.TRACEFORGE_TEST_MACOS_SEATBELT !== "1")("macOS native owned group", () => {
   let root: string, node: string, helper: { path: string; sha256: string };
@@ -44,16 +46,54 @@ describe.skipIf(process.env.TRACEFORGE_TEST_MACOS_SEATBELT !== "1")("macOS nativ
     await launched.process.writeInput(Buffer.from("round-trip")); await launched.process.closeInput();
     expect(await exited).toEqual({ code: 0, signal: null }); expect(output).toBe("round-trip");
   });
+  it("owns a real PTY, resizes it and accepts later input without losing cleanup", async () => {
+    const input = request("process.stdout.write('TTY:'+process.stdin.isTTY+'\\n');process.stdin.on('data',b=>{process.stdout.write('INPUT:'+b);process.exit(0)});setInterval(()=>{},1000)");
+    input.stdin = "pipe"; input.terminal = { columns: 80, rows: 24 }; input.permissions.process.interactive = true;
+    input.timeoutMs = 8000;
+    const launched = await new MacosProcessLauncher(helper).launch(input);
+    let output = ""; launched.process.onOutput((_stream, bytes) => { output += bytes.toString(); });
+    const exited = new Promise(resolve => launched.process.onExit((code, signal) => resolve({code,signal})));
+    try {
+      for (let i=0;i<100&&!output.includes('TTY:true');i++) await new Promise(resolve=>setTimeout(resolve,20));
+      expect(output).toContain('TTY:true');
+      await launched.process.resizeTerminal(100, 30);
+      await launched.process.writeInput(Buffer.from('second step\n'));
+      expect(await exited).toEqual({code:0,signal:null}); expect(output).toContain('INPUT:second step');
+    } finally { await launched.process.terminate(true); }
+  });
+  it("delivers a managed interrupt to a PTY process without granting detached execution", async () => {
+    const input = request("process.on('SIGINT',()=>{process.stdout.write('interrupted');process.exit(0)});process.stdout.write('ready');setInterval(()=>{},1000)");
+    input.stdin="pipe"; input.terminal={columns:80,rows:24}; input.permissions.process.interactive=true;
+    const launched = await new MacosProcessLauncher(helper).launch(input);
+    let output=""; launched.process.onOutput((_s,b)=>output+=b.toString());
+    const exited=new Promise(resolve=>launched.process.onExit(code=>resolve(code)));
+    try {
+      for(let i=0;i<100&&!output.includes('ready');i++)await new Promise(resolve=>setTimeout(resolve,20));
+      expect(output).toContain('ready'); await launched.process.sendSignal('interrupt');
+      expect(await exited).toBe(0); expect(output).toContain('interrupted');
+    } finally { await launched.process.terminate(true); }
+  });
   it("tolerates children exiting between native process enumeration and sampling", async () => {
     const input = request("const {spawn}=require('node:child_process');(async()=>{for(let i=0;i<20;i++)await new Promise((resolve,reject)=>{const child=spawn(process.execPath,['-e',''],{stdio:'inherit',env:{}});child.on('error',reject);child.on('exit',resolve)});process.stdout.write('complete')})()");
     input.timeoutMs = 10000; input.resources.cpuTimeMs = 5000;
     expect(await runMacosOwnedExecution(input, helper, new AbortController().signal))
       .toMatchObject({ reason: "exited", cleanupConfirmed: true, exitCode: 0 });
   });
-  it("managed cancellation waits for cleanup and denies PTY", async () => {
+  it("drains terminal output before reporting exit", async () => {
+    const input = request("process.stdout.write('x'.repeat(131072),()=>process.stdout.write('DONE'))");
+    input.stdin = "pipe";
+    input.terminal = { columns: 80, rows: 24 }; input.permissions.process.interactive = true;
+    input.outputLimitBytes = 262144; input.timeoutMs = 8000;
+    const result = await runMacosOwnedExecution(input, helper, new AbortController().signal, {
+      ready() {}, output() {}, resourceLimit() {},
+    });
+    expect(result).toMatchObject({ reason: "exited", cleanupConfirmed: true, exitCode: 0 });
+    expect(result.stdout.toString()).toBe('x'.repeat(131072) + 'DONE');
+  });
+  it("managed cancellation waits for cleanup and rejects resizing a non-terminal process", async () => {
     const launched = await new MacosProcessLauncher(helper).launch(request("setInterval(()=>{},1000)"));
     let exited = false; launched.process.onExit(() => { exited = true; });
-    await expect(launched.process.resizeTerminal(80, 24)).rejects.toThrow("PTY");
+    await expect(launched.process.resizeTerminal(80, 24)).rejects.toThrow("terminal");
     await launched.process.terminate(true); expect(exited).toBe(true);
   });
   it("runs through the real Execution Node contract and terminates with a confirmed terminal", async () => {
@@ -93,6 +133,61 @@ describe.skipIf(process.env.TRACEFORGE_TEST_MACOS_SEATBELT !== "1")("macOS nativ
   it("rejects environment injection into the unsandboxed supervisor", async () => {
     const input = request(""); input.environment = { DYLD_INSERT_LIBRARIES: "/untrusted" };
     await expect(runMacosOwnedExecution(input, helper, new AbortController().signal)).rejects.toThrow("empty environment");
+  });
+  it("uses a host-bound endpoint only, and applies environment after entering Seatbelt", async () => {
+    const allowed = createServer((_request, response) => response.end("broker"));
+    const denied = createServer((_request, response) => response.end("unexpected"));
+    await new Promise<void>(resolve => allowed.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>(resolve => denied.listen(0, "127.0.0.1", resolve));
+    const port = (server: typeof allowed) => (server.address() as { port: number }).port;
+    let releases = 0;
+    try {
+      const script = `const h=require('http');const get=p=>new Promise(r=>{const q=h.get({host:'127.0.0.1',port:p},s=>{let b='';s.on('data',x=>b+=x);s.on('end',()=>r(b))});q.on('error',()=>r('denied'));q.setTimeout(1000,()=>q.destroy())});(async()=>console.log(JSON.stringify([await get(${port(allowed)}),await get(${port(denied)}),process.env.HOME])))()`;
+      const input = request(script); input.permissions.network = "brokered";
+      input.permissions.filesystem.read.push({ path: "/usr/bin/env", scope: "exact" });
+      const launcher = new MacosProcessLauncher(helper, undefined, async () => ({ brokerPort: port(allowed),
+        environment: { HOME: root }, signal: new AbortController().signal, assertCurrent() {}, async release() { releases++; } }));
+      const launched = await launcher.launch(input);
+      let stdout = ""; launched.process.onOutput((stream, data) => { if (stream === "stdout") stdout += data; });
+      await new Promise<void>((resolve, reject) => { launched.process.onExit(() => resolve()); launched.process.onError(reject); });
+      expect(JSON.parse(stdout)).toEqual(["broker", "denied", root]);
+      expect(launched.enforcement.network).toBe("brokered");
+      expect(releases).toBe(1);
+    } finally {
+      allowed.closeAllConnections(); denied.closeAllConnections();
+      await Promise.all([new Promise<void>(resolve => allowed.close(() => resolve())), new Promise<void>(resolve => denied.close(() => resolve()))]);
+    }
+  });
+  it("releases a host binding on launch rejection and terminates on binding revocation", async () => {
+    let releases = 0; const abort = new AbortController();
+    const launcher = new MacosProcessLauncher(helper, undefined, async () => ({ signal: abort.signal, assertCurrent() {}, async release() { releases++; } }));
+    const invalid = request(""); invalid.environment = { NODE_OPTIONS: "--inspect" };
+    await expect(launcher.launch(invalid)).rejects.toThrow("empty environment");
+    expect(releases).toBe(1);
+    const launched = await launcher.launch(request("setInterval(()=>{},1000)"));
+    const exit = new Promise<void>((resolve, reject) => { launched.process.onExit(() => resolve()); launched.process.onError(reject); });
+    abort.abort(); await exit; expect(releases).toBe(2);
+  });
+  it("runs a real CLI through the execution endpoint without direct network access", async () => {
+    const requests: string[] = [];
+    const endpoint = await openProcessNetworkEndpoint({ assertCurrent() {}, async http(input) {
+      if (input.url !== "http://fixture.invalid/tool-input") throw new Error("Destination not granted");
+      requests.push(input.url); return { status: 200, headers: {}, body: Buffer.from("scoped tool input") };
+    } }, { signal: new AbortController().signal, maximumRequests: 2, maximumBytes: 4096, timeoutMs: 5000 });
+    try {
+      const input = request("process.stdout.write(require('child_process').execFileSync('/usr/bin/curl',['--silent','--show-error','--max-time','2','http://fixture.invalid/tool-input'],{env:process.env}))");
+      input.permissions.network = "brokered";
+      input.permissions.filesystem.read.push({ path: "/usr/bin/env", scope: "exact" }, { path: "/usr/bin/curl", scope: "exact" },
+        { path: "/private/etc/ssl/openssl.cnf", scope: "exact" });
+      const launcher = new MacosProcessLauncher(helper, undefined, async () => ({ brokerPort: endpoint.port, environment: { http_proxy: endpoint.proxyUrl },
+        signal: endpoint.signal, assertCurrent() { endpoint.signal.throwIfAborted(); }, release: endpoint.close }));
+      const launched = await launcher.launch(input); let stdout = "", stderr = "";
+      launched.process.onOutput((stream, bytes) => { if (stream === "stdout") stdout += bytes; else stderr += bytes; });
+      const code = await new Promise<number | null>((resolve, reject) => { launched.process.onExit(code => resolve(code)); launched.process.onError(reject); });
+      expect({ code, stdout, stderr }).toEqual({ code: 0, stdout: "scoped tool input", stderr: "" });
+      expect(requests).toEqual(["http://fixture.invalid/tool-input"]);
+      expect(endpoint.signal.aborted).toBe(true);
+    } finally { await endpoint.close(); }
   });
   it("terminates real CPU excess", async () => {
     const input = request("while(true){}"); input.resources.cpuTimeMs = 30;

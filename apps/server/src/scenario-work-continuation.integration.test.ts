@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ScenarioDefinitionRegistry, type ScenarioCommand, type WorkerDescriptor } from "@traceforge/orchestration-core";
 import { CapabilityProviderRegistry } from "@traceforge/tool-resolver";
 import { BoundedOutputDistiller, JsonFileCheckpointStore, WorkerHost, PolicyExecutionToolGateway,
-  executionToolContractFingerprint, toolInvocationInputFingerprint,
+  executionToolContractFingerprint, toolInvocationInputFingerprint, upgradeWorkerCheckpoint,
   type ExecutionToolAdapter, type WorkerAssignment, type WorkerCheckpointDocument, type WorkerCheckpointStore, type WorkerControlPlaneClient,
   type WorkerModel, type WorkerRunResult } from "@traceforge/worker-runtime";
 import { ScenarioWorkContinuationControl, registerScenarioWorkContinuationRoutes, type ScenarioWorkContinuationAuthorizer } from "./scenario-work-continuation.js";
@@ -93,6 +93,19 @@ const finish: WorkerModel = { async decide(request) {
 } };
 
 describe("Authorized partial Work continuation", () => {
+  it.each(["remaining", "turns", "duration", "failures"])("uses the persisted long-task budget on continuation: %s", async kind => {
+    const c = await setup();
+    const upgraded = upgradeWorkerCheckpoint(c.checkpoint, { caseId: "case", workKey: "effect", sessionId: "session", workerId: "worker", leaseId: "lease" });
+    upgraded.pendingInvocation = null;
+    upgraded.journal.turn = kind === "turns" ? 96 : 55;
+    upgraded.journal.consecutiveFailures = kind === "failures" ? 3 : 0;
+    upgraded.longTask = { policy: { segmentTurns: 24, maximumTurns: 96, maximumDurationMs: 120000 },
+      startedAt: kind === "duration" ? new Date(Date.parse(at) - 120000).toISOString() : at };
+    const ref = await c.store.save(upgraded);
+    c.command("long-checkpoint", { type: "checkpoint_work", workId: "work", leaseId: "lease", checkpointId: "long", payloadRef: ref, progressSummary: "Saved progress", at });
+    c.block();
+    expect((await c.continuation().continue(c.input())).audit.outcome).toBe(kind === "remaining" ? "queued" : "rejected");
+  });
   it("blocks before provider dispatch when the production checkpoint pool is full", async () => {
     const c = await setup(); const store = new SqliteWorkerCheckpointStore(c.sqlite);
     await store.save(c.checkpoint);

@@ -7,6 +7,31 @@ import type { DesktopReply } from "@traceforge/shared/desktop-replies";
 
 afterEach(()=>{vi.useRealTimers();document.body.replaceChildren();});
 const row:DesktopReply={conversationId:"conversation",messageCommandId:"message",revision:1,state:"streaming",text:"Saved partial",createdAt:"2026-09-08T00:00:00.000Z",updatedAt:"2026-09-08T00:00:00.000Z",contextMessages:1,contextTruncated:false,error:null};
+it("shows queued messages with an explicit withdrawal action, not a failure",async()=>{
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
+  const request=vi.fn(async()=>({status:200,body:{...row,state:"cancelled",text:""}}));
+  const node=document.createElement("div"),root=createRoot(node);
+  try{
+    await act(async()=>root.render(React.createElement(ConversationReply,{bridge:{protocolVersion:1,request},conversationId:"conversation",messageId:"message",reply:{...row,state:"queued",text:""},ready:true,otherActive:true,refresh(){}})));
+    expect(node.textContent).toContain("消息已排队");
+    expect(node.textContent).not.toContain("没有正常完成");
+    expect(request).not.toHaveBeenCalled();
+    await act(async()=>node.querySelector("button")!.click());
+    expect(request).toHaveBeenCalledWith({path:"/api/desktop/conversations/conversation/replies/message/cancel",method:"POST",body:"{}"});
+  }finally{act(()=>root.unmount());}
+});
+it("reads summary sources on demand without generating or executing HTML", async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  const request = vi.fn(async () => ({ status: 200, body: { conversationId: "conversation", messageId: "message", entries: [{ id: "earlier", summary: "An earlier summary", user: "<script>text</script>", assistant: "Earlier response" }] } }));
+  const node = document.createElement("div"); document.body.append(node); const root = createRoot(node);
+  try {
+    await act(async () => root.render(React.createElement(ConversationReply, { bridge: { protocolVersion: 1, request }, conversationId: "conversation", messageId: "message", reply: { ...row, contextTruncated: true }, ready: true, otherActive: false, refresh() {} })));
+    expect(request).not.toHaveBeenCalled();
+    await act(async () => [...node.querySelectorAll("button")].find(button => button.textContent === "查看历史摘要与原文")!.click());
+    expect(request).toHaveBeenCalledWith({ path: "/api/desktop/conversations/conversation/replies/message/memory", method: "GET" });
+    expect(node.querySelector("script")).toBeNull(); expect(node.textContent).toContain("Earlier response");
+  } finally { act(() => root.unmount()); }
+});
 it("restores and reconnects through cursor reads without generating again",async()=>{
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;vi.useFakeTimers();
   const calls:any[]=[];let offline=false,final=false;
@@ -29,4 +54,15 @@ it("stops only after an explicit click and renders model text without HTML execu
     await act(async()=>[...node.querySelectorAll("button")].find(button=>button.textContent==="停止回复")!.click());
     expect(request).toHaveBeenCalledWith({path:"/api/desktop/conversations/conversation/replies/message/cancel",method:"POST",body:"{}"});expect(refresh).toHaveBeenCalled();
   }finally{act(()=>root.unmount());}
+});
+it.each(["compacting", "recalling", "recovering"] as const)("keeps a clear stop action during %s", async phase => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  const request = vi.fn(async () => ({ status: 200, body: { ...row, phase, state: "cancelled" } }));
+  const node = document.createElement("div"); document.body.append(node); const root = createRoot(node);
+  try {
+    await act(async () => root.render(React.createElement(ConversationReply, { bridge: { protocolVersion: 1, request }, conversationId: "conversation", messageId: "message", reply: { ...row, text: "", phase }, ready: true, otherActive: false, refresh() {} })));
+    expect(node.querySelector('[role="status"]')?.textContent).toBe({ compacting: "正在整理上下文", recalling: "正在查阅对话原文", recovering: "正在调整上下文" }[phase]);
+    const stop = [...node.querySelectorAll("button")].find(button => button.textContent === "停止回复")!;
+    expect(stop.disabled).toBe(false); await act(async () => stop.click()); expect(request).toHaveBeenCalledTimes(1);
+  } finally { act(() => root.unmount()); }
 });

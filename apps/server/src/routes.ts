@@ -10,6 +10,8 @@ import { registerConversationRoutes } from "./conversation-routes.js";
 import { DesktopReplyService, registerDesktopReplyRoutes } from "./desktop-replies.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
 import type { ModelAccounts } from "./model-accounts.js";
+import type { ConversationTaskPort } from "./conversation-task-port.js";
+import { ConversationWorkspaces } from "./conversation-workspaces.js";
 
 /**
  * Small application control surface shared by the desktop shell and the
@@ -24,14 +26,15 @@ export function registerRoutes(
   llmService?: LlmConfigService,
   _projectRoot?: string,
   accounts?: ModelAccounts,
+  tasks?: ConversationTaskPort,
 ): void {
   const cases = new CaseStore(db);
   const sqlite = getSqliteClient(db);
-  registerConversationRoutes(app, db);
+  registerConversationRoutes(app, db, _projectRoot ? new ConversationWorkspaces(sqlite,_projectRoot) : undefined);
   registerDesktopReplyRoutes(app, new DesktopReplyService(sqlite, () => {
     if (!llmService) throw new Error("Model not configured");
     return llmService.getConversationProvider();
-  }));
+  }, 240000, tasks));
 
   app.get("/api/cases", async () => cases.list());
 

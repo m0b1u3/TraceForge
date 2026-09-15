@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { getSqliteClient, type Db } from "./db/client.js";
+import type { ConversationWorkspaces } from "./conversation-workspaces.js";
 
 /** Desktop application persistence, deliberately outside Core and Scenario.
  * Saved text is not a Planner input, an authorization, or an assistant reply.
  */
-export function registerConversationRoutes(app: FastifyInstance, db: Db): void {
+export function registerConversationRoutes(app: FastifyInstance, db: Db, workspaces?: ConversationWorkspaces): void {
   const sql = getSqliteClient(db);
   const id = { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-zA-Z0-9_-]+$" };
   const params = { type: "object", required: ["conversationId"], properties: { conversationId: id }, additionalProperties: false };
@@ -21,7 +22,11 @@ export function registerConversationRoutes(app: FastifyInstance, db: Db): void {
     if (!normalized) return reply.code(400).send({ error: "title_required" });
     const result = sql.transaction(() => {
       const previous = sql.prepare("SELECT id, title FROM desktop_conversations WHERE command_id=?").get(commandId) as { id: string; title: string } | undefined;
-      if (previous) return previous.title === normalized ? { status: owner(previous.id) ? 200 : 410, value: owner(previous.id) ?? { error: "conversation_owner_missing" } } : { status: 409, value: { error: "command_conflict" } };
+      if (previous) {
+        const existing = owner(previous.id) as {caseId:string}|undefined;
+        if (previous.title === normalized && existing) workspaces?.ensure(previous.id,existing.caseId);
+        return previous.title === normalized ? { status: existing ? 200 : 410, value: existing ?? { error: "conversation_owner_missing" } } : { status: 409, value: { error: "command_conflict" } };
+      }
       if ((sql.prepare("SELECT count(*) AS count FROM desktop_conversations").get() as { count: number }).count >= 1000) return { status: 409, value: { error: "conversation_capacity_reached" } };
       const conversationId = `conversation_${randomUUID()}`;
       const caseId = `case_${randomUUID()}`;
@@ -29,6 +34,7 @@ export function registerConversationRoutes(app: FastifyInstance, db: Db): void {
       // An empty Case is only an ownership container. It grants no target scope.
       sql.prepare("INSERT INTO cases (id,name,status,scope_rules_json,created_at) VALUES (?,?,'active','[]',?)").run(caseId, normalized, now);
       sql.prepare("INSERT INTO desktop_conversations (id,command_id,case_id,title,created_at) VALUES (?,?,?,?,?)").run(conversationId, commandId, caseId, normalized, now);
+      workspaces?.ensure(conversationId,caseId);
       return { status: 201, value: owner(conversationId) };
     })();
     return reply.code(result.status).send(result.value);

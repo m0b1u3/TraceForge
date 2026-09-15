@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_MODEL_ROLE_POLICIES,
   ModelBudgetExceededError,
@@ -95,6 +95,23 @@ function setup(routes: Array<[string, ModelJsonProviderPort]>, workerPolicy: Par
 }
 
 describe("model execution runtime integration harness", () => {
+  it("flushes public reasoning before completion and ignores callbacks after cancellation", async () => {
+    const events: any[] = []; let callback!: (text: string) => void;
+    const runtime = new ModelExecutionRuntime(new Map([["primary", provider(async args => {
+      callback = args.onReasoningDelta!;
+      return new Promise(() => {});
+    })]]), { ...DEFAULT_MODEL_ROLE_POLICIES, worker: { ...DEFAULT_MODEL_ROLE_POLICIES.worker, routeIds: ["primary"] } }, new MemoryExecutionStore(), new ImmediateAdmission(), () => "call-stream", () => at, { append: event => { events.push(event); } });
+    const abort = new AbortController();
+    const result = runtime.extractJson(context(), { ...request, signal: abort.signal });
+    const rejected = expect(result).rejects.toThrow();
+    await vi.waitFor(() => expect(callback).toBeTypeOf("function"));
+    callback("first"); callback(" second");
+    await vi.waitFor(() => expect(events.at(-1).params.item.reasoning).toBe("first second"));
+    expect(events.at(-1).params.item.status).toBe("inProgress");
+    abort.abort(); await rejected;
+    const count = events.length; callback("late"); expect(events).toHaveLength(count);
+    expect(events.at(-1).params.item).toMatchObject({ status: "cancelled", reasoning: "first second" });
+  });
   it("rechecks authorization changed during admission queueing before invoking any model", async () => {
     let admit!: (value: { id: string; release(): void }) => void; let queued!: () => void;
     const waiting = new Promise<void>((resolve) => { queued = resolve; }); let allowed = true; let checks = 0; let calls = 0;

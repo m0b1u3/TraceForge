@@ -50,6 +50,19 @@ async function observedFixture(configure?: (pkg: ScenarioPackageInstallation) =>
 }
 
 describe("Current context projection", () => {
+  it("rechecks archived originals before they can enter a rolling summary", async () => {
+    const f = await observedFixture();
+    const archived = structuredClone(f.request.transcript);
+    f.request.transcript = [];
+    f.policy.archivedTranscript = async () => structuredClone(archived);
+    const before = await f.policy.prepare(f.request);
+    expect(JSON.stringify(before.request.transcript)).toContain(contextText);
+    f.store.revoke(contextContentDigest(contextText), "Source withdrawn");
+    const after = await f.policy.prepare(f.request);
+    expect(JSON.stringify(after.request.transcript)).not.toContain(contextText);
+    expect(JSON.stringify(archived)).toContain(contextText);
+    expect(after.manifest.contextGovernance.suppressed).toHaveLength(1);
+  });
   it("recalls original context through the HTTP Worker and persists both Gateway receipts", async () => {
     const pkg = contextPackage(["context.read", "context.recall"]);
     pkg.definition.authorizationActions.push("context.recall");

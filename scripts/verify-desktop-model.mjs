@@ -6,7 +6,7 @@ import { resolve, join } from "node:path";
 import { register } from "../apps/server/dist/development-loader.js";
 register();
 const args = process.argv.slice(2);
-if (![3,5].includes(args.length) || args[0] !== "--allow-model-api" || args[1] !== "--config-directory" || (args.length === 5 && (args[3] !== "--suite" || !["cognitive","recall","planning"].includes(args[4])))) {
+if (![3,5].includes(args.length) || args[0] !== "--allow-model-api" || args[1] !== "--config-directory" || (args.length === 5 && (args[3] !== "--suite" || !["cognitive","recall","planning","rolling","desktop-memory","desktop-stream"].includes(args[4])))) {
   console.error("Use --allow-model-api --config-directory <desktop-config-directory>"); app.exit(2);
 } else {
   app.whenReady().then(async () => {
@@ -42,8 +42,15 @@ if (![3,5].includes(args.length) || args[0] !== "--allow-model-api" || args[1] !
     } });
     service.initializeFromConfig();
     const config = JSON.parse(readFileSync(configPath, "utf8"));
-    console.log(JSON.stringify({ status: "starting", provider: config.provider, model: config.model, maximumLogicalModelCalls: args[4] === "planning" ? 8 : args[4] === "cognitive" ? 3 : 6, maximumDurationMs: args[4] === "planning" ? 180000 : 120000 }));
-    const runner = args[4] === "planning" ? (await import("../apps/server/src/test-fixtures/planning-model-acceptance.ts")).runPlanningModelAcceptance
+    const recallLimits = args[4] === "desktop-stream" ? (await import("../apps/server/src/test-fixtures/desktop-stream-acceptance.ts")).desktopStreamLimits
+      : args[4] === "desktop-memory" ? (await import("../apps/server/src/test-fixtures/desktop-memory-acceptance.ts")).desktopMemoryLimits
+      : args[4] === "rolling" ? (await import("../apps/server/src/test-fixtures/rolling-memory-acceptance.ts")).rollingMemoryLimits
+      : args[4] === "recall" ? (await import("../apps/server/src/test-fixtures/recall-model-acceptance.ts")).recallAcceptanceLimits : undefined;
+    console.log(JSON.stringify({ status: "starting", provider: config.provider, model: config.model, maximumLogicalModelCalls: recallLimits?.maximumModelCalls ?? (args[4] === "planning" ? 8 : args[4] === "cognitive" ? 3 : 6), maximumDurationMs: recallLimits?.maximumDurationMs ?? (args[4] === "planning" ? 180000 : 120000), ...(recallLimits ? { modelCallTimeoutMs: recallLimits.modelCallTimeoutMs } : {}) }));
+    const runner = args[4] === "desktop-stream" ? (await import("../apps/server/src/test-fixtures/desktop-stream-acceptance.ts")).runDesktopStreamAcceptance
+      : args[4] === "desktop-memory" ? (await import("../apps/server/src/test-fixtures/desktop-memory-acceptance.ts")).runDesktopMemoryAcceptance
+      : args[4] === "rolling" ? (await import("../apps/server/src/test-fixtures/rolling-memory-acceptance.ts")).runRollingMemoryAcceptance
+      : args[4] === "planning" ? (await import("../apps/server/src/test-fixtures/planning-model-acceptance.ts")).runPlanningModelAcceptance
       : args[4] === "recall" ? (await import("../apps/server/src/test-fixtures/recall-model-acceptance.ts")).runRecallModelAcceptance
       : args[4] === "cognitive" ? (await import("../apps/server/src/test-fixtures/cognitive-model-acceptance.ts")).runCognitiveModelAcceptance : runFoundationModelAcceptance;
     const report = await runner(service.getProvider(), { mode: "external_model", outputParent: resolve("data/desktop-model-acceptance"),

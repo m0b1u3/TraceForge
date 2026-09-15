@@ -3,6 +3,8 @@ import {compareHttp} from "../runtime-src/comparison.mjs";
 import {reserveRequest,BudgetExhausted} from "../runtime-src/budgets.mjs";
 import {observationHighlights} from "../runtime-src/observations.mjs";
 import {BoundedOutputDistiller} from "@traceforge/worker-runtime";
+import {experimentFields,changedDimensions} from "../runtime-src/request-fields.mjs";
+import {createHash} from "node:crypto";
 function fixture(){const states=new Map<string,any>();let calls=0;
   const capability=async(name:string,action:string,input:any)=>{
     if(name.includes("authorization"))return {output:{scopePayload:{budgets:{variants:16,requestsPerCall:100,totalRequests:2}}},refs:[]};
@@ -13,6 +15,22 @@ function fixture(){const states=new Map<string,any>();let calls=0;
   const request=async(spec:any)=>{calls++;return {status:"succeeded" as const,summary:"Observation",raw:JSON.stringify({status:200,responseBytes:spec.url.length,bodyBase64:Buffer.from(spec.url).toString("base64"),bodyTruncated:false,receipt:{id:`receipt-${calls}`}}),refs:[],retryable:false as const};};
   return {states,capability,request,count:()=>calls};}
 const input={experimentId:"matrix",hypothesisId:"hypothesis",baseline:{url:"https://first.example/"},candidates:[{url:"https://first.example/one"},{url:"https://first.example/two"}],expectedSignals:["bodyChanged"],stopOn:"never"};
+it("bounds shared experiment fields and distinguishes body/header changes",()=>{
+  for(const method of ["GET","HEAD","POST","PUT","PATCH","DELETE","OPTIONS"])expect(experimentFields({method}).method).toBe(method);
+  const first=experimentFields({method:"POST",headers:{"X-Variant":"first"},bodyBase64:Buffer.from("first").toString("base64")});
+  expect(first.headers).toEqual({"x-variant":"first"});
+  expect(changedDimensions(first,{...first,headers:{"x-variant":"second"}})).toEqual(["headers"]);
+  expect(changedDimensions(first,{...first,bodyBase64:Buffer.from("second").toString("base64")})).toEqual(["bodyBase64"]);
+  expect(()=>experimentFields({method:"GET",bodyBase64:first.bodyBase64})).toThrow();
+  expect(()=>experimentFields({method:"POST",bodyBase64:Buffer.alloc(65537).toString("base64")})).toThrow();
+  expect(()=>experimentFields({headers:{"X-Value":"one\r\ntwo"}})).toThrow();
+});
+it("preserves the legacy single-candidate comparison fingerprint",async()=>{
+  const f=fixture();await compareHttp({experimentId:"legacy",hypothesisId:"hypothesis",baseline:input.baseline,candidate:input.candidates[0],maxRequests:1},f.capability,f.request);
+  const state=[...f.states.entries()].find(([key])=>key.startsWith("web.comparison.v1:"))![1].value;
+  const expected={hypothesisId:"hypothesis",baseline:{url:input.baseline.url,method:"GET",sessionId:null},candidate:{url:input.candidates[0].url,method:"GET",sessionId:null},rounds:2};
+  expect(state.fingerprint).toBe(createHash("sha256").update(JSON.stringify(expected)).digest("hex"));
+});
 it("normalizes HTTP and surface fields and uses configurable terms without inventing a singleton outlier",()=>{
   const one=observationHighlights([{status:201,responseBytes:10,bodyBase64:Buffer.from("neutral marker").toString("base64"),bodyTruncated:false,receipt:{id:"one"}}],["marker"]);
   expect(one.groups[0]!.representative).toMatchObject({bytes:10,truncated:false,refs:["network-receipt:one"],signals:{statusMinority:false,lengthMinority:false,termMatch:true}});

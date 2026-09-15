@@ -56,6 +56,20 @@ async function fixture(shared = true) {
 function provider(evaluate: LlmProvider["extractJson"]): LlmProvider { return { extractJson: evaluate, async runTools() { throw new Error("No tools"); } }; }
 
 describe("Cross-role context provenance", () => {
+  it("pages more than 256 package reads and still withholds revoked original content", async () => {
+    const f=await fixture(), receipts=new SqliteToolReceiptStore(f.sqlite);
+    const original=f.bindings.get("effect:read")!, receipt=(await receipts.get("effect:read"))!;
+    for(let i=0;i<280;i++) {
+      const id=`read-${i}`;
+      await f.bindings.prepare({idempotencyKey:`effect:${id}`,invocationId:id,inputFingerprint:original.inputFingerprint,tool:original.tool,attribution:original.attribution});
+      await receipts.put(`effect:${id}`,receipt); await f.bindings.complete(`effect:${id}`);
+    }
+    const valid=await f.policy.prepare(f.input,"worker","work");
+    expect(valid.manifest.contextLineage.sources.filter(source=>source.key.startsWith("effect:")).length).toBe(281);
+    expect(valid.manifest.contextLineage.withheldWorkIds).toEqual([]);
+    f.store.revoke(f.pkg.resourceManifest!.resources[0].digest,"Source no longer valid");
+    expect((await f.policy.prepare(f.input,"worker","work")).manifest.contextLineage.withheldWorkIds).toContain("work");
+  });
   it("retains a durable clue outside the transcript and removes it when its source is withdrawn",async()=>{
     const f=await fixture(),graphStore=new SqliteEvidenceGraphStore(f.sqlite);
     const receipt=(await new SqliteToolReceiptStore(f.sqlite).get("effect:read"))!;
@@ -73,6 +87,7 @@ describe("Cross-role context provenance", () => {
     expect(JSON.stringify(await f.policy.prepare(f.input, role))).toContain(contextText);
     f.store.revoke(contextContentDigest(contextText), "withdrawn");
     const projected = await f.policy.prepare(f.input, role);
+    expect(JSON.stringify(projected.manifest.sharedProgress)).not.toContain(contextText);
     expect(JSON.stringify(projected)).not.toContain(contextText); expect(projected.run.workItems[0]!.id).toBe("work");
     expect(projected.manifest.contextLineage.withheldWorkIds).toEqual(["work"]); expect(projected.recentEvents).toEqual([]);
     expect(JSON.stringify(f.input)).toBe(before); expect((await new SqliteToolReceiptStore(f.sqlite).get("effect:read"))!.raw).toContain(contextText);

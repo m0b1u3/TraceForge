@@ -23,6 +23,11 @@
 .host-workbench .reply-actions button:hover:not(:disabled) { background: #f4f4f4; }
 .host-workbench .reply-actions > p { flex-basis: 100%; }
 .host-workbench .reply-explanation { color: #656565; }
+.host-workbench .work-resumption { margin-block: 16px; max-width: 75ch; overflow-wrap: anywhere; }
+.host-workbench .work-resumption button { min-height: 36px; margin: 8px 8px 8px 0; padding: 6px 12px; border: 1px solid #dedede; border-radius: 7px; background: #fff; color: inherit; font: inherit; }
+.host-workbench .work-resumption button:hover:not(:disabled) { background: #f4f4f4; }
+.host-workbench .work-resumption button:focus-visible { outline: 2px solid #626875; outline-offset: 2px; }
+.host-workbench .work-resumption button:disabled { opacity: .6; cursor: not-allowed; }
 .host-workbench .conversation-authorization > summary { cursor: pointer; padding: 10px 0; font-size: 14px; }
 .conversation-authorization { max-width: 640px; margin: 32px 0; }
 .conversation-authorization > p { margin: 12px 0 22px; font-size: 16px; line-height: 1.7; }
@@ -32,6 +37,10 @@
 .host-workbench .execution-inline .authorization-initial[open] > summary { display: none; }
 .host-workbench .execution-inline .authorization-setup:not(.authorization-initial) > summary { display: flex; }
 .host-workbench .execution-inline .authorization-scenario { font-size: 12px; margin: 0 0 10px; color: #737373; }
+.host-workbench .approval-preference { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 8px; font-size: 12px; color: #626875; }
+.host-workbench .approval-preference button { min-height: 32px; padding: 4px 10px; border: 1px solid #d9dce2; border-radius: 7px; background: #fff; color: #202329; font: inherit; }
+.host-workbench .approval-preference button:focus-visible { outline: 2px solid #626875; outline-offset: 2px; }
+.host-workbench .approval-preference button:disabled { opacity: .6; cursor: wait; }
 .host-workbench .authorization-form { display: block; padding: 24px; border: 1px solid #e3e3e3; border-radius: 12px; background: #fafafa; }
 .host-workbench .authorization-card-title { display: flex; align-items: center; gap: 9px; font-size: 15px; font-weight: 600; margin: 0 0 20px; }
 .authorization-card-title svg { width: 19px; height: 19px; }
@@ -65,6 +74,9 @@
 .host-workbench .composer-area { width: 100%; max-width: 940px; padding: 12px 40px 26px; margin: 0 auto; }
 .host-workbench .host-composer { display: grid; grid-template-columns: minmax(0, 1fr) 32px; grid-template-rows: minmax(40px, auto) 30px; gap: 7px 14px; padding: 14px 16px; border: 1px solid #dedede; border-radius: 15px; background: #fafafa; box-shadow: none; }
 .host-workbench .host-composer textarea { grid-column: 1 / -1; width: 100%; min-height: 40px; max-height: 140px; padding: 0; border: 0; background: transparent; resize: none; font-size: 15px; }
+/* The composite input owns the focus boundary; avoid a second rectangular ring. */
+.host-workbench .host-composer textarea:focus-visible { outline: none; box-shadow: none; }
+.host-workbench .host-composer:has(textarea:focus-visible) { outline: 2px solid #626875; outline-offset: -1px; }
 .host-workbench .host-composer .send { grid-column: 2; grid-row: 2; width: 30px; height: 30px; min-height: 30px; border-radius: 50%; background: #292929; color: #fff; }
 .host-workbench .host-composer .composer-footnote { grid-row: 2; grid-column: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0; margin: 0; font-size: 11px; color: #707070; }
 .host-workbench .composer-footnote button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; padding: 3px 0; font-size: 12px; color: #626262; }
@@ -142,3 +154,30 @@
 .host-workbench .permission-change h3 { margin: 0; font-size: 18px; }
 .host-workbench .permission-change [role="group"] { display: grid; gap: 12px; }
 .host-workbench .permission-change [role="group"] button { justify-self: start; }
+.host-workbench .execution-trace { margin: 14px 0 20px; max-width: 75ch; min-width: 0; }
+.host-workbench .execution-trace-entry, .host-workbench .reasoning-trace { padding: 10px 0; border: 0; border-bottom: 1px solid #e7e9ec; }
+.host-workbench .execution-trace summary, .host-workbench .reasoning-trace summary { display: flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; list-style: none; font-size: 13px; color: #535b65; }
+.host-workbench .execution-trace summary::-webkit-details-marker, .host-workbench .reasoning-trace summary::-webkit-details-marker { display: none; }
+.host-workbench .execution-trace summary > svg, .host-workbench .reasoning-trace summary > svg { width: 16px; height: 16px; flex-shrink: 0; }
+.host-workbench .trace-title { min-width: 0; overflow-wrap: anywhere; color: #292e35; }
+.host-workbench .trace-status, .host-workbench .reasoning-trace summary > span { margin-left: auto; flex-shrink: 0; font-size: 12px; color: #626875; }
+.host-workbench .trace-content { margin: 8px 0 4px 24px; min-width: 0; }
+.host-workbench .trace-content small { color: #626875; font-size: 12px; }
+.host-workbench .trace-content pre { padding: 12px 14px; margin: 6px 0 12px; background: #f5f6f7; border-radius: 7px; font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; tab-size: 2; color: #292e35; }
+.host-workbench .reasoning-text { margin: 8px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: #535b65; font-size: 14px; line-height: 1.75; max-height: 360px; overflow: auto; }
+.host-workbench .trace-rationale { font-size: 13px; line-height: 1.65; margin: 0 0 10px; }
+@media (max-width: 650px) { .host-workbench .trace-content { margin-left: 8px; } .host-workbench .trace-status { max-width: 6em; white-space: normal; } }
+.host-workbench .message-markdown { min-width: 0; max-width: 75ch; line-height: 1.75; overflow-wrap: anywhere; }
+.host-workbench .message-markdown > :first-child { margin-top: 0; }
+.host-workbench .message-markdown > :last-child { margin-bottom: 0; }
+.host-workbench .message-markdown p { margin: .7em 0; }
+.host-workbench .message-markdown h1, .host-workbench .message-markdown h2, .host-workbench .message-markdown h3 { font-size: 1.12em; line-height: 1.4; margin: 1.4em 0 .6em; }
+.host-workbench .message-markdown ul, .host-workbench .message-markdown ol { padding-left: 1.6em; }
+.host-workbench .message-markdown a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.host-workbench .message-markdown code { font: .88em/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; background: #f5f6f7; border-radius: 4px; padding: .12em .3em; }
+.host-workbench .message-markdown pre { max-width: 100%; max-height: 480px; overflow: auto; padding: 14px 16px; background: #f5f6f7; border-radius: 7px; }
+.host-workbench .message-markdown pre code { padding: 0; white-space: pre; }
+.host-workbench .message-markdown blockquote { margin: 1em 0; padding-left: 1em; border-left: 2px solid #d8dbe0; color: #626875; }
+.host-workbench .message-table { max-width: 100%; overflow: auto; }
+.host-workbench .message-table table { border-collapse: collapse; font-size: .92em; }
+.host-workbench .message-table th, .host-workbench .message-table td { text-align: start; border-bottom: 1px solid #e3e5e8; padding: 8px 12px; }

@@ -32,6 +32,12 @@ describe("Foundation model acceptance harness (not a real-model certification)",
         const input = JSON.parse(body); apiCalls++;
         const value = await scripted({ system: input.messages[0].content, user: input.messages[1].content,
           schema: input.response_format.json_schema.schema });
+        if (input.stream) {
+          response.setHeader("content-type", "text/event-stream");
+          response.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "Read the available observation" }, finish_reason: null }] })}\n\n`);
+          response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(value) }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\n`);
+          response.end("data: [DONE]\n\n"); return;
+        }
         response.setHeader("content-type", "application/json");
         response.end(JSON.stringify({ id: "fixture-call", choices: [{ message: { role: "assistant", content: JSON.stringify(value) }, finish_reason: "stop" }],
           usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));

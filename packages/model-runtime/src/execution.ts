@@ -18,6 +18,7 @@ export interface ModelJsonRequest {
   schema: Record<string, unknown>;
   signal?: AbortSignal;
   onUsage?: (usage: ModelUsageSnapshot) => void;
+  onReasoningDelta?: (delta: string) => void;
   /** Host-local authorization recheck after admission and before each actual dispatch. */
   beforeDispatch?: () => void | Promise<void>;
 }
@@ -103,7 +104,7 @@ export interface ModelAdmissionPort {
 
 export interface ModelExecutionEventPort {
   append(event: {
-    method: "item/started" | "item/completed";
+    method: "item/started" | "item/updated" | "item/completed";
     runId: string;
     caseId: string;
     workId: string | null;
@@ -119,6 +120,8 @@ export interface ModelExecutionEventPort {
         reservedTokens: number;
         usage: ModelUsageSnapshot | null;
         error: string | null;
+        reasoning?: string;
+        reasoningTruncated?: boolean;
       };
     };
   }): unknown;
@@ -210,6 +213,17 @@ export class ModelExecutionRuntime {
         if (request.signal?.aborted) externalAbort();
         this.activeControllers.set(callId, { context, controller });
         let settled = false;
+        let reasoning = "", reasoningTruncated = false, lastReasoningEmit = 0, reasoningUpdates = 0;
+        const reasoningView = () => ({ reasoning, reasoningTruncated });
+        let reasoningTimer: ReturnType<typeof setTimeout> | undefined;
+        const flushReasoning = () => {
+          reasoningTimer = undefined;
+          if (settled || controller.signal.aborted) return;
+          try {
+            this.emitModelItem(context, "item/updated", callId, routeId, attempt, "inProgress", estimate, null, null, reasoningView());
+            lastReasoningEmit = Date.now(); reasoningUpdates++;
+          } catch (error) { controller.abort(error); }
+        };
         let dispatched = false;
         let abortCall: (() => void) | undefined;
         try {
@@ -228,6 +242,17 @@ export class ModelExecutionRuntime {
             return provider.extractJson({
               ...providerRequest,
               signal: controller.signal,
+              onReasoningDelta: this.events || request.onReasoningDelta ? (delta) => {
+                if (settled || controller.signal.aborted) return;
+                const room = 16000 - reasoning.length;
+                reasoning += delta.slice(0, room); reasoningTruncated ||= delta.length > room;
+                request.onReasoningDelta?.(delta);
+                if (room > 0 && !reasoningTimer) {
+                  const delay = Math.max(0, (reasoningUpdates < 32 ? 250 : 1000) - (Date.now() - lastReasoningEmit));
+                  if (!delay) flushReasoning();
+                  else reasoningTimer = setTimeout(flushReasoning, delay);
+                }
+              } : undefined,
               onUsage: (value) => {
                 if (settled || controller.signal.aborted) return;
                 usage.promptTokens += value.promptTokens;
@@ -243,7 +268,7 @@ export class ModelExecutionRuntime {
           clearTimeout(timer);
           this.store.finish(callId, "completed", usage, null, this.now());
           this.store.recordRouteSuccess(context.role, routeId, this.now());
-          this.emitModelItem(context, "item/completed", callId, routeId, attempt, "completed", estimate, usage, null);
+          this.emitModelItem(context, "item/completed", callId, routeId, attempt, "completed", estimate, usage, null, reasoningView());
           permitOutcome = "completed";
           return output;
         } catch (error) {
@@ -255,7 +280,7 @@ export class ModelExecutionRuntime {
           permitOutcome = timedOut ? "timed_out" : cancelled ? "cancelled" : "failed";
           permitReason = errorMessage(error);
           this.emitModelItem(context, "item/completed", callId, routeId, attempt,
-            timedOut ? "timedOut" : cancelled ? "cancelled" : "failed", estimate, usage, permitReason);
+            timedOut ? "timedOut" : cancelled ? "cancelled" : "failed", estimate, usage, permitReason, reasoningView());
           lastError = error;
           if (cancelled || !dispatched) throw error;
           if (!retryable(error)) break;
@@ -263,6 +288,7 @@ export class ModelExecutionRuntime {
           if (updatedCircuit.openUntil && Date.parse(updatedCircuit.openUntil) > Date.parse(this.now())) break;
         } finally {
           settled = true;
+          clearTimeout(reasoningTimer);
           if (abortCall) controller.signal.removeEventListener("abort", abortCall);
           clearTimeout(timer);
           request.signal?.removeEventListener("abort", externalAbort);
@@ -297,7 +323,7 @@ export class ModelExecutionRuntime {
 
   private emitModelItem(
     context: ModelCallContext,
-    method: "item/started" | "item/completed",
+    method: "item/started" | "item/updated" | "item/completed",
     id: string,
     routeId: string,
     attempt: number,
@@ -305,11 +331,12 @@ export class ModelExecutionRuntime {
     reservedTokens: number,
     usage: ModelUsageSnapshot | null,
     error: string | null,
+    display?: { reasoning: string; reasoningTruncated: boolean },
   ): void {
     this.events?.append({
       method, runId: context.runId, caseId: context.caseId, workId: context.workId ?? null,
       turnId: context.snapshotId, role: context.role,
-      params: { item: { type: "modelCall", id, routeId, attempt, status, reservedTokens, usage, error } },
+      params: { item: { type: "modelCall", id, routeId, attempt, status, reservedTokens, usage, error, ...display } },
     });
   }
 }

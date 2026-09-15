@@ -115,6 +115,7 @@ export class LlmConfigService {
     const previous = existing ? normalizeModelConnection(existing) : undefined;
     const destination = normalizeModelConnection({ provider: dto.provider, supplier: dto.supplier, model: dto.model, baseUrl: dto.baseUrl });
     const sameDestination = previous?.provider === destination.provider && previous?.baseUrl?.replace(/\/+$/, "") === destination.baseUrl?.replace(/\/+$/, "");
+    const sameModel = sameDestination && previous?.model === dto.model;
     const apiKey = dto.credentialRef ? undefined : dto.apiKey ?? (sameDestination ? existing?.apiKey : undefined);
     if (apiKey) validateApiKeyValue(apiKey);
     const config: LlmConfig = {
@@ -124,15 +125,15 @@ export class LlmConfigService {
       authMode: dto.authMode,
       requestOptions: dto.requestOptions,
       model: dto.model,
-      embeddingModel: dto.embeddingModel?.trim() || existing?.embeddingModel,
+      embeddingModel: dto.embeddingModel?.trim() || (sameDestination ? existing?.embeddingModel : undefined),
       baseUrl: dto.baseUrl,
       apiKey,
       jsonMode: dto.jsonMode,
-      contextWindowTokens: dto.contextWindowTokens ?? existing?.contextWindowTokens,
-      maxOutputTokens: dto.maxOutputTokens ?? existing?.maxOutputTokens,
-      currency: dto.currency === null ? undefined : (dto.currency?.trim().toUpperCase() ?? existing?.currency),
-      inputPricePerMillion: dto.inputPricePerMillion === null ? undefined : (dto.inputPricePerMillion ?? existing?.inputPricePerMillion),
-      outputPricePerMillion: dto.outputPricePerMillion === null ? undefined : (dto.outputPricePerMillion ?? existing?.outputPricePerMillion),
+      contextWindowTokens: dto.contextWindowTokens ?? (sameModel ? existing?.contextWindowTokens : undefined),
+      maxOutputTokens: dto.maxOutputTokens ?? (sameModel ? existing?.maxOutputTokens : undefined),
+      currency: dto.currency === null ? undefined : (dto.currency?.trim().toUpperCase() ?? (sameModel ? existing?.currency : undefined)),
+      inputPricePerMillion: dto.inputPricePerMillion === null ? undefined : (dto.inputPricePerMillion ?? (sameModel ? existing?.inputPricePerMillion : undefined)),
+      outputPricePerMillion: dto.outputPricePerMillion === null ? undefined : (dto.outputPricePerMillion ?? (sameModel ? existing?.outputPricePerMillion : undefined)),
       alternativeRoutes: existing?.alternativeRoutes ?? [],
       rolePolicies: existing?.rolePolicies ?? {},
       resourcePolicy: existing?.resourcePolicy,

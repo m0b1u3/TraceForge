@@ -1,6 +1,6 @@
 export const PROTOCOL_VERSION = 1;
 export const PACKAGE_ID = "traceforge.web-blackbox";
-export const PACKAGE_VERSION = "0.5.6";
+export const PACKAGE_VERSION = "0.5.13";
 export const SOURCE = "scenario:web_blackbox@1";
 
 export type JsonObject = Record<string, any>;
@@ -25,7 +25,8 @@ export interface CapabilityReceipt extends JsonObject {
 }
 
 const comparisonRequest = { type: "object", additionalProperties: false, required: ["url"], properties: {
-  url: { type: "string" }, method: { enum: ["GET", "HEAD"] }, sessionId: { type: "string" },
+  url: { type: "string" }, method: { enum: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }, sessionId: { type: "string" },
+  headers:{type:"object",maxProperties:16,additionalProperties:{type:"string"}},bodyBase64:{type:"string",maxLength:87384},
 } };
 
 const workflowRequest = { type: "object", additionalProperties: false, required: ["url"], properties: {
@@ -95,7 +96,7 @@ export const tools = Object.freeze([
   },
   {
     name: "web.validation.compare", source: SOURCE, version: PACKAGE_VERSION, priority: 97,
-    description: "Repeat a single-dimension HTTP comparison with evidence and resumable checkpoints; differences never verify findings.",
+    description: "Repeat a single-dimension HTTP comparison (URL, method, Session, non-credential headers or a literal body up to 64 KiB) with evidence and resumable checkpoints. Requests may mutate state; no automatic reset between rounds. Differences never verify findings.",
     inputSchema: { type: "object", additionalProperties: false, required: ["experimentId", "hypothesisId", "baseline"], properties: {
       experimentId: { type: "string" }, hypothesisId: { type: "string" }, baseline: comparisonRequest, candidate: comparisonRequest,
       candidates:{type:"array",minItems:1,maxItems:16,items:comparisonRequest},expectedSignals:{type:"array",minItems:1,maxItems:3,items:{enum:["statusChanged","bodyChanged","bytesChanged"]}},stopOn:{enum:["never","repeatable_difference"]},

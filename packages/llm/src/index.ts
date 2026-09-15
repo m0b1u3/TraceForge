@@ -1,6 +1,6 @@
 export type {
   LlmProvider, ExtractJsonArgs, ToolCall, TurnMessage, RunTurn, LlmToolDefinition,
-  RunToolsArgs, StreamToolsHandlers, UsageSnapshot, EmbedArgs,
+  RunToolsArgs, StreamToolsHandlers, ModelStreamEvent, UsageSnapshot, EmbedArgs,
 } from "./provider.js";
 export { LlmConfigSchema, LlmEndpointConfigSchema, type LlmConfig, type LlmEndpointConfig, loadLlmConfig } from "./config.js";
 export { AnthropicProvider } from "./anthropic-provider.js";
@@ -12,6 +12,8 @@ export type { ModelAccountBinding, ModelAccountConnection, ModelLoginChallenge }
 export type { ModelAdapterOptions } from "./adapter-options.js";
 export { discoverModels, ModelCatalogError, type ModelCatalog } from "./model-catalog.js";
 export { createProvider, createProviderFromConfig } from "./factory.js";
+export { MODEL_PROTOCOL_ADAPTERS } from "./protocol-adapters.js";
+export type { ModelSupplierDefinition } from "./suppliers.js";
 export { DeviceAuthorizationConnection, type OAuthConnection, type OAuthTokenStore, type OAuthTokenRecord } from "./device-authorization.js";
 export { MODEL_SUPPLIERS, normalizeModelConnection, modelConnectionFetch, validateEndpoint, type ModelSupplier,
   type ModelCredential, type ModelCredentialResolver, type ModelConnectionDependencies } from "./connections.js";

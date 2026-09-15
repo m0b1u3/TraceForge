@@ -3,6 +3,9 @@ import { CaretRight } from "@phosphor-icons/react";
 import { decodeScenarioAgentEvent, type ScenarioAgentEvent } from "@traceforge/shared/scenario-agent-events";
 import type { DesktopConversations } from "./desktop-conversation-transport";
 import { EvidenceReference } from "./evidence-reference";
+import { RunActivity } from "./run-activity";
+import { ExecutionTrace, mergeTrace } from "./execution-trace";
+import type { ConversationRun } from "./conversation-execution";
 
 /** Validate whole pages before advancing: a bad tail must not lose earlier events. */
 export function readProgressPage(body: unknown, runId: string, after: number, caseId?: string) {
@@ -30,12 +33,20 @@ function description(event: ScenarioAgentEvent) {
   if (item.type === "modelAdmission") return `模型资源 · ${statusLabel(item.status)}`;
   return item.summary;
 }
-export function RunProgress({ bridge, conversationId, runId, terminal = false }: { bridge: DesktopConversations; conversationId: string; runId: string; terminal?: boolean }) {
+export function RunProgress({ bridge, conversationId, runId, terminal = false, run }: { bridge: DesktopConversations; conversationId: string; runId: string; terminal?: boolean; run?: ConversationRun }) {
   const [events, setEvents] = useState<ScenarioAgentEvent[]>([]), [error, setError] = useState(false), [retry, setRetry] = useState(0);
   const [older, setOlder] = useState(false);
+  const [trace, setTrace] = useState<ScenarioAgentEvent[]>([]);
+  const [activity, setActivity] = useState(() => new RunActivity()), [syncing, setSyncing] = useState(true);
   useEffect(() => {
     let active = true, cursor = 0, caseId: string | undefined, timer: ReturnType<typeof setTimeout>;
     let collected: ScenarioAgentEvent[] = [];
+    let traceRows: ScenarioAgentEvent[] = [];
+    // Reconnect replays persisted pages without blanking already visible text.
+    setTrace(previous => previous.filter(event => event.runId === runId));
+    setEvents(previous => previous.filter(event => event.runId === runId));
+    const nextActivity = new RunActivity();
+    setSyncing(true);
     const poll = async () => {
       let more = false;
       try {
@@ -43,19 +54,24 @@ export function RunProgress({ bridge, conversationId, runId, terminal = false }:
         if (!active) return;
         if (result.status !== 200) throw new Error("Progress unavailable");
         const page = readProgressPage(result.body, runId, cursor, caseId);
+        nextActivity.apply(page.events);
+        traceRows = mergeTrace(traceRows, page.events);
+        if (!page.hasMore) setTrace(traceRows);
         cursor = page.nextCursor; caseId = page.caseId; more = page.hasMore;
         collected = [...collected, ...page.events].slice(-100);
         setEvents(collected); setOlder(cursor > 100); setError(false);
+        setActivity(nextActivity); setSyncing(more);
       } catch { if (active) setError(true); }
       // Drain every retained page before stopping terminal polling. A slow final
       // audit event can still be picked up by a low-frequency reconciliation.
-      if (active) timer = setTimeout(poll, more ? 100 : terminal ? 60000 : document.hidden ? 15000 : 2000);
+      if (active) timer = setTimeout(poll, more ? 0 : terminal ? 60000 : document.hidden ? 5000 : 250);
     };
     void poll(); return () => { active = false; clearTimeout(timer); };
   }, [bridge, conversationId, runId, retry, terminal]);
   return <section className="run-progress" aria-label="执行进展">
-    <p className="local-receipt" role="status">{events.length ? description(events[events.length - 1]!) : "正在等待执行事件…"}</p>
+    <p className="local-receipt" role="status">{error ? "状态连接中断，当前显示上次保存的记录" : syncing ? "正在同步任务进度…" : activity.label(run)}</p>
     {error && <p role="alert">进展读取中断，已显示记录保留；不会重跑操作。<button onClick={() => setRetry(value => value + 1)}>重新读取进展</button></p>}
+    <ExecutionTrace events={trace} />
     {events.length > 0 && <details><summary><CaretRight className="disclosure-caret" aria-hidden="true" />执行记录 · {older ? "最近 " : ""}{events.length} 条</summary>
       <ol>{events.map(event => {
         const refs = event.method === "turn/progress" ? event.params.refs : "item" in event.params && "refs" in event.params.item ? event.params.item.refs : [];

@@ -28,6 +28,13 @@ function request(): WorkerModelRequest {
   };
 }
 
+it("restricts the actual model schema and parser during read-only conclusion",async()=>{
+  const input={...request(),executionMode:"conclude" as const};
+  const model=new StructuredWorkerModel({async extractJson(value){expect(value.schema.properties.type).toEqual({const:"block"});expect(JSON.parse(value.user).executionMode).toBe("conclude");return {type:"block",reason:"Observed result; further work required"};}});
+  expect((await model.decide(input)).type).toBe("block");
+  await expect(new StructuredWorkerModel(provider({type:"complete",summary:"Forbidden",outputs:[]})).decide(input)).rejects.toThrow();
+});
+
 function provider(result: unknown): LlmProvider {
   return {
     async extractJson(input) {

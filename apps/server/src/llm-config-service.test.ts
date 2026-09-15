@@ -25,6 +25,18 @@ describe("LlmConfigService", () => {
   let tmp: string;
   beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), "llmcfg-")); });
 
+  it("does not carry a previous model window and prices into a different model", () => {
+    const svc = service(tmp);
+    svc.reload({provider:"openai",model:"first",apiKey:"fixture",contextWindowTokens:128000,maxOutputTokens:8192,currency:"USD",inputPricePerMillion:1,outputPricePerMillion:2});
+    expect(svc.reload({provider:"openai",model:"first"}).contextWindowTokens).toBe(128000);
+    const changed = svc.reload({provider:"openai",model:"second"});
+    expect(changed.contextWindowTokens).toBeUndefined();
+    expect(changed.maxOutputTokens).toBeUndefined();
+    expect(changed.currency).toBeUndefined();
+    expect(changed.inputPricePerMillion).toBeUndefined();
+    expect(changed.apiKeyMasked).toBeTruthy();
+  });
+
   it("does not silently send the previous supplier key to a changed endpoint", () => {
     makeConfig(tmp,{provider:"openai",model:"m",apiKey:"previous-secret",baseUrl:"https://first.example/v1"});
     const svc=service(tmp);
@@ -97,10 +109,10 @@ describe("LlmConfigService", () => {
     expect(secrets.value.primary).toBe("sk-existing");
   });
 
-  it("keeps existing context window settings when they are omitted during reload", () => {
+  it("keeps existing context window settings when omitted for the same model", () => {
     makeConfig(tmp, { provider: "openai", model: "m", apiKey: "sk-openai", contextWindowTokens: 128000, maxOutputTokens: 8192 });
     const svc = service(tmp);
-    svc.reload({ provider: "openai", model: "m2" });
+    svc.reload({ provider: "openai", model: "m" });
     const json = JSON.parse(readFileSync(join(tmp, "llm.json"), "utf8"));
     expect(json.contextWindowTokens).toBe(128000);
     expect(json.maxOutputTokens).toBe(8192);
@@ -116,7 +128,7 @@ describe("LlmConfigService", () => {
       inputPricePerMillion: 2.5,
       outputPricePerMillion: 10,
     });
-    svc.reload({ provider: "openai", model: "m2" });
+    svc.reload({ provider: "openai", model: "m" });
     expect(svc.load()).toMatchObject({
       currency: "USD",
       inputPricePerMillion: 2.5,

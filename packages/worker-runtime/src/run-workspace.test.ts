@@ -11,12 +11,12 @@ import { assignment } from "./test-fixtures.js";
 
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })));
-function setup() {
+function setup(seconds = 60) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), "traceforge-workspace-"))); roots.push(base);
   const execute = vi.fn(async () => ({ status: "succeeded" as const, summary: "done", raw: "output", refs: ["execution-process:one"], retryable: false,
     metadata: { exitCode: 0, enforcement: { sandboxed: true, filesystemPolicyApplied: true, network: "deny", processTreeEmptyBarrier: true } } }));
   const authorize = vi.fn();
-  const workspace = new RunWorkspace(join(base, "runs"), { execute } as unknown as ExecutionToolAdapter, authorize);
+  const workspace = new RunWorkspace(join(base, "runs"), { execute } as unknown as ExecutionToolAdapter, authorize, undefined, undefined, () => seconds);
   const context: ToolExecutionContext = { caseId: "case", runId: "run", workId: "work", scopeRef: "scope", workerId: "worker", leaseId: "lease",
     leaseExpiresAt: new Date(Date.now() + 120_000).toISOString(), idempotencyKey: "operation",
     effectivePermissions: { ...workspace.profile("case", "run", "workspace_execute", true), sources: ["test"] } };
@@ -29,6 +29,35 @@ function setup() {
 }
 
 describe("Run-owned offline workspace", () => {
+  it("shares only a host-selected namespace and preserves a process fence across Runs and restart",async()=>{
+    const f=setup();
+    const failed=vi.fn(async()=>{throw new Error("unknown execution");});
+    const workspace=new RunWorkspace(join(f.base,"shared"),{execute:failed} as unknown as ExecutionToolAdapter,f.authorize,undefined,undefined,()=>60,()=>"conversation-key");
+    const root=workspace.root("case","first");
+    expect(workspace.root("case","second")).toBe(root);
+    expect(workspace.root("other-case","second")).not.toBe(root);
+    const context={...f.context,runId:"first",effectivePermissions:{...f.context.effectivePermissions,filesystem:{read:[{path:root,scope:"tree" as const}],write:[{path:root,scope:"tree" as const}],deny:[]}}};
+    const file=JSON.parse((await workspace.tools().find(t=>t.name==="workspace_write")!.execute({path:"run.sh",content:"printf example",expectedDigest:null},context)).raw);
+    const second={...context,runId:"second"};
+    expect(JSON.parse((await workspace.tools().find(t=>t.name==="workspace_read")!.execute({path:"run.sh"},second)).raw).digest).toBe(file.digest);
+    await expect(workspace.tools().find(t=>t.name==="workspace_execute")!.execute({path:"run.sh",expectedDigest:file.digest},context)).rejects.toThrow("unknown execution");
+    const restored=new RunWorkspace(join(f.base,"shared"),{execute:failed} as unknown as ExecutionToolAdapter,f.authorize,undefined,undefined,()=>60,()=>"conversation-key");
+    await expect(restored.tools().find(t=>t.name==="workspace_read")!.execute({path:"run.sh"},second)).rejects.toThrow("reconciliation");
+    expect(failed).toHaveBeenCalledTimes(1);
+  });
+  it("uses explicit authorized long duration for both wall clock and CPU without widening permissions", async () => {
+    const f = setup(1800), file = await f.json("write", { path: "run.sh", content: "printf ok", expectedDigest: null });
+    await f.call("execute", { path: "run.sh", expectedDigest: file.digest, timeoutSeconds: 1200 });
+    expect(f.execute.mock.calls[0]).toMatchObject([{ timeoutMs: 1200000, resources: { cpuTimeMs: 1200000 }, environment: {} }, { effectivePermissions: { network: "deny" } }]);
+    expect(f.workspace.tools().find(t => t.name === "workspace_execute")!.timeoutMs).toBeGreaterThan(3600000);
+  });
+  it.each([61, 0, 1.5, "120", 3601])("rejects invalid or ungranted duration %s before process dispatch", async timeoutSeconds => {
+    const f = setup(), file = await f.json("write", { path: "run.sh", content: "printf ok", expectedDigest: null });
+    await expect(f.call("execute", { path: "run.sh", expectedDigest: file.digest, timeoutSeconds })).rejects.toThrow("duration");
+    expect(f.execute).not.toHaveBeenCalled();
+    await f.call("execute", { path: "run.sh", expectedDigest: file.digest });
+    expect(f.execute).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 60000 }), expect.anything());
+  });
   it("resolves the whole tool chain, requires process approval and replays receipts without rerunning", async () => {
     const f = setup(), current = assignment(), tools = f.workspace.tools();
     current.worker.capabilities = tools.flatMap(tool => tool.providedCapabilities);

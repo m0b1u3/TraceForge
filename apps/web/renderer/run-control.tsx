@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { desktopJournalStorage } from "./desktop-journal-storage";
 import { ExecutionController } from "./execution-controller";
 import type { DesktopConversations } from "./desktop-conversation-transport";
 import { PermissionChange } from "./permission-change";
@@ -7,7 +8,7 @@ import { PermissionChange } from "./permission-change";
 export function RunControl({ bridge, conversationId, runId, revision, status }: {
   bridge: DesktopConversations; conversationId: string; runId: string; revision: number; status: string;
 }) {
-  const controller = useMemo(() => new ExecutionController(bridge, localStorage, conversationId), [bridge, conversationId]);
+  const controller = useMemo(() => new ExecutionController(bridge, desktopJournalStorage(), conversationId), [bridge, conversationId]);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [confirmResume,setConfirmResume]=useState(false);
   const [permissionPending,setPermissionPending]=useState(false);
   let pending = false, invalid = false;

@@ -38,6 +38,8 @@ export class SqliteScenarioAuthorizationService implements ScenarioAuthorization
     if(Buffer.byteLength(row.scope_json)>1024*1024)throw new Error("Authorization scope budget exceeded");
     if(pkg.definition.kind!==row.scenario_kind)throw new AuthorizationRecoveryRequired("Authorization scenario mismatch");
     const scope=parseScenarioScope(pkg.authorizationPolicy,JSON.parse(row.scope_json));
+    if (scope.payload && typeof scope.payload === "object" && Object.hasOwn(scope.payload, "routineApprovalRequired")
+      && typeof (scope.payload as Record<string, unknown>).routineApprovalRequired !== "boolean") throw new Error("Invalid routine approval preference");
     const declared=new Set(pkg.definition.authorizationActions);
     if([...scope.allowedActions,...scope.deniedActions].some(a=>!declared.has(a)))throw new Error("Authorization contains undeclared actions");
     return scope;

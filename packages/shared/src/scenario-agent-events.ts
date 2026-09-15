@@ -18,12 +18,17 @@ export const ScenarioAgentItemSchema = z.discriminatedUnion("type", [
     type: z.literal("modelCall"), id: z.string().min(1), routeId: z.string().min(1), attempt: z.number().int().positive(),
     status: z.enum(["inProgress", "completed", "failed", "timedOut", "cancelled", "interrupted"]),
     reservedTokens: z.number().int().nonnegative(), usage: usage.nullable().default(null), error: z.string().nullable().default(null),
+    reasoning: z.string().max(16000).optional(), reasoningTruncated: z.boolean().optional(),
   }),
   z.object({
     type: z.literal("toolCall"), id: z.string().min(1), tool: z.string().min(1),
     status: z.enum(["inProgress", "completed", "failed", "waitingApproval", "cancelled"]),
     risk: z.enum(["read_only", "bounded_write", "privileged", "destructive"]).nullable().default(null),
     summary: z.string().nullable().default(null), refs: z.array(z.string()).default([]),
+    inputPreview: z.string().max(8000).optional(), outputPreview: z.string().max(12000).optional(),
+    rationale: z.string().max(2000).optional(), previewTruncated: z.boolean().optional(),
+    commandPreview: z.string().max(8000).optional(),
+    dispatchState: z.enum(["requested", "dispatched", "returned", "replayed"]).optional(),
   }),
   z.object({
     type: z.literal("approval"), id: z.string().min(1), tool: z.string().min(1),

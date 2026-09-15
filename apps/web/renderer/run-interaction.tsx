@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { desktopJournalStorage } from "./desktop-journal-storage";
 import { CaretRight, Shield } from "@phosphor-icons/react";
 import type { ConversationRun } from "./conversation-execution";
 import type { DesktopConversations } from "./desktop-conversation-transport";
@@ -37,30 +38,43 @@ function ApprovalChoice({ approval, workTitle, revision, disabled, submit, bridg
 }
 /** User intent is a durable command, never a side effect of receiving an event. */
 export function RunInteraction({ bridge, conversationId, run, hideInput=false }: { bridge: DesktopConversations; conversationId: string; run: ConversationRun; hideInput?:boolean }) {
-  const controller = useMemo(() => new ExecutionController(bridge, localStorage, conversationId), [bridge, conversationId]);
+  const controller = useMemo(() => new ExecutionController(bridge, desktopJournalStorage(), conversationId), [bridge, conversationId]);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [error, setError] = useState("");
   const [workId, setWorkId] = useState(""), [instruction, setInstruction] = useState("");
   const [submitted, setSubmitted] = useState<string[]>([]);
+  const [resumeWork, setResumeWork] = useState<string | null>(null);
   let pendingCommand: { path: string; body: Record<string, unknown> } | null = null, damaged = false;
   try { pendingCommand = controller.pending; } catch { damaged = true; }
   const pending = !!pendingCommand;
   const active = ["running", "paused"].includes(run.status);
   const available = run.workItems.filter(work => !["completed", "cancelled"].includes(work.status));
   const disabled = busy || pending || damaged || !active;
-  async function send(kind?: "approval" | "input", fields?: Record<string, unknown>) {
+  async function send(kind?: "approval" | "input" | "continue", fields?: Record<string, unknown>) {
     setBusy(true); setNotice(""); setError("");
     try {
       const receipt = await controller.execute(kind ? { path: `/api/desktop/conversations/${conversationId}/execution/${kind}`,
         body: { commandId: crypto.randomUUID(), runId: run.runId, expectedRevision: run.revision, ...fields } } : undefined);
       const sent = fields ?? pendingCommand?.body;
       setNotice(receipt.operation === "approval" ? sent?.approved ? "已批准本次操作，后续执行仍受原授权约束。" : "已拒绝本次操作。"
+        : receipt.operation === "continue" ? "已确认继续原工作，仍受原预算、权限和执行核对约束。"
         : receipt.operation === "input" ? "补充信息已保存，后续处理会使用这些内容；不会自动恢复或重试工具。" : "原请求已核对，请查看对应运行状态。");
       if (receipt.operation === "approval") setSubmitted(previous => [...previous, receipt.resourceId]);
       if (receipt.operation === "input" && sent?.workId === workId && typeof sent?.instruction === "string" && sent.instruction.trim() === instruction.trim()) setInstruction("");
     } catch (value) { setError(value instanceof Error ? value.message : "操作未核对成功，请保留原请求。"); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setResumeWork(null); }
   }
   return <div className="run-interaction">
+    {run.workItems.filter(work => ["blocked", "failed"].includes(work.status)).map(work => <div key={work.id} className="work-resumption">
+      <p>{work.title} · {work.continuation?.state === "budget_exhausted" ? "执行预算或失败次数已用尽" : "工作已中断，需要处理"}</p>
+      {work.error && <details><summary>查看中断原因</summary><p className="reply-text">{work.error}</p></details>}
+      {work.continuation?.state === "budget_exhausted" ? <p className="local-receipt">继续或重启不会重置预算。请先核对已保存的进展，再决定后续任务。</p>
+        : work.continuation?.state === "review" && run.status === "running" ? <>
+          {resumeWork !== JSON.stringify([run.revision, work.id, work.continuation.checkpointRef]) ? <button disabled={disabled} onClick={() => setResumeWork(JSON.stringify([run.revision, work.id, work.continuation!.checkpointRef]))}>检查并继续这项工作</button>
+            : <div role="group" aria-label="继续工作确认"><p>将从保存的进度继续。宿主会核对原权限、预算和执行结果；结果未知的操作不会自动重试。</p>
+              <button disabled={disabled} onClick={() => void send("continue", { workId: work.id, checkpointRef: work.continuation!.checkpointRef, confirmed: true, reason: "用户确认从保存进度继续" })}>确认继续</button>
+              <button disabled={busy} onClick={() => setResumeWork(null)}>暂不继续</button></div>}
+        </> : <p className="local-receipt">{run.status === "paused" ? "先恢复调查，再核对这项工作的继续条件。" : "当前无法直接继续，请核对授权、保存的进度及待处理执行结果。"}</p>}
+    </div>)}
     {!!run.directives?.some(item => item.issuedBy === "operator") && <details open={hideInput}><summary><CaretRight className="disclosure-caret" aria-hidden="true" />已保存的补充信息</summary>
       {run.directives.filter(item => item.issuedBy === "operator").map(item => <p key={item.id}>{item.instruction}<small className="local-receipt"> · {run.workItems.find(work => work.id === item.targetWorkId)?.title ?? item.targetWorkId}</small></p>)}
     </details>}

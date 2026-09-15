@@ -1,4 +1,5 @@
 export * from "./model.js";
+export * from "./decision-executor.js";
 export * from "./runtime.js";
 export * from "./distiller.js";
 export * from "./checkpoint-store.js";
@@ -22,4 +23,6 @@ export * from "./supervisor.js";
 export * from "./governed-execution.js";
 export * from "./scenario-process-runtime.js";
 export { waitForCancellation } from "./cancellation.js";
-export { RunWorkspace, workspaceAction, type WorkspaceProject } from "./run-workspace.js";
+export { RunWorkspace, managedWorkspacePath, workspaceAction, workspaceExecutionSeconds, type WorkspaceProject } from "./run-workspace.js";
+export * from "./long-task.js";
+export { executionDisplay } from "./execution-display.js";

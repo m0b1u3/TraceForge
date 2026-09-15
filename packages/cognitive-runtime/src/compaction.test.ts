@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ContextCompactionRuntime, ExtractiveContextCompactor, type ContextCompactionRecord, type ContextCompactionStore, type ContextCompactor } from "./compaction.js";
+import { SemanticContextCompactor } from "./semantic-compactor.js";
 
 class Store implements ContextCompactionStore {
   rows = new Map<string, ContextCompactionRecord>();
@@ -17,6 +18,20 @@ function input() { return { caseId: "case", runId: "run", consumer: "worker", so
     { turn: 3, kind: "tool", receiptKey: "newest-receipt", refs: [], summary: "Current bounded observation" }],
 } }; }
 describe("Bounded context compaction lifecycle", () => {
+  it("attributes semantic calls and reuses their durable result without changing protected goals", async () => {
+    const store = new Store(); let calls = 0;
+    const compactor = new SemanticContextCompactor({ async extractJson(request, context) {
+      calls++; expect(context).toMatchObject({ runId: "run", caseId: "case", consumer: "worker" });
+      expect(context!.id).toHaveLength(64);
+      const source = JSON.parse(request.user);
+      return { entries: source.entries.map((entry: { id: string }) => ({ id: entry.id, text: "Earlier result retained; next step unresolved." })) };
+    } });
+    const first = await new ContextCompactionRuntime(store, compactor, limits).prepare(input());
+    const second = await new ContextCompactionRuntime(store, compactor, limits).prepare(input());
+    expect(calls).toBe(1); expect(first.context.run).toEqual(input().context.run);
+    expect(second.context).toEqual(first.context);
+    expect(second.manifest.contextCompaction).toMatchObject({ status: "completed", replayed: true, semanticQualityVerified: false });
+  });
   it("reserves recall from the actual text budget even after newer ordinary observations",async()=>{
     const source=input();source.context.transcript[0].summary="[recall-page]"+"R".repeat(1200);
     const runtime=new ContextCompactionRuntime(new Store(),undefined,{...limits,maximumTextCharacters:900});

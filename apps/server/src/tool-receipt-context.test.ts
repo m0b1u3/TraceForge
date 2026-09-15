@@ -64,6 +64,37 @@ it("pages an ordinary saved output without repeating its original effect",async(
   expect(await f.tool.execute({receiptKey:"effect:first",offset:1},f.context)).toMatchObject({status:"failed",raw:""});
 });
 
+it("pages more than 256 tracked sources and preserves withdrawal of an early source", async () => {
+  const f = await fixture();
+  const origin = f.inventory.providers[0].tool;
+  for (let i = 0; i < 300; i++) {
+    const id = `history-${String(i).padStart(3, "0")}`;
+    await f.persist(id, origin, { status: "succeeded", summary: "Saved", raw: `Detail ${i}`, refs: [], retryable: false });
+    expect((await f.tool.execute({ receiptKey: `effect:${id}` }, f.context)).status).toBe("succeeded");
+  }
+  const run = f.control.runtime.load("run")!;
+  const sources = await f.service.lineage(run, "worker", "work");
+  expect(sources).toHaveLength(300);
+  expect(new Set(sources.map(source => source.key)).size).toBe(300);
+  expect(sources.every(source => source.valid)).toBe(true);
+  f.service.withdraw("effect:history-000", "Changed conditions");
+  const refreshed = await f.service.lineage(run, "worker", "work");
+  expect(refreshed.filter(source => !source.valid).map(source => source.key)).toEqual(["effect:history-000"]);
+  expect(f.effects()).toBe(1);
+});
+
+it("finds saved detail without a known receipt key and excludes withdrawn sources", async () => {
+  const f = await fixture();
+  const search = (await f.service.discover()).find(tool => tool.name === "tool.search")!;
+  const found = await search.execute({ query: "original observation" }, f.context);
+  expect(found.status).toBe("succeeded");
+  const match = JSON.parse(found.raw).matches[0]; expect(match.receiptKey).toBe("effect:first");
+  const read = await f.tool.execute({ receiptKey: match.receiptKey, digest: match.digest, offset: match.offset }, f.context);
+  expect(JSON.parse(read.raw).content).toContain("original observation"); expect(f.effects()).toBe(1);
+  f.service.withdraw("effect:first", "no longer applicable");
+  expect(JSON.parse((await search.execute({ query: "original" }, f.context)).raw).matches).toEqual([]);
+});
+
 it("uses the shipped Scenario receipt grant for retained clues and withdraws them without replay",async()=>{
   const f=await fixture(true);
   // Exercise the real declared origin allow-list with a persisted ordinary result.

@@ -18,12 +18,20 @@ export class AgentJournalCheckpointAdapter {
     return `agent:run:${encodeURIComponent(assignment.runId)}:work:${encodeURIComponent(assignment.work.id)}`;
   }
 
+  async hasCompleted(document: CurrentWorkerCheckpointDocument, id: string): Promise<boolean> {
+    if (document.journal.completedIntentIds.includes(id)) return true;
+    if (!document.completedHistory) return false;
+    if (!this.store.hasCompleted) throw new Error("Checkpoint store cannot read completed invocation history");
+    return this.store.hasCompleted(document, id);
+  }
+
   async restore(worker: WorkerDescriptor, assignment: WorkerAssignment): Promise<CurrentWorkerCheckpointDocument> {
     const identity = { caseId: assignment.runContext.caseId, workKey: assignment.work.idempotencyKey,
       sessionId: this.sessionId(assignment), workerId: worker.id, leaseId: assignment.leaseId };
     const existing = assignment.work.latestCheckpoint;
     if (existing) {
       const document = validateWorkerCheckpoint(await this.store.load(existing.payloadRef));
+      if (document.completedHistory && !this.store.hasCompleted) throw new Error("Checkpoint store cannot read completed invocation history");
       if (document.runId !== assignment.runId || document.workId !== assignment.work.id) {
         throw new Error("Checkpoint does not belong to this assignment");
       }
@@ -50,6 +58,7 @@ export class AgentJournalCheckpointAdapter {
   }
 
   async save(document: CurrentWorkerCheckpointDocument): Promise<string> {
+    if (this.store.compact) Object.assign(document, await this.store.compact(document));
     validateWorkerCheckpoint(document);
     return this.store.save(document);
   }

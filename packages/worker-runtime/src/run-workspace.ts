@@ -8,11 +8,24 @@ import type { ToolExecutionContext, ToolExecutionResult } from "./model.js";
 const FILE_BYTES = 256 * 1024;
 const TREE_BYTES = 16 * 1024 * 1024;
 const TREE_ENTRIES = 512;
+export const MAX_WORKSPACE_EXECUTION_SECONDS = 3600;
+export function workspaceExecutionSeconds(payload: unknown): number {
+  const value = (payload as Record<string, unknown> | null)?.maximumScriptSeconds ?? 60;
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > MAX_WORKSPACE_EXECUTION_SECONDS) throw new Error("Invalid authorized script duration");
+  return value as number;
+}
 const digest = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
+export function managedWorkspacePath(base: string, caseId: string, runId: string, sharedKey?: string): string {
+  if (![caseId, runId].every(value => typeof value === "string" && value.length > 0 && value.length <= 512)
+    || sharedKey !== undefined && (typeof sharedKey !== "string" || !sharedKey.length || sharedKey.length > 512)) throw new Error("Workspace ownership is required");
+  return join(resolve(base), digest(JSON.stringify(sharedKey === undefined ? [caseId, runId] : [caseId, "shared", sharedKey])));
+}
 const operations = ["read", "list", "search", "write", "edit", "remove", "execute", "stage"] as const;
 type Operation = typeof operations[number];
 const actionFor = (op: Operation) => `workspace.${["read", "list", "search"].includes(op) ? "read" : op === "execute" ? "execute" : "write"}`;
 export function workspaceAction(tool: string): string | undefined {
+  if (["workspace_start", "workspace_stop", "workspace_input"].includes(tool)) return "workspace.execute";
+  if (tool === "workspace_poll") return "workspace.read";
   const op = tool.replace(/^workspace_/, "") as Operation;
   return tool.startsWith("workspace_") && operations.includes(op) ? actionFor(op) : undefined;
 }
@@ -27,23 +40,25 @@ export class RunWorkspace {
   constructor(private readonly base: string, private readonly processTool: ExecutionToolAdapter,
     private readonly authorize: (context: ToolExecutionContext, action: string) => void,
     private readonly prepareExecution?: () => Promise<void>,
-    private readonly loadProject?: (context: ToolExecutionContext, id: string) => Promise<WorkspaceProject>) {}
+    private readonly loadProject?: (context: ToolExecutionContext, id: string) => Promise<WorkspaceProject>,
+    private readonly executionSeconds: (context: ToolExecutionContext) => number = () => 60,
+    private readonly sharedWorkspaceKey?: (caseId: string, runId: string) => string | undefined) {}
 
   root(caseId: string, runId: string): string {
-    if (!caseId || !runId || caseId.length > 512 || runId.length > 512) throw new Error("Workspace ownership is required");
-    return join(resolve(this.base), digest(JSON.stringify([caseId, runId])));
+    return managedWorkspacePath(this.base, caseId, runId, this.sharedWorkspaceKey?.(caseId, runId));
   }
 
   /** Pure calculation: catalog reads never create directories or launch processes. */
-  profile(caseId: string, runId: string, tool: string, enabled: boolean): PermissionProfile {
+  profile(caseId: string, runId: string, tool: string, enabled: boolean, network = false, interactive = false): PermissionProfile {
     const action = workspaceAction(tool), root = this.root(caseId, runId);
     // First supported native platform; no unrestricted fallback on other hosts.
     enabled = enabled && process.platform === "darwin" && process.arch === "arm64" && !!action;
     const execute = action === "workspace.execute";
     return { version: 1, platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : "linux",
-      filesystem: { read: enabled ? [{ path: root, scope: "tree" }, ...(execute ? [{ path: "/bin", scope: "tree" as const }, { path: "/usr/bin", scope: "tree" as const }] : [])] : [],
+      filesystem: { read: enabled ? [{ path: root, scope: "tree" }, ...(execute ? [{ path: "/bin", scope: "tree" as const }, { path: "/usr/bin", scope: "tree" as const },
+        ...(network ? [{ path: "/private/etc/ssl/openssl.cnf", scope: "exact" as const }, { path: "/private/etc/ssl/cert.pem", scope: "exact" as const }] : [])] : [])] : [],
         write: enabled && action !== "workspace.read" ? [{ path: root, scope: "tree" }] : [], deny: [] },
-      network: "deny", process: { access: enabled ? "sandboxed" : "deny", interactive: false, background: false }, secrets: "deny" };
+      network: enabled && execute && network ? "brokered" : "deny", process: { access: enabled ? "sandboxed" : "deny", interactive: enabled && execute && interactive, background: false }, secrets: "deny" };
   }
 
   tools(): ExecutionToolAdapter[] {
@@ -55,7 +70,7 @@ export class RunWorkspace {
       write: { properties: { path: text, content: text, expectedDigest: { type: ["string", "null"] } }, required: ["path", "content", "expectedDigest"] },
       edit: { properties: { path: text, expectedDigest: text, before: text, after: text }, required: ["path", "expectedDigest", "before", "after"] },
       remove: { properties: { path: text, expectedDigest: text }, required: ["path", "expectedDigest"] },
-      execute: { properties: { path: text, expectedDigest: text, arguments: { type: "array", maxItems: 64, items: { type: "string", maxLength: 4096 } } }, required: ["path", "expectedDigest"] },
+      execute: { properties: { path: text, expectedDigest: text, terminal: { type: "boolean", description: "Use a managed terminal, only with interactiveWorkspace consent; use workspace_start for later workspace_input calls." }, timeoutSeconds: { type: "integer", minimum: 1, maximum: MAX_WORKSPACE_EXECUTION_SECONDS, description: "Requested execution time; defaults to 60 seconds and cannot exceed this Run's authorized maximumScriptSeconds." }, arguments: { type: "array", maxItems: 64, items: { type: "string", maxLength: 4096 } } }, required: ["path", "expectedDigest"] },
       stage: { properties: { projectId: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,80}$" } }, required: ["projectId"] },
     };
     const descriptions: Record<Operation, string> = {
@@ -65,14 +80,14 @@ export class RunWorkspace {
       write: "Create/replace a UTF-8 file in this Run. expectedDigest=null creates only; replacing requires the last read SHA-256. Parent folders are created within this workspace.",
       edit: "Replace exactly one literal occurrence in a Run file, conditional on its last read SHA-256.",
       remove: "Delete one Run file, conditional on its last read SHA-256. No recursive deletion.",
-      execute: "Run a workspace Bash script pinned to its last read SHA-256 expectedDigest, without startup profiles, in the local native sandbox, offline, for up to 60 seconds. No network, user home, other Runs, secret environment, interactive or background execution. System /bin and /usr/bin utilities are readable. Output is bounded and is not verified security evidence.",
+      execute: "Run a workspace Bash script pinned to its last read SHA-256 expectedDigest, without startup profiles, in the local native sandbox defaulting to 60 seconds; timeoutSeconds may request up to the separately authorized maximumScriptSeconds (at most 3600 seconds). Offline unless separately granted workspace.network; supported HTTP/SOCKS5 TCP clients then use the host-controlled destination scope. Opaque tunnels are connection-level, not per-path inspection. terminal=true requires interactiveWorkspace consent; use workspace_start and workspace_input for later interaction. No user home, other Runs or detached execution. System /bin and /usr/bin utilities are readable. Output is bounded and is not verified security evidence.",
       stage: "Copy an enabled source project from this Run's pinned tool library into its workspace, without running it or installing dependencies. Read tools_catalog first. Returns the saved entry script and digest for a separately approved workspace_execute call; missing dependencies must be reported, not installed through an unrestricted fallback.",
     };
     return operations.filter(op => op !== "stage" || this.loadProject).map(op => ({ name: `workspace_${op}`, source: "traceforge.builtin", version: "1.0.0", priority: 100,
       description: descriptions[op], inputSchema: { type: "object", additionalProperties: false, ...schemas[op] },
       providedCapabilities: [`workspace.${op}`], dependencyCapabilities: op === "execute" ? ["workspace.read", "workspace.list", "workspace.search", "workspace.write", "workspace.edit", "workspace.remove"] : op === "stage" ? ["tools.use", "workspace.execute"] : [], permissionRequirements: { process: "sandboxed" },
       risk: op === "execute" || op === "stage" ? "privileged" : op === "remove" ? "destructive" : ["write", "edit"].includes(op) ? "bounded_write" : "read_only",
-      timeoutMs: op === "execute" ? 70_000 : 5_000,
+      timeoutMs: op === "execute" ? MAX_WORKSPACE_EXECUTION_SECONDS * 1000 + 30_000 : 5_000,
       execute: (input, context) => this.perform(op, input, context, Object.keys(schemas[op].properties)),
     }));
   }
@@ -84,12 +99,13 @@ export class RunWorkspace {
     if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some(key => !keys.includes(key))) throw new Error("Invalid workspace input");
     const args = input as Record<string, unknown>, root = this.root(context.caseId, context.runId);
     const permissions = context.effectivePermissions;
-    if (permissions.network !== "deny" || permissions.process.access !== "sandboxed" || permissions.secrets !== "deny"
+    if (!["deny", "brokered"].includes(permissions.network) || permissions.process.access !== "sandboxed" || permissions.secrets !== "deny"
       || !allowsFileSystemPath(permissions, "read", root)
       || (actionFor(op) !== "workspace.read" && !allowsFileSystemPath(permissions, "write", root))) throw new Error("Workspace permissions are unavailable");
     if (this.active.has(root)) throw new Error("Run workspace is busy; wait for the active operation");
     this.active.add(root);
     try {
+      if (permissions.network === "brokered") this.authorize(context, "workspace.network");
       this.directory(root);
       const marker = `${root}.busy`;
       if (existsSync(marker)) throw new Error("Workspace requires reconciliation: previous process cleanup is unconfirmed");
@@ -142,6 +158,11 @@ export class RunWorkspace {
       const path = this.path(root, args.path, context, actionFor(op) !== "workspace.read");
       if (op === "read") { const content = this.read(path); return this.result({ path: args.path, content, digest: digest(content) }); }
       if (op === "execute") {
+        if (args.terminal !== undefined && typeof args.terminal !== "boolean") throw new Error("Invalid terminal option");
+        if (args.terminal && !permissions.process.interactive) throw new Error("Interactive workspace execution is not authorized");
+        const maximum = workspaceExecutionSeconds({ maximumScriptSeconds: this.executionSeconds(context) });
+        const seconds = args.timeoutSeconds ?? Math.min(60, maximum);
+        if (!Number.isSafeInteger(seconds) || (seconds as number) < 1 || (seconds as number) > maximum) throw new Error(`Requested script duration exceeds authorized maximum (${maximum} seconds)`);
         if (args.expectedDigest !== digest(this.read(path))) throw new Error("Workspace script revision conflict; read and approve the current script before execution");
         const argv = args.arguments ?? [];
         if (!Array.isArray(argv) || argv.length > 64 || argv.some(arg => typeof arg !== "string" || arg.length > 4096 || arg.includes("\0"))) throw new Error("Invalid script arguments");
@@ -154,11 +175,12 @@ export class RunWorkspace {
         try { writeFileSync(fd, JSON.stringify({ runId: context.runId, idempotencyKey: context.idempotencyKey })); fsyncSync(fd); } finally { closeSync(fd); }
         this.syncDirectory(dirname(marker));
         const result = await this.processTool.execute({ executable: "/bin/bash", arguments: ["--noprofile", "--norc", path, ...argv], workingDirectory: root,
-          environment: {}, timeoutMs: 60_000, outputLimitBytes: 65_536,
-          resources: { cpuTimeMs: 60_000, memoryBytes: 256 * 1024 * 1024, maximumProcesses: 8, writeBytes: TREE_BYTES } }, context);
+          environment: {}, timeoutMs: (seconds as number) * 1000, outputLimitBytes: 65_536,
+          ...(args.terminal ? { terminal: { columns: 80, rows: 24 } } : {}),
+          resources: { cpuTimeMs: (seconds as number) * 1000, memoryBytes: 256 * 1024 * 1024, maximumProcesses: 8, writeBytes: TREE_BYTES } }, context);
         const enforcement = result.metadata?.enforcement as Record<string, unknown> | undefined;
-        if (enforcement?.sandboxed !== true || enforcement?.filesystemPolicyApplied !== true || enforcement?.network !== "deny"
-          || enforcement?.processTreeEmptyBarrier !== true || typeof result.metadata?.exitCode !== "number") {
+        if (enforcement?.sandboxed !== true || enforcement?.filesystemPolicyApplied !== true || enforcement?.network !== permissions.network
+          || enforcement?.processTreeEmptyBarrier !== true || (typeof result.metadata?.exitCode !== "number" && typeof result.metadata?.exitSignal !== "string")) {
           throw new Error("Workspace execution lacks a confirmed native cleanup barrier; reconciliation required");
         }
         unlinkSync(marker);

@@ -29,16 +29,16 @@ it("projects host-bound output after the user message and never dispatches on re
   expect(request.mock.calls[0]).toEqual([{ path: "/api/desktop/conversations/first/execution", method: "GET" }]);
   expect(node.querySelector(".execution-panel")).toBeNull();
 });
-it("opens inline authorization for saved intent without dispatching or inferring scope", async () => {
+it("does not show authorization merely because a message was saved", async () => {
   const request = vi.fn(async (_input: { method: string }) => ({ status: 200, body: { runs: [], scopes: [], truncated: false,
     modelReady: true, definitions: [{ kind: "review", version: 1,
       authorizationForm: { version: 1, description: "Enter literal resources", fields: [{ path: ["resources"], label: "Resources", description: "One per line", type: "string-list", required: true, maximumItems: 8, maximumLength: 100 }] },
       authorizationReview: { allowedActions: ["resource.read"], deniedActions: [], resources: [] } }] } }));
   const node = await mount(request);
-  expect(node.querySelector('[aria-label="调查授权"]')).not.toBeNull();
-  expect(node.querySelector("textarea")?.value).toBe("");
+  expect(node.querySelector('[aria-label="任务授权"]')).toBeNull();
+  expect(node.querySelector("textarea")).toBeNull();
   expect(request.mock.calls.every(([input]) => input.method === "GET")).toBe(true);
-  expect(node.querySelectorAll(".authorization-form")).toHaveLength(1);
+  expect(node.querySelectorAll(".authorization-form")).toHaveLength(0);
 });
 it("retains stale observations on failure, recovers and replaces rather than duplicates output", async () => {
   vi.useFakeTimers(); let fail = false;

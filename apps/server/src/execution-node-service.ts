@@ -25,6 +25,7 @@ import {
 } from "@traceforge/execution-node";
 import type { ScenarioAuthorizationPort } from "@traceforge/scenario-sdk";
 import type Database from "better-sqlite3";
+import { WorkspaceNetworkHost } from "./workspace-network-host.js";
 import { SqliteProcessExecutionJournal } from "./execution-process-journal.js";
 import {
   SqliteProcessOperationJournal,
@@ -78,9 +79,10 @@ class PlatformSandboxLauncher implements ProcessLauncher {
     backendExecutable: string,
     backendMeasurement: string,
     linuxRuntime?: LinuxSandboxRuntime,
+    workspaceNetwork?: WorkspaceNetworkHost,
   ) {
     if (process.platform === "darwin") {
-      this.stdio = new MacosProcessLauncher({ path: backendExecutable, sha256: backendMeasurement });
+      this.stdio = new MacosProcessLauncher({ path: backendExecutable, sha256: backendMeasurement }, undefined, request => workspaceNetwork?.bind(request) ?? Promise.resolve(undefined));
       this.terminal = new UnavailableProcessLauncher();
       return;
     }
@@ -173,7 +175,7 @@ export async function startLocalExecutionNodeService(
     },
   });
   const launcher = processReady && backendExecutable
-    ? new PlatformSandboxLauncher(backendExecutable, backendMeasurement!, linuxRuntime ?? undefined)
+    ? new PlatformSandboxLauncher(backendExecutable, backendMeasurement!, linuxRuntime ?? undefined, new WorkspaceNetworkHost(sqlite, authorization, projectRoot))
     : new UnavailableProcessLauncher();
   const operationJournal = new SqliteProcessOperationJournal(sqlite);
   const node = new LocalExecutionNode(launcher, {
@@ -192,7 +194,7 @@ export async function startLocalExecutionNodeService(
         adoption: processReady,
         resourceLimits: processReady && preflight.resourcePolicy !== "sampled_terminate",
         resourcePolicy: preflight.resourcePolicy,
-        signals: processReady ? (platform === "darwin" ? ["terminate", "kill"] : ["interrupt", "terminate", "kill"]) : [],
+        signals: processReady ? ["interrupt", "terminate", "kill"] : [],
       },
     },
   });

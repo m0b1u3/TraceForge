@@ -14,3 +14,5 @@ export * from "./windows-helper-contract.js";
 export * from "./linux-helper-contract.js";
 export * from "./native-helper-release.js";
 export type { ProcessWatchdogOptions } from "./process-watchdog.js";
+export * from "./macos-execution-binding.js";
+export * from "./process-network-endpoint.js";

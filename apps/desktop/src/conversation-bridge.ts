@@ -1,4 +1,5 @@
 import { DesktopEvidenceReadSchema } from "@traceforge/shared/desktop-evidence";
+import { ApprovalPreferenceUpdateSchema } from "@traceforge/shared/desktop-approval-preference";
 import { RequestScheduler } from "./request-scheduler.js";
 import { DesktopReplyCommandSchema } from "@traceforge/shared/desktop-replies";
 import { ConfigurationSaveSchema, ConfigurationImportSchema } from "@traceforge/shared/desktop-configuration";
@@ -21,6 +22,15 @@ export function validateConversationRequest(value: unknown): ConversationBridgeR
       input.path.length > 256 || !["GET", "POST"].includes(String(input.method))) throw new Error("Invalid conversation request");
   const method = input.method as "GET" | "POST";
   const path = input.path;
+  if (/^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/replies\/[a-zA-Z0-9_-]{1,100}\/memory$/.test(path)) {
+    if (method !== "GET" || input.body !== undefined) throw new Error("Invalid memory read");
+    return { path, method };
+  }
+  if (path === "/api/desktop/approval-preference") {
+    if (method === "GET" && input.body === undefined) return { path, method };
+    if (method !== "POST" || typeof input.body !== "string" || Buffer.byteLength(input.body) > 1024) throw new Error("Invalid approval preference");
+    return { path, method, body: JSON.stringify(ApprovalPreferenceUpdateSchema.parse(JSON.parse(input.body))) };
+  }
   if (path === "/api/desktop/resources") {
     if (method === "GET" && input.body === undefined) return { path, method };
     if (method !== "POST" || typeof input.body !== "string" || Buffer.byteLength(input.body) > 96 * 1024) throw new Error("Invalid resource operation");
@@ -66,7 +76,7 @@ export function validateConversationRequest(value: unknown): ConversationBridgeR
     if(method!=="POST" || typeof input.body!=="string" || Buffer.byteLength(input.body)>40000)throw new Error("Invalid permission change");
     return {path,method,body:JSON.stringify(DesktopPermissionChangeSchema.parse(JSON.parse(input.body)))};
   }
-  const execution = /^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/execution(\/(authorize|cancel|pause|resume|approval|input))?$/.exec(path);
+  const execution = /^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/execution(\/(authorize|cancel|pause|resume|continue|approval|input))?$/.exec(path);
   if (execution) {
     if (method === "GET") {
       if (execution[1] || input.body !== undefined) throw new Error("Invalid execution read");

@@ -2,9 +2,10 @@ import type { CapabilityReceipt, JsonObject, ToolResult } from "./contracts.mjs"
 import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, requiredText, sha, shaBytes, succeeded } from "./validation.mjs";
 import { budgets, BudgetExhausted } from "./budgets.mjs";
 import {observationHighlights} from "./observations.mjs";
+import {experimentFields,changedDimensions} from "./request-fields.mjs";
 
 type Capability = (name: string, action: string, input: unknown, suffix: string) => Promise<CapabilityReceipt>;
-interface RequestSpec { url: string; method: "GET" | "HEAD"; sessionId: string | null }
+interface RequestSpec { url: string; method: string; sessionId: string | null; headers?:Record<string,string>;bodyBase64?:string }
 interface Observation { step: number; side: "baseline" | "candidate"; status: number; bytes: number;
   bodySha256: string; truncated: boolean; receiptRef: string; refs: string[] }
 interface ComparisonState { version: 1; fingerprint: string; pending: number | null; observations: Observation[]; stopped?: boolean }
@@ -20,10 +21,10 @@ export async function compareHttp(input: JsonObject, capability: Capability,
   const variants=input.candidates??[input.candidate];
   if(!Array.isArray(variants)||variants.length<1||variants.length>limits.variants)throw new Error(`Variant budget exceeded (1–${limits.variants})`);
   const baseline = parseRequest(input.baseline), candidates=variants.map(parseRequest), candidate=candidates[0]!;
-  for(const item of candidates)if((["url","method","sessionId"] as const).filter(key=>baseline[key]!==item[key]).length!==1)throw new Error("Comparison requires exactly one changed request dimension per variant");
-  const dimensions = (["url", "method", "sessionId"] as const).filter(key => baseline[key] !== candidate[key]);
+  for(const item of candidates)if(changedDimensions(baseline,item).length!==1)throw new Error("Comparison requires exactly one changed request dimension per variant");
+  const dimensions = changedDimensions(baseline,candidate);
   if (dimensions.length !== 1) throw new Error("Comparison requires exactly one changed request dimension");
-  if(candidates.some(item=>baseline[dimensions[0]!]===item[dimensions[0]!]))throw new Error("All variants must vary the same request dimension");
+  if(candidates.some(item=>changedDimensions(baseline,item)[0]!==dimensions[0]))throw new Error("All variants must vary the same request dimension");
   const rounds = boundedInteger(input.rounds ?? 2, 2, 3, "Comparison rounds");
   const maxRequests = boundedInteger(input.maxRequests ?? Math.min(rounds*2*candidates.length,limits.requestsPerCall), 1, limits.requestsPerCall, "Comparison request budget");
   const expectedSignals=input.expectedSignals??["statusChanged","bodyChanged","bytesChanged"],stopOn=input.stopOn??"never";
@@ -94,11 +95,11 @@ export async function compareHttp(input: JsonObject, capability: Capability,
 
 function parseRequest(value: unknown): RequestSpec {
   const request = plainObject(value, "Comparison request");
-  exact(request, ["url", "method", "sessionId"]);
-  const method = requiredText(request.method ?? "GET", "Comparison method").toUpperCase();
-  if (method !== "GET" && method !== "HEAD") throw new Error("Comparison supports GET and HEAD only");
+  exact(request, ["url", "method", "sessionId", "headers", "bodyBase64"]);
+  const fields=experimentFields(request),method=fields.method;
   return { url: canonicalHttpUrl(request.url, "Comparison URL"), method,
-    sessionId: request.sessionId == null ? null : requiredText(request.sessionId, "Comparison Session") };
+    sessionId: request.sessionId == null ? null : requiredText(request.sessionId, "Comparison Session"),
+    ...(Object.keys(fields.headers).length?{headers:fields.headers}:{}),...(fields.bodyBase64===undefined?{}:{bodyBase64:fields.bodyBase64}) };
 }
 
 function restore(value: unknown, fingerprint: string, maximum: number): ComparisonState {

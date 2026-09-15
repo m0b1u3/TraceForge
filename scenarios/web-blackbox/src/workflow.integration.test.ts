@@ -40,6 +40,7 @@ class Fixture {
         const index = Number(req.url.split("/").at(-1));
         res.end(`<a href="/chain/0">Start</a><a href="/chain/${index + 1}">Continue</a>`);
       }
+      else if (req.url === "/echo") res.end(`${req.method}:${body}:${req.headers["x-variant"]??""}`);
       else if (req.url === "/prepare") { this.prepared = true; res.end("prepared"); }
       else if (req.url === "/fail") { res.statusCode = 409; res.end("precondition rejected"); }
       else if (req.url === "/unstable") res.end(String(this.requests.length));
@@ -118,6 +119,47 @@ async function fixture() { const value = new Fixture(); fixtures.push(value); re
 afterEach(async () => { await Promise.all(fixtures.splice(0).map(item => item.close())); });
 
 describe("Web HTTP investigation workflow", () => {
+  it.each(["web.validation.compare","web.validation.execute"])("%s forwards header comparisons through the Session request path",async(tool)=>{
+    const f=await fixture();if(tool.endsWith("execute"))await f.register();
+    const baseline={url:`${f.base}/echo`,method:"PATCH",sessionId:"session-a",headers:{"x-variant":"first"}};
+    const candidate={...baseline,headers:{"x-variant":"second"}};
+    const input=tool.endsWith("execute")?{candidateId:"first",plan:{prepare:[],baseline,candidate,changedCondition:"header"}}:{experimentId:"headers",hypothesisId:"neutral",baseline,candidate};
+    const start=f.requests.length;expect((await f.call(tool,input)).assessment).toBe("repeatable_difference");
+    expect(f.requests.slice(start)).toHaveLength(4);expect(f.requests.slice(start).every(item=>item.method==="PATCH")).toBe(true);
+  });
+  it.each(["web.validation.compare","web.validation.execute"])("%s performs body matrices across restart without replay or lost payloads",async(tool)=>{
+    const f=await fixture();f.budgets={variants:2};if(tool.endsWith("execute"))await f.register();
+    const baseline={url:`${f.base}/echo`,method:"POST",headers:{"Content-Type":"application/json"},bodyBase64:Buffer.from('{"value":"first"}').toString("base64")};
+    const candidates=["second","third"].map(value=>({...baseline,bodyBase64:Buffer.from(JSON.stringify({value})).toString("base64")}));
+    const plan={prepare:[],baseline,candidates,rounds:2,changedCondition:"Change only the declared request body"};
+    const input=tool.endsWith("execute")?{candidateId:"first",plan}:{experimentId:"body-matrix",hypothesisId:"neutral-hypothesis",baseline,candidates,rounds:2};
+    const start=f.requests.length;
+    await f.call(tool,{...input,maxRequests:3});expect(f.requests.length-start).toBe(3);
+    await f.restart();
+    const result=await f.call(tool,input);expect(result.assessment).toBe("repeatable_difference");
+    expect(f.requests.length-start).toBe(8);
+    expect(f.requests.slice(start).map(item=>item.body)).toEqual(["first","second","first","second","first","third","first","third"].map(value=>JSON.stringify({value})));
+    await f.call(tool,input);expect(f.requests.length-start).toBe(8);
+    expect(JSON.stringify([...f.state.values()])).not.toContain(baseline.bodyBase64);
+  });
+
+  it.each(["web.validation.compare","web.validation.execute"])("%s preserves the unknown-result fence for a POST comparison",async(tool)=>{
+    const f=await fixture();if(tool.endsWith("execute"))await f.register();
+    const baseline={url:`${f.base}/echo`,method:"POST",bodyBase64:Buffer.from("first").toString("base64")};
+    const candidate={...baseline,bodyBase64:Buffer.from("second").toString("base64")};
+    const input=tool.endsWith("execute")?{candidateId:"first",plan:{prepare:[],baseline,candidate,changedCondition:"body"}}:{experimentId:"unknown-body",hypothesisId:"neutral",baseline,candidate};
+    f.failAfterRequest=true;await expect(f.call(tool,input)).rejects.toThrow();const count=f.requests.length;
+    f.failAfterRequest=false;await f.restart();expect((await f.call(tool,input)).status).toBe("interrupted");expect(f.requests.length).toBe(count);
+  });
+
+  it.each(["web.validation.compare","web.validation.execute"])("%s rejects mixed changes and credential headers before dispatch",async(tool)=>{
+    const f=await fixture();if(tool.endsWith("execute"))await f.register();const count=f.requests.length;
+    const baseline={url:`${f.base}/echo`,method:"POST",bodyBase64:Buffer.from("first").toString("base64")};
+    for(const candidate of [{...baseline,method:"PUT",bodyBase64:Buffer.from("second").toString("base64")},{...baseline,headers:{Authorization:"not-a-secret"}}]){
+      const input=tool.endsWith("execute")?{candidateId:"first",plan:{prepare:[],baseline,candidate,changedCondition:"invalid"}}:{experimentId:"invalid-body",hypothesisId:"neutral",baseline,candidate};
+      await expect(f.call(tool,input)).rejects.toThrow();expect(f.requests.length).toBe(count);
+    }
+  });
   it("prioritizes HTTP, Session and discovery observations with caller-selected literal hints",async()=>{
     const f=await fixture();
     for(const tool of ["web.http.request","web.session.request"]){

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { desktopJournalStorage } from "./desktop-journal-storage";
 import { CaretRight } from "@phosphor-icons/react";
 import type { DesktopConversations } from "./desktop-conversation-transport";
 import type { SavedMessage } from "./conversation-client";
@@ -17,27 +18,28 @@ interface Catalog {
 }
 
 /** Application projection only; no Scenario rules, provider calls or execution policy. */
-export function ExecutionPanel({ bridge, conversationId, messages, evidenceOnly = false, inline = false }: {
+export function ExecutionPanel({ bridge, conversationId, messages, evidenceOnly = false, inline = false, intent }: {
   bridge: DesktopConversations; conversationId: string; messages: SavedMessage[]; evidenceOnly?: boolean; inline?: boolean;
+  intent?: { scenarioKind: string; definitionVersion: number };
 }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null), [error, setError] = useState("");
   const [busy, setBusy] = useState(false), [scopeId, setScopeId] = useState("");
-  const [selection, setSelection] = useState(""), [scopeText, setScopeText] = useState("{}");
+  const [selection, setSelection] = useState(intent ? `${intent.scenarioKind}:${intent.definitionVersion}` : ""), [scopeText, setScopeText] = useState("{}");
   const [confirmedFor, setConfirmedFor] = useState<string | null>(null), [notice, setNotice] = useState("");
   const [journal] = useState(() => {
-    try { return { pending: readExecutionJournal(localStorage, conversationId), error: false }; }
+    try { return { pending: readExecutionJournal(desktopJournalStorage(), conversationId), error: false }; }
     catch { return { pending: null, error: true }; }
   });
   const [pending, setPending] = useState(journal.pending);
   const controller = useMemo(() => {
-    try { return new ExecutionController(bridge, localStorage, conversationId); } catch { return null; }
+    try { return new ExecutionController(bridge, desktopJournalStorage(), conversationId); } catch { return null; }
   }, [bridge, conversationId]);
   const path = `/api/desktop/conversations/${conversationId}/execution`;
   async function load() {
     const result = await bridge.request({ path, method: "GET" });
     const value = result.body as Catalog;
     if (result.status !== 200 || !value || !Array.isArray(value.runs) || !Array.isArray(value.scopes) || !Array.isArray(value.definitions)) throw new Error("任务状态读取失败，请重试。");
-    setCatalog(value);
+    setCatalog(intent ? {...value, definitions: value.definitions.filter(d=>d.kind===intent.scenarioKind&&d.version===intent.definitionVersion), scopes:value.scopes.filter(s=>s.scenarioKind===intent.scenarioKind)} : value);
   }
   useEffect(() => {
     let active = true;
@@ -46,7 +48,7 @@ export function ExecutionPanel({ bridge, conversationId, messages, evidenceOnly 
         const result = await bridge.request({ path, method: "GET" }), value = result.body as Catalog;
         if (!active) return;
         if (result.status !== 200 || !value || !Array.isArray(value.runs) || !Array.isArray(value.scopes) || !Array.isArray(value.definitions)) throw new Error();
-        setCatalog(value);
+        setCatalog(intent ? {...value, definitions: value.definitions.filter(d=>d.kind===intent.scenarioKind&&d.version===intent.definitionVersion), scopes:value.scopes.filter(s=>s.scenarioKind===intent.scenarioKind)} : value);
       } catch { if (active) setError("任务状态读取失败。上次状态保留，请重新读取。"); }
       if (active) timer = setTimeout(poll, 2000);
     };
@@ -84,7 +86,7 @@ export function ExecutionPanel({ bridge, conversationId, messages, evidenceOnly 
       {!catalog.definitions.length && <p>尚未安装可用场景，请先在宿主配置中安装并审核场景包。</p>}
       {!catalog.modelReady && <p className="inline-warning">请先在设置中保存可用模型连接。</p>}
       {activeScopes.length > 0 && <>
-      <p className="authorization-help">使用最后一条调查说明，可能产生模型费用和目标请求。</p>
+      <p className="authorization-help">使用本条任务说明，可能产生模型费用和目标请求。</p>
       <label>有效授权<select value={scopeId} onChange={event => { setScopeId(event.target.value); setConfirmed(false); }} disabled={busy || !!pending}>
         <option value="">选择本会话授权</option>{catalog.scopes.filter(item => item.status === "active" && Date.parse(item.expiresAt) > Date.now()).map(item => <option key={item.id} value={item.id}>{item.scenarioKind} · {item.id}</option>)}
       </select></label>
@@ -103,11 +105,13 @@ export function ExecutionPanel({ bridge, conversationId, messages, evidenceOnly 
         {definition?.authorizationForm !== undefined ? <AuthorizationForm
           key={JSON.stringify([selection, definition.authorizationForm, definition.authorizationReview])}
           contract={definition.authorizationForm} policy={definition.authorizationReview} disabled={busy || !!pending}
+          submitLabel={intent ? "授权并执行本条任务" : undefined} startsWork={!!intent}
           register={async (value, expiresAt) => {
             const commandId = crypto.randomUUID();
             const success = await write({ path: `${path}/authorize`, body: { commandId,
               scenarioKind: definition.kind, definitionVersion: definition.version, scope: value, expiresAt, confirmed: true } });
             if (success) setScopeId(commandId);
+            if (success && intent && message) return write({path, body:{commandId:crypto.randomUUID(),messageCommandId:message.commandId,scopeRef:commandId,scenarioKind:definition.kind,definitionVersion:definition.version}});
             return success;
           }} /> : definition && <details><summary>高级 JSON 授权</summary><p>此场景尚未提供可视化表单，请按场景文档填写。</p>
         <label>场景范围 JSON<textarea rows={6} value={scopeText} onChange={event => setScopeText(event.target.value)} maxLength={32768} /></label>

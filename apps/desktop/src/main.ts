@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
+import { DesktopJournalStore } from "./desktop-journal-store.js";
 import { RequestScheduler } from "./request-scheduler.js";
 import { requireDesktopRenderer } from "./renderer-availability.js";
 import { ModelAccounts, ModelAccountManifestSchema, defaultModelAccounts } from "@traceforge/server/model-settings";
@@ -94,6 +95,7 @@ async function start(): Promise<void> {
     }
   }
   ensureDesktopData(paths);
+  const desktopJournal = new DesktopJournalStore(join(paths.root, "desktop-journal.json"));
   const manifestPath = join(paths.configDirectory, "model-accounts.json");
   if (existsSync(manifestPath) && statSync(manifestPath).size > 65536) throw new Error("Account manifest exceeds limit");
   const manifestText = existsSync(manifestPath) ? readFileSync(manifestPath, "utf8") : undefined;
@@ -135,6 +137,15 @@ async function start(): Promise<void> {
     },
   });
   const window = mainWindow;
+  const journalHandler = (event: Electron.IpcMainEvent, input: unknown) => {
+    try {
+      if (event.sender.id !== window.webContents.id || event.senderFrame !== event.sender.mainFrame
+        || new URL(event.senderFrame?.url ?? "").origin !== localOrigin) throw new Error("Invalid journal sender");
+      event.returnValue = { ok: true, value: desktopJournal.request(input) };
+    } catch { event.returnValue = { ok: false }; }
+  };
+  ipcMain.on("desktop-journal:request", journalHandler);
+  window.on("closed", () => ipcMain.removeListener("desktop-journal:request", journalHandler));
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
     return { action: "deny" };

@@ -8,6 +8,8 @@ export const DesktopAuthorizeSchema = z.object({ commandId: id, scenarioKind: z.
   definitionVersion: z.number().int().positive(), scope: z.record(z.unknown()), expiresAt: z.string().datetime(), confirmed: z.literal(true) }).strict();
 export const DesktopCancelSchema = z.object({ commandId: id, runId: id, expectedRevision: z.number().int().nonnegative() }).strict();
 export const DesktopResumeSchema = DesktopCancelSchema.extend({confirmed:z.literal(true)}).strict();
+export const DesktopContinueSchema = DesktopResumeSchema.extend({ workId: opaqueId,
+  checkpointRef: z.string().regex(/^checkpoint:\/\/sha256-[a-f0-9]{64}\.json$/), reason: z.string().trim().min(1).max(1024) }).strict();
 export const DesktopPermissionChangeSchema = DesktopCancelSchema.extend({ expectedScopeRevision: z.number().int().positive(), scope: z.record(z.unknown()), reason: z.string().trim().min(1).max(2000), confirmed: z.literal(true),
   resolution: z.object({ workId: opaqueId, requestId: opaqueId, approved: z.boolean() }).strict().optional(),
 }).strict();
@@ -19,7 +21,7 @@ export const DesktopPendingApprovalSchema = z.object({ id: opaqueId, workId: opa
   risk: z.enum(["read_only", "bounded_write", "privileged", "destructive"]), rationale: z.string().max(16000), inputRef: z.string().max(4000), status: z.literal("pending") });
 export type DesktopPendingApproval = z.infer<typeof DesktopPendingApprovalSchema>;
 export const DesktopExecutionReceiptSchema = z.object({ version: z.literal(1), conversationId: id, commandId: id,
-  operation: z.enum(["dispatch", "authorize", "cancel", "pause", "resume", "approval", "input"]), resourceId: opaqueId }).strict();
+  operation: z.enum(["dispatch", "authorize", "cancel", "pause", "resume", "continue", "approval", "input"]), resourceId: opaqueId }).strict();
 export type DesktopExecutionReceipt = z.infer<typeof DesktopExecutionReceiptSchema>;
 export interface DesktopExecutionOperation { path: string; body: Record<string, unknown> }
 
@@ -29,7 +31,7 @@ export function parseDesktopExecutionOperation(value: unknown, conversationId: s
   const base = `/api/desktop/conversations/${conversationId}/execution`;
   const schema = input.path === base ? DesktopDispatchSchema : input.path === `${base}/authorize` ? DesktopAuthorizeSchema
     : input.path === `${base}/cancel` || input.path === `${base}/pause` ? DesktopCancelSchema : input.path === `${base}/resume` ? DesktopResumeSchema : input.path === `${base}/approval` ? DesktopApprovalSchema
-    : input.path === `${base}/input` ? DesktopInputSchema : undefined;
+    : input.path === `${base}/input` ? DesktopInputSchema : input.path === `${base}/continue` ? DesktopContinueSchema : undefined;
   if (!schema) throw new Error("Invalid execution path");
   const body = schema.parse(input.body);
   if (new TextEncoder().encode(JSON.stringify(body)).length > 40000

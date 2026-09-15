@@ -2,10 +2,32 @@
 import { afterEach, expect, it, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
+import { Simulate } from "react-dom/test-utils";
 import { ExecutionPanel } from "./execution-panel";
 import type { SavedMessage } from "./conversation-client";
 
 let dispose: (() => void) | undefined;
+it("one explicit review authorizes then dispatches the pinned message without widening scope",async()=>{
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
+  const writes:Array<{path:string;body:any}>=[];
+  const catalog={modelReady:true,definitions:[{kind:"review",version:1,authorizationForm:{version:1,description:"Review resources",fields:[{path:["resources"],label:"Resources",description:"Literal resources",type:"string-list",required:true,maximumItems:8,maximumLength:100}]},authorizationReview:{allowedActions:["resource.read"],deniedActions:[],resources:[]}}],scopes:[],runs:[],truncated:false};
+  const bridge={protocolVersion:1 as const,request:async(input:any)=>{
+    if(input.method==="GET")return {status:200,body:catalog};
+    const body=JSON.parse(input.body);writes.push({path:input.path,body});
+    const operation=input.path.endsWith("/authorize")?"authorize":"dispatch";
+    return {status:200,body:{runId:"run",desktopReceipt:{version:1,conversationId:"first",commandId:body.commandId,operation,resourceId:operation==="authorize"?body.commandId:"run"}}};
+  }};
+  const node=document.createElement("div");document.body.append(node);const root=createRoot(node);dispose=()=>root.unmount();
+  await act(async()=>root.render(React.createElement(ExecutionPanel,{bridge,conversationId:"first",messages:[{commandId:"original",text:"Original intent"} as SavedMessage],intent:{scenarioKind:"review",definitionVersion:1},inline:true})));
+  await act(async()=>{const field=node.querySelector("textarea")!;field.value="allowed-resource";Simulate.change(field);});
+  const button=(text:string)=>[...node.querySelectorAll("button")].find(b=>b.textContent===text)!;
+  await act(async()=>button("核对授权").click());expect(writes).toHaveLength(0);
+  expect(node.textContent).toContain("确认后执行本条任务");expect(node.textContent).not.toContain("不会自动启动");
+  await act(async()=>node.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+  await act(async()=>button("授权并执行本条任务").click());
+  expect(writes).toHaveLength(2);expect(writes[0].body.scope).toEqual({resources:["allowed-resource"]});
+  expect(writes[1].body).toMatchObject({messageCommandId:"original",scopeRef:writes[0].body.commandId,scenarioKind:"review",definitionVersion:1});
+});
 afterEach(() => { act(() => dispose?.()); vi.useRealTimers(); document.body.replaceChildren(); localStorage.clear(); });
 async function render(evidenceOnly = false) {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

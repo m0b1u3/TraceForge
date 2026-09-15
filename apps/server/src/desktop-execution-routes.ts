@@ -2,11 +2,14 @@ import type { FastifyInstance } from "fastify";
 import type Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { DesktopDispatchSchema, DesktopAuthorizeSchema, DesktopCancelSchema, DesktopResumeSchema, DesktopApprovalSchema, DesktopInputSchema, DesktopApprovalReadSchema, type DesktopExecutionReceipt } from "@traceforge/shared/desktop-execution";
+import { DesktopDispatchSchema, DesktopAuthorizeSchema, DesktopCancelSchema, DesktopResumeSchema, DesktopContinueSchema, DesktopApprovalSchema, DesktopInputSchema, DesktopApprovalReadSchema, type DesktopExecutionReceipt } from "@traceforge/shared/desktop-execution";
 import { SqliteWorkerCheckpointStore } from "./worker-checkpoint-store.js";
+import { continuationBudgetExhausted, type ScenarioWorkContinuationControl } from "./scenario-work-continuation.js";
+import type { ConversationWorkspaces } from "./conversation-workspaces.js";
 
 export interface DesktopExecutionPort {
   ready(): boolean;
+  continueWork?: ScenarioWorkContinuationControl["continue"];
   request(path: string, body?: Record<string, unknown>): Promise<{ status: number; body: any }>;
 }
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
@@ -16,7 +19,7 @@ const receipt = (conversationId: string, commandId: string, operation: DesktopEx
 
 /** Application binding only. Existing Scenario APIs own authorization, Run
  * lifecycle, planning and execution. Saved chat never grants permissions. */
-export function registerDesktopExecutionRoutes(app: FastifyInstance, db: Database.Database, host: DesktopExecutionPort) {
+export function registerDesktopExecutionRoutes(app: FastifyInstance, db: Database.Database, host: DesktopExecutionPort, workspaces?: ConversationWorkspaces) {
   db.exec(`CREATE TABLE IF NOT EXISTS desktop_execution_commands (
     conversation_id TEXT NOT NULL, command_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
     run_id TEXT NOT NULL UNIQUE, message_command_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
@@ -25,6 +28,24 @@ export function registerDesktopExecutionRoutes(app: FastifyInstance, db: Databas
     CREATE TABLE IF NOT EXISTS desktop_authorization_commands(conversation_id TEXT NOT NULL, command_id TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(conversation_id,command_id));`);
   const owner = (value: string) => db.prepare("SELECT case_id AS caseId FROM desktop_conversations WHERE id=?").get(value) as { caseId: string } | undefined;
   const path = "/api/desktop/conversations/:conversationId/execution";
+  app.post(`${path}/continue`, async (request, reply) => {
+    const params = id.safeParse((request.params as any).conversationId), body = DesktopContinueSchema.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_continuation" });
+    const conversation = owner(params.data);
+    const state = conversation && await host.request(`/api/scenarios/runs/${body.data.runId}`);
+    if (!state || state.status !== 200 || state.body?.id !== body.data.runId || state.body?.caseId !== conversation!.caseId)
+      return reply.code(404).send({ error: "run_not_found" });
+    if (!host.continueWork) return reply.code(409).send({ error: "continuation_unavailable" });
+    try {
+      const { confirmed: _confirmed, ...command } = body.data;
+      const result = await host.continueWork({ ...command, actor: "desktop-operator" });
+      if (result.audit.outcome !== "queued") return reply.code(result.audit.outcome === "denied" ? 403 : 409).send({ error: "continuation_rejected" });
+      if (result.audit.runId !== command.runId || result.audit.workId !== command.workId || result.audit.commandId !== command.commandId
+        || result.audit.checkpointRef !== command.checkpointRef || result.audit.expectedRevision !== command.expectedRevision)
+        return reply.code(503).send({ error: "continuation_receipt_unavailable" });
+      return { desktopReceipt: receipt(params.data, command.commandId, "continue", command.workId) };
+    } catch { return reply.code(503).send({ error: "continuation_result_unavailable" }); }
+  });
   const readApprovalInput = async (state: any, workId: string, approvalId: string, includeHistory = false) => {
     const work = state.workItems.find((item: any) => item.id === workId);
     const approval = work?.pendingApproval?.id === approvalId ? work.pendingApproval
@@ -106,7 +127,19 @@ export function registerDesktopExecutionRoutes(app: FastifyInstance, db: Databas
     ]);
     if ([definitions, scopes, runs].some(value => value.status !== 200)) return reply.code(503).send({ error: "execution_catalog_unavailable" });
     const states = await Promise.all(runs.body.slice(0, 20).map((run: { runId: string }) => host.request(`/api/scenarios/runs/${encodeURIComponent(run.runId)}`)));
-    if (states.some(value => value.status !== 200)) return reply.code(503).send({ error: "execution_state_unavailable" });
+    if (states.some(value => value.status !== 200 || value.body?.caseId !== conversation.caseId)) return reply.code(503).send({ error: "execution_state_unavailable" });
+    const checkpoints = new SqliteWorkerCheckpointStore(db);
+    for (const value of states) for (const work of value.body.workItems) {
+      if (!["blocked", "failed"].includes(work.status)) continue;
+      work.continuation = { state: "unavailable", checkpointRef: null };
+      if (!host.continueWork || !work.latestCheckpoint?.payloadRef) continue;
+      try {
+        const checkpoint = await checkpoints.load(work.latestCheckpoint.payloadRef);
+        if (checkpoint.caseId !== conversation.caseId || checkpoint.runId !== value.body.id || checkpoint.workId !== work.id || checkpoint.workKey !== work.idempotencyKey) continue;
+        work.continuation = { state: continuationBudgetExhausted(checkpoint, new Date().toISOString()) ? "budget_exhausted" : "review",
+          checkpointRef: work.latestCheckpoint.payloadRef };
+      } catch { /* Missing/corrupt history must not offer an unchecked resume. */ }
+    }
     const binding = db.prepare("SELECT message_command_id AS messageCommandId FROM desktop_execution_commands WHERE conversation_id=? AND run_id=? AND status != 'rejected'");
     return { modelReady: host.ready(), definitions: definitions.body, scopes: scopes.body,
       runs: states.filter(value => value.status === 200).map(value => ({ ...value.body, runId: value.body.id,
@@ -138,8 +171,11 @@ export function registerDesktopExecutionRoutes(app: FastifyInstance, db: Databas
       const prior = db.prepare("SELECT run_id FROM desktop_execution_commands WHERE conversation_id=? AND message_command_id=? AND status != 'rejected'")
         .get(conversationId.data, body.messageCommandId);
       if (prior) return reply.code(409).send({ error: "message_already_bound" });
-      db.prepare("INSERT INTO desktop_execution_commands(conversation_id,command_id,fingerprint,run_id,message_command_id) VALUES (?,?,?,?,?)")
-        .run(conversationId.data, body.commandId, fingerprint, runId, body.messageCommandId);
+      db.transaction(() => {
+        db.prepare("INSERT INTO desktop_execution_commands(conversation_id,command_id,fingerprint,run_id,message_command_id) VALUES (?,?,?,?,?)")
+          .run(conversationId.data, body.commandId, fingerprint, runId, body.messageCommandId);
+        workspaces?.bind(conversationId.data,conversation.caseId,runId);
+      })();
     }
     const result = await host.request("/api/scenarios/runs", { commandId: body.commandId, runId, caseId: conversation.caseId,
       goal: message.text, scopeRef: body.scopeRef, scenarioKind: body.scenarioKind, definitionVersion: body.definitionVersion });

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { workspaceExecutionSeconds } from "@traceforge/worker-runtime";
 import type Database from "better-sqlite3";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
@@ -374,9 +375,16 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       const body = workerActionBase.parse(request.body);
       requireWorkerLease(runId, workId, body.workerId, body.leaseId);
       authorizationService.requireRun(requireRun(runId));
+      const state = requireRun(runId);
+      let duration = controlPlaneOptions.leaseDurationMs;
+      try {
+        const grant = authorizationService.requireAction(state.scopeRef, state.caseId, "workspace.execute");
+        const seconds = workspaceExecutionSeconds(grant.scopePayload);
+        if (seconds > 60) duration = Math.max(duration, seconds * 1000 + 30_000);
+      } catch { /* No optional workspace execution grant: preserve the original lease policy. */ }
       return execute(runId, body.commandId, body.expectedRevision, {
         type: "renew_lease", workId, leaseId: body.leaseId,
-        leaseExpiresAt: new Date(Date.parse(now()) + controlPlaneOptions.leaseDurationMs).toISOString(), at: now(),
+        leaseExpiresAt: new Date(Date.parse(now()) + duration).toISOString(), at: now(),
       });
     } catch (error) { return sendError(reply, error); }
   });

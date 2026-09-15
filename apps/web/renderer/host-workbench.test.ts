@@ -55,6 +55,7 @@ it("starts from the composer and clears confirmed text even when history refresh
   await act(async()=>root.render(React.createElement(HostWorkbench,{bridge:{protocolVersion:1,request:async({path,method,body})=>{
     if(method==="POST"){
       posts.push(path);const data=JSON.parse(body!);
+      if(path.includes("/replies/"))return {status:503,body:{error:"streaming_model_unavailable"}};
       if(path.endsWith("messages")){saved={conversationId:c.id,commandId:data.commandId,sequence:1,text:data.text,createdAt:c.createdAt,role:"user",persistence:"saved",delivery:"not_dispatched",reason:"conversation_dispatch_not_connected"};return {status:200,body:saved};}
       return {status:200,body:c};
     }
@@ -62,13 +63,13 @@ it("starts from the composer and clears confirmed text even when history refresh
     return {status:200,body:path.endsWith("conversations")?{conversations:[c]}:path.includes("messages?")?{conversationId:c.id,messages:[saved],hasMore:false,nextAfter:1}:path.endsWith("execution")?{runs:[],truncated:false}:c};
   }}})));
   const field=node.querySelector("textarea")!;expect(field.disabled).toBe(false);
-  await act(async()=>{const mode=node.querySelector('select[aria-label="消息用途"]') as HTMLSelectElement;mode.value="new";Simulate.change(mode);});
+  expect(node.querySelector('select[aria-label="消息用途"]')).toBeNull();
   await act(async()=>{field.value="First goal";Simulate.change(field);});
-  await act(async()=>node.querySelector<HTMLButtonElement>('[aria-label="保存到宿主"]')!.click());
-  expect(posts).toEqual(["/api/desktop/conversations","/api/desktop/conversations/first/messages"]);
+  await act(async()=>node.querySelector<HTMLButtonElement>('[aria-label="发送给助手"]')!.click());
+  expect(posts).toEqual(["/api/desktop/conversations","/api/desktop/conversations/first/messages",`/api/desktop/conversations/first/replies/${saved.commandId}`]);
   expect(field.value).toBe("");expect(node.textContent).toContain("视图刷新失败");
   await act(async()=>[...node.querySelectorAll("button")].find(b=>b.textContent==="重新连接并读取")!.click());
-  expect(node.textContent).toContain("First goal");expect(posts).toHaveLength(2);
+  expect(node.textContent).toContain("First goal");expect(posts).toHaveLength(3);
 });
 
 it("preserves separate drafts while switching conversations and supports keyboard history search",async()=>{
@@ -84,5 +85,5 @@ it("preserves separate drafts while switching conversations and supports keyboar
   expect(node.querySelector("textarea")!.value).toBe("");await edit("Unsent first");
   await act(async()=>node.querySelector<HTMLButtonElement>('[aria-label="新建对话"]')!.click());
   expect(node.querySelector("textarea")!.value).toBe("Unsent new");
-  expect(sessionStorage.getItem("traceforge.desktop.session-drafts.v1")).toContain("Unsent first");
+  expect(localStorage.getItem("traceforge.desktop.session-drafts.v1")).toContain("Unsent first");
 });

@@ -45,7 +45,7 @@ async function setup(autoScheduleIntervalMs?: number) {
   return app;
 }
 
-async function authorize(app: Awaited<ReturnType<typeof setup>>) {
+async function authorize(app: Awaited<ReturnType<typeof setup>>, routineApprovalRequired?: unknown) {
   return app.inject({
     method: "POST",
     url: "/api/scenarios/authorizations",
@@ -54,6 +54,7 @@ async function authorize(app: Awaited<ReturnType<typeof setup>>) {
       caseId: "case_1",
       scenarioKind: "web_blackbox",
       scope: {
+        ...(routineApprovalRequired === undefined ? {} : { routineApprovalRequired }),
         targets: ["https://authorized.example"],
         allowedActions: [
           "scope.read",
@@ -76,6 +77,16 @@ afterEach(() => {
 });
 
 describe("scenario control-plane routes", () => {
+  it("persists explicit inquiry preference in the authorization and rejects malformed consent", async () => {
+    const app = await setup();
+    const invalid = await authorize(app, "false"); expect(invalid.statusCode).toBe(400);
+    const created = await authorize(app, false); expect(created.statusCode).toBe(201);
+    expect(created.json().scope.routineApprovalRequired).toBe(false);
+    const list = await app.inject({ method: "GET", url: "/api/scenarios/authorizations?caseId=case_1" });
+    expect(list.json()[0].scope.routineApprovalRequired).toBe(false);
+    expect(list.json()[0].policyBinding.status).toBe("available");
+    await app.close();
+  });
   it("starts with an empty definition catalog when no scenario is installed", async () => {
     const app = Fastify();
     const db = createDb(":memory:");
@@ -176,7 +187,7 @@ describe("scenario control-plane routes", () => {
     expect(started.statusCode).toBe(201);
     expect(started.json().state.revision).toBe(1);
     expect(started.json().state.scenarioPackage).toEqual({
-      id: "traceforge.web-blackbox", version: "0.5.6", schemaRevision: 1,
+      id: "traceforge.web-blackbox", version: "0.5.13", schemaRevision: 1,
     });
     const replayed = await app.inject({ method: "POST", url: "/api/scenarios/runs", payload: startPayload });
     expect(replayed.statusCode).toBe(200);
@@ -184,7 +195,7 @@ describe("scenario control-plane routes", () => {
 
     const bindingList = await app.inject({ method: "GET", url: "/api/scenarios/runs?caseId=case_1" });
     expect(bindingList.json()[0]).toMatchObject({
-      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.5.6", schemaRevision: 1 },
+      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.5.13", schemaRevision: 1 },
       packageAvailability: "available",
       packageDiagnostic: null,
     });

@@ -71,6 +71,30 @@ const policy: ToolGatewayPolicy = {
 };
 
 describe("PolicyExecutionToolGateway", () => {
+  it.each([
+    ["bounded_write", false, "succeeded"], ["bounded_write", true, "approval_required"],
+    ["privileged", false, "approval_required"], ["destructive", false, "approval_required"],
+  ] as const)("applies inquiry policy to %s with routine inquiries %s", async (risk, ask, status) => {
+    let effects = 0;
+    const gateway = new PolicyExecutionToolGateway(createExecutionToolRegistry([{
+      name: "operation", source: "test", version: "1", priority: 1, description: "Operation", inputSchema: {},
+      providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk, timeoutMs: 1000,
+      async execute() { effects++; return { status: "succeeded", summary: "done", raw: "", refs: [], retryable: false }; },
+    }]), { async authorize() { return { decision: "pending" }; } }, new Receipts(), {
+      ...policy, allowedRisks: [risk], requiresApproval: () => ask, approvalPolicyRef: () => "host-policy:2",
+    });
+    const input = assignment(); input.assignment.work.requiredCapabilities = ["evidence.read"];
+    const request = { ...input, invocation: { id: "call", tool: "operation", input: {}, rationale: "Operation" }, idempotencyKey: "call" };
+    const result = await gateway.execute(request);
+    expect(result.status).toBe(status);
+    if (status === "succeeded") expect(result.metadata?.approvalPolicyRef).toBe("host-policy:2");
+    expect(effects).toBe(status === "succeeded" ? 1 : 0);
+    if (status === "approval_required") {
+      input.assignment.work.grantedActionKeys.push("call");
+      expect((await gateway.execute(request)).status).toBe("succeeded");
+      expect(effects).toBe(1);
+    }
+  });
   it.each(["approval","dispatch"])("rechecks host authorization after %s waits without executing the tool",async phase=>{
     let allowed=true,effects=0;const receipts=new Receipts(),bindings=new Bindings();
     if(phase==="dispatch")bindings.beginExecution=async()=>{allowed=false;};

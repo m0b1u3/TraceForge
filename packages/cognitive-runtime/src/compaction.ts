@@ -2,10 +2,11 @@ import { createHash } from "node:crypto";
 import { canonicalJson } from "@traceforge/orchestration-core";
 
 export interface ContextTextEntry { id: string; text: string }
+export interface CompactionCallContext { id: string; runId: string; caseId: string; consumer: string; workId?: string }
 export interface ContextCompactor {
   /** Version is part of immutable cache identity. A changed implementation needs a new version. */
   version: string;
-  compact(entries: readonly ContextTextEntry[], maximumCharacters: number, signal: AbortSignal): Promise<ContextTextEntry[]>;
+  compact(entries: readonly ContextTextEntry[], maximumCharacters: number, signal: AbortSignal, context?: CompactionCallContext): Promise<ContextTextEntry[]>;
 }
 export interface ContextCompactionRecord {
   id: string; caseId: string; runId: string; consumer: string; inputFingerprint: string; protectedFingerprint: string;
@@ -20,7 +21,7 @@ export interface ContextCompactionStore {
 export interface ContextCompactionPolicy {
   readonly maximumTextCharacters?: number;
   readonly preservesRecall?: boolean;
-  prepare(input: { caseId: string; runId: string; consumer: string; context: Record<string, unknown>; sourceFingerprint: string }): Promise<{
+  prepare(input: { caseId: string; runId: string; consumer: string; context: Record<string, unknown>; sourceFingerprint: string; signal?: AbortSignal }): Promise<{
     context: Record<string, unknown>; manifest: Record<string, unknown>;
   }>;
 }
@@ -48,7 +49,8 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
       || !compactor.version.trim() || compactor.version.length > 128) throw new Error("Invalid compaction configuration");
   }
 
-  async prepare(input: { caseId: string; runId: string; consumer: string; context: Record<string, unknown>; sourceFingerprint: string }): ReturnType<ContextCompactionPolicy["prepare"]> {
+  async prepare(input: Parameters<ContextCompactionPolicy["prepare"]>[0]): ReturnType<ContextCompactionPolicy["prepare"]> {
+    input.signal?.throwIfAborted();
     const original = structuredClone(input.context), entries: ContextTextEntry[] = [];
     if (Buffer.byteLength(JSON.stringify(original)) > 1048576) throw new Error("Compaction source exceeds hard input bound");
     // Only these narrative fields can be transformed. Goal, identifiers, statuses, references,
@@ -103,13 +105,22 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
         sourceFingerprint: input.sourceFingerprint, compactorVersion: this.compactor.version, sourceIds, status: "prepared", entries: null, error: null };
       this.store.prepare(record);
       const controller = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
+      const abort = () => controller.abort(input.signal?.reason);
+      input.signal?.addEventListener("abort", abort, { once: true });
+      if (input.signal?.aborted) abort();
+      let rejectAbort!: () => void;
       try {
+        const cancelled = new Promise<never>((_, reject) => { rejectAbort = () => reject(controller.signal.reason); controller.signal.addEventListener("abort", rejectAbort, { once: true }); if (controller.signal.aborted) rejectAbort(); });
         const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error("Compaction deadline exceeded")); }, this.limits.timeoutMs); });
-        const result = await Promise.race([Promise.resolve().then(() => this.compactor.compact(structuredClone(entries), remainingTextCharacters, controller.signal)), timeout]);
+        const workId = (original.work as { id?: unknown } | undefined)?.id;
+        const result = await Promise.race([Promise.resolve().then(() => this.compactor.compact(structuredClone(entries), remainingTextCharacters, controller.signal,
+          { id, runId: input.runId, caseId: input.caseId, consumer: input.consumer, ...(typeof workId === "string" ? { workId } : {}) })), timeout, cancelled]);
+        controller.signal.throwIfAborted();
         validateEntries(result, sourceIds, remainingTextCharacters);
         this.store.finish(id, result, null);
       } catch { this.store.finish(id, null, "Compaction failed, timed out, or returned incompatible text references"); }
-      finally { if (timer) clearTimeout(timer); controller.abort(); }
+      finally { if (timer) clearTimeout(timer); controller.signal.removeEventListener("abort", rejectAbort); input.signal?.removeEventListener("abort", abort); controller.abort(); }
+      input.signal?.throwIfAborted();
       record = this.store.get(id)!;
     }
     if (record.caseId !== input.caseId || record.runId !== input.runId || record.consumer !== input.consumer || record.inputFingerprint !== inputFingerprint

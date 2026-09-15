@@ -5,6 +5,8 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
+    "./model-context": "./src/model-context.ts",
+    "./desktop-approval-preference": "./src/desktop-approval-preference.ts",
     ".": "./src/index.ts",
     "./model-protocol": "./src/model-protocol.ts",
     "./desktop-evidence": "./src/desktop-evidence.ts",

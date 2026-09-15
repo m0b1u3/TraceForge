@@ -1,6 +1,8 @@
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import Fastify from "fastify";
+import { createConversationTaskPort } from "./conversation-task-port.js";
+import { ConversationWorkspaces } from "./conversation-workspaces.js";
 import websocket from "@fastify/websocket";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
@@ -147,8 +149,10 @@ export async function buildServer(
   };
   const executionNodeService = await startLocalExecutionNodeService(projectRoot, authorizationProxy, sqlite);
 
+  let continueWork: import("./scenario-work-continuation.js").ScenarioWorkContinuationControl["continue"] | undefined;
   registerSecurityAgentFoundation(app, sqlite, provider, projectRoot, () => llmService.hasProvider(), {
     ...effectiveHostOptions,
+    onOperatorContinuationReady: port => { continueWork = port; },
     scenarioPackageTrust: scenarioHost.trust,
     loadScenarioPackageDescriptors: (scenarioHost.trust.installations?.length ?? 0) > 0,
     scenarioProcessLaunches: scenarioHost.launches,
@@ -161,17 +165,22 @@ export async function buildServer(
     toolProviderTrustRoots: loadToolProviderTrustRoots(resolve(projectRoot, "config/tool-provider-trust-roots.json")),
   });
   // Register application APIs after the host transport fence. No unguarded legacy API back door.
-  registerRoutes(app, db, bus, provider, llmService, projectRoot, modelAccounts);
   const desktopChannel = foundationHostControl(app).management();
+  const tasks = createConversationTaskPort(sqlite, async (url, body) => {
+    const response = await app.inject({ url, method: body === undefined ? "GET" : "POST", headers: desktopChannel.headers(), ...(body === undefined ? {} : { payload: body }) });
+    return { status: response.statusCode, body: response.json() };
+  });
+  registerRoutes(app, db, bus, provider, llmService, projectRoot, modelAccounts, tasks);
   registerDesktopEvidenceRoutes(app, sqlite, new SqliteDesktopBrowserEvidenceReader(sqlite));
   registerDesktopExecutionRoutes(app, sqlite, {
     ready: () => llmService.hasProvider(),
+    continueWork,
     request: async (url, body) => {
       const response = await app.inject({ url, method: body === undefined ? "GET" : "POST",
         headers: desktopChannel.headers(), ...(body === undefined ? {} : { payload: body }) });
       return { status: response.statusCode, body: response.json() };
     },
-  });
+  }, new ConversationWorkspaces(sqlite,projectRoot));
 
   app.get("/api/health", async () => {
     const executionNode = await executionNodeService.health();

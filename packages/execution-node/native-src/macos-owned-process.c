@@ -16,6 +16,9 @@
 #include <inttypes.h>
 #include <string.h>
 #include <time.h>
+#include <util.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
 
 static volatile sig_atomic_t stopping = 0;
 static void stop(int signal_number) { (void)signal_number; stopping = 1; }
@@ -24,26 +27,43 @@ static uint64_t clock_ms(void) {
   return (uint64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 int main(int argc, char **argv) {
-  if (argc < 3 || strlen(argv[1]) > 65536 || argv[2][0] != '/') return 2;
+  if (argc < 3 || strlen(argv[1]) > 65536 || (argv[2][0] != '/' && strcmp(argv[2], "--pty"))) return 2;
   if (!strstr(argv[1], "(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid))")) return 3;
   FILE *events = fdopen(3, "w"); if (!events) return 4;
   setvbuf(events, NULL, _IONBF, 0);
   signal(SIGPIPE, SIG_IGN); signal(SIGTERM, stop); signal(SIGINT, stop);
   int gate[2]; if (pipe(gate)) return 5;
+  int master = -1, slave = -1, command = 2;
+  if (!strcmp(argv[2], "--pty")) {
+    unsigned cols = 0, rows = 0; char extra;
+    if (argc < 5 || argv[4][0] != '/' || sscanf(argv[3], "%u,%u%c", &cols, &rows, &extra) != 2 || !cols || cols > 500 || !rows || rows > 500) return 10;
+    struct winsize size = { .ws_row = rows, .ws_col = cols };
+    if (openpty(&master, &slave, NULL, NULL, &size)) return 11;
+    command = 4;
+  }
   pid_t host = getppid(), root = fork();
   if (root < 0) return 6;
   if (root == 0) {
     close(gate[0]); close(3); close(4);
     signal(SIGTERM, SIG_DFL); signal(SIGINT, SIG_DFL); signal(SIGPIPE, SIG_DFL);
     if (setsid() < 0) _exit(101);
+    if (master >= 0) {
+      close(master);
+      if (ioctl(slave, TIOCSCTTY, 0) < 0 || dup2(slave, 0) < 0 || dup2(slave, 1) < 0 || dup2(slave, 2) < 0) _exit(105);
+      if (slave > 2) close(slave);
+    }
     if (write(gate[1], "R", 1) != 1) _exit(102);
     close(gate[1]);
     char **args = calloc((size_t)argc + 2, sizeof(char *)); if (!args) _exit(103);
     args[0] = "/usr/bin/sandbox-exec"; args[1] = "-p"; args[2] = argv[1];
-    for (int i = 2; i < argc; ++i) args[i + 1] = argv[i];
+    for (int i = command; i < argc; ++i) args[i - command + 3] = argv[i];
     execv(args[0], args); _exit(104);
   }
   close(gate[1]);
+  if (slave >= 0) close(slave);
+  if (master >= 0) {
+    fcntl(master, F_SETFL, O_NONBLOCK); fcntl(0, F_SETFL, O_NONBLOCK); fcntl(1, F_SETFL, O_NONBLOCK);
+  }
   char ready = 0; struct pollfd startup = { gate[0], POLLIN, 0 };
   if (poll(&startup, 1, 2000) != 1 || read(gate[0], &ready, 1) != 1 || ready != 'R') {
     kill(root, SIGKILL); waitpid(root, NULL, 0); close(gate[0]); return 7;
@@ -51,10 +71,44 @@ int main(int argc, char **argv) {
   close(gate[0]);
   fprintf(events, "{\"type\":\"ready\",\"pid\":%d}\n", root);
   uint64_t cleanup_at = 0; int failed = 0;
+  char controls[128]; size_t control_size = 0;
+  unsigned char to_pty[65536], to_host[65536]; size_t input_size = 0, output_size = 0;
+  int input_closed = 0;
   for (;;) {
+    int pty_read = 0;
     if (getppid() != host) stopping = 1;
     struct pollfd control = { 4, POLLIN | POLLHUP, 0 };
-    if (poll(&control, 1, 0) > 0 && control.revents) stopping = 1;
+    if (poll(&control, 1, 0) > 0 && control.revents) {
+      ssize_t n = read(4, controls + control_size, sizeof(controls) - control_size);
+      if (n <= 0) stopping = 1;
+      else {
+        control_size += (size_t)n;
+        char *newline;
+        while ((newline = memchr(controls, '\n', control_size))) {
+          size_t length = (size_t)(newline - controls); *newline = 0;
+          unsigned cols, rows; char extra;
+          if (!strcmp(controls, "I")) kill(-root, SIGINT);
+          else if (master >= 0 && sscanf(controls, "R %u %u%c", &cols, &rows, &extra) == 2 && cols && cols <= 500 && rows && rows <= 500) {
+            struct winsize size = { .ws_row = rows, .ws_col = cols };
+            if (ioctl(master, TIOCSWINSZ, &size)) stopping = 1;
+          } else stopping = 1;
+          memmove(controls, newline + 1, control_size - length - 1); control_size -= length + 1;
+        }
+        if (control_size == sizeof(controls)) stopping = 1;
+      }
+    }
+    if (master >= 0) {
+      ssize_t n;
+      if (!input_closed && input_size < sizeof(to_pty)) {
+        n = read(0, to_pty + input_size, sizeof(to_pty) - input_size);
+        if (n > 0) input_size += (size_t)n;
+        else if (!n) { input_closed = 1; to_pty[input_size++] = 4; }
+        else if (errno != EAGAIN && errno != EINTR) stopping = 1;
+      }
+      if (input_size && (n = write(master, to_pty, input_size)) > 0) { memmove(to_pty, to_pty + n, input_size - (size_t)n); input_size -= (size_t)n; }
+      if (output_size < sizeof(to_host) && (n = read(master, to_host + output_size, sizeof(to_host) - output_size)) > 0) { output_size += (size_t)n; pty_read = 1; }
+      if (output_size && (n = write(1, to_host, output_size)) > 0) { memmove(to_host, to_host + n, output_size - (size_t)n); output_size -= (size_t)n; }
+    }
     siginfo_t info; memset(&info, 0, sizeof(info));
     if (waitid(P_PID, (id_t)root, &info, WEXITED | WNOHANG | WNOWAIT) < 0) { stopping = 1; failed = 1; }
     if (info.si_pid == root) stopping = 1;
@@ -104,6 +158,7 @@ int main(int argc, char **argv) {
     if (!stopping) fprintf(events, "],\"valid\":%s}\n", failed ? "false" : "true");
     if (ferror(events)) { stopping = 1; failed = 1; }
     if (stopping && !living && info.si_pid == root && scan_valid) {
+      if ((output_size || pty_read) && !failed && clock_ms() - cleanup_at < 2000) { usleep(20000); continue; }
       int status = 0; if (waitpid(root, &status, 0) != root) return 8;
       fprintf(events, "{\"type\":\"terminal\",\"exitCode\":%d,\"signal\":%d}\n",
         WIFEXITED(status) ? WEXITSTATUS(status) : -1, WIFSIGNALED(status) ? WTERMSIG(status) : 0);

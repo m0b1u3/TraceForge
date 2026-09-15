@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import { proxyFetch } from "@traceforge/shared/proxy";
 import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall, StreamToolsHandlers, UsageSnapshot } from "./provider.js";
 import { withRetry } from "./retry.js";
+import { normalizeToolHistory } from "./tool-history.js";
+import { modelStreamEvents } from "./stream-events.js";
 
 import type { ModelAdapterOptions } from "./adapter-options.js";
 /** Compatibility alias for existing adapter consumers. */
@@ -26,8 +28,7 @@ function extractText(choice: { message?: { content?: string | null; reasoning_co
   const msg = choice?.message;
   const content = msg?.content?.trim();
   if (content) return content;
-  const reasoning = (msg as { reasoning_content?: string | null } | undefined)?.reasoning_content?.trim();
-  return reasoning || undefined;
+  return undefined;
 }
 
 function extractReasoning(choice: { message?: { content?: string | null; reasoning_content?: string | null } } | undefined): string | undefined {
@@ -65,7 +66,7 @@ export function assembleOpenAIStreamChoice(chunks: OpenAIStreamChunk[]): RunTurn
     name: tc.name,
     input: JSON.parse(tc.args || "{}"),
   }));
-  const text = contentText || reasoningText;
+  const text = contentText;
   const reasoning = reasoningText && reasoningText !== contentText ? reasoningText : undefined;
   return { text, reasoning, toolCalls, done: finish !== "tool_calls" };
 }
@@ -74,7 +75,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
   private client: OpenAI;
   constructor(private opts: OpenAIOptions) {
     const fetchImpl = opts.fetch ?? proxyFetch();
-    this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseUrl, ...(fetchImpl ? { fetch: fetchImpl } : {}) });
+    this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseUrl, maxRetries: 0, ...(fetchImpl ? { fetch: fetchImpl } : {}) });
   }
 
   private parameters() {
@@ -100,6 +101,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
   }
 
   async extractJson(args: ExtractJsonArgs): Promise<unknown> {
+    if (args.onReasoningDelta) return this.extractJsonStream(args);
     if (this.opts.jsonMode === "json_object") return this.extractJsonObject(args);
 
     let res;
@@ -129,6 +131,35 @@ export class OpenAICompatibleProvider implements LlmProvider {
     if (!content) throw new Error("no content in response");
     emitUsage(args.onUsage, res.usage);
     return JSON.parse(content);
+  }
+
+  private async extractJsonStream(args: ExtractJsonArgs): Promise<unknown> {
+    const create = (format: boolean) => this.client.chat.completions.create({
+      ...this.parameters(), model: this.opts.model,
+      messages: [{ role: "system", content: jsonObjectSystemPrompt(args.system, args.schema) }, { role: "user", content: args.user }],
+      ...(format ? { response_format: this.opts.jsonMode === "json_object" ? { type: "json_object" as const } : { type: "json_schema" as const, json_schema: { name: "extraction", schema: args.schema } } } : {}),
+      stream: true, stream_options: { include_usage: true },
+    }, { signal: args.signal, maxRetries: 0 });
+    // Only retry a format rejection before a stream is accepted. Never replay
+    // an interrupted stream after its public text has reached the desktop.
+    const stream = await create(true).catch(error => {
+      if (!isResponseFormatUnavailable(error)) throw error;
+      return create(false);
+    });
+    let text = "", finish: string | null | undefined;
+    try {
+      for await (const chunk of stream) {
+        const value = chunk as OpenAIStreamChunk;
+        const choice = value.choices?.[0];
+        if (choice?.delta?.reasoning_content) args.onReasoningDelta?.(choice.delta.reasoning_content);
+        text += choice?.delta?.content ?? "";
+        if (text.length > 4 * 1024 * 1024) throw new Error("Model JSON exceeds limit");
+        if (choice?.finish_reason) finish = choice.finish_reason;
+        if (value.usage) emitUsage(args.onUsage, value.usage);
+      }
+      if (finish !== "stop") throw new Error("Incomplete model JSON stream");
+      return JSON.parse(text);
+    } finally { stream.controller.abort(); }
   }
 
   private async extractJsonObject(args: ExtractJsonArgs): Promise<unknown> {
@@ -184,6 +215,9 @@ export class OpenAICompatibleProvider implements LlmProvider {
   }
 
   async streamTools(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn> {
+    return modelStreamEvents(handlers, events => this.nativeStreamTools(args, events));
+  }
+  private async nativeStreamTools(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn> {
     const msgs = this.toOpenAIMessages(args);
     return withRetry("openai.streamTools", async () => {
       const chunks: OpenAIStreamChunk[] = [];
@@ -201,6 +235,11 @@ export class OpenAICompatibleProvider implements LlmProvider {
         if (c.usage) usage = c.usage;
         const delta = c.choices?.[0]?.delta?.content ?? "";
         if (delta) handlers.onTextDelta?.(delta);
+        const reasoning = c.choices?.[0]?.delta?.reasoning_content;
+        if (reasoning) handlers.onReasoningDelta?.(reasoning);
+        for (const call of c.choices?.[0]?.delta?.tool_calls ?? []) {
+          handlers.onEvent?.({ type: "tool_call_delta", index: call.index, id: call.id, name: call.function?.name, delta: call.function?.arguments ?? "" });
+        }
       }
       const turn = assembleOpenAIStreamChoice(chunks);
       const finish = chunks.flatMap(chunk => chunk.choices ?? []).map(choice => choice.finish_reason).filter(Boolean).at(-1);
@@ -213,7 +252,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
 
   private toOpenAIMessages(args: RunToolsArgs): Array<Record<string, unknown>> {
     const msgs: Array<Record<string, unknown>> = [{ role: "system", content: args.system }];
-    for (const m of args.messages) {
+    for (const m of normalizeToolHistory(args.messages)) {
       if (m.role === "tool") {
         msgs.push({ role: "tool", tool_call_id: m.toolCallId, content: m.content });
       } else if (m.role === "assistant" && m.toolCalls?.length) {

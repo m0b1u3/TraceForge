@@ -1,5 +1,9 @@
 import type { ExtractJsonArgs, LlmProvider, RunToolsArgs, RunTurn, StreamToolsHandlers, TurnMessage, UsageSnapshot } from "./provider.js";
 import type { ModelAdapterOptions } from "./adapter-options.js";
+import { responseContextOverflow } from "./context-overflow.js";
+import { ModelContextOverflowError } from "@traceforge/shared/model-context";
+import { normalizeToolHistory } from "./tool-history.js";
+import { modelStreamEvents } from "./stream-events.js";
 
 class ResponsesError extends Error {}
 
@@ -34,12 +38,15 @@ export class ResponsesProvider implements LlmProvider {
     const format = this.options.jsonMode === "json_object" ? { type: "json_object" }
       : { type: "json_schema", name: "extraction", schema: args.schema, strict: false };
     const result = await this.request({ ...this.body(`${args.system}\nReturn JSON matching: ${JSON.stringify(args.schema)}`,
-      [{ role: "user", content: args.user }]), text: { format } }, { signal: args.signal, onUsage: args.onUsage });
+      [{ role: "user", content: args.user }]), text: { format }, ...(args.onReasoningDelta ? { stream: true } : {}) },
+      { signal: args.signal, onUsage: args.onUsage, onReasoningDelta: args.onReasoningDelta }, !!args.onReasoningDelta);
     if (result.toolCalls.length || !result.text) throw new ResponsesError("Responses did not return JSON text");
     try { return JSON.parse(result.text); } catch { throw new ResponsesError("Responses returned invalid JSON"); }
   }
-  runTools(args: RunToolsArgs): Promise<RunTurn> { return this.turn(args, { onUsage: args.onUsage }); }
-  streamTools(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn> { return this.turn(args, handlers, true); }
+  async runTools(args: RunToolsArgs): Promise<RunTurn> { return this.turn(args, { onUsage: args.onUsage }); }
+  streamTools(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn> {
+    return modelStreamEvents(handlers, events => this.turn(args, events, true));
+  }
   private turn(args: RunToolsArgs, handlers: StreamToolsHandlers, stream = false) {
     return this.request({ ...this.body(args.system, responsesInput(args.messages)),
       tools: args.tools.map(tool => ({ type: "function", name: tool.name, description: tool.description,
@@ -56,14 +63,15 @@ export class ResponsesProvider implements LlmProvider {
         method: "POST", headers: { "content-type": "application/json", accept: streaming ? "text/event-stream" : "application/json",
           authorization: `Bearer ${this.options.apiKey}` }, body: JSON.stringify(body), signal, redirect: "manual" });
       if (!response.ok) {
-        await response.body?.cancel();
+        const overflow = await responseContextOverflow(response);
+        if (overflow) throw overflow;
         throw Object.assign(new ResponsesError(`Model request failed (HTTP ${response.status})`), { status: response.status });
       }
       if (streaming && !response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream")) throw new ResponsesError("Expected Responses event stream");
       reader = response.body?.getReader();
       if (!reader) throw new ResponsesError("Empty Responses body");
       let bytes = 0; let buffer = ""; const decoder = new TextDecoder();
-      let final: RunTurn | undefined; let delivered = "";
+      let final: RunTurn | undefined; let delivered = "", reasoningDelivered = "";
       const event = (frame: string) => {
         const data = frame.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
         if (!data || data === "[DONE]") return;
@@ -72,8 +80,20 @@ export class ResponsesProvider implements LlmProvider {
         try { value = object(JSON.parse(data)); } catch { throw new ResponsesError("Invalid Responses event"); }
         if (value.type === "response.output_text.delta") {
           const delta = string(value.delta); delivered += delta; handlers.onTextDelta?.(delta);
+        } else if (value.type === "response.reasoning_summary_text.delta") {
+          const delta = string(value.delta); reasoningDelivered += delta; handlers.onReasoningDelta?.(delta);
+        } else if (value.type === "response.output_item.added" && object(value.item).type === "function_call") {
+          const item = object(value.item);
+          if (!Number.isSafeInteger(value.output_index) || (value.output_index as number) < 0) throw new ResponsesError("Invalid tool stream index");
+          handlers.onEvent?.({ type: "tool_call_delta", index: value.output_index as number, id: string(item.call_id), name: string(item.name), delta: "" });
+        } else if (value.type === "response.function_call_arguments.delta") {
+          // Some compatible endpoints omit the preview index. Do not invent an
+          // association: omit that preview and retain the validated final call.
+          if (Number.isSafeInteger(value.output_index) && (value.output_index as number) >= 0)
+            handlers.onEvent?.({ type: "tool_call_delta", index: value.output_index as number, delta: string(value.delta) });
         } else if (value.type === "response.completed") {
           final = parseResponse(value.response, handlers.onUsage);
+          if (!reasoningDelivered && final.reasoning) handlers.onReasoningDelta?.(final.reasoning);
           if (delivered && delivered !== final.text) throw new ResponsesError("Responses stream text did not match its completion");
           if (!delivered && final.text) handlers.onTextDelta?.(final.text);
         } else if (["error", "response.failed", "response.incomplete"].includes(String(value.type))) {
@@ -106,7 +126,7 @@ export class ResponsesProvider implements LlmProvider {
     } catch (error) {
       if (signal.aborted) signal.throwIfAborted();
       // Transport exceptions can contain URLs or upstream bodies. Do not expose them.
-      if (error instanceof ResponsesError) throw error;
+      if (error instanceof ResponsesError || error instanceof ModelContextOverflowError) throw error;
       throw new ResponsesError("Responses transport failed");
     } finally { clearTimeout(timer); controller.abort(); await reader?.cancel().catch(() => {}); }
   }
@@ -114,7 +134,7 @@ export class ResponsesProvider implements LlmProvider {
 
 export function responsesInput(messages: TurnMessage[]): unknown[] {
   const input: unknown[] = []; const outstanding = new Set<string>(); const used = new Set<string>();
-  for (const message of messages) {
+  for (const message of normalizeToolHistory(messages)) {
     if (message.role === "tool") {
       if (!message.toolCallId || !outstanding.delete(message.toolCallId)) throw new ResponsesError("Tool result has no matching Responses call");
       input.push({ type: "function_call_output", call_id: message.toolCallId, output: message.content });
@@ -157,6 +177,10 @@ function parseResponse(payload: unknown, onUsage?: (usage: UsageSnapshot) => voi
       // Opaque reasoning continuation is not representable in the current
       // provider-neutral history. Fail rather than silently discard it.
       if (item.encrypted_content) throw new ResponsesError("Responses encrypted reasoning continuation is not supported");
+      if (Array.isArray(item.summary)) for (const entry of item.summary) {
+        const part = object(entry);
+        if (part.type === "summary_text") turn.reasoning = (turn.reasoning ?? "") + string(part.text);
+      }
     } else throw new ResponsesError("Responses output type is unsupported");
   }
   turn.done = turn.toolCalls.length === 0;

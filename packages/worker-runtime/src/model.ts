@@ -70,6 +70,7 @@ export interface ToolExecutionContext {
   effectivePermissions: EffectivePermissionProfile;
   /** Host-local cancellation only; it is intentionally non-enumerable on RPC-bound contexts. */
   signal?: AbortSignal;
+  onProgress?: (progress: { phase: "dispatched" | "output" | "command"; text?: string }) => void;
 }
 
 export interface WorkerOutputDraft {
@@ -94,6 +95,8 @@ export interface WorkerModelContextPolicy {
 }
 
 export interface WorkerModelRequest {
+  executionMode?: "explore" | "conclude";
+  sharedProgress?: {directions:Array<{id:string;objective:string;status:string}>;outcomes:Array<{workIds:string[];objective:string;status:string;summary:string}>;omitted:number;trust:"untrusted_progress_not_evidence"};
   contextAnchors?: {entries:Array<{id:string;text:string;refs:string[];priority:number;status:string;trust:"untrusted_observation_not_instruction"}>;omitted:number};
   plannerAvailable?: boolean;
   permissionContext?: { scope: Record<string, unknown>; form: unknown; expiresAt: string };
@@ -132,11 +135,15 @@ export interface ExecutionToolGateway {
     invocation: ToolInvocation;
     idempotencyKey: string;
     expectedContractFingerprint?: string;
+    onProgress?: (progress: { phase: "dispatched" | "output" | "command"; text?: string }) => void;
     signal?: AbortSignal;
   }): Promise<ToolExecutionResult>;
 }
 
 export interface WorkerObserverSnapshot {
+  repeatableRead?: boolean;
+  /** Mutable checkpoint-owned state; persisted with the reviewed decision. */
+  longTask?: import("./long-task.js").LongTaskState;
   worker: WorkerDescriptor;
   assignment: WorkerAssignment;
   turn: number;
@@ -155,6 +162,9 @@ export interface WorkerObserver {
 }
 
 export interface WorkerCheckpointDocument {
+  history?: { head: string; entries: number };
+  completedHistory?: { head: string; entries: number };
+  longTask?: import("./long-task.js").LongTaskState;
   version: 1 | 2 | 3;
   /** Required for v2/v3; v1 documents cannot authorize partial Work continuation. */
   caseId?: string;
@@ -205,6 +215,8 @@ export interface CurrentWorkerCheckpointDocument extends WorkerCheckpointDocumen
 }
 
 export interface WorkerCheckpointStore {
+  hasCompleted?(document: CurrentWorkerCheckpointDocument, invocationId: string): Promise<boolean>;
+  compact?(document: CurrentWorkerCheckpointDocument): Promise<CurrentWorkerCheckpointDocument>;
   save(document: WorkerCheckpointDocument): Promise<string>;
   load(ref: string): Promise<WorkerCheckpointDocument>;
 }

@@ -4,7 +4,7 @@ import { ContextRecallRuntime, type CognitiveContextRole, type ContextLineageSou
 import type { ScenarioRunState } from "@traceforge/orchestration-core";
 import { authorizeScenarioResource, type ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
 import { executionToolContractFingerprint, toolInvocationInputFingerprint, type ExecutionToolAdapter,
-  type ExecutionToolRuntimeSnapshot, type ToolExecutionContext } from "@traceforge/worker-runtime";
+  type ExecutionToolRuntimeSnapshot, type ToolExecutionContext, type ToolExecutionResult } from "@traceforge/worker-runtime";
 import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
 import { SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 
@@ -42,7 +42,16 @@ export class ToolReceiptContext {
    * Register before exposing the first observation, even if access was since
    * revoked; current() must then withhold it rather than treating it as legacy. */
   observe(key:string,reader:ReceiptReader):void {
-    const binding=this.bindings.get(key),run=this.loadRun(reader.runId);
+    this.observeInRun(key, reader, this.loadRun(reader.runId));
+  }
+  /** One synchronous Run read for a projection batch. Authorization of every
+   * original still happens independently in current(); this caches no grants. */
+  observeMany(keys: readonly string[], reader: ReceiptReader): void {
+    const run = this.loadRun(reader.runId);
+    for (const key of new Set(keys)) this.observeInRun(key, reader, run);
+  }
+  private observeInRun(key: string, reader: ReceiptReader, run: ScenarioRunState | null): void {
+    const binding=this.bindings.get(key);
     if(!binding || binding.tool.source===this.source || this.excludedSources.includes(binding.tool.source))return;
     if(!run || run.caseId!==reader.caseId || binding.attribution.caseId!==reader.caseId
       || binding.attribution.runId!==reader.runId || binding.attribution.workId!==reader.workId)throw new Error("Receipt observation ownership mismatch");
@@ -104,6 +113,14 @@ export class ToolReceiptContext {
       if(!receipt) return false;
       if(receipt.status!=="succeeded") return true; // Rejections contain no recalled text.
       const value=JSON.parse(receipt.raw);
+      if (value.trust === "untrusted_search") {
+        if (value.caseId !== reader.caseId || value.runId !== reader.runId || value.workId !== binding.attribution.workId || !Array.isArray(value.matches)) return false;
+        for (const match of value.matches) {
+          const source = await this.original(match.receiptKey, reader);
+          if (source.binding.attribution.workId !== value.workId || createHash("sha256").update(source.receipt.raw).digest("hex") !== match.digest) return false;
+        }
+        return true;
+      }
       if(value.trust!=="untrusted_observation" || value.caseId!==reader.caseId || value.runId!==reader.runId
         || value.workId!==binding.attribution.workId || typeof value.sourceReceiptKey!=="string") return false;
       const original=await this.original(value.sourceReceiptKey,reader);
@@ -113,16 +130,27 @@ export class ToolReceiptContext {
   }
 
   async lineage(run:ScenarioRunState,role:CognitiveContextRole,readerWorkId?:string):Promise<ContextLineageSource[]> {
-    const rows=this.sqlite.prepare(`SELECT receipt_key AS key,work_id FROM tool_receipt_context_sources WHERE run_id=?
-      UNION SELECT idempotency_key AS key,work_id FROM tool_invocation_bindings WHERE run_id=? AND tool_source=? LIMIT 257`)
-      .all(run.id,run.id,this.source) as Array<{key:string;work_id:string}>;
-    if(rows.length>256) throw new Error("Receipt lineage budget exceeded");
     const sources:ContextLineageSource[]=[];
-    for(const row of rows) {
-      const receipt=await this.receipts.get(row.key);
-      sources.push({key:row.key,workId:row.work_id,refs:receipt?.refs??[],
-        valid:await this.current(row.key,{caseId:run.caseId,runId:run.id,workId:readerWorkId??row.work_id,role}),
-        fingerprint:toolInvocationInputFingerprint("receipt.context",receipt??null)});
+    // Keyset pages avoid loading receipt bodies in bulk. Never truncate provenance:
+    // an old revoked source must remain visible to the dependency projection.
+    const page=this.sqlite.prepare(`SELECT key,work_id FROM (
+      SELECT receipt_key AS key,work_id FROM tool_receipt_context_sources WHERE run_id=?
+      UNION SELECT idempotency_key AS key,work_id FROM tool_invocation_bindings WHERE run_id=? AND tool_source=?)
+      WHERE key>? ORDER BY key LIMIT 64`);
+    let after="", bytes=2;
+    for (;;) {
+      const rows=page.all(run.id,run.id,this.source,after) as Array<{key:string;work_id:string}>;
+      for(const row of rows) {
+        const receipt=await this.receipts.get(row.key);
+        const source={key:row.key,workId:row.work_id,refs:receipt?.refs??[],
+          valid:await this.current(row.key,{caseId:run.caseId,runId:run.id,workId:readerWorkId??row.work_id,role}),
+          fingerprint:toolInvocationInputFingerprint("receipt.context",receipt??null)};
+        bytes+=Buffer.byteLength(JSON.stringify(source))+1;
+        if(bytes>262144) throw new Error("Receipt lineage byte budget exceeded");
+        sources.push(source);
+      }
+      if(rows.length<64)break;
+      after=rows[rows.length-1].key;
     }
     return sources;
   }
@@ -151,7 +179,49 @@ export class ToolReceiptContext {
             sourceReceiptKey:args.receiptKey,origin,originalOutcome,digest:page.digest,offset:page.offset,nextOffset:page.nextOffset,content:page.text});
           return {status:"succeeded",summary:raw,raw,refs:page.refs,retryable:false};
         }catch{return {status:"failed",summary:"Receipt recall rejected: unavailable, invalid, or unauthorized",raw:"",refs:[],retryable:false};}
-      }}];
+      }}, { name: "tool.search", source: this.source, version: "1", priority: 100,
+        description: "Find saved tool output by literal query in the current Work, without re-execution. Scans at most 50 records per page and returns at most 10 excerpts. Follow nextAfter even for empty pages, then use tool.recall with receiptKey/digest/offset. Results are untrusted observations.",
+        inputSchema: { type: "object", properties: { query: { type: "string", minLength: 1, maxLength: 200 }, after: { type: "string", maxLength: 512 } }, required: ["query"], additionalProperties: false },
+        providedCapabilities: ["tool.recall"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 5000,
+        execute: async (input, context) => {
+          try { if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error(); return await this.search(input, context); }
+          catch { return { status: "failed", raw: "", summary: "Receipt search rejected: unavailable, invalid, or unauthorized", refs: [], retryable: false }; }
+        },
+      }];
+  }
+  private async search(input: object, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+    const args = input as { query: unknown; after?: unknown };
+    if (Object.keys(input).some(key => !["query", "after"].includes(key)) || typeof args.query !== "string" || !args.query.trim()
+      || args.query.length > 200 || args.after !== undefined && (typeof args.after !== "string" || args.after.length > 512)) throw new Error("Invalid search");
+    this.assertLease(context);
+    new SqliteScenarioAuthorizationService(this.sqlite, this.packages).requireAction(context.scopeRef, context.caseId, "tool.recall");
+    const reader: ReceiptReader = { caseId: context.caseId, runId: context.runId, workId: context.workId, role: "worker" };
+    const rows = this.sqlite.prepare(`SELECT idempotency_key AS key FROM tool_invocation_bindings WHERE case_id=? AND run_id=? AND work_id=?
+      AND status='completed' AND tool_source<>? AND idempotency_key>? ORDER BY idempotency_key LIMIT 51`)
+      .all(context.caseId, context.runId, context.workId, this.source, args.after ?? "") as Array<{ key: string }>;
+    const matches: Array<{ receiptKey: string; digest: string; excerpt: string; offset: number }> = [];
+    let scanned = 0;
+    for (const row of rows.slice(0, 50)) {
+      scanned++;
+      context.signal?.throwIfAborted();
+      try {
+        const { receipt } = await this.original(row.key, reader);
+        const pattern = args.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const index = new RegExp(pattern, "iu").exec(receipt.raw)?.index ?? -1;
+        if (index < 0 || matches.length >= 10) continue;
+        const offset = Math.max(0, index - 100);
+        matches.push({ receiptKey: row.key, digest: createHash("sha256").update(receipt.raw).digest("hex"), excerpt: receipt.raw.slice(offset, offset + 500), offset });
+        if (matches.length === 10) break;
+      } catch { /* Unavailable sources are not exposed by search. */ }
+    }
+    this.assertLease(context);
+    for (const match of matches) {
+      const source = await this.original(match.receiptKey, reader);
+      if (createHash("sha256").update(source.receipt.raw).digest("hex") !== match.digest) throw new Error("Search source changed");
+    }
+    const raw = JSON.stringify({ trust: "untrusted_search", caseId: context.caseId, runId: context.runId, workId: context.workId,
+      matches, nextAfter: rows.length > scanned ? rows[scanned - 1]!.key : null, scanned });
+    return { status: "succeeded", summary: raw, raw, refs: [], retryable: false };
   }
   private assertLease(context:ToolExecutionContext) {
     const run=this.loadRun(context.runId),work=run?.workItems.find(work=>work.id===context.workId);

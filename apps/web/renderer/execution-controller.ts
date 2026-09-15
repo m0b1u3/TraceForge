@@ -30,7 +30,7 @@ export class ExecutionController {
       }
       const parsed = DesktopExecutionReceiptSchema.safeParse(value?.desktopReceipt);
       const operation = next.path.endsWith("/authorize") ? "authorize" : next.path.endsWith("/cancel") ? "cancel"
-        : next.path.endsWith("/pause") ? "pause" : next.path.endsWith("/resume") ? "resume"
+        : next.path.endsWith("/pause") ? "pause" : next.path.endsWith("/resume") ? "resume" : next.path.endsWith("/continue") ? "continue"
         : next.path.endsWith("/approval") ? "approval" : next.path.endsWith("/input") ? "input" : "dispatch";
       if (![200, 201].includes(response.status) || !parsed.success || parsed.data.conversationId !== this.conversationId
         || parsed.data.commandId !== next.body.commandId || parsed.data.operation !== operation
@@ -38,6 +38,7 @@ export class ExecutionController {
         || (["cancel","pause","resume"].includes(operation) && parsed.data.resourceId !== next.body.runId)
         || (operation === "approval" && parsed.data.resourceId !== next.body.approvalId)
         || (operation === "input" && parsed.data.resourceId !== next.body.commandId)
+        || (operation === "continue" && parsed.data.resourceId !== next.body.workId)
         || (operation === "dispatch" && parsed.data.resourceId !== value?.runId)) {
         throw new Error("宿主回执未核对成功，结果未知。请核对原请求；不会自动重复执行。");
       }

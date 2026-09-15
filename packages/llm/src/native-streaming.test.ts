@@ -12,6 +12,28 @@ function upstream() {
   return { fetch, send(value: object, type?: string) { controller.enqueue(new TextEncoder().encode(`${type ? `event: ${type}\n` : ""}data: ${JSON.stringify(value)}\n\n`)); }, end() { controller.close(); }, fail() { controller.error(new Error("ECONNRESET")); } };
 }
 const args = { system: "Text only", messages: [{ role: "user" as const, content: "Hello" }], tools: [] };
+it("streams public reasoning separately before JSON completion", async () => {
+  const u = upstream(), provider = new OpenAICompatibleProvider({ apiKey: "test", model: "neutral", fetch: u.fetch });
+  const reasoning = vi.fn(); let done = false;
+  const result = provider.extractJson({ system: "Return JSON", user: "Hello", schema: { type: "object" }, onReasoningDelta: reasoning }).then(value => { done = true; return value; });
+  await vi.waitFor(() => expect(u.fetch).toHaveBeenCalledOnce());
+  u.send({ choices: [{ delta: { reasoning_content: "Checking available information" }, finish_reason: null }] });
+  await vi.waitFor(() => expect(reasoning).toHaveBeenCalledWith("Checking available information"));
+  expect(done).toBe(false);
+  u.send({ choices: [{ delta: { content: '{"ok":true}' }, finish_reason: "stop" }] }); u.end();
+  expect(await result).toEqual({ ok: true });
+});
+it("reasoning deltas never become ordinary answer text", async () => {
+  const u = upstream(), provider = new OpenAICompatibleProvider({ apiKey: "test", model: "neutral", fetch: u.fetch });
+  const reasoning = vi.fn(), text = vi.fn();
+  const result = provider.streamTools(args, { onReasoningDelta: reasoning, onTextDelta: text });
+  await vi.waitFor(() => expect(u.fetch).toHaveBeenCalledOnce());
+  u.send({ choices: [{ delta: { reasoning_content: "Public summary" } }] });
+  await vi.waitFor(() => expect(reasoning).toHaveBeenCalledWith("Public summary"));
+  expect(text).not.toHaveBeenCalled();
+  u.send({ choices: [{ delta: { content: "Answer" }, finish_reason: "stop" }] }); u.end();
+  expect(await result).toMatchObject({ text: "Answer", reasoning: "Public summary" });
+});
 it("Chat Completions delivers native deltas before completion and omits empty tools", async () => {
   const u=upstream(),provider=new OpenAICompatibleProvider({apiKey:"test",model:"neutral",fetch:u.fetch});
   const delta=vi.fn();let done=false;
@@ -36,14 +58,18 @@ it("Chat Completions never replays a broken stream or accepts missing completion
 });
 it("Anthropic consumes native text events and confirms final message before success",async()=>{
   const u=upstream(),provider=new AnthropicProvider({apiKey:"test",model:"neutral",fetch:u.fetch});
-  const delta=vi.fn();let done=false;
-  const result=provider.streamTools(args,{onTextDelta:delta}).then(value=>{done=true;return value;});
+  const delta=vi.fn(), reasoning=vi.fn();let done=false;
+  const result=provider.streamTools(args,{onTextDelta:delta,onReasoningDelta:reasoning}).then(value=>{done=true;return value;});
   await vi.waitFor(()=>expect(u.fetch).toHaveBeenCalledOnce());
   u.send({type:"message_start",message:{id:"message",type:"message",role:"assistant",content:[],model:"neutral",stop_reason:null,stop_sequence:null,usage:{input_tokens:3,output_tokens:0}}},"message_start");
-  u.send({type:"content_block_start",index:0,content_block:{type:"text",text:""}},"content_block_start");
-  u.send({type:"content_block_delta",index:0,delta:{type:"text_delta",text:"Native text"}},"content_block_delta");
-  await vi.waitFor(()=>expect(delta).toHaveBeenCalledWith("Native text"));expect(done).toBe(false);
+  u.send({type:"content_block_start",index:0,content_block:{type:"thinking",thinking:"",signature:""}},"content_block_start");
+  u.send({type:"content_block_delta",index:0,delta:{type:"thinking_delta",thinking:"Public thinking"}},"content_block_delta");
+  await vi.waitFor(()=>expect(reasoning).toHaveBeenCalledExactlyOnceWith("Public thinking")); expect(done).toBe(false); expect(delta).not.toHaveBeenCalled();
   u.send({type:"content_block_stop",index:0},"content_block_stop");
+  u.send({type:"content_block_start",index:1,content_block:{type:"text",text:""}},"content_block_start");
+  u.send({type:"content_block_delta",index:1,delta:{type:"text_delta",text:"Native text"}},"content_block_delta");
+  await vi.waitFor(()=>expect(delta).toHaveBeenCalledWith("Native text"));expect(done).toBe(false);
+  u.send({type:"content_block_stop",index:1},"content_block_stop");
   u.send({type:"message_delta",delta:{stop_reason:"end_turn",stop_sequence:null},usage:{output_tokens:2}},"message_delta");
   u.send({type:"message_stop"},"message_stop");u.end();
   expect(await result).toMatchObject({text:"Native text",toolCalls:[],done:true});expect(u.fetch).toHaveBeenCalledOnce();

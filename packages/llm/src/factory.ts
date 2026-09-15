@@ -1,10 +1,10 @@
 import type { LlmProvider } from "./provider.js";
 import type { LlmConfig, LlmEndpointConfig } from "./config.js";
-import { AnthropicProvider } from "./anthropic-provider.js";
-import { OpenAICompatibleProvider } from "./openai-provider.js";
-import { ResponsesProvider } from "./responses-provider.js";
+import { MODEL_PROTOCOL_ADAPTERS } from "./protocol-adapters.js";
 import { normalizeModelConnection, modelConnectionFetch, type ModelConnectionDependencies } from "./connections.js";
 import { proxyFetch } from "@traceforge/shared/proxy";
+import { withContextBudget } from "./context-budget-provider.js";
+import { resolveContextBudget } from "@traceforge/shared/model-context";
 
 export function createProvider(input: LlmEndpointConfig, dependencies: ModelConnectionDependencies = {}): LlmProvider {
   const config = normalizeModelConnection(input);
@@ -13,13 +13,16 @@ export function createProvider(input: LlmEndpointConfig, dependencies: ModelConn
   if (!apiKey) throw new Error("apiKey is missing");
   if (/[\r\n]/.test(apiKey)) throw new Error("Invalid API key");
   const fetchImpl = modelConnectionFetch(config, { ...dependencies, fetch: dependencies.fetch ?? proxyFetch() ?? globalThis.fetch });
+  const outputTokens = resolveContextBudget(config).output;
   const opts = { apiKey, model: config.model, embeddingModel: config.embeddingModel, baseUrl: config.baseUrl, jsonMode: config.jsonMode,
-    fetch: fetchImpl, requestOptions: config.requestOptions, maxOutputTokens: config.maxOutputTokens };
+    fetch: fetchImpl, requestOptions: config.requestOptions, maxOutputTokens: outputTokens };
   // Exhaustive protocol registry. Supplier selection never selects a constructor.
-  const adapters = { anthropic: AnthropicProvider, openai: OpenAICompatibleProvider, responses: ResponsesProvider };
-  const Adapter = adapters[config.provider];
+  const Adapter = MODEL_PROTOCOL_ADAPTERS[config.provider];
   if (!Adapter) throw new Error("Unsupported model wire protocol");
-  return new Adapter(opts);
+  const provider = new Adapter(opts);
+  return withContextBudget(provider, {
+    contextWindowTokens: config.contextWindowTokens, maxOutputTokens: outputTokens,
+  });
 }
 
 export function createProviderFromConfig(config: LlmConfig | null): LlmProvider {

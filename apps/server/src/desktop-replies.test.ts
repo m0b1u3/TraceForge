@@ -6,9 +6,67 @@ import { registerConversationRoutes } from "./conversation-routes.js";
 import { DesktopReplyService, registerDesktopReplyRoutes } from "./desktop-replies.js";
 import { DesktopReplySchema } from "@traceforge/shared/desktop-replies";
 import { validateConversationRequest } from "../../desktop/src/conversation-bridge.js";
+import { createConversationTaskPort } from "./conversation-task-port.js";
 
 const cleanup: Array<()=>Promise<void>>=[];
+it("conversation function loop persists a task proposal and reopens without inference or dispatch",async()=>{
+  const db=createDb(":memory:"),sql=getSqliteClient(db),app=Fastify();
+  registerConversationRoutes(app,db);
+  const request=vi.fn(async()=>({status:200,body:{definitions:[{kind:"neutral",version:1}],runs:[],truncated:false}}));
+  const tasks=createConversationTaskPort(sql,request);
+  let count=0;
+  const model:LlmProvider={extractJson:vi.fn(),runTools:vi.fn(),streamTools:vi.fn(async(args,handlers)=>{
+    expect(args.tools.some(tool=>tool.name==="task_request")).toBe(true);
+    if(!count++)return {text:"",done:false,toolCalls:[{id:"request",name:"task_request",input:{scenarioKind:"neutral",definitionVersion:1}}]};
+    handlers.onTextDelta?.("Please review the requested scope.");
+    return {text:"Please review the requested scope.",done:true,toolCalls:[]};
+  })};
+  const service=new DesktopReplyService(sql,()=>model,10000,tasks);registerDesktopReplyRoutes(app,service);
+  await app.ready();cleanup.push(async()=>{await app.close();sql.close();});
+  const conversation=(await app.inject({url:"/api/desktop/conversations",method:"POST",payload:{commandId:"create",title:"Task"}})).json();
+  await app.inject({url:`/api/desktop/conversations/${conversation.id}/messages`,method:"POST",payload:{commandId:"message",text:"Perform the requested review"}});
+  service.start(conversation.id,"message");
+  await vi.waitFor(()=>expect(service.read(conversation.id,0).body).toMatchObject({replies:[{state:"completed",taskRequest:{scenarioKind:"neutral",definitionVersion:1},recallCount:0}]}));
+  service.close();
+  const restored=new DesktopReplyService(sql,()=>model,10000,tasks);
+  expect(restored.start(conversation.id,"message").body).toMatchObject({taskRequest:{scenarioKind:"neutral",definitionVersion:1}});
+  expect(model.streamTools).toHaveBeenCalledTimes(2);expect(request).toHaveBeenCalledTimes(1);restored.close();
+});
 afterEach(async()=>{for(const close of cleanup.splice(0))await close();});
+it("queues follow-ups once and assembles context after the preceding answer", async()=>{
+  const f=await fixture();
+  await f.call(`${f.base}/replies/message`,{});
+  await f.call(`${f.base}/messages`,{commandId:"second",text:"Continue using that result"});
+  expect((await f.call(`${f.base}/replies/second`,{})).json().state).toBe("queued");
+  expect((await f.call(`${f.base}/replies/second`,{})).json().state).toBe("queued");
+  expect(f.provider.streamTools).toHaveBeenCalledTimes(1);
+  f.handlers().onTextDelta?.("Saved first result"); f.finish("Saved first result");
+  await vi.waitFor(()=>expect(f.provider.streamTools).toHaveBeenCalledTimes(2));
+  expect(f.args().messages).toContainEqual({role:"assistant",content:"Saved first result"});
+  f.handlers().onTextDelta?.("Follow-up complete"); f.finish("Follow-up complete");
+  await vi.waitFor(()=>expect(f.service.read(f.conversation.id,0).body).toMatchObject({replies:expect.arrayContaining([expect.objectContaining({messageCommandId:"second",state:"completed"})])}));
+});
+it("stopping the current reply cancels its queued follow-ups without inference",async()=>{
+  const f=await fixture(); await f.call(`${f.base}/replies/message`,{});
+  await f.call(`${f.base}/messages`,{commandId:"second",text:"Queued instruction"});
+  await f.call(`${f.base}/replies/second`,{});
+  await f.call(`${f.base}/replies/message/cancel`,{});
+  expect(f.service.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"cancelled"},{state:"cancelled"}]});
+  await new Promise(resolve=>setTimeout(resolve,10));
+  expect(f.provider.streamTools).toHaveBeenCalledTimes(1);
+});
+it("a withdrawn queued message is not executed and restart does not replay the queue",async()=>{
+  const f=await fixture(); await f.call(`${f.base}/replies/message`,{});
+  for(const commandId of ["withdraw","pending"]){
+    await f.call(`${f.base}/messages`,{commandId,text:"Queued instruction"});
+    await f.call(`${f.base}/replies/${commandId}`,{});
+  }
+  expect((await f.call(`${f.base}/replies/withdraw/cancel`,{})).json().state).toBe("cancelled");
+  f.service.close();
+  const restored=new DesktopReplyService(f.sql,()=>f.provider);
+  expect(restored.start(f.conversation.id,"pending").body).toMatchObject({state:"interrupted",error:"host_stopped"});
+  expect(f.provider.streamTools).toHaveBeenCalledTimes(1); restored.close();
+});
 async function fixture(timeout=120000){
   const db=createDb(":memory:"),sql=getSqliteClient(db),app=Fastify();
   let handlers!:StreamToolsHandlers,args!:RunToolsArgs,finish!:(turn:RunTurn)=>void,fail!:(error:Error)=>void;
@@ -31,7 +89,7 @@ it("persists real deltas before completion; reads and repeated commands never in
   expect((await f.call(`${f.base}/replies?after=0`)).json().replies).toEqual([]);
   expect(f.provider.streamTools).not.toHaveBeenCalled();
   const started=await f.call(`${f.base}/replies/message`,{});
-  expect(started.statusCode).toBe(202);expect(f.args().tools).toEqual([]);
+  expect(started.statusCode).toBe(202);expect(f.args().tools.map(tool => tool.name)).toEqual(["conversation_search", "conversation_read"]);
   expect(DesktopReplySchema.parse(started.json()).state).toBe("streaming");
   f.handlers().onTextDelta?.("First part ");
   await vi.waitFor(async()=>expect((await f.call(`${f.base}/replies?after=0`)).json().replies[0].text).toBe("First part "));
@@ -42,6 +100,16 @@ it("persists real deltas before completion; reads and repeated commands never in
   await vi.waitFor(async()=>expect((await f.call(`${f.base}/replies?after=${partial.revision}`)).json().replies[0].state).toBe("completed"));
   await f.call(`${f.base}/replies/message`,{});expect(f.provider.streamTools).toHaveBeenCalledTimes(1);
   expect((await f.call(`${f.base}/execution`)).statusCode).toBe(404);
+});
+it("persists streaming public reasoning and preserves it on cancellation without late writes", async () => {
+  const f = await fixture(); await f.call(`${f.base}/replies/message`, {});
+  f.handlers().onReasoningDelta?.("Public progress");
+  await vi.waitFor(async () => expect((await f.call(`${f.base}/replies?after=0`)).json().replies[0]).toMatchObject({ state: "streaming", text: "", reasoning: "Public progress" }));
+  const stopped = (await f.call(`${f.base}/replies/message/cancel`, {})).json();
+  expect(stopped).toMatchObject({ state: "cancelled", reasoning: "Public progress" });
+  f.handlers().onReasoningDelta?.("late"); f.finish("late answer");
+  expect((await f.call(`${f.base}/replies?after=0`)).json().replies[0].reasoning).toBe("Public progress");
+  expect(f.provider.streamTools).toHaveBeenCalledOnce();
 });
 it("cancel flushes partial text and ignores late deltas/completion",async()=>{
   const f=await fixture();await f.call(`${f.base}/replies/message`,{});f.handlers().onTextDelta?.("partial");
@@ -69,11 +137,12 @@ it("recovers a crash-left streaming row with a new cursor",async()=>{
 it("bounds concurrency, output, runtime and hides provider errors",async()=>{
   const f=await fixture();await f.call(`${f.base}/replies/message`,{});
   await f.call(`${f.base}/messages`,{commandId:"second",text:"Second message"});
-  expect((await f.call(`${f.base}/replies/second`,{})).statusCode).toBe(409);
+  expect((await f.call(`${f.base}/replies/second`,{})).json()).toMatchObject({state:"queued"});
   f.handlers().onTextDelta?.("partial");f.fail();
   await vi.waitFor(async()=>expect((await f.call(`${f.base}/replies?after=0`)).body).toContain("provider_failed"));
   expect((await f.call(`${f.base}/replies?after=0`)).body).not.toContain("upstream secret");
   await f.call(`${f.base}/replies/second`,{});
+  await vi.waitFor(()=>expect(f.provider.streamTools).toHaveBeenCalledTimes(2));
   expect(()=>f.handlers().onTextDelta?.("字".repeat(22000))).toThrow();
   expect((await f.call(`${f.base}/replies?after=0`)).body).toContain("output_limit");
   const timed=await fixture(10);await timed.call(`${timed.base}/replies/message`,{});
@@ -85,6 +154,23 @@ it("uses only saved same-conversation history and completed prior replies",async
   await f.call(`${f.base}/messages`,{commandId:"second",text:"Follow up"});
   await f.call(`${f.base}/replies/second`,{});
   expect(f.args().messages).toEqual([{role:"user",content:"Explain the next step without executing it"},{role:"assistant",content:"Answer"},{role:"user",content:"Follow up"}]);
+});
+
+it("adds traceable cached summaries for omitted conversation history without deleting original messages", async () => {
+  const f = await fixture();
+  vi.mocked(f.provider.extractJson).mockImplementation(async input => ({ entries: JSON.parse(input.user).entries.map((entry: { id: string }) => ({ id: entry.id, text: "Earlier discussion; retain limitations and unfinished questions." })) }));
+  for (let i = 0; i < 24; i++) await f.call(`${f.base}/messages`, { commandId: `long_${i}`, text: "Historical context ".repeat(300) });
+  await f.call(`${f.base}/replies/long_23`, {});
+  await vi.waitFor(() => expect(f.provider.streamTools).toHaveBeenCalledTimes(1));
+  expect(f.args().messages[0].content).toContain("untrusted_incomplete_conversation_summary");
+  expect(f.args().messages[0].content).toContain("originalMessageIds");
+  expect((f.sql.prepare("SELECT count(*) AS n FROM desktop_conversation_messages").get() as { n: number }).n).toBe(25);
+  expect((f.sql.prepare("SELECT count(*) AS n FROM desktop_conversation_memory").get() as { n: number }).n).toBeGreaterThan(0);
+  const path = `${f.base}/replies/long_23/memory`;
+  expect(validateConversationRequest({ path, method: "GET" }).path).toBe(path);
+  const memory = (await f.call(path)).json(); expect(memory.entries[0].user).toContain("Explain");
+  expect(memory.entries[0].summary).toContain("limitations");
+  expect(f.provider.streamTools).toHaveBeenCalledTimes(1);
 });
 it("rejects unsupported models, injected authority, unknown ownership and tool-bearing completion",async()=>{
   const f=await fixture();

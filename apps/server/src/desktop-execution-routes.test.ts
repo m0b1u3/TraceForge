@@ -4,7 +4,7 @@ import { ScenarioDefinitionRegistry } from "@traceforge/orchestration-core";
 import { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { registerConversationRoutes } from "./conversation-routes.js";
-import { registerDesktopExecutionRoutes } from "./desktop-execution-routes.js";
+import { registerDesktopExecutionRoutes, type DesktopExecutionPort } from "./desktop-execution-routes.js";
 import { registerScenarioRoutes } from "./scenario-routes.js";
 import { webBlackboxControlPlanePackage } from "./test-fixtures/web-blackbox-control-plane-package.js";
 import { FoundationHostControl } from "./foundation-host-control.js";
@@ -14,26 +14,62 @@ import { AuthorizationFormSchema, buildAuthorizationScope } from "@traceforge/sh
 import { registerScenarioAgentEventRoutes, SqliteScenarioAgentEventStream } from "./scenario-agent-event-stream.js";
 import { WEB_BLACKBOX_CAPABILITIES } from "./test-fixtures/web-blackbox-descriptor.js";
 import { SqliteWorkerCheckpointStore } from "./worker-checkpoint-store.js";
+import { createConversationTaskPort } from "./conversation-task-port.js";
+import { ConversationWorkspaces } from "./conversation-workspaces.js";
+import { mkdtempSync, realpathSync, rmSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const cleanups: Array<() => Promise<void>> = [];
+it("creates a private directory with the conversation and binds subsequent Runs before dispatch",async()=>{
+  const f=await fixture();
+  const directory=f.workspaces.ensure(f.conversation.id,f.conversation.caseId);
+  expect(existsSync(directory)).toBe(true);
+  expect((await f.call("/api/desktop/conversations",{commandId:"create",title:"Neutral assessment"})).json().id).toBe(f.conversation.id);
+  await f.call(`${f.base}/execution/authorize`,f.authorization);
+  const first=(await f.call(`${f.base}/execution`,f.command)).json().runId;
+  await f.call(`${f.base}/messages`,{commandId:"next",text:"Continue with existing files"});
+  const second=(await f.call(`${f.base}/execution`,{...f.command,commandId:"next-dispatch",messageCommandId:"next"})).json().runId;
+  expect(first).toBeTruthy();expect(second).toBeTruthy();expect(second).not.toBe(first);
+  expect(f.workspaces.root(f.conversation.caseId,first)).toBe(directory);
+  expect(f.workspaces.root(f.conversation.caseId,second)).toBe(directory);
+  const other=(await f.call("/api/desktop/conversations",{commandId:"other",title:"Other conversation"})).json();
+  expect(f.workspaces.ensure(other.id,other.caseId)).not.toBe(directory);
+  expect(()=>f.workspaces.key(other.caseId,first)).toThrow("ownership");
+});
+it("conversation task proposal joins the governed authorization and Run routes",async()=>{
+  const f=await fixture(),conversationId=f.base.split("/").at(-1)!;
+  const task=createConversationTaskPort(f.sql,async(path,body)=>{const result=await f.call(path,body);return {status:result.statusCode,body:result.json()};});
+  const proposal=await task.execute(conversationId,"message",{id:"call",name:"task_request",input:{scenarioKind:f.command.scenarioKind,definitionVersion:f.command.definitionVersion}},new AbortController().signal);
+  expect(proposal).toMatchObject({state:"awaiting_user_review",executed:false});
+  expect((await f.call(`${f.base}/execution`)).json().runs).toHaveLength(0);
+  expect((await f.call(`${f.base}/execution`,f.command)).statusCode).not.toBe(201);
+  expect((await f.call(`${f.base}/execution/authorize`,f.authorization)).statusCode).toBe(201);
+  const started=await f.call(`${f.base}/execution`,{...f.command,commandId:"confirmed-dispatch"});
+  expect([200,201]).toContain(started.statusCode);
+  const catalog=(await f.call(`${f.base}/execution`)).json();
+  expect(catalog.runs).toHaveLength(1);expect(catalog.runs[0].messageCommandId).toBe("message");
+});
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
-async function fixture() {
+async function fixture(continueWork?: DesktopExecutionPort["continueWork"]) {
   const app = Fastify(), db = createDb(":memory:"), sql = getSqliteClient(db);
+  const projectRoot = realpathSync(mkdtempSync(join(tmpdir(),"traceforge-conversation-workspace-")));
+  const workspaces = new ConversationWorkspaces(sql,projectRoot);
   const control = new FoundationHostControl(app, sql), channel = control.management();
   const pkg = webBlackboxControlPlanePackage();
   registerScenarioRoutes(app, sql, { definitions: new ScenarioDefinitionRegistry([pkg.definition]), packages: new ScenarioPackageRegistry([pkg]) });
-  registerConversationRoutes(app, db);
+  registerConversationRoutes(app, db, workspaces);
   const events = new SqliteScenarioAgentEventStream(sql);
   registerScenarioAgentEventRoutes(app, events);
   let ready = true, loseResponse = false, corruptReply = false, rejectCommitted = false;
-  registerDesktopExecutionRoutes(app, sql, { ready: () => ready, request: async (url, body) => {
+  registerDesktopExecutionRoutes(app, sql, { continueWork, ready: () => ready, request: async (url, body) => {
     const response = await app.inject({ url, method: body ? "POST" : "GET", headers: channel.headers(), ...(body ? { payload: body } : {}) });
     if (loseResponse && url === "/api/scenarios/runs" && body) { loseResponse = false; throw new Error("response lost"); }
     if (corruptReply && url === "/api/scenarios/runs" && body) { corruptReply = false; return { status: 200, body: {} }; }
     if (rejectCommitted && url === "/api/scenarios/runs" && body) { rejectCommitted = false; return { status: 409, body: { error: "uncertain upstream response" } }; }
     return { status: response.statusCode, body: response.json() };
-  } });
-  await app.ready(); cleanups.push(async () => { await app.close(); sql.close(); });
+  } }, workspaces);
+  await app.ready(); cleanups.push(async () => { await app.close(); sql.close(); rmSync(projectRoot,{recursive:true,force:true}); });
   const call = (url: string, payload?: object) => app.inject({ url, method: payload ? "POST" : "GET", headers: channel.headers(), ...(payload ? { payload } : {}) });
   const conversation = (await call("/api/desktop/conversations", { commandId: "create", title: "Neutral assessment" })).json();
   const base = `/api/desktop/conversations/${conversation.id}`;
@@ -42,9 +78,21 @@ async function fixture() {
     scope: { targets: ["https://authorized.example"], allowedActions: ["scope.read", "evidence.write", "web.request.replay", "report.write"], deniedActions: [] },
     expiresAt: "2099-01-01T00:00:00.000Z", confirmed: true };
   const command = { commandId: "dispatch", messageCommandId: "message", scopeRef: "scope", scenarioKind: pkg.definition.kind, definitionVersion: pkg.definition.version };
-  return { app, call, base, authorization, command, sql, events, setReady(value: boolean) { ready = value; }, lose() { loseResponse = true; },
+  return { app, call, base, authorization, command, sql, events, workspaces, conversation, setReady(value: boolean) { ready = value; }, lose() { loseResponse = true; },
     corrupt() { corruptReply = true; }, rejectCommitted() { rejectCommitted = true; } };
 }
+it("requires explicit desktop continuation and checks conversation ownership before the operator port", async () => {
+  const port=vi.fn(async (input:any)=>({audit:{...input,operation:"continue" as const,outcome:"queued" as const,authorizationRef:"local",failure:null,at:new Date().toISOString()},replayed:false}));
+  const f=await fixture(port);
+  await f.call(`${f.base}/execution/authorize`,f.authorization);
+  const runId=(await f.call(`${f.base}/execution`,f.command)).json().runId;
+  const body={commandId:"continue-desktop",runId,workId:"work",expectedRevision:1,checkpointRef:`checkpoint://sha256-${"a".repeat(64)}.json`,reason:"Connection restored"};
+  expect((await f.call(`${f.base}/execution/continue`,body)).statusCode).toBe(400);expect(port).not.toHaveBeenCalled();
+  const other=(await f.call("/api/desktop/conversations",{commandId:"other",title:"Other"})).json();
+  expect((await f.call(`/api/desktop/conversations/${other.id}/execution/continue`,{...body,confirmed:true})).statusCode).toBe(404);expect(port).not.toHaveBeenCalled();
+  expect((await f.call(`${f.base}/execution/continue`,{...body,confirmed:true})).json().desktopReceipt).toMatchObject({operation:"continue",resourceId:"work"});
+  expect(port).toHaveBeenCalledWith({...body,actor:"desktop-operator"});
+});
 async function waitingFixture() {
   const f = await fixture();
   await f.call(`${f.base}/execution/authorize`, f.authorization);

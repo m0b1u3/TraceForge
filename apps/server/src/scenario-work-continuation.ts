@@ -4,7 +4,7 @@ import { z } from "zod";
 import { canonicalJson, DurableScenarioRuntime, type ScenarioDefinitionRegistry, type ScenarioRunBindingValidator,
   type ScenarioRunState } from "@traceforge/orchestration-core";
 import { defaultWorkerRuntimeOptions, toolInvocationInputFingerprint, validateWorkerCheckpoint, workerCheckpointJournal, type WorkerAssignment,
-  type WorkerCheckpointStore } from "@traceforge/worker-runtime";
+  type WorkerCheckpointStore, type WorkerCheckpointDocument } from "@traceforge/worker-runtime";
 import type { BlackboardChangeBus } from "@traceforge/cognitive-runtime";
 import { SqliteScenarioEventStore } from "./scenario-event-store.js";
 import { SqliteToolInvocationBindingStore } from "./worker-execution-adapters.js";
@@ -28,6 +28,13 @@ export interface WorkContinuationAudit extends ContinuationRequest {
 }
 
 /** Same Work/key, unlike whole-Work retry. Audit shares the bounded immutable Work-recovery ledger. */
+export function continuationBudgetExhausted(checkpoint: WorkerCheckpointDocument, now: string): boolean {
+  const journal = workerCheckpointJournal(checkpoint);
+  return journal.turn >= (checkpoint.longTask?.policy.maximumTurns ?? defaultWorkerRuntimeOptions.maxTurns)
+    || !!checkpoint.longTask && Date.parse(now) >= Date.parse(checkpoint.longTask.startedAt) + checkpoint.longTask.policy.maximumDurationMs
+    || journal.consecutiveFailures >= defaultWorkerRuntimeOptions.repeatedFailureLimit;
+}
+
 export class ScenarioWorkContinuationControl {
   private readonly runtime: DurableScenarioRuntime;
   private readonly bindings: SqliteToolInvocationBindingStore;
@@ -75,8 +82,7 @@ export class ScenarioWorkContinuationControl {
         if (!work || work.latestCheckpoint?.payloadRef !== input.checkpointRef) throw new Error("Continuation checkpoint changed or is missing");
         if (![2, 3].includes(checkpoint.version) || checkpoint.runId !== current.id || checkpoint.workId !== work.id
           || checkpoint.caseId !== current.caseId || checkpoint.workKey !== work.idempotencyKey) throw new Error("Continuation requires a matching current checkpoint");
-        const journal = workerCheckpointJournal(checkpoint);
-        if (journal.turn >= defaultWorkerRuntimeOptions.maxTurns || journal.consecutiveFailures >= defaultWorkerRuntimeOptions.repeatedFailureLimit) {
+        if (continuationBudgetExhausted(checkpoint, at)) {
           throw new Error("Continuation cannot reset exhausted execution budgets");
         }
         if (this.sqlite.prepare("SELECT 1 FROM scenario_work_leases WHERE run_id = ? AND work_id = ?").get(input.runId, input.workId)) {

@@ -39,16 +39,17 @@ describe("Responses protocol through the model gateway", () => {
     expect(() => responsesInput([{ role: "tool", toolCallId: "missing", content: "result" }])).toThrow(/matching/);
   });
   it("handles byte-fragmented CRLF SSE, text, final tool arguments and usage once", async () => {
-    const frames = [ { type: "response.output_text.delta", delta: "检查" },
+    const frames = [ { type: "response.reasoning_summary_text.delta", delta: "公开摘要" }, { type: "response.output_text.delta", delta: "检查" },
       { type: "response.function_call_arguments.delta", delta: '{"value":' },
-      { type: "response.completed", response: completed([message("检查"), call]) } ];
+      { type: "response.completed", response: completed([{ type: "reasoning", summary: [{ type: "summary_text", text: "公开摘要" }] }, message("检查"), call]) } ];
     const bytes = new TextEncoder().encode(frames.map(frame => `data: ${JSON.stringify(frame)}\r\n\r\n`).join(""));
     let position = 0;
     const provider = createProvider(config, { fetch: async () => new Response(new ReadableStream({ pull(controller) {
       if (position === bytes.length) controller.close(); else controller.enqueue(bytes.slice(position, ++position));
     } }), { headers: { "content-type": "text/event-stream" } }) });
-    const delta = vi.fn(); const usage = vi.fn();
-    expect(await provider.streamTools!(args, { onTextDelta: delta, onUsage: usage })).toMatchObject({ text: "检查", done: false, toolCalls: [{ input: { value: 1 } }] });
+    const delta = vi.fn(); const usage = vi.fn(); const reasoning = vi.fn();
+    expect(await provider.streamTools!(args, { onTextDelta: delta, onUsage: usage, onReasoningDelta: reasoning })).toMatchObject({ text: "检查", done: false, toolCalls: [{ input: { value: 1 } }] });
+    expect(reasoning).toHaveBeenCalledExactlyOnceWith("公开摘要");
     expect(delta).toHaveBeenCalledExactlyOnceWith("检查"); expect(usage).toHaveBeenCalledTimes(1);
   });
   it.each([

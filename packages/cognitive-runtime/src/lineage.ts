@@ -27,13 +27,13 @@ export function projectRunContextLineage(input: RunContextInput, facts: {
 }): RunContextProjection {
   if (input.graph.caseId !== input.run.caseId || input.graph.nodes.length > 2048 || input.graph.edges.length > 4096
     || input.recentEvents.length > 4096 || input.run.workItems.length > 512 || input.run.outputs.length > 512 || input.run.directives.length > 512
-    || facts.sources.length > 256 || facts.derived.length > 512) throw new Error("Invalid Run context lineage bounds or Case");
+    || Buffer.byteLength(JSON.stringify(facts.sources)) > 262144 || facts.derived.length > 512) throw new Error("Invalid Run context lineage bounds or Case");
   const valid = new Set(facts.sources.filter((source) => source.valid).map((source) => source.key));
   const bad = facts.sources.filter((source) => !source.valid);
   const workIds = new Set(bad.map((source) => source.workId)), directiveIds = new Set<string>();
   for (const row of facts.derived) {
     const keys = JSON.parse(row.sources_json) as unknown;
-    if (!Array.isArray(keys) || keys.length > 256 || keys.some((key) => typeof key !== "string")) throw new Error("Invalid context derivation");
+    if (!Array.isArray(keys) || Buffer.byteLength(row.sources_json) > 32768 || keys.some((key) => typeof key !== "string")) throw new Error("Invalid context derivation");
     if (keys.some((key) => !valid.has(key))) (row.target_kind === "work" ? workIds : directiveIds).add(row.target_id);
   }
   for (let iteration = 0; iteration < input.run.workItems.length; iteration += 1) {

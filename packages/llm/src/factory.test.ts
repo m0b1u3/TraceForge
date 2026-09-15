@@ -4,6 +4,12 @@ import { AnthropicProvider } from "./anthropic-provider.js";
 import { OpenAICompatibleProvider } from "./openai-provider.js";
 
 describe("createProvider", () => {
+  it("exposes configured context and enforces the same default output used for reservation", () => {
+    const p = createProvider({ provider: "openai", model: "m", apiKey: "test", contextWindowTokens: 128000 });
+    expect(p.contextLimits).toMatchObject({ contextWindowTokens: 128000, maxOutputTokens: 4096 });
+    expect((p as unknown as { opts: { maxOutputTokens: number } }).opts.maxOutputTokens).toBe(4096);
+    expect(() => createProvider({ provider: "openai", model: "m", apiKey: "test", contextWindowTokens: 8000, maxOutputTokens: 9000 })).toThrow("budget");
+  });
   it("builds an AnthropicProvider for provider=anthropic", () => {
     const p = createProvider({ provider: "anthropic", model: "m", apiKey: "sk-x" });
     expect(p).toBeInstanceOf(AnthropicProvider);

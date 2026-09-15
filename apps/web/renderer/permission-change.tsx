@@ -1,4 +1,5 @@
 import React,{useEffect,useRef,useState} from "react";
+import { desktopJournalStorage } from "./desktop-journal-storage";
 import {DesktopPermissionChangeSchema} from "@traceforge/shared/desktop-execution";
 import type {DesktopConversations} from "./desktop-conversation-transport";
 import {AuthorizationForm} from "./authorization-form";
@@ -9,7 +10,7 @@ export function PermissionChange({bridge,conversationId,runId,canChange=true,ins
   const [corrupt,setCorrupt]=useState(false);
   const [rejectConfirmed,setRejectConfirmed]=useState(false);
   const storageKey=`traceforge:permission-change:${conversationId}:${runId}`;
-  useEffect(()=>{try{const raw=localStorage.getItem(storageKey);if(raw){const value=DesktopPermissionChangeSchema.parse(JSON.parse(raw));if(value.runId!==runId)throw new Error("任务不匹配");pending.current=value;setError("有待核对的授权变更，请先核对原请求。");}}catch{setCorrupt(true);setError("待核对记录无法读取，请保留记录并检查宿主状态。");}},[storageKey]);
+  useEffect(()=>{try{const raw=desktopJournalStorage().getItem(storageKey);if(raw){const value=DesktopPermissionChangeSchema.parse(JSON.parse(raw));if(value.runId!==runId)throw new Error("任务不匹配");pending.current=value;setError("有待核对的授权变更，请先核对原请求。");}}catch{setCorrupt(true);setError("待核对记录无法读取，请保留记录并检查宿主状态。");}},[storageKey]);
   useEffect(()=>{onPending?.(!!state||busy||!!pending.current||corrupt);},[state,busy,error,corrupt,onPending]);
   const path=`/api/desktop/conversations/${conversationId}/execution/${runId}/permissions`;
   async function request(body?:Record<string,unknown>){const result=await bridge.request({path,method:body?"POST":"GET",...(body?{body:JSON.stringify(body)}:{})});if(result.status!==200)throw Object.assign(new Error((result.body as any)?.error??"授权变更失败，请核对任务状态"),{notApplied:result.status===409&&(result.body as any)?.notApplied===true});return result.body as any;}
@@ -18,13 +19,13 @@ export function PermissionChange({bridge,conversationId,runId,canChange=true,ins
   const proposal=state?.requests?.[0];
   async function save(scope?:Record<string,unknown>,approved=true){if(locked.current)return false;locked.current=true;setBusy(true);setError("");try{
     if(!pending.current){const input={commandId:crypto.randomUUID(),runId,expectedRevision:state.expectedRevision,expectedScopeRevision:state.expectedScopeRevision,scope,reason,confirmed:true,
-      ...(proposal?{resolution:{workId:proposal.workId,requestId:proposal.id,approved}}:{})};localStorage.setItem(storageKey,JSON.stringify(input));pending.current=input;}
+      ...(proposal?{resolution:{workId:proposal.workId,requestId:proposal.id,approved}}:{})};desktopJournalStorage().setItem(storageKey,JSON.stringify(input));pending.current=input;}
     const result=await request(pending.current);
     const expectedResolution=pending.current.resolution as {workId:string;requestId:string;approved:boolean}|undefined;
     if(result.commandId!==pending.current.commandId||result.runId!==runId||result.automaticResume!==!!pending.current.resolution
       || (expectedResolution&&(result.resolution?.workId!==expectedResolution.workId||result.resolution?.requestId!==expectedResolution.requestId||result.resolution?.approved!==expectedResolution.approved)))throw new Error("授权变更回执未核对，请保留当前窗口并核对原请求");
-    localStorage.removeItem(storageKey);pending.current=null;setState(null);setReason("");setRejectConfirmed(false);setError(result.resolution?result.resolution.approved?"已批准并继续原工作。后续执行使用你审核后的授权。":"已拒绝并继续原工作。模型会在原授权内调整做法。":"授权变更已核对。该请求不会恢复任务，请查看当前任务状态后再决定是否恢复。");return true;
-  }catch(e){if((e as {notApplied?:boolean}).notApplied){try{localStorage.removeItem(storageKey);pending.current=null;setState(null);}catch{setCorrupt(true);}}setError(`${(e as Error).message} 未自动重发；请核对原请求或刷新授权。`);return false;}finally{locked.current=false;setBusy(false);}}
+    desktopJournalStorage().removeItem(storageKey);pending.current=null;setState(null);setReason("");setRejectConfirmed(false);setError(result.resolution?result.resolution.approved?"已批准并继续原工作。后续执行使用你审核后的授权。":"已拒绝并继续原工作。模型会在原授权内调整做法。":"授权变更已核对。该请求不会恢复任务，请查看当前任务状态后再决定是否恢复。");return true;
+  }catch(e){if((e as {notApplied?:boolean}).notApplied){try{desktopJournalStorage().removeItem(storageKey);pending.current=null;setState(null);}catch{setCorrupt(true);}}setError(`${(e as Error).message} 未自动重发；请核对原请求或刷新授权。`);return false;}finally{locked.current=false;setBusy(false);}}
   return <section className="permission-change" aria-label="变更任务授权">
     {!state&&canChange&&!pending.current&&<button disabled={busy||corrupt} onClick={()=>void load()}>变更任务授权</button>}
     {!state&&pending.current&&<button disabled={busy||corrupt} onClick={()=>void save()}>核对原授权变更</button>}

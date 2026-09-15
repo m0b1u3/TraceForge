@@ -3,6 +3,8 @@ import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, StreamToolsHandlers, R
 export class ProviderHolder implements LlmProvider {
   constructor(private getCurrent: () => LlmProvider) {}
 
+  get contextLimits() { return this.getCurrent().contextLimits; }
+
   extractJson(args: ExtractJsonArgs): Promise<unknown> {
     return this.getCurrent().extractJson(args);
   }

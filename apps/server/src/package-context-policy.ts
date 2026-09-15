@@ -22,10 +22,16 @@ export class PackageContextPolicy implements WorkerModelContextPolicy {
   }
 
   extensionToolAllowed: ((runId: string, source: string) => boolean) | undefined;
+  archivedTranscript: ((request: WorkerModelRequest) => Promise<WorkerTranscriptEntry[]>) | undefined;
 
   async prepare(input: WorkerModelRequest) {
     if (input.transcript.length > 512) throw new Error("Context projection transcript budget exceeded");
     const request = structuredClone(input);
+    if (this.archivedTranscript) {
+      const archived = await this.archivedTranscript(input);
+      request.transcript = [...archived, ...request.transcript];
+      if (Buffer.byteLength(JSON.stringify(request.transcript)) > 16 * 1048576) throw new Error("Context history source capacity exceeded");
+    }
     if (this.extensionToolAllowed) request.tools = request.tools.filter(tool => this.extensionToolAllowed!(input.assignment.runId,tool.source));
     if (this.configuration) {
       request.tools = request.tools.filter(tool => this.configuration!.toolAllowed(input.assignment.runId, tool.source, tool.name));
@@ -38,7 +44,7 @@ export class PackageContextPolicy implements WorkerModelContextPolicy {
     // matching a text hash is only a lookup hint, never authority to trust transcript text.
     const legacy = new Map<string, string>();
     let legacyContextHistory = false;
-    if (input.transcript.some((entry) => entry.kind === "tool" && !entry.receiptKey)) {
+    if (request.transcript.some((entry) => entry.kind === "tool" && !entry.receiptKey)) {
       const rows = this.contextBindings(context.runId, context.workId);
       legacyContextHistory = rows.length > 0 || (!!this.toolReceipts && input.assignment.work.requiredCapabilities.includes("tool.recall"));
       if (rows.length > 256) throw new Error("Legacy context receipt lookup budget exceeded");
@@ -53,6 +59,12 @@ export class PackageContextPolicy implements WorkerModelContextPolicy {
     // One authorized package scan per projection, not one full scan per past tool call.
     let selection: ReturnType<PackageContextDiscoverySource["selection"]> | null | undefined;
     const entries: WorkerTranscriptEntry[] = [];
+    this.toolReceipts?.observeMany(request.transcript.flatMap(entry => {
+      if (entry.kind !== "tool") return [];
+      const hash = /^\[[^;]+; raw-sha256=([a-f0-9]{64});/.exec(entry.summary)?.[1];
+      const key = entry.receiptKey ?? (hash ? legacy.get(hash) : undefined);
+      return key ? [key] : [];
+    }), { caseId: context.caseId, runId: context.runId, workId: context.workId, role: "worker" });
     for (const entry of request.transcript) {
       if (entry.kind !== "tool") { entries.push(entry); continue; }
       const hash = /^\[[^;]+; raw-sha256=([a-f0-9]{64});/.exec(entry.summary)?.[1];
@@ -71,7 +83,6 @@ export class PackageContextPolicy implements WorkerModelContextPolicy {
         || binding.attribution.workId !== context.workId || key !== `${input.assignment.work.idempotencyKey}:${binding.invocationId}`) {
         throw new Error("Context projection receipt attribution mismatch");
       }
-      this.toolReceipts?.observe(key,{caseId:context.caseId,runId:context.runId,workId:context.workId,role:"worker"});
       if (this.toolReceipts?.managed(key)) {
         const receipt = await this.receipts.get(key);
         if (!receipt || !await this.toolReceipts.current(key,{caseId:context.caseId,runId:context.runId,workId:context.workId,role:"worker"})) {

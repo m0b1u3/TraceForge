@@ -87,6 +87,10 @@ class ToolExecutionTimeoutError extends Error {}
 
 export interface ToolGatewayPolicy {
   allowedRisks: ExecutionRisk[];
+  /** Host may require extra confirmation; never removes the high-risk gate. */
+  requiresApproval?(input: { assignment: WorkerAssignment; tool: ExecutionToolSpec }): boolean;
+  /** Immutable host policy revision consulted for this invocation. */
+  approvalPolicyRef?(): string;
   /** Current host authorization, checked again immediately before dispatch; throws to fail closed. */
   assertAuthorized?(input:{worker:WorkerDescriptor;assignment:WorkerAssignment;tool:ExecutionToolSpec}):void;
   allowedTools?: string[];
@@ -196,8 +200,9 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
     });
 
     const hasDurableGrant = request.assignment.work.grantedActionKeys.includes(request.idempotencyKey);
+    const approvalPolicyRef = this.policy.approvalPolicyRef?.();
     let approvalReason: string | undefined;
-    if ((tool.risk === "privileged" || tool.risk === "destructive") && !hasDurableGrant) {
+    if ((tool.risk === "privileged" || tool.risk === "destructive" || this.policy.requiresApproval?.({ assignment: request.assignment, tool })) && !hasDurableGrant) {
       const approval = await waitForCancellation(() => this.approvals.authorize({ worker: request.worker, assignment: request.assignment, tool, invocation: request.invocation }), request.signal);
       request.signal?.throwIfAborted();
       if (approval.decision === "approved") approvalReason = approval.reason;
@@ -239,7 +244,12 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
           effectivePermissions,
           };
           Object.defineProperty(context, "signal", { value: signal, enumerable: false });
-          return tool.execute(request.invocation.input, context);
+          let progressOpen = true;
+          Object.defineProperty(context, "onProgress", { value: (progress: { phase: "dispatched" | "output" | "command"; text?: string }) => {
+            if (progressOpen && !signal.aborted) request.onProgress?.(progress);
+          }, enumerable: false });
+          context.onProgress?.({ phase: "dispatched" });
+          return tool.execute(request.invocation.input, context).finally(() => { progressOpen = false; });
         },
         tool.timeoutMs,
         request.signal,
@@ -266,7 +276,7 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
     else if (result.retryable) this.registry.recordFailure(tool.name, result.summary);
     result = {
       ...result,
-      metadata: { ...result.metadata, effectivePermissions, ...(approvalReason ? { approvalReason } : {}) },
+      metadata: { ...result.metadata, effectivePermissions, ...(approvalPolicyRef ? { approvalPolicyRef } : {}), ...(approvalReason ? { approvalReason } : {}) },
     };
     try { await this.receipts.put(request.idempotencyKey, result); }
     catch (error) {

@@ -4,6 +4,7 @@ import { canonicalJson, type ScenarioEvent, type ScenarioRunState } from "@trace
 import type { WorkerModelRequest, WorkerTranscriptEntry } from "@traceforge/worker-runtime";
 
 export * from "./snapshot.js";
+export * from "./shared-progress.js";
 export * from "./evaluation.js";
 export * from "./wakeup.js";
 export * from "./loop.js";
@@ -187,3 +188,5 @@ export class CognitiveContextDistiller {
     };
   }
 }
+export * from "./semantic-compactor.js";
+export * from "./rolling-context.js";
