@@ -46,6 +46,8 @@ it("edits, saves, restores with confirmation and keeps drafts on save failure", 
   expect([...node.querySelectorAll("button")].find(b => b.textContent === "保存配置")!.disabled).toBe(true);
   await click("替换正文"); expect(custom.value).toBe("Imported");
   await click("保存配置"); expect(state.packages[0]!.userResources?.[0]?.content).toBe("Imported");
+  expect(state.packages[0]!.userResources?.[0]?.source).toEqual({kind:"file",name:"guide.md"});
+  expect(node.textContent).toContain("guide.md");
   await click("删除此资源"); await click("确认删除"); await click("保存配置");
   expect(state.packages[0]!.userResources).toEqual([]);
 });

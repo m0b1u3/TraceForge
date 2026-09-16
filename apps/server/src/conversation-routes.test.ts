@@ -7,6 +7,8 @@ import { createDb, getSqliteClient } from "./db/client.js";
 import { registerRoutes } from "./routes.js";
 import { EventBus } from "./event-bus.js";
 import { FoundationHostControl } from "./foundation-host-control.js";
+import { prepareConversationContext } from "./desktop-conversation-context.js";
+import { ConversationHistoryReader } from "./conversation-history-reader.js";
 
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -22,6 +24,21 @@ async function fixture(path = ":memory:") {
 }
 
 describe("desktop conversation host persistence", () => {
+  it("saves attachment bytes atomically, replays idempotently and feeds context and original readback",async()=>{
+    const f=await fixture();const id=(await f.create()).json().id;
+    const payload={commandId:"attached",text:"Review this file",attachments:[{kind:"text",name:"notes.txt",text:"original attachment detail"}]};
+    const send=()=>f.app.inject({method:"POST",url:`/api/desktop/conversations/${id}/messages`,payload});
+    expect((await send()).statusCode).toBe(201);expect((await send()).statusCode).toBe(200);
+    const sql=getSqliteClient(f.db);
+    const model={runTools:async()=>({done:true,text:"",toolCalls:[]}),extractJson:async()=>({})};
+    expect(prepareConversationContext(sql,id,1,model,"Task").messages[0].attachments).toEqual(payload.attachments);
+    const reader=new ConversationHistoryReader(sql,id,1);
+    expect(JSON.stringify(reader.execute({id:"read",name:"conversation_read",input:{id:"attached"}}))).toContain("original attachment detail");
+    const page=(await f.app.inject(`/api/desktop/conversations/${id}/messages`)).json();
+    expect(page.messages[0].attachmentNames).toEqual(["notes.txt"]);expect(JSON.stringify(page)).not.toContain("original attachment detail");
+    payload.attachments[0].text="changed";expect((await send()).statusCode).toBe(409);
+    expect(sql.prepare("SELECT count(*) AS n FROM desktop_message_attachments").get()).toEqual({n:1});
+  });
   it("uses the existing local management channel, not worker or public access", async () => {
     const db = createDb(":memory:"); const app = Fastify();
     const control = new FoundationHostControl(app, getSqliteClient(db));

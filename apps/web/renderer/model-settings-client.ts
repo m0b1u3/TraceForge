@@ -1,4 +1,5 @@
 import type { ModelProtocol, ModelSupplier } from "@traceforge/shared/model-protocol";
+import { ModelProfileSchema, type ModelProfile, type ModelCatalogEntry } from "@traceforge/shared/model-profile";
 
 export interface ModelSettingsBridge {
   protocolVersion: 1;
@@ -7,14 +8,15 @@ export interface ModelSettingsBridge {
 export interface ModelConfigInput {
   provider: ModelProtocol; supplier?: ModelSupplier;
   model: string; baseUrl: string; apiKey?: string; credentialRef?: string; authMode?: "api_key" | "bearer";
-  jsonMode?: "json_schema" | "json_object"; contextWindowTokens?: number; maxOutputTokens?: number;
-  requestOptions?: { thinking?: "enabled" | "disabled"; reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "max"; temperature?: number };
+  jsonMode?: "json_schema" | "json_object"; contextWindowTokens?: number | null; maxOutputTokens?: number | null;
+  modelProfile?: ModelProfile | null;
+  requestOptions?: { thinking?: "enabled" | "disabled"; reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "max"; temperature?: number; includeReasoningContinuation?: boolean };
 }
 export interface ModelSettingsSnapshot {
   accounts?: ModelAccountView[];
   configured: boolean; revision: string; scope: "host";
   config: (Omit<ModelConfigInput, "apiKey"> & { apiKeyMasked: string; credentialRef?: string }) | null;
-  suppliers: Record<string, { protocol: ModelProtocol; baseUrl: string; jsonMode: "json_schema" | "json_object" }>;
+  suppliers: Record<string, { label?: string; group?: "domestic" | "international" | "coding"; note?: string; requestOptions?: ModelConfigInput["requestOptions"]; protocol: ModelProtocol; baseUrl: string; jsonMode: "json_schema" | "json_object" }>;
 }
 export interface ModelAccountView {
   id: string; label: string; provider: ModelConfigInput["provider"]; baseUrl: string; issuer: string; scopes: string[];
@@ -44,11 +46,17 @@ export class ModelSettingsClient {
     return value;
   }
   async load() { return this.snapshot(await this.request("load")); }
-  async discover(expectedRevision: string, config: ModelConfigInput): Promise<{ models: Array<{ id: string }>; truncated: boolean }> {
-    const value = await this.request("discover", { expectedRevision, config }) as { models?: Array<{ id: string }>; truncated?: boolean };
+  async discover(expectedRevision: string, config: ModelConfigInput): Promise<{ models: ModelCatalogEntry[]; truncated: boolean }> {
+    const value = await this.request("discover", { expectedRevision, config }) as { models?: ModelCatalogEntry[]; truncated?: boolean };
     if (!value || !Array.isArray(value.models) || value.models.length > 1000 || typeof value.truncated !== "boolean" ||
       value.models.some(model => !model || typeof model.id !== "string" || !model.id || model.id.length > 200 || /[\s\x00-\x1f\x7f]/.test(model.id))) throw new Error("模型目录回执无效，可以刷新或手动填写。");
-    return { models: value.models.map(({ id }) => ({ id })), truncated: value.truncated };
+    return { models: value.models.map(({ id, profile }) => {
+      if (!profile) return {id};
+      const parsed=ModelProfileSchema.safeParse(profile);
+      if (!parsed.success || parsed.data.model !== id || parsed.data.protocol !== config.provider || parsed.data.baseUrl.replace(/\/+$/,"") !== config.baseUrl.replace(/\/+$/,""))
+        throw new Error("模型能力回执与当前连接不匹配，请重新读取。");
+      return {id,profile:parsed.data};
+    }), truncated: value.truncated };
   }
   async openLogin(id: string) {
     const result = await this.request("open-login", { id }) as { opened?: boolean };

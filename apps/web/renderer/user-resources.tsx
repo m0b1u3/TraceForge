@@ -20,7 +20,7 @@ export function UserResources({ resources, parents, busy, onChange, onBusy, onPe
 }) {
   const [selected, setSelected] = useState("");
   const [remove, setRemove] = useState(false), [error, setError] = useState("");
-  const [pendingImport, setPendingImport] = useState<{ id: string; content: string } | null>(null);
+  const [pendingImport, setPendingImport] = useState<{ id: string; content: string; name:string } | null>(null);
   const importing = useRef(false);
   useEffect(() => { onPending(!!pendingImport); return () => onPending(false); }, [pendingImport, onPending]);
   const item = resources.find(r => r.id === selected) ?? resources[0];
@@ -34,15 +34,15 @@ export function UserResources({ resources, parents, busy, onChange, onBusy, onPe
     const source = available[0]; if (!source || resources.length >= 64) return;
     const id = `user.${crypto.randomUUID()}`;
     onChange([...resources, { id, parentId: source.id, title: "未命名 Skill", kind: "skill", content: "", enabled: true,
-      roles: [source.roles[0] as UserResource["roles"][number]], phases: [] }]); setSelected(id); setRemove(false);
+      roles: [source.roles[0] as UserResource["roles"][number]], phases: [],source:{kind:"editor",name:"客户端新建"} }]); setSelected(id); setRemove(false);
   }
   async function importFile(file: File | undefined) {
     if (!file || !item || importing.current || busy) return;
     importing.current = true; onBusy(true); setError(""); setRemove(false);
     try {
       const content = await readGuidanceFile(file);
-      if (item.content) setPendingImport({ id: item.id, content });
-      else patch({ content });
+      if (item.content) setPendingImport({ id: item.id, content,name:file.name.slice(0,200) });
+      else patch({ content,source:{kind:"file",name:file.name.slice(0,200)} });
     } catch (cause) { setError((cause as Error).message); }
     finally { importing.current = false; onBusy(false); }
   }
@@ -54,6 +54,8 @@ export function UserResources({ resources, parents, busy, onChange, onBusy, onPe
     {!!resources.length && <div className="configuration-editor">
       <nav aria-label="用户资源">{resources.map(r => <button key={r.id} disabled={busy || !!pendingImport} aria-current={item?.id === r.id ? "true" : undefined} onClick={() => { setSelected(r.id); setRemove(false); setError(""); }}><span>{r.title || "未命名"}</span><small>{kindName[r.kind]} · {r.enabled ? "启用" : "停用"}</small></button>)}</nav>
       {item && <div className="configuration-document">
+        <p className="configuration-meta">来源：{item.source?.kind==="file"?"导入文件 · "+item.source.name:item.source?.kind==="editor"?"客户端创建":"来源未记录（旧资源）"}。来源是用户提供的信息，不代表签名或可信认证。</p>
+        <p className="configuration-meta">使用位置：当前场景 · {item.roles.map(r=>roleName[r]??r).join("、")} · {item.phases.length?item.phases.join("、"):"继承父资源阶段"}。{!item.enabled?"资源已停用。":!parent?.enabled?"父资源已停用，本资源不可读取。":"新任务按保存后的配置使用。"}角色指导自动加入上下文；Skill 和知识资料按需读取。</p>
         <fieldset disabled={busy || !!pendingImport}>
           <label>资源名称<input aria-label="用户资源名称" value={item.title} maxLength={160} required onChange={e => patch({ title: e.target.value })} /></label>
           <label>资源类型<select value={item.kind} onChange={e => patch({ kind: e.target.value as UserResource["kind"] })}>{Object.entries(kindName).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select></label>
@@ -73,7 +75,7 @@ export function UserResources({ resources, parents, busy, onChange, onBusy, onPe
           <button type="button" onClick={() => setRemove(true)}>删除此资源</button>
         </fieldset>
         {error && <p role="alert">{error}</p>}
-        {pendingImport && <div role="group" aria-label="替换正文确认"><p>导入会替换当前资源正文，保存前仍是草稿。</p><button disabled={busy} onClick={() => { if (pendingImport.id === item.id) patch({ content: pendingImport.content }); setPendingImport(null); }}>替换正文</button><button disabled={busy} onClick={() => setPendingImport(null)}>取消导入</button></div>}
+        {pendingImport && <div role="group" aria-label="替换正文确认"><p>导入会替换当前资源正文，保存前仍是草稿。</p><button disabled={busy} onClick={() => { if (pendingImport.id === item.id) patch({ content: pendingImport.content,source:{kind:"file",name:pendingImport.name} }); setPendingImport(null); }}>替换正文</button><button disabled={busy} onClick={() => setPendingImport(null)}>取消导入</button></div>}
         {remove && <div role="group" aria-label="删除资源确认"><p>保存后从后续任务移除；已有任务保留原配置。</p><button disabled={busy} onClick={() => { onChange(resources.filter(r => r.id !== item.id)); setRemove(false); setSelected(""); }}>确认删除</button><button disabled={busy} onClick={() => setRemove(false)}>保留资源</button></div>}
       </div>}
     </div>}

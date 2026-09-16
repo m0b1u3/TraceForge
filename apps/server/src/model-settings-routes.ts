@@ -4,16 +4,18 @@ import { MODEL_PROTOCOLS, MODEL_SUPPLIER_IDS } from "@traceforge/shared/model-pr
 import type { LlmConfigService } from "./llm-config-service.js";
 import type { ModelAccounts } from "./model-accounts.js";
 import { ModelCatalogError } from "@traceforge/llm";
+import { ModelProfileSchema } from "@traceforge/shared/model-profile";
 
 const configSchema = z.object({
   provider: z.enum(MODEL_PROTOCOLS), supplier: z.enum(MODEL_SUPPLIER_IDS).optional(),
+  modelProfile: ModelProfileSchema.nullish(),
   model: z.string().trim().min(1).max(200), baseUrl: z.string().min(1).max(2048),
   apiKey: z.string().min(1).max(8192).refine(key => !/[\r\n]/.test(key)).optional(),
   credentialRef: z.string().regex(/^[a-z][a-z0-9_.:-]{0,127}$/).optional(),
   authMode: z.enum(["api_key", "bearer"]).optional(), jsonMode: z.enum(["json_schema", "json_object"]).optional(),
-  contextWindowTokens: z.number().int().positive().max(100000000).optional(),
-  maxOutputTokens: z.number().int().positive().max(10000000).optional(),
-  requestOptions: z.object({ thinking: z.enum(["enabled", "disabled"]).optional(),
+  contextWindowTokens: z.number().int().positive().max(100000000).nullish(),
+  maxOutputTokens: z.number().int().positive().max(10000000).nullish(),
+  requestOptions: z.object({ includeReasoningContinuation: z.boolean().optional(), thinking: z.enum(["enabled", "disabled"]).optional(),
     reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "max"]).optional(),
     temperature: z.number().min(0).max(2).optional() }).strict().optional(),
 }).strict();

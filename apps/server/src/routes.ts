@@ -12,6 +12,7 @@ import { registerModelSettingsRoutes } from "./model-settings-routes.js";
 import type { ModelAccounts } from "./model-accounts.js";
 import type { ConversationTaskPort } from "./conversation-task-port.js";
 import { ConversationWorkspaces } from "./conversation-workspaces.js";
+import type {ContinuationCipher} from "./conversation-continuations.js";
 
 /**
  * Small application control surface shared by the desktop shell and the
@@ -27,6 +28,7 @@ export function registerRoutes(
   _projectRoot?: string,
   accounts?: ModelAccounts,
   tasks?: ConversationTaskPort,
+  continuationCipher?:ContinuationCipher,
 ): void {
   const cases = new CaseStore(db);
   const sqlite = getSqliteClient(db);
@@ -34,7 +36,7 @@ export function registerRoutes(
   registerDesktopReplyRoutes(app, new DesktopReplyService(sqlite, () => {
     if (!llmService) throw new Error("Model not configured");
     return llmService.getConversationProvider();
-  }, 240000, tasks));
+  }, 240000, tasks,continuationCipher));
 
   app.get("/api/cases", async () => cases.list());
 

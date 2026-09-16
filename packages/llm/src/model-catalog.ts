@@ -1,7 +1,9 @@
 import type { LlmEndpointConfig } from "./config.js";
 import { modelConnectionFetch, normalizeModelConnection, type ModelConnectionDependencies } from "./connections.js";
+import { profileFromCatalog } from "./model-profile.js";
+import type { ModelCatalogEntry } from "@traceforge/shared/model-profile";
 
-export interface ModelCatalog { models: Array<{ id: string }>; truncated: boolean }
+export interface ModelCatalog { models: ModelCatalogEntry[]; truncated: boolean }
 export class ModelCatalogError extends Error {
   constructor(readonly code: "unauthorized" | "unsupported" | "rate_limited" | "unavailable" | "invalid_response") { super(code); }
 }
@@ -18,7 +20,7 @@ export async function discoverModels(input: LlmEndpointConfig, dependencies: Mod
     requestSignal.throwIfAborted();
     if (!config.credentialRef && !config.apiKey) throw new ModelCatalogError("unauthorized");
     const base = config.baseUrl!.replace(/\/+$/, "");
-    const path = config.provider === "anthropic" && new URL(base).pathname === "/" ? "/v1/models" : "/models";
+    const path = config.provider === "anthropic" ? "/v1/models" : "/models";
     const headers: Record<string, string> = { accept: "application/json" };
     if (config.provider === "anthropic") headers["anthropic-version"] = "2023-06-01";
     if (!config.credentialRef) headers[config.provider === "anthropic" && config.authMode !== "bearer" ? "x-api-key" : "authorization"] =
@@ -42,12 +44,15 @@ export async function discoverModels(input: LlmEndpointConfig, dependencies: Mod
     requestSignal.throwIfAborted();
     const value = JSON.parse(text);
     if (!value || !Array.isArray(value.data) || value.data.length > 10000) throw new ModelCatalogError("invalid_response");
-    const ids = new Set<string>();
+    const ids = new Map<string, ModelCatalogEntry>();
     for (const model of value.data) {
       if (!model || typeof model.id !== "string" || !model.id || model.id.length > 200 || /[\s\x00-\x1f\x7f]/.test(model.id)) throw new ModelCatalogError("invalid_response");
-      ids.add(model.id);
+      const profile=profileFromCatalog(model,config);
+      if (ids.has(model.id)) {
+        if (JSON.stringify(ids.get(model.id)?.profile) !== JSON.stringify(profile)) ids.set(model.id,{id:model.id});
+      } else ids.set(model.id,{id:model.id,...(profile ? {profile} : {})});
     }
-    return { models: [...ids].sort().slice(0, 1000).map(id => ({ id })), truncated: value.has_more === true || ids.size > 1000 };
+    return { models: [...ids.values()].sort((a,b)=>a.id.localeCompare(b.id)).slice(0, 1000), truncated: value.has_more === true || ids.size > 1000 };
   } catch (error) { throw error instanceof ModelCatalogError ? error : new ModelCatalogError("unavailable"); }
   finally { clearTimeout(timer); await reader?.cancel().catch(() => {}); reader?.releaseLock(); }
 }

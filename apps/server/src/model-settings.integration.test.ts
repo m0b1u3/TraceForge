@@ -29,6 +29,37 @@ function fixture() {
 const config = { provider: "openai" as const, supplier: "deepseek" as const, model: "explicit-model", baseUrl: "https://api.deepseek.com", apiKey: "fixture-secret-only" };
 
 describe("complete model settings control flow", () => {
+  it("persists capability snapshots, consumes budgets and explicitly clears same-model overrides", async () => {
+    const f = fixture(); const requests: Request[] = [];
+    const gateway = new ModelGateway([], { fetch: async (input, init) => {
+      const request = new Request(input, init); requests.push(request);
+      return request.method === "GET" ? Response.json({data:[{id:"explicit-model",context_length:64000,max_output_tokens:1024}]}) :
+        Response.json({choices:[{message:{role:"assistant",content:'{"ok":true}'},finish_reason:"stop"}]});
+    }});
+    const path = join(f.dir,"profiles.json");
+    const service = new LlmConfigService(path,{secretStore:f.store,gateway});
+    const app = Fastify(); cleanup.push(()=>app.close()); registerModelSettingsRoutes(app,service);
+    const bridge = createModelSettingsBridge({webContentsId:7,origin:"http://127.0.0.1:43333",request:async(url,payload)=>{
+      const response=await app.inject({method:"POST",url,payload:JSON.stringify(payload),headers:{"content-type":"application/json"}});
+      return {status:response.statusCode,body:response.json()};
+    }});
+    const client=new ModelSettingsClient({protocolVersion:1,request:input=>bridge.request({webContentsId:7,mainFrame:true,url:"http://127.0.0.1:43333/"},input)});
+    const catalog=await client.discover(service.settings().revision,{...config,model:""});
+    const modelProfile=catalog.models[0].profile!;
+    expect(modelProfile).toMatchObject({contextWindowTokens:64000,maxOutputTokens:1024,source:"catalog"});
+    const saved=await client.save(service.settings().revision,{...config,modelProfile,contextWindowTokens:16000,maxOutputTokens:512});
+    const oldProvider=service.getConversationProvider();
+    await client.save(saved.revision,{...config,apiKey:undefined,contextWindowTokens:null,maxOutputTokens:null});
+    const reopened=new LlmConfigService(path,{secretStore:f.store,gateway});
+    expect(reopened.initializeFromConfig().modelProfile).toEqual(modelProfile);
+    const args={system:"JSON",user:"ping",schema:{}};
+    await reopened.getProvider().extractJson(args); await oldProvider.extractJson(args);
+    expect((await requests[1].json()).max_tokens).toBe(1024);
+    expect((await requests[2].json()).max_tokens).toBe(512);
+    await client.save(service.settings().revision,{...config,apiKey:undefined,modelProfile:null});
+    expect(service.settings().config?.modelProfile).toBeNull();
+    expect(readFileSync(path,"utf8")).not.toContain(config.apiKey);
+  });
   it("discovers through the desktop bridge without a model ID, saving or inference", async () => {
     const f = fixture(); const requests: Request[] = [];
     const gateway = new ModelGateway([], {

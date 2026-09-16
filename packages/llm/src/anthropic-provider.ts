@@ -5,6 +5,7 @@ import { withRetry } from "./retry.js";
 import { normalizeToolHistory } from "./tool-history.js";
 import type { ModelAdapterOptions } from "./adapter-options.js";
 import { modelStreamEvents } from "./stream-events.js";
+import { continuation, continuationState } from "./model-continuation.js";
 
 export type AnthropicOptions = ModelAdapterOptions;
 
@@ -61,7 +62,7 @@ export class AnthropicProvider implements LlmProvider {
   async runTools(args: RunToolsArgs): Promise<RunTurn> {
     const res = await withRetry("anthropic.runTools", () => this.client.messages.create(this.toolParameters(args)), { onRetry: mapRetry(args.onRetry) });
     emitUsage(args.onUsage, res.usage);
-    return anthropicTurn(res);
+    return this.withContinuation(res);
   }
 
   async streamTools(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn> {
@@ -82,8 +83,17 @@ export class AnthropicProvider implements LlmProvider {
       const message = await stream.finalMessage();
       if (!["end_turn", "stop_sequence", "tool_use"].includes(message.stop_reason ?? "")) throw new Error("Incomplete model stream");
       emitUsage(handlers.onUsage, message.usage);
-      return anthropicTurn(message);
+      return this.withContinuation(message);
     } catch (error) { stream.abort(); throw error; }
+  }
+
+  private withContinuation(message: Anthropic.Message): RunTurn {
+    const turn = anthropicTurn(message);
+    const blocks = message.content.flatMap<Extract<import("./provider.js").ModelContinuation["state"],{protocol:"anthropic"}>["blocks"][number]>(block => block.type === "thinking" && block.signature
+      ? [{type:"thinking" as const,thinking:block.thinking,signature:block.signature}]
+      : block.type === "redacted_thinking" ? [{type:"redacted_thinking" as const,data:block.data}] : []) as Extract<import("./provider.js").ModelContinuation["state"],{protocol:"anthropic"}>["blocks"];
+    if (blocks.length) turn.continuation = continuation(this.opts,{protocol:"anthropic",blocks});
+    return turn;
   }
 
   private toolParameters(args: RunToolsArgs): Anthropic.MessageCreateParamsNonStreaming {
@@ -110,13 +120,16 @@ export class AnthropicProvider implements LlmProvider {
         anthropicMessages.push({
           role: "assistant",
           content: [
+            ...(continuationState(m.continuation,this.opts,"anthropic")?.blocks ?? []),
             ...(m.content ? [{ type: "text", text: m.content }] : []),
             ...m.toolCalls.map((tc) => ({ type: "tool_use", id: tc.id, name: tc.name, input: tc.input })),
           ],
         });
         continue;
       }
-      anthropicMessages.push({ role: m.role as "user" | "assistant", content: m.content });
+      const blocks = m.role === "assistant" ? continuationState(m.continuation, this.opts, "anthropic")?.blocks : undefined;
+      anthropicMessages.push({ role: m.role as "user" | "assistant", content: blocks?.length
+        ? [...blocks, ...(m.content ? [{ type: "text", text: m.content }] : [])] : attachmentContent(m,"anthropic") });
     }
     const params = {
       model: this.opts.model,
@@ -161,3 +174,4 @@ function mapRetry(onRetry: RunToolsArgs["onRetry"]) {
       onRetry({ attempt: event.attempt, maxAttempts: event.maxAttempts, reason: event.reason })
     : undefined;
 }
+import { attachmentContent } from "./attachment-content.js";

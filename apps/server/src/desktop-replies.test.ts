@@ -9,7 +9,39 @@ import { validateConversationRequest } from "../../desktop/src/conversation-brid
 import { createConversationTaskPort } from "./conversation-task-port.js";
 
 const cleanup: Array<()=>Promise<void>>=[];
-it("conversation function loop persists a task proposal and reopens without inference or dispatch",async()=>{
+it("edits and reorders only pending replies, pauses durably and reconciles lost acknowledgements",async()=>{
+  const f=await fixture();await f.call(`${f.base}/replies/message`,{});
+  for(const id of ["second","third"]){await f.call(`${f.base}/messages`,{commandId:id,text:id});await f.call(`${f.base}/replies/${id}`,{});}
+  const queue=async()=>(await f.call(`${f.base}/reply-queue`)).json();
+  const apply=async(commandId:string,operation:object)=>f.call(`${f.base}/reply-queue`,{commandId,expectedRevision:(await queue()).revision,operation});
+  expect((await apply("pause",{kind:"pause",paused:true})).statusCode).toBe(200);
+  const edit={commandId:"edit",expectedRevision:(await queue()).revision,operation:{kind:"edit",messageId:"second",text:"edited second"}};
+  const edited=await f.call(`${f.base}/reply-queue`,edit);expect(edited.statusCode).toBe(200);
+  expect((await f.call(`${f.base}/reply-queue`,edit)).json()).toEqual(edited.json());
+  expect((await f.call(`${f.base}/reply-queue`,{...edit,commandId:"stale"})).statusCode).toBe(409);
+  expect((await apply("order",{kind:"reorder",ids:["third","second"]})).statusCode).toBe(200);
+  f.handlers().onTextDelta?.("first answer");f.finish("first answer");await vi.waitFor(()=>expect(f.service.read(f.conversation.id,0).body).toMatchObject({replies:expect.arrayContaining([expect.objectContaining({state:"completed"})])}));
+  expect(f.provider.streamTools).toHaveBeenCalledTimes(1);
+  await apply("resume",{kind:"pause",paused:false});
+  await vi.waitFor(()=>expect(f.provider.streamTools).toHaveBeenCalledTimes(2));
+  expect(f.args().messages.at(-1)?.content).toBe("third");
+  expect(JSON.stringify(f.args().messages)).not.toContain("edited second");
+  expect((await apply("late",{kind:"edit",messageId:"third",text:"too late"})).statusCode).toBe(409);
+  f.handlers().onTextDelta?.("third answer");f.finish("third answer");
+  await vi.waitFor(()=>expect(f.provider.streamTools).toHaveBeenCalledTimes(3));
+  expect(f.args().messages.at(-1)?.content).toBe("edited second");
+  expect(f.args().messages).toContainEqual({role:"assistant",content:"third answer"});
+  f.handlers().onTextDelta?.("second answer");f.finish("second answer");await vi.waitFor(()=>expect((f.service.readQueue(f.conversation.id).body as any).items).toHaveLength(0));
+});
+it("queue commands cannot mutate a different conversation or dispatched message",async()=>{
+  const f=await fixture();await f.call(`${f.base}/replies/message`,{});
+  const command={commandId:"change",expectedRevision:0,operation:{kind:"edit",messageId:"message",text:"changed"}};
+  expect((await f.call(`${f.base}/reply-queue`,command)).statusCode).toBe(409);
+  expect((await f.call("/api/desktop/conversations/missing/reply-queue",command)).statusCode).toBe(404);
+  expect((await f.call(`${f.base}/reply-queue`,{...command,operation:{kind:"pause",paused:true,scope:"all"}})).statusCode).toBe(400);
+  f.service.close();
+});
+it("one conversation loop reads history then proposes a task and reopens without replay",async()=>{
   const db=createDb(":memory:"),sql=getSqliteClient(db),app=Fastify();
   registerConversationRoutes(app,db);
   const request=vi.fn(async()=>({status:200,body:{definitions:[{kind:"neutral",version:1}],runs:[],truncated:false}}));
@@ -17,22 +49,37 @@ it("conversation function loop persists a task proposal and reopens without infe
   let count=0;
   const model:LlmProvider={extractJson:vi.fn(),runTools:vi.fn(),streamTools:vi.fn(async(args,handlers)=>{
     expect(args.tools.some(tool=>tool.name==="task_request")).toBe(true);
-    if(!count++)return {text:"",done:false,toolCalls:[{id:"request",name:"task_request",input:{scenarioKind:"neutral",definitionVersion:1}}]};
+    expect(args.tools.some(tool=>tool.name==="conversation_read")).toBe(true);
+    expect(args.tools.some(tool=>tool.name==="memory_recall")).toBe(true);
+    if(count++===0)return {text:"",done:false,toolCalls:[{id:"read",name:"conversation_read",input:{id:"source"}}]};
+    if(count===2){
+      expect(JSON.parse(args.messages.at(-1)!.content).text).toContain("Earlier detail");
+      return {text:"",done:false,toolCalls:[{id:"request",name:"task_request",input:{scenarioKind:"neutral",definitionVersion:1}}]};
+    }
     handlers.onTextDelta?.("Please review the requested scope.");
     return {text:"Please review the requested scope.",done:true,toolCalls:[]};
   })};
   const service=new DesktopReplyService(sql,()=>model,10000,tasks);registerDesktopReplyRoutes(app,service);
   await app.ready();cleanup.push(async()=>{await app.close();sql.close();});
   const conversation=(await app.inject({url:"/api/desktop/conversations",method:"POST",payload:{commandId:"create",title:"Task"}})).json();
-  await app.inject({url:`/api/desktop/conversations/${conversation.id}/messages`,method:"POST",payload:{commandId:"message",text:"Perform the requested review"}});
+  await app.inject({url:`/api/desktop/conversations/${conversation.id}/messages`,method:"POST",payload:{commandId:"source",text:"Earlier detail"}});
+  await app.inject({url:`/api/desktop/conversations/${conversation.id}/messages`,method:"POST",payload:{commandId:"message",text:"Read the earlier detail and continue the task"}});
   service.start(conversation.id,"message");
-  await vi.waitFor(()=>expect(service.read(conversation.id,0).body).toMatchObject({replies:[{state:"completed",taskRequest:{scenarioKind:"neutral",definitionVersion:1},recallCount:0}]}));
+  await vi.waitFor(()=>expect(service.read(conversation.id,0).body).toMatchObject({replies:[{state:"completed",taskRequest:{scenarioKind:"neutral",definitionVersion:1},recallCount:1,originalReadCount:1}]}));
   service.close();
   const restored=new DesktopReplyService(sql,()=>model,10000,tasks);
   expect(restored.start(conversation.id,"message").body).toMatchObject({taskRequest:{scenarioKind:"neutral",definitionVersion:1}});
-  expect(model.streamTools).toHaveBeenCalledTimes(2);expect(request).toHaveBeenCalledTimes(1);restored.close();
+  expect(model.streamTools).toHaveBeenCalledTimes(3);expect(request).toHaveBeenCalledTimes(1);restored.close();
 });
 afterEach(async()=>{for(const close of cleanup.splice(0))await close();});
+it("rejects retired review commands and never upgrades a saved read-only intent",async()=>{
+  const f=await fixture();
+  expect((await f.call(`${f.base}/replies/message`,{review:[{id:"source"}]})).statusCode).toBe(400);
+  f.sql.exec("CREATE TABLE desktop_source_reviews(conversation_id TEXT,message_id TEXT)");
+  f.sql.prepare("INSERT INTO desktop_source_reviews VALUES(?,?)").run(f.conversation.id,"message");
+  expect((await f.call(`${f.base}/replies/message`,{})).json()).toEqual({error:"source_review_retired"});
+  expect(f.provider.streamTools).not.toHaveBeenCalled();
+});
 it("queues follow-ups once and assembles context after the preceding answer", async()=>{
   const f=await fixture();
   await f.call(`${f.base}/replies/message`,{});
@@ -89,7 +136,7 @@ it("persists real deltas before completion; reads and repeated commands never in
   expect((await f.call(`${f.base}/replies?after=0`)).json().replies).toEqual([]);
   expect(f.provider.streamTools).not.toHaveBeenCalled();
   const started=await f.call(`${f.base}/replies/message`,{});
-  expect(started.statusCode).toBe(202);expect(f.args().tools.map(tool => tool.name)).toEqual(["conversation_search", "conversation_read"]);
+  expect(started.statusCode).toBe(202);expect(f.args().tools.map(tool => tool.name)).toEqual(["conversation_read_sources", "conversation_search", "conversation_read", "conversation_attachments", "conversation_attachment_read", "memory_recall", "memory_update", "memory_topics"]);
   expect(DesktopReplySchema.parse(started.json()).state).toBe("streaming");
   f.handlers().onTextDelta?.("First part ");
   await vi.waitFor(async()=>expect((await f.call(`${f.base}/replies?after=0`)).json().replies[0].text).toBe("First part "));
@@ -153,7 +200,8 @@ it("uses only saved same-conversation history and completed prior replies",async
   await vi.waitFor(async()=>expect((await f.call(`${f.base}/replies?after=0`)).body).toContain('"state":"completed"'));
   await f.call(`${f.base}/messages`,{commandId:"second",text:"Follow up"});
   await f.call(`${f.base}/replies/second`,{});
-  expect(f.args().messages).toEqual([{role:"user",content:"Explain the next step without executing it"},{role:"assistant",content:"Answer"},{role:"user",content:"Follow up"}]);
+  expect(JSON.parse(f.args().messages[0].content).references).toEqual([{id:"message",sequence:1,excerpt:"Explain the next step without executing it"}]);
+  expect(f.args().messages.slice(1)).toEqual([{role:"user",content:"Explain the next step without executing it"},{role:"assistant",content:"Answer"},{role:"user",content:"Follow up"}]);
 });
 
 it("adds traceable cached summaries for omitted conversation history without deleting original messages", async () => {

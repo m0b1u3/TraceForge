@@ -10,6 +10,8 @@ import { registerConversationRoutes } from "./conversation-routes.js";
 import { DesktopReplyService } from "./desktop-replies.js";
 import { ConversationHistoryReader } from "./conversation-history-reader.js";
 import { DesktopReplySchema } from "@traceforge/shared/desktop-replies";
+import { DesktopConversationMemory } from "./desktop-conversation-memory.js";
+import { prepareConversationContext } from "./desktop-conversation-context.js";
 
 const clean: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const run of clean.splice(0)) await run(); });
@@ -30,6 +32,27 @@ async function host(model: LlmProvider, timeout = 120000) {
   };
 }
 const summaries: LlmProvider["extractJson"] = async args => ({ entries: JSON.parse(args.user).entries.map((entry: any) => ({ id: entry.id, text: "Earlier details omitted; use the original saved conversation when necessary." })) });
+
+it("maps recent corrections to readable source IDs without changing the current instruction", async () => {
+  const model = { extractJson: summaries, runTools: vi.fn() };
+  const f = await host(model); await f.add("amendment", "The current reference replaces the earlier one."); await f.add("request", "Remember that correction.");
+  const context = prepareConversationContext(f.sql(), f.conversation.id, 2, model, "system");
+  expect(JSON.parse(context.messages[0].content).references).toEqual([{ id: "amendment", sequence: 1, excerpt: "The current reference replaces the earlier one." }]);
+  expect(context.messages.at(-1)?.content).toBe("Remember that correction.");
+  expect(context.messages[0].content).not.toContain('"id":"request"');
+});
+
+it("exposes the same source digest in summaries and original-read tools", async () => {
+  const model = { extractJson: summaries, runTools: vi.fn() };
+  const f = await host(model); await f.add("early", "A source whose exact fingerprint is reusable."); await f.add("later", "Current request");
+  const memory = new DesktopConversationMemory(f.sql());
+  const body = await memory.prepare(f.conversation.id, 2, model, new AbortController().signal);
+  const value = JSON.parse(body!);
+  const result = new ConversationHistoryReader(f.sql(), f.conversation.id, 1).execute({ id: "read", name: "conversation_read", input: { id: "early", digest: value.sourceDigests.early } }) as any;
+  expect(result.error).toBeUndefined(); expect(result.digest).toBe(value.sourceDigests.early);
+  memory.record(f.conversation.id, "later", body!);
+  expect(memory.read(f.conversation.id, "later").entries[0].user).toContain("exact fingerprint");
+});
 
 it("exposes compacting and cancellation without letting a non-cooperating summary block the next message", async () => {
   let finish!: (value: unknown) => void, signal: AbortSignal | undefined;

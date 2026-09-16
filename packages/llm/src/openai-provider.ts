@@ -4,6 +4,7 @@ import type { LlmProvider, ExtractJsonArgs, RunToolsArgs, RunTurn, ToolCall, Str
 import { withRetry } from "./retry.js";
 import { normalizeToolHistory } from "./tool-history.js";
 import { modelStreamEvents } from "./stream-events.js";
+import { continuation, continuationState } from "./model-continuation.js";
 
 import type { ModelAdapterOptions } from "./adapter-options.js";
 /** Compatibility alias for existing adapter consumers. */
@@ -211,7 +212,9 @@ export class OpenAICompatibleProvider implements LlmProvider {
       return { id: tc.id, name: fn.name, input: JSON.parse(fn.arguments || "{}") };
     });
     emitUsage(args.onUsage, res.usage);
-    return { text: extractText(choice) ?? "", reasoning: extractReasoning(choice), toolCalls, done: choice.finish_reason !== "tool_calls" };
+    const rawReasoning = (choice.message as {reasoning_content?:string}).reasoning_content;
+    return { text: extractText(choice) ?? "", reasoning: extractReasoning(choice), toolCalls, done: choice.finish_reason !== "tool_calls",
+      ...(typeof rawReasoning === "string" ? {continuation:continuation(this.opts,{protocol:"openai",reasoning:rawReasoning})} : {}) };
   }
 
   async streamTools(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn> {
@@ -242,6 +245,9 @@ export class OpenAICompatibleProvider implements LlmProvider {
         }
       }
       const turn = assembleOpenAIStreamChoice(chunks);
+      const rawReasoning = chunks.map(chunk=>chunk.choices?.[0]?.delta?.reasoning_content ?? "").join("");
+      if (chunks.some(chunk=>typeof chunk.choices?.[0]?.delta?.reasoning_content === "string"))
+        turn.continuation = continuation(this.opts,{protocol:"openai",reasoning:rawReasoning});
       const finish = chunks.flatMap(chunk => chunk.choices ?? []).map(choice => choice.finish_reason).filter(Boolean).at(-1);
       if (finish !== "stop" && finish !== "tool_calls") throw new Error("Incomplete model stream");
       emitUsage(handlers.onUsage, usage);
@@ -253,15 +259,17 @@ export class OpenAICompatibleProvider implements LlmProvider {
   private toOpenAIMessages(args: RunToolsArgs): Array<Record<string, unknown>> {
     const msgs: Array<Record<string, unknown>> = [{ role: "system", content: args.system }];
     for (const m of normalizeToolHistory(args.messages)) {
+      const state = m.role === "assistant" ? continuationState(m.continuation,this.opts,"openai") : undefined;
+      const reasoning = state ? {reasoning_content:state.reasoning} : {};
       if (m.role === "tool") {
         msgs.push({ role: "tool", tool_call_id: m.toolCallId, content: m.content });
       } else if (m.role === "assistant" && m.toolCalls?.length) {
         msgs.push({
-          role: "assistant", content: m.content || null,
+          role: "assistant", content: m.content || null, ...reasoning,
           tool_calls: m.toolCalls.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: JSON.stringify(tc.input) } })),
         });
       } else {
-        msgs.push({ role: m.role, content: m.content });
+        msgs.push({ role: m.role, content: attachmentContent(m,"openai"), ...reasoning });
       }
     }
     return msgs;
@@ -310,6 +318,7 @@ function exampleJsonForSchema(schema: Record<string, unknown>): string {
 function exampleValue(schema: unknown): unknown {
   if (!schema || typeof schema !== "object") return null;
   const type = (schema as { type?: unknown }).type;
+  if (type === "null" || Array.isArray(type) && type.includes("null")) return null;
   if (type === "array") return [];
   if (type === "object") return {};
   if (type === "number" || type === "integer") return 0;
@@ -334,3 +343,4 @@ function emitUsage(
     totalTokens: usage.total_tokens ?? 0,
   });
 }
+import { attachmentContent } from "./attachment-content.js";

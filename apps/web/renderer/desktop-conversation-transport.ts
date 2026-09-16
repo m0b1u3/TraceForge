@@ -3,6 +3,7 @@ import type { ConversationTransport } from "./conversation-client";
 /** The bridge is supplied by an isolated Electron preload, never by URL config. */
 export interface DesktopConversations {
   protocolVersion: 1;
+  selectAttachments?():Promise<unknown>;
   request(input: { path: string; method: "GET" | "POST"; body?: string }): Promise<{ status: number; body: unknown }>;
 }
 export function desktopConversationTransport(bridge: DesktopConversations): ConversationTransport {

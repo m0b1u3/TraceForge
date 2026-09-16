@@ -12,13 +12,14 @@ export interface LlmConfigDto {
   credentialRef?: string;
   authMode?: LlmEndpointConfig["authMode"];
   requestOptions?: LlmEndpointConfig["requestOptions"];
+  modelProfile?: LlmEndpointConfig["modelProfile"];
   model: string;
   embeddingModel?: string;
   baseUrl?: string;
   apiKey?: string;
   jsonMode?: "json_schema" | "json_object";
-  contextWindowTokens?: number;
-  maxOutputTokens?: number;
+  contextWindowTokens?: number | null;
+  maxOutputTokens?: number | null;
   currency?: string | null;
   inputPricePerMillion?: number | null;
   outputPricePerMillion?: number | null;
@@ -98,7 +99,7 @@ export class LlmConfigService {
   }
   connectionCatalog() { return structuredClone(MODEL_SUPPLIERS); }
   async discover(dto: LlmConfigDto) {
-    const config = this.buildConfig({ ...dto, model: "catalog-discovery" });
+    const config = this.buildConfig({ ...dto, model: "catalog-discovery", modelProfile: null });
     return this.deps.gateway?.discoverModels ? this.deps.gateway.discoverModels(config)
       : discoverModels(config, { credentials: this.deps.credentials });
   }
@@ -124,13 +125,14 @@ export class LlmConfigService {
       credentialRef: dto.credentialRef,
       authMode: dto.authMode,
       requestOptions: dto.requestOptions,
+      modelProfile: dto.modelProfile === undefined ? (sameModel ? existing?.modelProfile : undefined) : dto.modelProfile,
       model: dto.model,
       embeddingModel: dto.embeddingModel?.trim() || (sameDestination ? existing?.embeddingModel : undefined),
       baseUrl: dto.baseUrl,
       apiKey,
       jsonMode: dto.jsonMode,
-      contextWindowTokens: dto.contextWindowTokens ?? (sameModel ? existing?.contextWindowTokens : undefined),
-      maxOutputTokens: dto.maxOutputTokens ?? (sameModel ? existing?.maxOutputTokens : undefined),
+      contextWindowTokens: dto.contextWindowTokens === null ? undefined : dto.contextWindowTokens ?? (sameModel ? existing?.contextWindowTokens : undefined),
+      maxOutputTokens: dto.maxOutputTokens === null ? undefined : dto.maxOutputTokens ?? (sameModel ? existing?.maxOutputTokens : undefined),
       currency: dto.currency === null ? undefined : (dto.currency?.trim().toUpperCase() ?? (sameModel ? existing?.currency : undefined)),
       inputPricePerMillion: dto.inputPricePerMillion === null ? undefined : (dto.inputPricePerMillion ?? (sameModel ? existing?.inputPricePerMillion : undefined)),
       outputPricePerMillion: dto.outputPricePerMillion === null ? undefined : (dto.outputPricePerMillion ?? (sameModel ? existing?.outputPricePerMillion : undefined)),

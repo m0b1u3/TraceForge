@@ -55,7 +55,7 @@ export class DesktopConfigurationStore {
   snapshot(): ConfigurationSnapshot {
     return { packages: this.packages.list().filter(pkg => this.packages.bindingStatus(this.packages.bindingFor(pkg), pkg.definition.kind, pkg.definition.version).status === "available").map(pkg => {
       const binding = this.packages.bindingFor(pkg), saved = this.latest(binding);
-      return { package: binding, title: pkg.definition.title, revision: saved.revision, userResources: saved.value.userResources ?? [],
+      return { package: binding, title: pkg.definition.title, revision: saved.revision, userResources: saved.value.userResources ?? [], inspection:this.inspection(binding),
         previousVersions:(this.sqlite.prepare("SELECT binding,max(revision) AS revision FROM desktop_configuration_versions WHERE json_extract(binding,'$[0]')=? AND binding<>? GROUP BY binding").all(binding.id,key(binding)) as Array<{binding:string;revision:number}>).map(row=>{const [id,version,schemaRevision]=JSON.parse(row.binding);return {package:{id,version,schemaRevision},revision:row.revision};}),
         resources: (pkg.resourceManifest?.resources ?? []).filter(r => r.context).map(r => {
           const override = saved.value.resources.find(item => item.id === r.id);
@@ -72,6 +72,26 @@ export class DesktopConfigurationStore {
             tools: server.tools.map(tool => ({ name: tool.tool.name, enabled: choice ? choice.tools.includes(tool.tool.name) : true })) };
         }) };
     }) };
+  }
+
+  /** Read projection of the existing immutable revision ledger, not another source of truth. */
+  private inspection(binding:ScenarioPackageBinding) {
+    const versions=this.sqlite.prepare("SELECT revision,value_json FROM desktop_configuration_versions WHERE binding=? ORDER BY revision DESC LIMIT 21").all(key(binding)) as Array<{revision:number;value_json:string}>;
+    const history=versions.slice(0,20).map((row,index)=>{
+      const value=JSON.parse(row.value_json) as Saved,previous=versions[index+1]?JSON.parse(versions[index+1].value_json) as Saved:empty();
+      const changes:string[]=[];
+      for(const r of value.userResources??[]){
+        const old=previous.userResources?.find(p=>p.id===r.id);
+        if(JSON.stringify(old)!==JSON.stringify(r))changes.push(`${old?"更新":"添加"} ${r.title} · ${r.source?.kind==="file"?"来源文件："+r.source.name:"客户端编辑"}`);
+      }
+      for(const old of previous.userResources??[])if(!value.userResources?.some(r=>r.id===old.id))changes.push(`移除 ${old.title}`);
+      if(JSON.stringify(value.resources)!==JSON.stringify(previous.resources))changes.push("调整场景资源启停或正文");
+      if(JSON.stringify(value.mcp)!==JSON.stringify(previous.mcp))changes.push("调整场景 MCP 工具选择");
+      return {revision:row.revision,changes:changes.length?changes:["保存配置（内容未变化）"]};
+    });
+    const runs=this.sqlite.prepare("SELECT run_id AS runId,revision FROM desktop_configuration_runs WHERE binding=? ORDER BY rowid DESC LIMIT 20").all(key(binding)) as Array<{runId:string;revision:number}>;
+    const runCount=(this.sqlite.prepare("SELECT count(*) AS n FROM desktop_configuration_runs WHERE binding=?").get(key(binding)) as {n:number}).n;
+    return {history,runs,runCount};
   }
 
   save(input: unknown): ConfigurationSnapshot {

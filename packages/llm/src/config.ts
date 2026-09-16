@@ -2,14 +2,17 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, parse } from "node:path";
 import { z } from "zod";
 import { MODEL_PROTOCOLS, MODEL_SUPPLIER_IDS } from "@traceforge/shared/model-protocol";
+import { ModelProfileSchema } from "@traceforge/shared/model-profile";
 
 const endpointShape = {
   /** Wire protocol identifier; retained field name for existing configurations. */
   provider: z.enum(MODEL_PROTOCOLS),
   supplier: z.enum(MODEL_SUPPLIER_IDS).optional(),
+  modelProfile: ModelProfileSchema.nullish(),
   credentialRef: z.string().regex(/^[a-z][a-z0-9_.:-]{0,127}$/).optional(),
   authMode: z.enum(["api_key", "bearer"]).optional(),
   requestOptions: z.object({
+    includeReasoningContinuation: z.boolean().optional(),
     thinking: z.enum(["enabled", "disabled"]).optional(),
     reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "max"]).optional(),
     temperature: z.number().finite().min(0).max(2).optional(),

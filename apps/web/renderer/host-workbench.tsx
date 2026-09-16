@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import type { MessageAttachment } from "@traceforge/shared/message-attachments";
 import { desktopJournalStorage } from "./desktop-journal-storage";
 import { ChatCircle, CheckSquare, FolderSimple, GearSix, SidebarSimple, ClockCounterClockwise } from "@phosphor-icons/react";
 import { ConversationClient } from "./conversation-client";
@@ -16,6 +17,8 @@ import { ApprovalPreference } from "./approval-preference";
 import type { ModelSettingsBridge } from "./model-settings-client";
 import { ExecutionPanel } from "./execution-panel";
 import { ConversationExecution, type ConversationRun } from "./conversation-execution";
+import { conversationRuntimeView } from "./conversation-runtime-view";
+import { ArtifactPreviewProvider, ArtifactPreviewPanel } from "./artifact-preview";
 import "./host-workbench.css";
 
 export function HostWorkbench({ bridge, modelBridge }: { bridge: DesktopConversations; modelBridge?: ModelSettingsBridge }) {
@@ -25,8 +28,10 @@ export function HostWorkbench({ bridge, modelBridge }: { bridge: DesktopConversa
   });
   const controller = setup.controller;
   const [sessions, setSessions] = useState<SavedConversation[]>([]);
+  const [attachmentReset,setAttachmentReset]=useState(0);
   const [current, setCurrent] = useState<SavedConversation | null>(null);
   const [messages, setMessages] = useState<SavedMessage[]>([]);
+  const [runtime,setRuntime]=useState<ReturnType<typeof conversationRuntimeView>>();
   const [runs,setRuns]=useState<ConversationRun[]|null>(null),[composerBusy,setComposerBusy]=useState(false);
   const [draftStore] = useState(() => { try { return ConversationDrafts.persistent(desktopJournalStorage(), window.sessionStorage); } catch { return null; } });
   const [draft, setDraft] = useState(() => draftStore?.read("new") ?? "");
@@ -53,7 +58,7 @@ export function HostWorkbench({ bridge, modelBridge }: { bridge: DesktopConversa
   }
   function editDraft(value:string){setDraft(value);try{if(!draftStore)throw new Error();draftStore.write(current?.id??"new",value);setDraftError("");}catch{setDraftError("草稿未能保存到本地，请勿关闭或刷新窗口。");}}
   function remember(id: string | null) { try { saveConversationLocation(desktopJournalStorage(), id); } catch { setDraftError("未能保存最近打开的会话位置。消息仍在宿主保存，可从会话记录重新打开。"); } }
-  function newConversation(){if(busy||composerBusy||controller?.pending||configurationDirty||!retainDraft())return;remember(null);setCurrent(null);setRuns(null);setMessages([]);setDraft(draftStore?.read("new")??"");setPanel("");requestAnimationFrame(()=>input.current?.focus());}
+  function newConversation(){if(busy||composerBusy||controller?.pending||configurationDirty||!retainDraft())return;generation.current++;remember(null);setCurrent(null);setRuns(null);setRuntime(undefined);setMessages([]);setDraft(draftStore?.read("new")??"");setPanel("");requestAnimationFrame(()=>input.current?.focus());}
   useEffect(()=>{const field=input.current;if(field){field.style.height="auto";field.style.height=`${Math.min(field.scrollHeight,180)}px`;}},[draft,panel]);
   useEffect(()=>{
     const handler=(event:KeyboardEvent)=>{
@@ -104,7 +109,8 @@ export function HostWorkbench({ bridge, modelBridge }: { bridge: DesktopConversa
       else {
         // A confirmed save must clear the sent draft even if the following read
         // fails; otherwise the enabled composer invites a duplicate submission.
-        setRecoveryId(result.conversationId);setDraft("");
+        setRecoveryId(result.conversationId);
+        setDraft("");setAttachmentReset(value=>value+1);
         try { draftStore?.write(original?.kind === "start" ? "new" : result.conversationId, ""); } catch { setDraftError("消息已保存，但窗口草稿清理失败。重新打开时请核对记录，不要重复发送。"); }
         const restored = await controller.restore(result.conversationId);
         remember(restored.conversation.id);setCurrent(restored.conversation); setMessages(restored.messages); setRecoveryId(null);
@@ -115,8 +121,8 @@ export function HostWorkbench({ bridge, modelBridge }: { bridge: DesktopConversa
     finally { setBusy(false); }
   }
   const disabled = busy || composerBusy || !controller || !!controller.pending;
-  const send = (reply=false) => { if (draft.trim() && !disabled) void execute(current ? { kind: "send", commandId: crypto.randomUUID(), conversationId: current.id, text: draft,reply } : {kind:"start",commandId:crypto.randomUUID(),messageCommandId:crypto.randomUUID(),title:Array.from(draft.trim().split("\n")[0]!).slice(0,60).join(""),text:draft,reply}); };
-  return <div className="workbench host-workbench">
+  const send = (reply=false,attachments?:MessageAttachment[]) => { const text=draft.trim()?draft:"请查看附件。";if ((draft.trim()||attachments?.length) && !disabled) void execute(current ? { kind: "send", commandId: crypto.randomUUID(), conversationId: current.id, text,reply,attachments } : {kind:"start",commandId:crypto.randomUUID(),messageCommandId:crypto.randomUUID(),title:Array.from(text.trim().split("\n")[0]!).slice(0,60).join(""),text,reply,attachments}); };
+  return <ArtifactPreviewProvider><div className="workbench host-workbench">
     <a className="skip-link" href="#dialogue">跳到对话</a>
     <header className="topbar"><span className="brand">TraceForge</span><h1 className="host-title">{current?.title ?? "新会话"}</h1>
       <div className="host-header-actions">{busy && <span role="status">正在核对…</span>}
@@ -136,13 +142,13 @@ export function HostWorkbench({ bridge, modelBridge }: { bridge: DesktopConversa
           {panel === "sessions" ? <><div className="host-session-actions"><button disabled={disabled} onClick={newConversation}>新建会话</button><button disabled={busy || !controller} onClick={() => void load()}>重新读取</button></div><label className="host-session-search">查找会话<input type="search" autoFocus value={search} onChange={event=>setSearch(event.target.value)} placeholder="搜索会话标题" /></label>{!sessions.length && !busy && <p>还没有会话。直接写下你的调查目标即可开始。</p>}<ul className="host-session-list">{sessions.filter(session=>session.title.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map(session => <li key={session.id}><button disabled={disabled} onClick={() => void select(session.id)}><span>{session.title}</span><small>{session.createdAt.slice(0, 10)}</small></button></li>)}</ul>{sessions.length>0&&!sessions.some(session=>session.title.toLocaleLowerCase().includes(search.toLocaleLowerCase()))&&<p>没有匹配的会话。试试其他关键词。</p>}</> : panel === "settings" ? <WorkbenchSettings bridge={bridge} modelBridge={modelBridge} onDirty={setConfigurationDirty} /> : !current ? <p>发送调查目标后，这里会展示对应任务和证据。</p> : null}
           {(panel === "tasks" || panel === "evidence") && current && <ExecutionPanel key={current.id} bridge={bridge} conversationId={current.id} messages={messages} evidenceOnly={panel === "evidence"} />}
           <button onClick={() => setPanel("")}>返回对话</button>
-        </section> : <>{!messages.length && <div className="host-empty"><h2>{current ? "记录你的调查意图" : "这次想调查什么？"}</h2><p>写下目标，我们会先确认授权范围，再开始调查。工具活动和证据会随进展呈现。</p><div className="host-welcome-actions"><button onClick={()=>{setPanel("settings");}}>配置模型与工具</button>{sessions.length>0&&<button onClick={() => setPanel("sessions")}>继续已有会话</button>}</div></div>}{current && <ConversationExecution key={current.id} bridge={bridge} conversationId={current.id} messages={messages} onRuns={setRuns}/>}</>}
+        </section> : <>{!messages.length && <div className="host-empty"><h2>{current ? "记录你的调查意图" : "这次想调查什么？"}</h2><p>写下目标，我们会先确认授权范围，再开始调查。工具活动和证据会随进展呈现。</p><div className="host-welcome-actions"><button onClick={()=>{setPanel("settings");}}>配置模型与工具</button>{sessions.length>0&&<button onClick={() => setPanel("sessions")}>继续已有会话</button>}</div></div>}{current && <ConversationExecution key={current.id} bridge={bridge} conversationId={current.id} messages={messages} onRuns={setRuns} onRuntime={setRuntime} onMessagesChanged={async()=>{const id=current.id,ticket=generation.current;const restored=await controller!.restore(id);if(ticket===generation.current)setMessages(restored.messages);}}/>}</>}
       </ConversationViewport>
       <div className="composer-area"><ApprovalPreference bridge={bridge} /><div role="status" className="live-notice">{notice}</div>{error && <p role="alert" className="inline-warning">{error}</p>}{controller?.pending && <button disabled={busy} onClick={() => void execute()}>核对原请求</button>}
         {draftError&&<p role="alert" className="inline-warning">{draftError}</p>}
         {error&&!controller?.pending&&<button disabled={busy} onClick={()=>recoveryId||current?void select(recoveryId??current!.id):void load()}>重新连接并读取</button>}
-        {panel !== "settings" && <ConversationComposer key={current?.id??"new"} bridge={bridge} conversationId={current?.id} runs={panel?null:runs} draft={draft} onChange={editDraft} onNewMessage={send} onSettings={()=>setPanel("settings")} disabled={busy||!controller||!!controller.pending} onBusy={setComposerBusy} inputRef={input}/>}
+        {panel !== "settings" && <ConversationComposer key={current?.id??"new"} attachmentReset={attachmentReset} sendLabel={!panel?runtime?.sendLabel:undefined} bridge={bridge} conversationId={current?.id} runs={panel?null:runs} draft={draft} onChange={editDraft} onNewMessage={send} onSettings={()=>setPanel("settings")} disabled={busy||!controller||!!controller.pending} onBusy={setComposerBusy} inputRef={input}/>}
       </div>
-    </section></main>
-  </div>;
+    </section>{current&&panel!=="settings"&&<ArtifactPreviewPanel bridge={bridge} conversationId={current.id}/>}</main>
+  </div></ArtifactPreviewProvider>;
 }

@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import type { LlmProvider } from "@traceforge/llm";
 import { SemanticContextCompactor, summarizeHistory } from "@traceforge/cognitive-runtime";
 import { resolveContextBudget } from "@traceforge/shared/model-context";
+import { readConversationOriginal } from "./conversation-history-reader.js";
 
 /** A derived reading aid. Original user/assistant messages remain authoritative
  * storage; summaries neither replace them nor create execution permission. */
@@ -22,7 +23,7 @@ export class DesktopConversationMemory {
     if (value.version === 2) {
       const originals = this.sql.prepare(`SELECT m.sequence,m.command_id AS id,m.text,r.text AS response FROM desktop_conversation_messages m
         LEFT JOIN desktop_replies r ON r.conversation_id=m.conversation_id AND r.message_command_id=m.command_id AND r.state='completed'
-        WHERE m.conversation_id=? AND m.sequence<=? ORDER BY m.sequence LIMIT 10001`).all(conversationId, value.coveredThroughSequence);
+        WHERE NOT EXISTS (SELECT 1 FROM desktop_replies pending WHERE pending.conversation_id=m.conversation_id AND pending.message_command_id=m.command_id AND pending.state IN ('queued','cancelled')) AND m.conversation_id=? AND m.sequence<=? ORDER BY m.sequence LIMIT 10001`).all(conversationId, value.coveredThroughSequence);
       if (originals.length !== value.coveredMessages || createHash("sha256").update(JSON.stringify(originals)).digest("hex") !== value.sourceDigest)
         throw new Error("Conversation memory historical coverage changed");
     }
@@ -30,7 +31,10 @@ export class DesktopConversationMemory {
       const original = this.sql.prepare(`SELECT m.text AS user,r.text AS assistant FROM desktop_conversation_messages m LEFT JOIN desktop_replies r
         ON r.conversation_id=m.conversation_id AND r.message_command_id=m.command_id AND r.state='completed' WHERE m.conversation_id=? AND m.command_id=?`)
         .get(conversationId, summary.id) as { user: string; assistant: string | null } | undefined;
-      if (!original || createHash("sha256").update(JSON.stringify(original)).digest("hex") !== value.sourceDigests[summary.id]) throw new Error("Conversation memory source changed");
+      const digest = value.sourceDigestFormat === "conversation-original-v1"
+        ? readConversationOriginal(this.sql, conversationId, summary.id, value.coveredThroughSequence)?.digest
+        : original && createHash("sha256").update(JSON.stringify(original)).digest("hex");
+      if (!original || digest !== value.sourceDigests[summary.id]) throw new Error("Conversation memory source changed");
       return { id: summary.id, summary: summary.text, user: original?.user ?? "", assistant: original?.assistant ?? null };
     }) };
   }
@@ -38,7 +42,7 @@ export class DesktopConversationMemory {
     if (before <= 1) return undefined;
     const rows = this.sql.prepare(`SELECT m.sequence,m.command_id AS id,m.text,r.text AS response FROM desktop_conversation_messages m
       LEFT JOIN desktop_replies r ON r.conversation_id=m.conversation_id AND r.message_command_id=m.command_id AND r.state='completed'
-      WHERE m.conversation_id=? AND m.sequence<? ORDER BY m.sequence LIMIT 10001`)
+      WHERE NOT EXISTS (SELECT 1 FROM desktop_replies pending WHERE pending.conversation_id=m.conversation_id AND pending.message_command_id=m.command_id AND pending.state IN ('queued','cancelled')) AND m.conversation_id=? AND m.sequence<? ORDER BY m.sequence LIMIT 10001`)
       .all(conversationId, before) as Array<{ sequence: number; id: string; text: string; response: string | null }>;
     if (!rows.length) return undefined;
     if (rows.length > 10000 || Buffer.byteLength(JSON.stringify(rows)) > 16 * 1048576) throw new Error("Conversation history source capacity exceeded");
@@ -61,7 +65,8 @@ export class DesktopConversationMemory {
       version: 2, coveredThroughSequence: before - 1, coveredMessages: rows.length, historyDigest: history.digest,
       sourceDigest: createHash("sha256").update(JSON.stringify(rows)).digest("hex"),
       originalMessageIds: selected.map(row => row.id), omittedMessageCount: 0, detailExamplesOmitted: rows.length - selected.length,
-      sourceDigests: Object.fromEntries(selected.map(row => [row.id, createHash("sha256").update(JSON.stringify({ user: row.text, assistant: row.response })).digest("hex")])),
+      sourceDigestFormat: "conversation-original-v1",
+      sourceDigests: Object.fromEntries(selected.map(row => [row.id, readConversationOriginal(this.sql, conversationId, row.id, before - 1)!.digest])),
       summaries });
   }
 }

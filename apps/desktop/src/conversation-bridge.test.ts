@@ -4,6 +4,14 @@ import { createConversationBridge, validateConversationRequest } from "./convers
 const origin = "http://127.0.0.1:41234";
 const sender = { webContentsId: 7, mainFrame: true, url: `${origin}/` };
 const input = { path: "/api/desktop/conversations", method: "GET" };
+it("accepts opaque file references but never exposes the host import endpoint or file paths",()=>{
+  const path="/api/desktop/conversations/first/messages";
+  const attachment={kind:"reference",id:"40f721bd-7662-4cb0-8f7d-27e99d4cce0e",name:"book.pdf"};
+  const body={commandId:"message",text:"Read",attachments:[attachment]};
+  expect(validateConversationRequest({path,method:"POST",body:JSON.stringify(body)}).path).toBe(path);
+  expect(()=>validateConversationRequest({path:"/api/desktop/attachment-import",method:"POST",body:JSON.stringify({name:"book.pdf",data:"AAAA"})})).toThrow();
+  expect(()=>validateConversationRequest({path,method:"POST",body:JSON.stringify({...body,attachments:[{...attachment,path:"/private/file.pdf"}]})})).toThrow();
+});
 it("allows only a narrow live approval preference operation", () => {
   const path = "/api/desktop/approval-preference";
   expect(validateConversationRequest({ path, method: "GET" })).toEqual({ path, method: "GET" });

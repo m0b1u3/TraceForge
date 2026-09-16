@@ -12,7 +12,8 @@ export async function modelStreamEvents(handlers: StreamToolsHandlers,
       onReasoningDelta(delta) { handlers.onReasoningDelta?.(delta); handlers.onEvent?.({ type: "reasoning_delta", delta }); },
     });
     handlers.signal?.throwIfAborted();
-    handlers.onEvent?.({ type: "complete", turn });
+    const { continuation: _privateState, ...displayTurn } = turn;
+    handlers.onEvent?.({ type: "complete", turn: displayTurn });
     return turn;
   } catch (error) {
     handlers.onEvent?.({ type: "error", aborted: handlers.signal?.aborted === true });

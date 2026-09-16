@@ -6,6 +6,13 @@ import { ExecutionTrace, mergeTrace } from "./execution-trace";
 import type { ScenarioAgentEvent } from "@traceforge/shared/scenario-agent-events";
 
 const event = (sequence: number, item: object, turnId = "turn") => ({ protocolVersion: 2, id: `event-${sequence}`, sequence, caseId: "case", runId: "run", workId: "work", role: "worker", turnId, createdAt: "2026-09-15T00:00:00.000Z", method: "item/updated", params: { item: { type: "toolCall", id: "tool", tool: "workspace_execute", status: "inProgress", risk: "privileged", summary: null, refs: [], ...item } } }) as ScenarioAgentEvent;
+it("ignores duplicated or older snapshots after a terminal tool observation",()=>{
+ const done=event(8,{status:"completed",outputPreview:"saved"});
+ expect(mergeTrace([done],[event(2,{outputPreview:"old"}),done])).toEqual([done]);
+ const ended={...event(10,{}),method:"turn/completed",params:{status:"cancelled",outcome:null,checkpointRef:null,error:null}} as ScenarioAgentEvent;
+ const rows=mergeTrace([event(4,{})],[ended,event(5,{})]);
+ expect((rows[0].params as any).item.status).toBe("cancelled");
+});
 it("merges live snapshots without losing command and keeps turns separate", () => {
   const rows = mergeTrace([], [event(1, { commandPreview: "command", dispatchState: "requested" }), event(2, { outputPreview: "first", dispatchState: "dispatched" }), event(3, { status: "completed", outputPreview: "final" }), event(4, {}, "other-turn")]);
   expect(rows).toHaveLength(2);

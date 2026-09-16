@@ -29,3 +29,23 @@ it("does not dispatch a cancelled summary", async () => {
   await expect(new SemanticContextCompactor({ async extractJson() { calls++; return {}; } }).compact([{ id: "entry", text: "source" }], 100, abort.signal)).rejects.toThrow();
   expect(calls).toBe(0);
 });
+
+it("repairs an overlong summary once using originals and caches only valid output", async () => {
+  const inputs: any[] = [], saved: string[] = [];
+  const compactor = new SemanticContextCompactor({ async extractJson(input) {
+    inputs.push(JSON.parse(input.user));
+    return { entries: [{ id: "entry", text: inputs.length === 1 ? "x".repeat(100) : "Pending, not verified." }] };
+  } }, { get: () => undefined, put: (_key, text) => { saved.push(text); } });
+  const entries = [{ id: "entry", text: "Original pending question, no verification." }];
+  expect(await compactor.compact(entries, 100, new AbortController().signal)).toEqual([{ id: "entry", text: "Pending, not verified." }]);
+  expect(inputs).toHaveLength(2); expect(inputs[1].entries).toEqual(entries); expect(saved).toEqual(["Pending, not verified."]);
+});
+
+it("does not retry changed identities or cache a repeatedly oversized summary", async () => {
+  for (const mode of ["identity", "length"]) {
+    let calls = 0, writes = 0;
+    const compactor = new SemanticContextCompactor({ async extractJson() { calls++; return { entries: [{ id: mode === "identity" ? "wrong" : "entry", text: "x".repeat(100) }] }; } }, { get: () => undefined, put: () => { writes++; } });
+    await expect(compactor.compact([{ id: "entry", text: "source" }], 100, new AbortController().signal)).rejects.toThrow();
+    expect(calls).toBe(mode === "identity" ? 1 : 2); expect(writes).toBe(0);
+  }
+});

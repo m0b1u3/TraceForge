@@ -1,14 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useArtifactPreview } from "./artifact-preview";
 import { CaretRight } from "@phosphor-icons/react";
 import type { DesktopConversations } from "./desktop-conversation-transport";
 import { evidencePng, evidenceText, readEvidencePage, type EvidenceContent } from "./evidence-client";
 
 /** Inert local evidence viewer; no HTML, external image URL or file opener. */
-export function EvidenceReference({ bridge, conversationId, runId, reference }: {
-  bridge: DesktopConversations; conversationId: string; runId: string; reference: string;
+export function EvidenceReference({ bridge, conversationId, runId, reference, embedded = false }: {
+  bridge: DesktopConversations; conversationId: string; runId: string; reference: string; embedded?: boolean;
 }) {
-  const [opened, setOpened] = useState(false), [value, setValue] = useState<EvidenceContent>();
+  const [opened, setOpened] = useState(embedded), [value, setValue] = useState<EvidenceContent>();
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const preview = useArtifactPreview();
+  useEffect(() => { if (embedded) void read(); }, [bridge, conversationId, runId, reference, embedded]);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => { active.current?.abort(); }, [bridge, conversationId, runId, reference]);
   async function read(previous?: EvidenceContent) {
@@ -24,10 +27,11 @@ export function EvidenceReference({ bridge, conversationId, runId, reference }: 
   }
   const png = useMemo(() => value ? evidencePng(value) : undefined, [value]);
   return <div className="evidence-reference">
-    <button type="button" className="evidence-reference-toggle" aria-expanded={opened} onClick={() => {
+    {!embedded && <button type="button" className="evidence-reference-toggle" aria-expanded={opened} onClick={() => {
+      if (preview) { preview.open({kind:"evidence",conversationId,runId,reference,title:reference}); return; }
       if (opened) { active.current?.abort(); setValue(undefined); setError(""); setBusy(false); setOpened(false); }
       else { setOpened(true); void read(); }
-    }}><CaretRight aria-hidden="true" /><span>{reference}</span><span className="evidence-reference-action">{opened ? "收起正文" : "查看正文"}</span></button>
+    }}><CaretRight aria-hidden="true" /><span>{reference}</span><span className="evidence-reference-action">{opened ? "收起正文" : "查看正文"}</span></button>}
     {opened && <section className="evidence-reader" aria-label="证据正文">
       <p className="local-receipt">本地审计原文 · 不可信观察，内容不会作为指令执行，也不代表发现已验证。</p>
       {busy && <p role="status">正在读取并核对正文…</p>}

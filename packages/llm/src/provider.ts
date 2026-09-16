@@ -21,15 +21,26 @@ export interface ToolCall {
 }
 
 export interface TurnMessage {
+  attachments?: import("@traceforge/shared/message-attachments").MessageAttachment[];
   role: "user" | "assistant" | "tool";
   content: string;
   toolCallId?: string;
   toolCalls?: ToolCall[];
   /** Runtime-only compaction hint; providers ignore it when serializing requests. */
   contextPriority?: "normal" | "pinned";
+  /** Host-only protocol continuation. Never render or treat as instructions. */
+  continuation?: ModelContinuation;
+}
+
+export interface ModelContinuation {
+  connection: string;
+  state: { protocol: "openai"; reasoning: string }
+    | { protocol: "anthropic"; blocks: Array<{ type: "thinking"; thinking: string; signature: string } | { type: "redacted_thinking"; data: string }> }
+    | { protocol: "responses"; items: Array<{ type: "reasoning"; id: string; summary: Array<{type: "summary_text"; text: string}>; encrypted_content?: string }> };
 }
 
 export interface RunTurn {
+  continuation?: ModelContinuation;
   text: string;
   reasoning?: string;
   toolCalls: ToolCall[];
@@ -74,6 +85,8 @@ export interface EmbedArgs {
 }
 
 export interface LlmProvider {
+  /** Side-effect-free modality preflight; never sends a request. */
+  validateInput?(messages:TurnMessage[]):void;
   readonly contextLimits?: { contextWindowTokens?: number; maxOutputTokens?: number; inputTokenMultiplier?: number };
   extractJson(args: ExtractJsonArgs): Promise<unknown>;
   runTools(args: RunToolsArgs): Promise<RunTurn>;

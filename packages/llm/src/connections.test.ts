@@ -32,17 +32,21 @@ describe("TraceForge upstream model connections", () => {
     const requests: Request[] = [];
     const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       requests.push(new Request(input, init));
-      return Response.json({ choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 } });
+      return Response.json(preset.protocol === "responses" ? {status:"completed",output:[{type:"message",role:"assistant",status:"completed",content:[{type:"output_text",text:'{"ok":true}'}]}]}
+        : preset.protocol === "anthropic" ? {id:"fixture",type:"message",role:"assistant",content:[{type:"text",text:'{"ok":true}'}],stop_reason:"end_turn",usage:{input_tokens:2,output_tokens:3}}
+        : { choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 } });
     });
-    const config = LlmConfigSchema.parse({provider:"openai",supplier,model:"operator-selected-model",apiKey:"test-key",maxOutputTokens:1000,
-      requestOptions:{thinking:"disabled",reasoningEffort:"low",temperature:0.5}});
+    const config = LlmConfigSchema.parse({provider:preset.protocol,supplier,model:"operator-selected-model",apiKey:"test-key",maxOutputTokens:1000});
     const provider = createProvider(config,{fetch:transport});
     await expect(provider.extractJson({system:"Return JSON",user:"ping",schema:{type:"object"}})).resolves.toEqual({ok:true});
     const request = requests[0]!;
-    expect(request.url).toBe(`${preset.baseUrl}/chat/completions`);
-    expect(request.headers.get("authorization")).toBe("Bearer test-key");
-    expect(await request.json()).toMatchObject({model:"operator-selected-model",max_tokens:1000,thinking:{type:"disabled"},reasoning_effort:"low",temperature:0.5,
-      response_format:{type:preset.jsonMode}});
+    expect(request.url).toBe(`${preset.baseUrl}/${preset.protocol === "responses" ? "responses" : preset.protocol === "anthropic" ? "v1/messages" : "chat/completions"}`);
+    expect(request.headers.get(preset.protocol === "anthropic" ? "x-api-key" : "authorization")).toBe(preset.protocol === "anthropic" ? "test-key" : "Bearer test-key");
+    const body = await request.json();
+    expect(body).toMatchObject({model:"operator-selected-model",[preset.protocol === "responses" ? "max_output_tokens" : "max_tokens"]:1000});
+    if (preset.protocol === "openai") expect(body.response_format.type).toBe(preset.jsonMode);
+    if (preset.protocol === "responses") expect(body.text.format.type).toBe(preset.jsonMode);
+    if (preset.protocol === "anthropic") expect(body).not.toHaveProperty("thinking");
   });
   it("resolves managed credentials per invocation and does not place them in messages",async()=>{
     let token="first";const requests:Request[]=[];

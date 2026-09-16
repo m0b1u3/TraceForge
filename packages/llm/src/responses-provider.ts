@@ -4,6 +4,7 @@ import { responseContextOverflow } from "./context-overflow.js";
 import { ModelContextOverflowError } from "@traceforge/shared/model-context";
 import { normalizeToolHistory } from "./tool-history.js";
 import { modelStreamEvents } from "./stream-events.js";
+import { continuation, continuationState } from "./model-continuation.js";
 
 class ResponsesError extends Error {}
 
@@ -30,6 +31,7 @@ export class ResponsesProvider implements LlmProvider {
   private body(system: string, input: unknown[]) {
     const opts = this.options;
     return { model: opts.model, instructions: system, input, store: false,
+      ...(opts.requestOptions?.includeReasoningContinuation ? {include:["reasoning.encrypted_content"]} : {}),
       ...(opts.maxOutputTokens === undefined ? {} : { max_output_tokens: opts.maxOutputTokens }),
       ...(opts.requestOptions?.temperature === undefined ? {} : { temperature: opts.requestOptions.temperature }),
       ...(opts.requestOptions?.reasoningEffort === undefined ? {} : { reasoning: { effort: opts.requestOptions.reasoningEffort } }) };
@@ -48,7 +50,7 @@ export class ResponsesProvider implements LlmProvider {
     return modelStreamEvents(handlers, events => this.turn(args, events, true));
   }
   private turn(args: RunToolsArgs, handlers: StreamToolsHandlers, stream = false) {
-    return this.request({ ...this.body(args.system, responsesInput(args.messages)),
+    return this.request({ ...this.body(args.system, responsesInput(args.messages, this.options)),
       tools: args.tools.map(tool => ({ type: "function", name: tool.name, description: tool.description,
         parameters: tool.input_schema, strict: false })), stream }, handlers, stream);
   }
@@ -92,7 +94,7 @@ export class ResponsesProvider implements LlmProvider {
           if (Number.isSafeInteger(value.output_index) && (value.output_index as number) >= 0)
             handlers.onEvent?.({ type: "tool_call_delta", index: value.output_index as number, delta: string(value.delta) });
         } else if (value.type === "response.completed") {
-          final = parseResponse(value.response, handlers.onUsage);
+          final = parseResponse(value.response, handlers.onUsage, this.options);
           if (!reasoningDelivered && final.reasoning) handlers.onReasoningDelta?.(final.reasoning);
           if (delivered && delivered !== final.text) throw new ResponsesError("Responses stream text did not match its completion");
           if (!delivered && final.text) handlers.onTextDelta?.(final.text);
@@ -122,7 +124,7 @@ export class ResponsesProvider implements LlmProvider {
       }
       let payload: unknown;
       try { payload = JSON.parse(buffer); } catch { throw new ResponsesError("Invalid Responses JSON"); }
-      return parseResponse(payload, handlers.onUsage);
+      return parseResponse(payload, handlers.onUsage, this.options);
     } catch (error) {
       if (signal.aborted) signal.throwIfAborted();
       // Transport exceptions can contain URLs or upstream bodies. Do not expose them.
@@ -132,7 +134,7 @@ export class ResponsesProvider implements LlmProvider {
   }
 }
 
-export function responsesInput(messages: TurnMessage[]): unknown[] {
+export function responsesInput(messages: TurnMessage[], options?: ModelAdapterOptions): unknown[] {
   const input: unknown[] = []; const outstanding = new Set<string>(); const used = new Set<string>();
   for (const message of normalizeToolHistory(messages)) {
     if (message.role === "tool") {
@@ -140,7 +142,8 @@ export function responsesInput(messages: TurnMessage[]): unknown[] {
       input.push({ type: "function_call_output", call_id: message.toolCallId, output: message.content });
     } else {
       if (outstanding.size) throw new ResponsesError("Responses tool results are missing");
-      if (message.content) input.push({ role: message.role, content: message.content });
+      if (message.role === "assistant" && options) input.push(...(continuationState(message.continuation,options,"responses")?.items ?? []));
+      if (message.content || message.attachments?.length) input.push({ role: message.role, content: attachmentContent(message,"responses") });
       for (const tool of message.toolCalls ?? []) {
         if (message.role !== "assistant" || !tool.id || used.has(tool.id)) throw new ResponsesError("Invalid Responses tool call history");
         used.add(tool.id); outstanding.add(tool.id);
@@ -152,10 +155,11 @@ export function responsesInput(messages: TurnMessage[]): unknown[] {
   return input;
 }
 
-function parseResponse(payload: unknown, onUsage?: (usage: UsageSnapshot) => void): RunTurn {
+function parseResponse(payload: unknown, onUsage?: (usage: UsageSnapshot) => void, options?: ModelAdapterOptions): RunTurn {
   const response = object(payload);
   if (response.status !== "completed" || response.error || !Array.isArray(response.output)) throw new ResponsesError("Responses result was not complete");
   const turn: RunTurn = { text: "", toolCalls: [], done: true }; const ids = new Set<string>();
+  const items: Extract<import("./provider.js").ModelContinuation["state"],{protocol:"responses"}>["items"] = [];
   for (const value of response.output) {
     const item = object(value);
     if (item.type === "message") {
@@ -174,16 +178,20 @@ function parseResponse(payload: unknown, onUsage?: (usage: UsageSnapshot) => voi
       try { input = JSON.parse(string(item.arguments)); } catch { throw new ResponsesError("Invalid Responses tool arguments"); }
       turn.toolCalls.push({ id, name, input });
     } else if (item.type === "reasoning") {
-      // Opaque reasoning continuation is not representable in the current
-      // provider-neutral history. Fail rather than silently discard it.
-      if (item.encrypted_content) throw new ResponsesError("Responses encrypted reasoning continuation is not supported");
+      if (item.encrypted_content !== undefined && typeof item.encrypted_content !== "string") throw new ResponsesError("Invalid encrypted reasoning continuation");
+      const summary: Array<{type:"summary_text";text:string}> = [];
       if (Array.isArray(item.summary)) for (const entry of item.summary) {
         const part = object(entry);
-        if (part.type === "summary_text") turn.reasoning = (turn.reasoning ?? "") + string(part.text);
+        if (part.type === "summary_text") { const text=string(part.text); turn.reasoning = (turn.reasoning ?? "") + text; summary.push({type:"summary_text",text}); }
+      }
+      if (item.encrypted_content) {
+        if (!options || !item.id) throw new ResponsesError("Responses encrypted reasoning identity is missing");
+        items.push({type:"reasoning",id:string(item.id),summary,encrypted_content:item.encrypted_content as string});
       }
     } else throw new ResponsesError("Responses output type is unsupported");
   }
   turn.done = turn.toolCalls.length === 0;
+  if (items.length && options) turn.continuation=continuation(options,{protocol:"responses",items});
   if (response.usage) {
     const usage = object(response.usage);
     const values = [usage.input_tokens, usage.output_tokens, usage.total_tokens];
@@ -192,3 +200,4 @@ function parseResponse(payload: unknown, onUsage?: (usage: UsageSnapshot) => voi
   }
   return turn;
 }
+import { attachmentContent } from "./attachment-content.js";

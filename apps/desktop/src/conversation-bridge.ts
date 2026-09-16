@@ -2,6 +2,7 @@ import { DesktopEvidenceReadSchema } from "@traceforge/shared/desktop-evidence";
 import { ApprovalPreferenceUpdateSchema } from "@traceforge/shared/desktop-approval-preference";
 import { RequestScheduler } from "./request-scheduler.js";
 import { DesktopReplyCommandSchema } from "@traceforge/shared/desktop-replies";
+import {ReplyQueueCommandSchema} from "@traceforge/shared/desktop-reply-queue";
 import { ConfigurationSaveSchema, ConfigurationImportSchema } from "@traceforge/shared/desktop-configuration";
 import { DesktopMcpOperationSchema } from "@traceforge/shared/desktop-mcp";
 import { DesktopResourceOperationSchema } from "@traceforge/shared/desktop-resources";
@@ -22,6 +23,15 @@ export function validateConversationRequest(value: unknown): ConversationBridgeR
       input.path.length > 256 || !["GET", "POST"].includes(String(input.method))) throw new Error("Invalid conversation request");
   const method = input.method as "GET" | "POST";
   const path = input.path;
+  if (/^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/attachments\/preview$/.test(path)) {
+    if(method!=="POST"||typeof input.body!=="string"||input.body.length>1024)throw new Error("Invalid attachment preview");
+    return {path,method,body:JSON.stringify(AttachmentPreviewRequestSchema.parse(JSON.parse(input.body)))};
+  }
+  if (/^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/reply-queue$/.test(path)) {
+    if(method==="GET"&&input.body===undefined)return {path,method};
+    if(method!=="POST"||typeof input.body!=="string"||Buffer.byteLength(input.body)>70000)throw new Error("Invalid queue command");
+    return {path,method,body:JSON.stringify(ReplyQueueCommandSchema.parse(JSON.parse(input.body)))};
+  }
   if (/^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/replies\/[a-zA-Z0-9_-]{1,100}\/memory$/.test(path)) {
     if (method !== "GET" || input.body !== undefined) throw new Error("Invalid memory read");
     return { path, method };
@@ -42,8 +52,9 @@ export function validateConversationRequest(value: unknown): ConversationBridgeR
     return { path, method };
   }
   if (/^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/replies\/[a-zA-Z0-9_-]{1,100}(\/cancel)?$/.test(path)) {
-    if (method !== "POST" || typeof input.body !== "string" || input.body.length > 100) throw new Error("Invalid reply command");
-    return { path, method, body: JSON.stringify(DesktopReplyCommandSchema.parse(JSON.parse(input.body))) };
+    if (method !== "POST" || typeof input.body !== "string" || input.body.length > 2048) throw new Error("Invalid reply command");
+    const command = DesktopReplyCommandSchema.parse(JSON.parse(input.body));
+    return { path, method, body: JSON.stringify(command) };
   }
   if(path === "/api/desktop/configuration/import") {
     if(method!=="POST"||typeof input.body!=="string"||Buffer.byteLength(input.body)>4096)throw new Error("Invalid configuration import");
@@ -96,16 +107,17 @@ export function validateConversationRequest(value: unknown): ConversationBridgeR
     if (input.body !== undefined) throw new Error("GET body not allowed");
     return { path, method };
   }
-  if (typeof input.body !== "string" || Buffer.byteLength(input.body) > 100000) throw new Error("Invalid conversation body");
+  if (typeof input.body !== "string" || Buffer.byteLength(input.body) > 3200000) throw new Error("Invalid conversation body");
   let body: unknown;
   try { body = JSON.parse(input.body); } catch { throw new Error("Invalid conversation body"); }
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Invalid conversation body");
   const data = body as Record<string, unknown>;
   const field = collection ? "title" : "text";
-  if (Object.keys(data).length !== 2 || Object.keys(data).some(key => key !== "commandId" && key !== field) ||
+  if (Object.keys(data).some(key => key !== "commandId" && key !== field && (collection || key !== "attachments")) ||
       typeof data.commandId !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(data.commandId) ||
       typeof data[field] !== "string" || !(data[field] as string).trim() ||
       (data[field] as string).length > (collection ? 200 : 16000)) throw new Error("Invalid conversation body");
+  if(data.attachments!==undefined)MessageAttachmentsSchema.parse(data.attachments);
   return { path, method, body: JSON.stringify(data) };
 }
 
@@ -122,7 +134,7 @@ export function createConversationBridge(options: { webContentsId: number; origi
       if (!active || sender.webContentsId !== options.webContentsId || !sender.mainFrame || url.origin !== expected.origin ||
           url.username || url.password || url.pathname !== "/") throw new Error("Untrusted conversation sender");
       const input = validateConversationRequest(value);
-      const read = input.method === "GET" || /\/(evidence\/read|execution\/approval-input)$/.test(input.path);
+      const read = input.method === "GET" || /\/(evidence\/read|attachments\/preview|execution\/approval-input)$/.test(input.path);
       const urgent = input.method === "POST" && /\/(cancel|pause|resume|approval)$/.test(input.path);
       return scheduler.schedule(!read, async () => {
         if (!active) throw new Error("Conversation bridge closed");
@@ -133,3 +145,4 @@ export function createConversationBridge(options: { webContentsId: number; origi
     },
   };
 }
+import { MessageAttachmentsSchema,AttachmentPreviewRequestSchema } from "@traceforge/shared/message-attachments";

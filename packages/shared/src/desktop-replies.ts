@@ -12,6 +12,7 @@ export const DesktopReplySchema = z.object({
   state: ReplyStateSchema,
   text: z.string().max(65536),
   taskRequest: z.object({ scenarioKind: z.string().min(1).max(100), definitionVersion: z.number().int().positive() }).strict().optional(),
+  originalReadCount: z.number().int().min(0).max(48).optional(),
   reasoning: z.string().max(16000).optional(),
   reasoningTruncated: z.boolean().optional(),
   toolActivity: z.array(z.object({ ordinal: z.number().int().positive(), tool: z.string().max(100), input: z.string().max(2000), output: z.string().max(2000) }).strict()).max(6).optional(),
@@ -22,7 +23,8 @@ export const DesktopReplySchema = z.object({
   phase: z.enum(["compacting", "generating", "recalling", "recovering"]).optional(),
   recoveryAttempts: z.number().int().min(0).max(1).optional(),
   recallCount: z.number().int().min(0).max(6).optional(),
-  error: z.enum(["provider_failed", "output_limit", "invalid_completion", "host_stopped", "timeout", "context_limit", "recall_limit"]).nullable(),
+  // review_incomplete is decode-only compatibility for saved replies from the retired mode.
+  error: z.enum(["review_incomplete", "attachment_input", "provider_failed", "output_limit", "invalid_completion", "host_stopped", "timeout", "context_limit", "recall_limit"]).nullable(),
 }).strict();
 export type DesktopReply = z.infer<typeof DesktopReplySchema>;
 export const DesktopReplyPageSchema = z.object({
@@ -32,5 +34,5 @@ export const DesktopReplyPageSchema = z.object({
   hasMore: z.boolean(),
 }).strict();
 
-/** An empty command deliberately cannot grant tools, change providers or send arbitrary history. */
+/** Historical reads are tools, not a reply mode. */
 export const DesktopReplyCommandSchema = z.object({}).strict();

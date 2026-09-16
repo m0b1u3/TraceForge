@@ -12,6 +12,8 @@ import { buildServer, foundationHostControl, type LlmSecretBundle, type LlmSecre
 import { ensureDesktopData, resolveDesktopPaths } from "./desktop-paths.js";
 import { createConversationBridge } from "./conversation-bridge.js";
 import { createModelSettingsBridge } from "./model-settings-bridge.js";
+import {readSelectedAttachment} from "./attachment-file.js";
+import {MessageAttachmentsSchema} from "@traceforge/shared/message-attachments";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
@@ -115,6 +117,7 @@ async function start(): Promise<void> {
     desktopMcp: { secrets: { async read(ref) { return (await mcpSecrets.read(ref))?.accessToken; },
       async write(ref,value) { await mcpSecrets.write(ref,{accessToken:value,binding:ref,expiresAt:8640000000000000}); } } },
     llmSecretStore: desktopLlmSecretStore(paths.llmSecrets),
+    continuationCipher:{encrypt(value){if(!safeStorage.isEncryptionAvailable() || process.platform==="linux"&&safeStorage.getSelectedStorageBackend()==="basic_text")throw new Error("Secure storage unavailable");return safeStorage.encryptString(value);},decrypt:value=>safeStorage.decryptString(value)},
     modelAccounts: accounts,
     browserInstallationPath: process.env.TRACEFORGE_BROWSER_INSTALLATION,
   });
@@ -145,6 +148,29 @@ async function start(): Promise<void> {
     } catch { event.returnValue = { ok: false }; }
   };
   ipcMain.on("desktop-journal:request", journalHandler);
+  let selectingAttachments=false;
+  ipcMain.handle("attachments:select",async(event)=>{
+    if(event.sender.id!==window.webContents.id||event.senderFrame!==event.sender.mainFrame||new URL(event.senderFrame?.url??"").origin!==localOrigin||selectingAttachments)throw new Error("Invalid attachment request");
+    selectingAttachments=true;
+    try{
+      const selected=await dialog.showOpenDialog(window,{title:"添加附件（PDF / 文本 32 MiB，图片 / 音频 1 MiB）",properties:["openFile","multiSelections"],filters:[{name:"支持的附件",extensions:["pdf","txt","md","json","csv","log","yaml","yml","xml","html","css","js","ts","py","sh","png","jpg","jpeg","wav","mp3"]}]});
+      if(selected.canceled)return [];
+      if(selected.filePaths.length>4)throw new Error("Too many attachments");
+      const items=[];
+      for(const path of selected.filePaths){
+        if(window.isDestroyed()||!server)throw new Error("Host closed");
+        const payload=await readSelectedAttachment(path);
+        const extension=payload.name.split(".").at(-1)?.toLowerCase()??"";
+        const media:Record<string,string>={png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",wav:"audio/wav",mp3:"audio/mpeg"};
+        if(media[extension]){items.push(...MessageAttachmentsSchema.parse([{kind:extension==="wav"||extension==="mp3"?"audio":"image",name:payload.name,mediaType:media[extension],data:payload.data}]));continue;}
+        const response=await server.inject({method:"POST",url:"/api/desktop/attachment-import",payload,headers:managementChannel.headers()});
+        if(response.statusCode!==200)throw new Error("Attachment import failed");
+        items.push(response.json());
+      }
+      return MessageAttachmentsSchema.parse(items);
+    }finally{selectingAttachments=false;}
+  });
+  window.on("closed",()=>ipcMain.removeHandler("attachments:select"));
   window.on("closed", () => ipcMain.removeListener("desktop-journal:request", journalHandler));
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);

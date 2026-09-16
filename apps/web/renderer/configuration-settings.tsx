@@ -79,6 +79,7 @@ export function ConfigurationSettings({ bridge, onDirty }: { bridge: DesktopConv
     {snapshot && !current && <p>还没有可用的已安装场景。安装并审核场景后，其指导资源会显示在这里。</p>}
     {current && draft && <>
       <p className="configuration-meta">修订 {current.revision} · {dirty ? "有未保存的修改" : "与宿主一致"}。修改在新任务中生效。</p>
+      {current.inspection&&<details><summary>配置历史与任务使用 · {current.inspection.runCount} 个绑定</summary><p>任务固定的是创建时配置，不会因修改默认值而自动更新。这里只展示最近 20 条绑定及修订。</p>{current.inspection.runs.map(run=><p key={run.runId}>{run.runId} · 配置修订 {run.revision}</p>)}{current.inspection.history.map(row=><section key={row.revision}><strong>修订 {row.revision}</strong><ul>{row.changes.map((change,i)=><li key={i}>{change}</li>)}</ul></section>)}</details>}
       {!!current.previousVersions?.length&&<details><summary>从旧版本保留自定义配置</summary><p>旧版本配置不会删除。先预览不兼容项，再替换当前草稿；保存后才生效。</p>
         {current.previousVersions.map(p=><button key={p.package.version} disabled={busy||dirty||importing||pendingImport||!!versionPreview} onClick={()=>void previewVersion(p.package)}>预览 {p.package.version} · 修订 {p.revision}</button>)}
       </details>}
@@ -90,6 +91,7 @@ export function ConfigurationSettings({ bridge, onDirty }: { bridge: DesktopConv
           <span>{r.id}</span><small>{r.type === "skill" ? "Skill / 场景指导" : "知识资源"}</small>
         </button>)}</nav>
         {resource ? <div className="configuration-document">
+          <p className="configuration-meta">来源：场景包 {current.package.id} · {current.package.version}。用户修改独立保存，不覆盖包内默认内容。</p>
           <p>{resource.summary}</p><p className="configuration-meta">角色：{resource.roles.join("、")} · 阶段：{resource.phases.join("、") || "不限阶段"}</p>
           {resource.editable && override ? <>
             <label className="configuration-check"><input type="checkbox" checked={override.enabled} disabled={busy || importing || pendingImport} onChange={e => changeResource({ enabled: e.target.checked })} />为新任务启用此资源</label>

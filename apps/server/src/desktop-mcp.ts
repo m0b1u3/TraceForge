@@ -1,3 +1,4 @@
+import {McpDiagnosticError,mcpDiagnostic} from "./mcp-diagnostics.js";
 import type Database from "better-sqlite3";
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
@@ -30,7 +31,8 @@ export class DesktopMcpControl {
   constructor(private readonly sqlite: Database.Database, private readonly packages: ScenarioPackageRegistry,
     private readonly loadRun: (id: string) => ScenarioRunState | null, private readonly options: DesktopMcpOptions = {},
     private readonly node?:ExecutionNode,private readonly capacity?:ProcessExecutionCapacity) {
-    sqlite.exec(`CREATE TABLE IF NOT EXISTS desktop_mcp_heads(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,active INTEGER,deleted INTEGER NOT NULL DEFAULT 0);
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS desktop_mcp_diagnostics(serial INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL,revision INTEGER NOT NULL,operation TEXT NOT NULL,at TEXT NOT NULL,success INTEGER NOT NULL,code TEXT NOT NULL,recovery TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS desktop_mcp_heads(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,active INTEGER,deleted INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS desktop_mcp_versions(id TEXT NOT NULL,revision INTEGER NOT NULL,value_json TEXT NOT NULL,PRIMARY KEY(id,revision));
       CREATE TABLE IF NOT EXISTS desktop_mcp_tests(id TEXT NOT NULL,revision INTEGER NOT NULL,catalog_json TEXT NOT NULL,PRIMARY KEY(id,revision));
       CREATE TABLE IF NOT EXISTS desktop_mcp_activations(id TEXT NOT NULL,revision INTEGER NOT NULL,value_json TEXT NOT NULL,PRIMARY KEY(id,revision));
@@ -62,11 +64,24 @@ export class DesktopMcpControl {
     return { secureStorage: !!this.options.secrets, connections: heads.map(h => {
       const v = this.version(h.id, h.revision), row = this.sqlite.prepare("SELECT catalog_json FROM desktop_mcp_tests WHERE id=? AND revision=?").get(h.id, h.revision) as { catalog_json: string } | undefined;
       let reviewedTools: Review = []; try { reviewedTools = this.activation(h.id, h.revision).tools; } catch {}
-      return { connection: v.connection, revision: h.revision, enabled: h.active !== null, credentialConfigured: !!v.credentialRef, catalog: row ? JSON.parse(row.catalog_json) : null, reviewedTools,
+      return { connection: v.connection, inspection:this.inspection(h.id), revision: h.revision, enabled: h.active !== null, credentialConfigured: !!v.credentialRef, catalog: row ? JSON.parse(row.catalog_json) : null, reviewedTools,
         ...(h.active === null ? {} : {effective:{revision:h.active,connection:this.version(h.id,h.active).connection,tools:this.activation(h.id,h.active).tools}}) };
     }), packages: this.packages.list().map(p => ({ package: this.packages.bindingFor(p), title: p.definition.title, actions: p.definition.authorizationActions,
       capabilities: [...new Set(p.definition.agentTopology?.workerPools.flatMap(p => p.capabilities) ?? [])],
       resourceKinds: "resources" in p.authorizationPolicy ? p.authorizationPolicy.resources.map(r => r.kind) : [] })) };
+  }
+  private record(id:string,revision:number,operation:string,success:boolean,error?:unknown) {
+    const diagnostic=success?{code:"ok",recovery:""}:mcpDiagnostic(error);
+    this.sqlite.transaction(()=>{
+      this.sqlite.prepare("INSERT INTO desktop_mcp_diagnostics(id,revision,operation,at,success,code,recovery) VALUES(?,?,?,?,?,?,?)").run(id,revision,operation,new Date().toISOString(),Number(success),diagnostic.code,diagnostic.recovery);
+      this.sqlite.prepare("DELETE FROM desktop_mcp_diagnostics WHERE id=? AND serial NOT IN (SELECT serial FROM desktop_mcp_diagnostics WHERE id=? ORDER BY serial DESC LIMIT 40)").run(id,id);
+    })();
+  }
+  private inspection(id:string) {
+    const history=this.sqlite.prepare("SELECT revision,operation,at,success FROM desktop_mcp_diagnostics WHERE id=? ORDER BY serial DESC LIMIT 20").all(id) as Array<{revision:number;operation:string;at:string;success:number}>;
+    const last=this.sqlite.prepare("SELECT revision,at,success,code,recovery FROM desktop_mcp_diagnostics WHERE id=? AND operation='test' ORDER BY serial DESC LIMIT 1").get(id) as {revision:number;at:string;success:number;code:string;recovery:string}|undefined;
+    const runs=this.sqlite.prepare("SELECT run_id AS runId,revision FROM desktop_mcp_runs WHERE id=? ORDER BY rowid DESC LIMIT 20").all(id) as Array<{runId:string;revision:number}>;
+    return {history:history.map(r=>({...r,success:!!r.success})),lastTest:last?{...last,success:!!last.success}:null,runs,runCount:(this.sqlite.prepare("SELECT count(*) AS n FROM desktop_mcp_runs WHERE id=?").get(id) as {n:number}).n};
   }
   /** Includes retained revisions for old Runs; the Run pin controls which revision can be invoked. */
   sources(): ExecutionToolDiscoverySource[] {
@@ -80,6 +95,7 @@ export class DesktopMcpControl {
   }
   async operate(value: unknown): Promise<DesktopMcpSnapshot> {
     const op = DesktopMcpOperationSchema.parse(value); if (this.locked) throw new Error("MCP configuration is busy"); this.locked = true;
+    let retesting = false;
     try {
       const id = op.operation === "save" ? op.connection.id : op.id, head = this.head(id);
       if ((head?.revision ?? 0) !== op.expectedRevision || head?.deleted) throw new Error("MCP configuration changed; reload");
@@ -101,6 +117,8 @@ export class DesktopMcpControl {
         const v = this.version(id,head.revision);
         if (op.operation === "test" || op.operation === "activate") this.pkg(v.connection);
         if (op.operation === "test") {
+          retesting = true;
+          this.sqlite.prepare("DELETE FROM desktop_mcp_tests WHERE id=? AND revision=?").run(id,head.revision);
           const session = await this.session(v, this.serviceAttribution(id), () => { if (this.head(id)?.revision !== head.revision) throw new Error("MCP configuration changed"); });
           try{const catalog = await session.discover();
           this.sqlite.prepare("INSERT INTO desktop_mcp_tests VALUES (?,?,?) ON CONFLICT(id,revision) DO UPDATE SET catalog_json=excluded.catalog_json").run(id,head.revision,JSON.stringify(catalog));}finally{await session.close();}
@@ -122,7 +140,15 @@ export class DesktopMcpControl {
           for (const row of this.sqlite.prepare("SELECT revision FROM desktop_mcp_activations WHERE id=?").all(id) as Array<{revision:number}>) await this.runtime?.deactivateSource(sourceName(id,row.revision));
         }
       }
+      this.record(op.operation==="save"?op.connection.id:op.id,op.expectedRevision+(op.operation==="save"?1:0),op.operation,true);
       return this.snapshot();
+    } catch(error) {
+      if(op.operation==="test"){
+        // Discovery is not successful until controlled session cleanup also finishes.
+        if(retesting)this.sqlite.prepare("DELETE FROM desktop_mcp_tests WHERE id=? AND revision=?").run(op.id,op.expectedRevision);
+        this.record(op.id,op.expectedRevision,"test",false,error);
+      }
+      throw error;
     } finally { this.locked = false; }
   }
   private serviceAttribution(id: string): ExecutionAttribution { return { caseId:"desktop-mcp",runId:"desktop-mcp",workId:"discovery",workerId:"operator",scopeRef:id,leaseId:randomUUID(),leaseExpiresAt:new Date(Date.now()+60000).toISOString(),actionId:"mcp.discovery",idempotencyKey:randomUUID() }; }
@@ -132,7 +158,7 @@ export class DesktopMcpControl {
       return new DesktopMcpStdioSession(v.connection,this.node,this.capacity,attribution,check,signal);
     }
     const credential = v.credentialRef ? await this.options.secrets?.read(v.credentialRef) : undefined;
-    if (v.credentialRef && !credential) throw new Error("MCP credential unavailable");
+    if (v.credentialRef && !credential) throw new McpDiagnosticError("credential","MCP credential unavailable");
     return new DesktopMcpSession(v.connection,credential,attribution,check,this.options.transport,signal);
   }
   private inputPolicy(schema: Record<string,any>, resources: Review[number]["resources"]): McpInputPolicy {
@@ -188,5 +214,5 @@ export class DesktopMcpControl {
 
 export function registerDesktopMcpRoutes(app: FastifyInstance, control: DesktopMcpControl) {
   app.get("/api/desktop/mcp",async()=>control.snapshot());
-  app.post("/api/desktop/mcp",{bodyLimit:128*1024},async(request,reply)=>{ try {return await control.operate(request.body);} catch {return reply.code(409).send({error:"MCP 操作未完成。请检查修订、HTTPS 凭证、场景授权及工具输入契约；保存不会自动启用。"});} });
+  app.post("/api/desktop/mcp",{bodyLimit:128*1024},async(request,reply)=>{ try {return await control.operate(request.body);} catch (error) {const diagnostic=mcpDiagnostic(error);return reply.code(409).send({error:diagnostic.recovery,code:diagnostic.code});} });
 }

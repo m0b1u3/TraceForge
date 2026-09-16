@@ -31,6 +31,7 @@ export interface McpCatalog { serverName: string; serverVersion: string; digest:
 export interface DesktopMcpSnapshot {
   secureStorage: boolean;
   connections: Array<{ connection: McpConnection; revision: number; enabled: boolean; credentialConfigured: boolean;
+    inspection?: { lastTest:null|{revision:number;at:string;success:boolean;code:string;recovery:string}; history:Array<{revision:number;operation:string;at:string;success:boolean}>; runs:Array<{runId:string;revision:number}>;runCount:number };
     catalog: McpCatalog | null; reviewedTools: z.infer<typeof McpToolReviewSchema>[];
     effective?: { revision: number; connection: McpConnection; tools: z.infer<typeof McpToolReviewSchema>[] } }>;
   packages: Array<{ package: McpConnection["package"]; title: string; actions: string[]; capabilities: string[]; resourceKinds: string[] }>;

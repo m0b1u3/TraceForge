@@ -14,6 +14,7 @@ export const UserResourceSchema = z.object({
   content: z.string().max(65536), enabled: z.boolean(),
   roles: z.array(z.enum(["worker", "planner", "observer"])).min(1).max(3),
   phases: z.array(z.string().min(1).max(256)).max(64),
+  source: z.object({kind:z.enum(["editor","file"]),name:z.string().min(1).max(200)}).strict().optional(),
 }).strict();
 export type UserResource = z.infer<typeof UserResourceSchema>;
 export const guidanceVariables = ["goal", "phase", "role", "runId", "caseId"] as const;
@@ -39,6 +40,7 @@ export interface ConfigurationSnapshot {
   packages: Array<{
     package: ConfigurationSave["package"]; title: string; revision: number;
     userResources?: UserResource[];
+    inspection?: { history:Array<{revision:number;changes:string[]}>; runs:Array<{runId:string;revision:number}>; runCount:number };
     previousVersions?: Array<{ package:ConfigurationSave["package"]; revision:number }>;
     resources: Array<{ id: string; type: string; summary: string; phases: string[]; roles: string[];
       enabled: boolean; content: string | null; defaultContent: string; defaultDigest: string; editable: boolean; reason?: string }>;

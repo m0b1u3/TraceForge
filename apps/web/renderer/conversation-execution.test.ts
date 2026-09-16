@@ -14,7 +14,7 @@ const run = { runId: "run", messageCommandId: "message", goal: "检查已授权�
 async function mount(request: (input: { path: string; method: "GET" | "POST" }) => Promise<{ status: number; body: unknown }>) {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const node = document.createElement("div"); document.body.append(node); const root = createRoot(node); dispose = () => root.unmount();
-  await act(async () => { root.render(React.createElement(ConversationExecution, { bridge: { protocolVersion: 1, request: input => input.path.includes("/replies?")
+  await act(async () => { root.render(React.createElement(ConversationExecution, { bridge: { protocolVersion: 1, request: input => input.path.endsWith("/reply-queue")?Promise.resolve({status:200,body:{conversationId:"first",revision:0,paused:false,items:[]}}):input.path.includes("/replies?")
     ? Promise.resolve({status:200,body:{conversationId:"first",replies:[],nextAfter:0,hasMore:false}}) : request(input) }, conversationId: "first", messages })); });
   return node;
 }

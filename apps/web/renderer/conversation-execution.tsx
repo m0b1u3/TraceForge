@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { CaretRight, Robot, User } from "@phosphor-icons/react";
 import type { SavedMessage } from "./conversation-client";
 import type { DesktopConversations } from "./desktop-conversation-transport";
@@ -9,6 +9,10 @@ import { RunControl } from "./run-control";
 import { DesktopPendingApprovalSchema, type DesktopPendingApproval } from "@traceforge/shared/desktop-execution";
 import { RunInteraction } from "./run-interaction";
 import { ConversationReply, useConversationReplies } from "./conversation-replies";
+
+import { useArtifactPreview } from "./artifact-preview";
+import { ReplyQueue } from "./reply-queue";
+import { conversationRuntimeView, mergeRunSnapshots } from "./conversation-runtime-view";
 
 export interface ConversationRun {
   runId: string; messageCommandId: string | null; goal: string; status: string; revision: number;
@@ -77,10 +81,11 @@ function RunReply({ run, bridge, conversationId, unified=false }: { run: Convers
 }
 
 /** Read-only task projection. Opening the conversation never dispatches a Run. */
-export function ConversationExecution({ bridge, conversationId, messages, onRuns }: {
-  bridge: DesktopConversations; conversationId: string; messages: SavedMessage[]; onRuns?: (runs:ConversationRun[]|null)=>void;
+export function ConversationExecution({ bridge, conversationId, messages, onRuns, onMessagesChanged, onRuntime }: {
+  bridge: DesktopConversations; conversationId: string; messages: SavedMessage[]; onRuns?: (runs:ConversationRun[]|null)=>void; onMessagesChanged?:()=>Promise<void>; onRuntime?:(value:ReturnType<typeof conversationRuntimeView>)=>void;
 }) {
   const [snapshot, setSnapshot] = useState<{ runs: ConversationRun[]; truncated: boolean } | null>(null);
+  const preview = useArtifactPreview(), latestRuns = useRef<ConversationRun[]>([]);
   const assistant = useConversationReplies(bridge, conversationId);
   const [error, setError] = useState(false), [refresh, setRefresh] = useState(0);
   useEffect(()=>{const changed=(event:Event)=>{if((event as CustomEvent).detail===conversationId)setRefresh(value=>value+1);};window.addEventListener("traceforge:execution-updated",changed);return()=>window.removeEventListener("traceforge:execution-updated",changed);},[conversationId]);
@@ -92,7 +97,7 @@ export function ConversationExecution({ bridge, conversationId, messages, onRuns
         if (!active) return;
         if (response.status !== 200) throw new Error("Unavailable");
         const next = parseConversationRuns(response.body);
-        setSnapshot(next); setError(false);onRuns?.(next.runs);
+        latestRuns.current=mergeRunSnapshots(latestRuns.current,next.runs);setSnapshot({...next,runs:latestRuns.current}); setError(false);onRuns?.(latestRuns.current);
       } catch { if (active) {setError(true);onRuns?.(null);} }
       if (active) timer = setTimeout(poll, document.hidden ? 15000 : 2000);
     };
@@ -102,9 +107,12 @@ export function ConversationExecution({ bridge, conversationId, messages, onRuns
   const runs = snapshot?.runs ?? [];
   const commands = new Set(messages.map(message => message.commandId));
   const unbound = runs.filter(run => !run.messageCommandId || !commands.has(run.messageCommandId));
+  const runtime=conversationRuntimeView(assistant.replies.values(),snapshot?.runs??null,assistant.ready&&!!snapshot,assistant.error||error);
+  useEffect(()=>{onRuntime?.(runtime);},[runtime.label,runtime.ready,runtime.queued,runtime.activeMessageId,onRuntime]);
   return <>
+    <p className="conversation-runtime-status" role="status">{runtime.label}{runtime.queued>0?` · ${runtime.queued} 条待处理`:""}</p>
     {messages.map(message => <React.Fragment key={message.commandId}>
-      <article className="message message-user"><div className="avatar user" aria-hidden="true"><User weight="fill" /></div><div className="message-body"><div className="sender">你</div><p className="user-text">{message.text}</p><small className="local-receipt">已保存到本机会话</small></div></article>
+      <article className="message message-user"><div className="avatar user" aria-hidden="true"><User weight="fill" /></div><div className="message-body"><div className="sender">你</div><p className="user-text">{message.text}</p>{message.attachmentNames?.map((name,index)=><button type="button" className="attachment-reference" key={index} onClick={()=>preview?.open({kind:"attachment",conversationId,messageId:message.commandId,index,title:name})}>附件：{name}</button>)}<small className="local-receipt">已保存到本机会话</small></div></article>
       <ConversationReply bridge={bridge} conversationId={conversationId} messageId={message.commandId} reply={assistant.replies.get(message.commandId)} ready={assistant.ready&&!assistant.error}
         otherActive={[...assistant.replies.values()].some(item=>item.state==="streaming"&&item.messageCommandId!==message.commandId)} refresh={assistant.refresh}/>
       {assistant.replies.get(message.commandId)?.taskRequest && !runs.some(run=>run.messageCommandId===message.commandId) && <section className="conversation-authorization" aria-label="任务授权">
@@ -117,6 +125,7 @@ export function ConversationExecution({ bridge, conversationId, messages, onRuns
     {unbound.length > 0 && <section aria-label="会话关联运行"><h2 className="related-runs-title">会话关联运行</h2><p className="local-receipt">以下运行没有对应的已加载消息，不按文字相似度匹配。</p>{unbound.map(run => <RunReply key={run.runId} run={run} bridge={bridge} conversationId={conversationId} />)}</section>}
     {error ? <div className="inline-warning" role="alert">任务状态暂时无法更新，下面的操作不会自动重试。已显示内容是上次读取结果。<button onClick={() => setRefresh(value => value + 1)}>重新读取状态</button></div>
       : !snapshot ? <p role="status" className="local-receipt">正在读取任务进展…</p> : null}
+    <ReplyQueue key={conversationId} bridge={bridge} conversationId={conversationId} onChanged={()=>{assistant.refresh();void onMessagesChanged?.().catch(()=>setError(true));}}/>
     {snapshot?.truncated && <p className="local-receipt">仅显示最近 20 次运行；没有显示的运行不代表尚未执行。</p>}
   </>;
 }

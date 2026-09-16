@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { ArrowClockwise, Key, ShieldCheck } from "@phosphor-icons/react";
 import { ModelSettingsClient } from "./model-settings-client";
 import { ModelAccountPanel } from "./model-account-panel";
+import { ModelRequestOptions } from "./model-request-options";
+import { ModelProfileSettings } from "./model-profile-settings";
+import type { ModelCatalogEntry } from "@traceforge/shared/model-profile";
 import type { ModelConfigInput, ModelSettingsBridge, ModelSettingsSnapshot } from "./model-settings-client";
 
 const labels: Record<string, string> = { deepseek: "DeepSeek", xai: "xAI / Grok API", kimi: "Kimi", glm: "GLM", custom: "自定义 / 兼容端点" };
@@ -13,7 +16,7 @@ export function ModelSettings({ bridge, onDirty }: { bridge?: ModelSettingsBridg
   const [form, setForm] = useState<ModelConfigInput>(empty);
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState<"load" | "save" | "test" | "discover" | null>(null);
-  const [catalog, setCatalog] = useState<{ models: Array<{ id: string }>; truncated: boolean } | null>(null);
+  const [catalog, setCatalog] = useState<{ models: ModelCatalogEntry[]; truncated: boolean } | null>(null);
   const [catalogError, setCatalogError] = useState("");
   const lastDiscovery = useRef("");
   const [result, setResult] = useState("");
@@ -34,7 +37,7 @@ export function ModelSettings({ bridge, onDirty }: { bridge?: ModelSettingsBridg
     setForm(current ? { provider: current.provider, supplier: current.supplier, model: current.model, credentialRef: current.credentialRef,
       baseUrl: current.baseUrl ?? value.suppliers[current.supplier ?? ""]?.baseUrl ?? (current.provider === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1"),
       authMode: current.authMode ?? "api_key", jsonMode: current.jsonMode ?? "json_object", contextWindowTokens: current.contextWindowTokens,
-      maxOutputTokens: current.maxOutputTokens, requestOptions: current.requestOptions } : empty);
+      maxOutputTokens: current.maxOutputTokens, requestOptions: current.requestOptions, modelProfile: current.modelProfile } : empty);
     if (!current) {
       const connected = value.accounts?.filter(account => account.status !== "signed_out") ?? [];
       if (connected.length === 1) setForm({ ...empty, credentialRef: connected[0].id, provider: connected[0].provider, baseUrl: connected[0].baseUrl, authMode: "bearer" });
@@ -48,12 +51,18 @@ export function ModelSettings({ bridge, onDirty }: { bridge?: ModelSettingsBridg
     catch (cause) { if (alive.current) { setMustReload(true); setError((cause as Error).message); } }
     finally { locked.current = false; if (alive.current) setBusy(null); }
   }
-  function change(patch: Partial<ModelConfigInput>) { setForm(value => ({ ...value, ...patch })); setDirty(true); setResult(""); setError(""); }
+  function change(patch: Partial<ModelConfigInput>) {
+    setForm(value => {
+      const changed=(["model","baseUrl","provider","credentialRef"] as const).some(key=>key in patch && patch[key] !== value[key]);
+      return {...value,...(changed ? {modelProfile:null,contextWindowTokens:null,maxOutputTokens:null} : {}),...patch};
+    }); setDirty(true); setResult(""); setError("");
+  }
   function supplier(value: string) {
     setKey("");
     const preset = snapshot?.suppliers[value];
-    change(preset ? { supplier: value as ModelConfigInput["supplier"], provider: preset.protocol, baseUrl: preset.baseUrl, jsonMode: preset.jsonMode, model: "", requestOptions: undefined } : { supplier: undefined, model: "", baseUrl: "", requestOptions: undefined });
+    change(preset ? { supplier: value as ModelConfigInput["supplier"], provider: preset.protocol, baseUrl: preset.baseUrl, jsonMode: preset.jsonMode, model: "", requestOptions: preset.requestOptions, contextWindowTokens: undefined, maxOutputTokens: undefined } : { supplier: undefined, model: "", baseUrl: "", requestOptions: undefined, contextWindowTokens: undefined, maxOutputTokens: undefined });
   }
+  function selectModel(model: string) { change({ model, modelProfile: catalog?.models.find(item=>item.id===model)?.profile ?? null, contextWindowTokens: null, maxOutputTokens: null }); }
   const savedUrl = snapshot?.config?.baseUrl ?? snapshot?.suppliers[snapshot?.config?.supplier ?? ""]?.baseUrl ?? (snapshot?.config?.provider === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1");
   const sameDestination = snapshot?.config?.provider === form.provider && savedUrl.replace(/\/+$/, "") === form.baseUrl.replace(/\/+$/, "");
   const canKeepKey = sameDestination && !!snapshot?.config?.apiKeyMasked;
@@ -109,12 +118,13 @@ export function ModelSettings({ bridge, onDirty }: { bridge?: ModelSettingsBridg
           change(account ? { credentialRef: account.id, provider: account.provider, baseUrl: account.baseUrl, authMode: "bearer", supplier: undefined, requestOptions: undefined }
             : { credentialRef: undefined, authMode: "api_key" });
         }}><option value="">API Key</option>{managed && !selectedAccount && <option value={form.credentialRef}>未注册的已保存连接</option>}{snapshot?.accounts?.map(account => <option key={account.id} value={account.id}>{account.label}{account.status === "signed_out" ? " · 未登录" : ""}</option>)}</select></label>
-        <div className="model-fields"><label>供应商<select aria-label="供应商" disabled={managed} value={form.supplier ?? "custom"} onChange={event => supplier(event.target.value)}><option value="custom">自定义 / 兼容端点</option>{Object.keys(snapshot?.suppliers ?? {}).map(id => <option key={id} value={id}>{labels[id] ?? id}</option>)}</select></label>
+        <div className="model-fields"><label>供应商<select aria-label="供应商" disabled={managed} value={form.supplier ?? "custom"} onChange={event => supplier(event.target.value)}><option value="custom">自定义 / 兼容端点</option>{([['domestic','国内模型与平台'],['international','国际模型与平台'],['coding','Coding 专用入口']] as const).map(([group,label]) => <optgroup key={group} label={label}>{Object.entries(snapshot?.suppliers ?? {}).filter(([,preset]) => (preset.group ?? 'domestic') === group).map(([id,preset]) => <option key={id} value={id}>{preset.label ?? labels[id] ?? id}</option>)}</optgroup>)}</select></label>
         <label>接口协议<select aria-label="接口协议" disabled={managed} value={form.provider} onChange={event => { setKey(""); change({ provider: event.target.value as ModelConfigInput["provider"], requestOptions: undefined }); }}><option value="openai">OpenAI Chat Completions</option><option value="responses">Responses</option><option value="anthropic">Anthropic Messages</option></select></label></div>
         <p className="field-help">供应商与协议独立选择，请确认端点支持该协议。切换协议会清除输入的密钥和协议专用参数，不会自动改用其他协议重试。</p>
+        {form.supplier && snapshot?.suppliers[form.supplier]?.note && <p className="field-help" role="status">{snapshot.suppliers[form.supplier].note}</p>}
         <label>API 地址<input aria-label="API 地址" disabled={managed} type="url" value={form.baseUrl} placeholder="https://api.example.com/v1" autoComplete="off" maxLength={2048} onChange={event => { setKey(""); change({ baseUrl: event.target.value, supplier: undefined }); }} /></label>
         <div className="model-catalog">
-          <label>选择模型<select aria-label="选择模型" value={catalog?.models.some(item => item.id === form.model) ? form.model : ""} disabled={!catalog?.models.length} onChange={event => { if (event.target.value) change({ model: event.target.value }); }}>
+          <label>选择模型<select aria-label="选择模型" value={catalog?.models.some(item => item.id === form.model) ? form.model : ""} disabled={!catalog?.models.length} onChange={event => { if (event.target.value) selectModel(event.target.value); }}>
             <option value="">{busy === "discover" ? "正在获取模型列表…" : "从当前连接的模型目录选择"}</option>
             {catalog?.models.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}
           </select></label>
@@ -122,10 +132,12 @@ export function ModelSettings({ bridge, onDirty }: { bridge?: ModelSettingsBridg
         </div>
         <p className="field-help" role="status">{busy === "discover" ? "正在读取模型目录，不发送对话或生成请求…" : catalog ? `${catalog.models.length ? `获取到 ${catalog.models.length} 个模型` : "供应商返回空目录，可手动填写"}${catalog.truncated ? "（列表不完整，可手动填写未列出的模型）" : ""}。目录不代表模型调用或工具能力已通过。` : "连接就绪后自动读取模型目录，不会自动选择、保存或测试模型。"}</p>
         {catalogError && <p className="model-error" role="alert">{catalogError}</p>}
-        <label>模型 ID<input aria-label="模型 ID" value={form.model} placeholder="从上方选择，或手动填写模型 ID" maxLength={200} autoComplete="off" onChange={event => change({ model: event.target.value })} /></label>
+        <label>模型 ID<input aria-label="模型 ID" value={form.model} placeholder="从上方选择，或手动填写模型 ID" maxLength={200} autoComplete="off" onChange={event => selectModel(event.target.value)} /></label>
         <label><span><Key size={16} /> API 密钥</span><input aria-label="API 密钥" type="password" value={key} disabled={managed || !client || !snapshot || mustReload} autoComplete="new-password" spellCheck={false} maxLength={8192} placeholder={canKeepKey ? "已保存 · 留空保留现有密钥" : "输入此端点的 API 密钥"} onChange={event => { setKey(event.target.value); setDirty(true); setResult(""); }} /></label>
         <p className="field-help">{canKeepKey ? "密钥不会回显；留空仅在相同端点和协议下保留。" : "更换端点或协议后，不会沿用之前的密钥。"} 密钥不写入浏览器存储或对话历史。</p>
-        <details className="model-advanced"><summary>高级参数</summary><div className="model-fields"><label>JSON 输出<select value={form.jsonMode ?? "json_object"} onChange={event => change({ jsonMode: event.target.value as ModelConfigInput["jsonMode"] })}><option value="json_object">JSON Object</option><option value="json_schema">JSON Schema</option></select></label><label>凭据方式<select value={form.authMode ?? "api_key"} onChange={event => change({ authMode: event.target.value as ModelConfigInput["authMode"] })}><option value="api_key">API Key（协议默认）</option><option value="bearer">Bearer Token</option></select></label><label>上下文上限<input type="number" min={1} max={100000000} value={form.contextWindowTokens ?? ""} placeholder="保留宿主默认" onChange={event => change({ contextWindowTokens: event.target.value ? Number(event.target.value) : undefined })} /></label><label>最大输出 Tokens<input type="number" min={1} max={10000000} value={form.maxOutputTokens ?? ""} placeholder="保留宿主默认" onChange={event => change({ maxOutputTokens: event.target.value ? Number(event.target.value) : undefined })} /></label></div><p className="field-help">参数支持因模型而异。现有推理参数会保留；本表单不自动推断模型能力。</p></details>
+        <details className="model-advanced"><summary>高级参数</summary><div className="model-fields"><label>JSON 输出<select value={form.jsonMode ?? "json_object"} onChange={event => change({ jsonMode: event.target.value as ModelConfigInput["jsonMode"] })}><option value="json_object">JSON Object</option><option value="json_schema">JSON Schema</option></select></label><label>凭据方式<select value={form.authMode ?? "api_key"} onChange={event => change({ authMode: event.target.value as ModelConfigInput["authMode"] })}><option value="api_key">API Key（协议默认）</option><option value="bearer">Bearer Token</option></select></label><label>上下文上限<input aria-label="上下文预算" type="number" min={1024} max={100000000} value={form.contextWindowTokens ?? ""} placeholder="自动预算" onChange={event => change({ contextWindowTokens: event.target.value ? Number(event.target.value) : null })} /></label><label>最大输出 Tokens<input aria-label="单次输出预算" type="number" min={1} max={10000000} value={form.maxOutputTokens ?? ""} placeholder="自动预算" onChange={event => change({ maxOutputTokens: event.target.value ? Number(event.target.value) : null })} /></label></div><p className="field-help">参数支持因模型而异。现有推理参数会保留；本表单不自动推断模型能力。</p></details>
+        <ModelRequestOptions protocol={form.provider} value={form.requestOptions} onChange={requestOptions => change({ requestOptions })} />
+        <ModelProfileSettings form={form} discovered={catalog?.models.find(item=>item.id===form.model)?.profile} onChange={modelProfile=>change({modelProfile})} />
       </fieldset>
       <div className="model-notes"><ShieldCheck size={20} /><p>保存影响宿主后续模型调用，不只当前对话。连接测试会向上方端点发送一次最小请求，可能产生 API 费用。Grok 等聊天订阅不等于 API 授权；账号登录仅在宿主安装了有效注册时可用，不保证所有套餐均有模型调用权限。</p></div>
       {error && <p role="alert" className="model-error">{error}</p>}<p role="status" className="model-result">{busy === "load" ? "正在读取安全配置…" : busy === "save" ? "正在保存，请等待宿主回执…" : busy === "test" ? "正在测试连接，最长等待约 30 秒…" : result}</p>

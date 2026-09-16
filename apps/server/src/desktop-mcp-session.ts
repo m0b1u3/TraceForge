@@ -1,3 +1,4 @@
+import {McpDiagnosticError} from "./mcp-diagnostics.js";
 import { randomUUID, createHash } from "node:crypto";
 import { BrokeredHttpGateway, type BrokeredHttpTransport, type ExecutionAttribution, type BrokeredNetworkReceipt } from "@traceforge/execution-node";
 import { canonicalJson, type EffectivePermissionProfile } from "@traceforge/orchestration-core";
@@ -34,7 +35,7 @@ export class DesktopMcpSession {
     private readonly attribution: ExecutionAttribution, private readonly authorize: () => void,
     transport?: BrokeredHttpTransport, private readonly signal?: AbortSignal) {
     this.broker = new BrokeredHttpGateway({ transport:transport??httpTransport(signal), limits: { maximumRequestBytes: 65536, maximumResponseBytes: 262144, maximumTimeoutMs: 15000, maximumConcurrentRequests: 1 },
-      authorizer: { authorize: ({ url }) => { this.check(); if (url !== new URL(connection.endpoint).href) throw new Error("MCP endpoint changed");
+      authorizer: { authorize: ({ url }) => { this.check(); if (url !== new URL(connection.endpoint).href) throw new McpDiagnosticError("contract","MCP endpoint changed");
         return { canonicalUrl: url, authorizationRef: `desktop-mcp:${connection.id}`, expiresAt: attribution.leaseExpiresAt }; } } });
   }
   private check() { this.signal?.throwIfAborted(); this.authorize(); }
@@ -47,11 +48,12 @@ export class DesktopMcpSession {
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26",
         ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}), ...(this.credential ? { authorization: `Bearer ${this.credential}` } : {}) },
       bodyBase64: Buffer.from(JSON.stringify({ jsonrpc: "2.0", ...(notification ? {} : { id }), method, params })).toString("base64"),
-      timeoutMs: 15000, responseLimitBytes: 262144 });
+      timeoutMs: 15000, responseLimitBytes: 262144 }).catch(()=>{throw new McpDiagnosticError("transport","MCP transport unavailable");});
     this.check(); this.receipts.push(response.receipt);
-    if (response.status < 200 || response.status >= 300 || response.bodyTruncated) throw new Error("MCP HTTP request failed or exceeded its response limit");
+    if(response.status===401||response.status===403)throw new McpDiagnosticError("authentication","MCP authentication rejected");
+    if (response.status < 200 || response.status >= 300 || response.bodyTruncated) throw new McpDiagnosticError("http","MCP HTTP request failed or exceeded its response limit");
     const session = response.headers.find(h => h.name.toLowerCase() === "mcp-session-id")?.value;
-    if (session) { if (session.length > 512 || /[^\x21-\x7e]/.test(session) || this.sessionId && this.sessionId !== session) throw new Error("MCP session identity changed"); this.sessionId = session; }
+    if (session) { if (session.length > 512 || /[^\x21-\x7e]/.test(session) || this.sessionId && this.sessionId !== session) throw new McpDiagnosticError("contract","MCP session identity changed"); this.sessionId = session; }
     if (notification) return;
     const original = Buffer.from(response.bodyBase64, "base64").toString("utf8");
     const body = this.credential ? original.split(this.credential).join("[REDACTED]") : original;
@@ -59,24 +61,24 @@ export class DesktopMcpSession {
     if (response.headers.some(h => h.name.toLowerCase() === "content-type" && h.value.includes("text/event-stream"))) {
       messages = body.split(/\r?\n\r?\n/).filter(part => /^data:/m.test(part)).map(part => JSON.parse(part.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n")));
     } else messages = [JSON.parse(body)];
-    if (messages.some(m => !object(m) || m.jsonrpc !== "2.0" || m.method && m.id !== undefined)) throw new Error("Unnegotiated MCP reverse request");
+    if (messages.some(m => !object(m) || m.jsonrpc !== "2.0" || m.method && m.id !== undefined)) throw new McpDiagnosticError("contract","Unnegotiated MCP reverse request");
     const replies = messages.filter(m => object(m) && m.id === id) as Record<string, any>[];
-    if (replies.length !== 1 || replies[0]!.error || !("result" in replies[0]!)) throw new Error("Invalid MCP response");
+    if (replies.length !== 1 || replies[0]!.error || !("result" in replies[0]!)) throw new McpDiagnosticError("contract","Invalid MCP response");
     return replies[0]!.result;
   }
   async discover(): Promise<McpCatalog> {
     const hello = await this.rpc("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "traceforge", version: "1" } });
     if (!object(hello) || hello.protocolVersion !== "2025-03-26" || !object(hello.serverInfo) || !object(hello.capabilities?.tools)
       || typeof hello.serverInfo.name !== "string" || !hello.serverInfo.name || hello.serverInfo.name.length > 256
-      || typeof hello.serverInfo.version !== "string" || !hello.serverInfo.version || hello.serverInfo.version.length > 256) throw new Error("MCP initialization contract mismatch");
+      || typeof hello.serverInfo.version !== "string" || !hello.serverInfo.version || hello.serverInfo.version.length > 256) throw new McpDiagnosticError("contract","MCP initialization contract mismatch");
     await this.rpc("notifications/initialized", {}, true);
     const result = await this.rpc("tools/list");
-    if (!object(result) || !Array.isArray(result.tools) || result.tools.length > 128 || result.nextCursor !== undefined) throw new Error("MCP catalog exceeds supported bounds");
+    if (!object(result) || !Array.isArray(result.tools) || result.tools.length > 128 || result.nextCursor !== undefined) throw new McpDiagnosticError("contract","MCP catalog exceeds supported bounds");
     const tools = result.tools.map((t: unknown) => {
-      if (!object(t) || typeof t.name !== "string" || !t.name || t.name.length > 256 || !object(t.inputSchema) || t.inputSchema.type !== "object") throw new Error("Invalid MCP tool schema");
+      if (!object(t) || typeof t.name !== "string" || !t.name || t.name.length > 256 || !object(t.inputSchema) || t.inputSchema.type !== "object") throw new McpDiagnosticError("contract","Invalid MCP tool schema");
       return { name: t.name, inputSchema: t.inputSchema };
     });
-    if (new Set(tools.map(t => t.name)).size !== tools.length) throw new Error("Duplicate MCP tool name");
+    if (new Set(tools.map(t => t.name)).size !== tools.length) throw new McpDiagnosticError("contract","Duplicate MCP tool name");
     const data = { serverName: hello.serverInfo.name, serverVersion: hello.serverInfo.version, tools };
     return { ...data, digest: mcpDigest(data) };
   }

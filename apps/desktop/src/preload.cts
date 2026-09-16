@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("traceforgeDesktop", {
   },
   conversations: {
     protocolVersion: 1,
+    selectAttachments: () => ipcRenderer.invoke("attachments:select"),
     request: (input: { path: string; method: "GET" | "POST"; body?: string }) => ipcRenderer.invoke("conversations:request", input),
   },
 });

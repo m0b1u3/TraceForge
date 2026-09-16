@@ -47,7 +47,7 @@ export async function runDesktopStreamAcceptance(provider: LlmProvider, options:
   const check = (condition: unknown, name: string) => { if (!condition) throw new Error(name); };
   try {
     await attach();
-    const c = await call("/api/desktop/conversations", { commandId: "create", title: "Grok streaming acceptance — isolated" }), base = `/api/desktop/conversations/${c.id}`;
+    const c = await call("/api/desktop/conversations", { commandId: "create", title: "Model streaming acceptance — isolated" }), base = `/api/desktop/conversations/${c.id}`;
     const reference = `reference-${randomBytes(6).toString("hex")}`;
     await call(`${base}/messages`, { commandId: "early", text: `Synthetic saved reference: ${reference}. No task execution is authorized or requested.` });
     await call(`${base}/messages`, { commandId: "ask", text: "Use conversation_read to read message id early now. Then include its exact reference and explain in twelve numbered sentences how to organize ordinary notes. No external actions. Respond in Chinese." });

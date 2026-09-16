@@ -8,6 +8,7 @@ export function normalizeToolHistory(messages: readonly TurnMessage[]): TurnMess
   const used = new Set<string>();
   const wireIds = new Set<string>();
   const result = messages.map(message => {
+    if(message.attachments?.length && message.role!=="user")throw new Error("Attachments require a user message");
     if (message.role === "tool") {
       const id = message.toolCallId && pending.get(message.toolCallId);
       if (!id || message.toolCalls?.length) throw new Error("Tool result has no matching call");

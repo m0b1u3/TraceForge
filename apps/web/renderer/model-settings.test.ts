@@ -20,6 +20,44 @@ async function render(bridge?: ModelSettingsBridge) {
 const initial: ModelSettingsSnapshot = { configured: false, config: null, revision: "a".repeat(64), scope: "host",
   suppliers: { deepseek: { protocol: "openai", baseUrl: "https://api.deepseek.com", jsonMode: "json_object" }, xai: { protocol: "openai", baseUrl: "https://api.x.ai/v1", jsonMode: "json_schema" } } };
 
+it("selects catalog capabilities, permits overrides and clears them on identity change",async()=>{
+  let submitted:any;
+  const profile={model:"neutral",baseUrl:"https://api.deepseek.com",protocol:"openai",source:"catalog",contextWindowTokens:64000,maxOutputTokens:1024,toolCalling:true};
+  const ui=await render({protocolVersion:1,request:async input=>{
+    if(input.operation==="discover") return {status:200,body:{models:[{id:"neutral",profile}],truncated:false}};
+    if(input.operation==="test") {submitted=(input.payload as any).config;return {status:200,body:{ok:true,saved:false,scope:"structured_ping"}};}
+    return {status:200,body:initial};
+  }});
+  await ui.change("供应商","deepseek");await ui.change("API 密钥","fixture");await ui.click("刷新模型列表");
+  await ui.change("选择模型","neutral");
+  expect(ui.field("模型窗口声明").value).toBe("64000");expect(ui.field("工具调用能力").value).toBe("true");
+  await ui.change("模型窗口声明","48000");await ui.click("测试连接");
+  expect(submitted.modelProfile).toMatchObject({source:"operator",contextWindowTokens:48000});
+  await ui.click("刷新模型列表");expect(ui.field("模型窗口声明").value).toBe("48000");
+  await ui.click("清除能力声明");await ui.click("测试连接");expect(submitted.modelProfile).toBeNull();
+  await ui.click("使用本次目录声明");await ui.change("模型 ID","second");await ui.click("测试连接");
+  expect(submitted.modelProfile).toBeNull();expect(submitted.contextWindowTokens).toBeNull();
+});
+
+it("groups supplier presets and sends editable reasoning settings without reusing model limits",async()=>{
+  let saved:any;
+  const snapshot:ModelSettingsSnapshot={...initial,suppliers:{...initial.suppliers,openai:{label:"OpenAI / GPT",group:"international",protocol:"responses",baseUrl:"https://api.openai.com/v1",jsonMode:"json_schema",requestOptions:{includeReasoningContinuation:true}}}};
+  const ui=await render({protocolVersion:1,request:async input=>{
+    if(input.operation === "test") {saved=(input.payload as any).config;return {status:200,body:{ok:true,saved:false,scope:"structured_ping"}};}
+    return {status:200,body:snapshot};
+  }});
+  await ui.change("供应商","openai");
+  expect(ui.field("接口协议").value).toBe("responses");
+  expect(ui.node.querySelector('optgroup[label="国际模型与平台"]')?.textContent).toContain("OpenAI / GPT");
+  expect(ui.field("加密推理续接").value).toBe("true");
+  await ui.change("加密推理续接","false");await ui.change("推理强度","low");await ui.change("温度","0.5");
+  await ui.change("模型 ID","neutral");await ui.change("API 密钥","fixture");await ui.click("测试连接");
+  expect(saved.requestOptions).toEqual({includeReasoningContinuation:false,reasoningEffort:"low",temperature:0.5});
+  expect(saved.contextWindowTokens).toBeNull();
+  await ui.change("供应商","deepseek");
+  expect(ui.field("思考模式").value).toBe("");expect(ui.field("温度").value).toBe("");
+});
+
 it("automatically loads the sole logged-in account's directory, selects and preserves manual fallback", async () => {
   vi.useFakeTimers(); let fail = false; const calls: string[] = [];
   const snapshot: ModelSettingsSnapshot = { ...initial, accounts: [{ id: "first", label: "First", provider: "responses", baseUrl: "https://models.example/v1", issuer: "https://identity.example", scopes: ["api"], status: "connected" }] };

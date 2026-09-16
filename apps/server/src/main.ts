@@ -64,9 +64,9 @@ export async function buildServer(
   projectRoot = PROJECT_ROOT,
   webRoot?: string,
   hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"|"deployment"|"browserDeployment"|"browserInstallation">
-    & { llmSecretStore?: LlmSecretStore; browserInstallationPath?: string; modelAccounts?: ModelAccounts; desktopMcp?: SecurityAgentFoundationOptions["desktopMcp"]; desktopResources?: SecurityAgentFoundationOptions["desktopResources"] } = {},
+    & { continuationCipher?:import("./conversation-continuations.js").ContinuationCipher; llmSecretStore?: LlmSecretStore; browserInstallationPath?: string; modelAccounts?: ModelAccounts; desktopMcp?: SecurityAgentFoundationOptions["desktopMcp"]; desktopResources?: SecurityAgentFoundationOptions["desktopResources"] } = {},
 ) {
-  const { llmSecretStore: suppliedLlmSecretStore, browserInstallationPath, modelAccounts, ...foundationHostOptions } = hostOptions;
+  const { continuationCipher,llmSecretStore: suppliedLlmSecretStore, browserInstallationPath, modelAccounts, ...foundationHostOptions } = hostOptions;
   if (browserInstallationPath !== undefined) {
     if (foundationHostOptions.browserInstallation || foundationHostOptions.browserDeployment) throw new Error("Choose one Browser installation source");
     foundationHostOptions.browserInstallation = await loadBrowserInstallation(browserInstallationPath);
@@ -170,7 +170,7 @@ export async function buildServer(
     const response = await app.inject({ url, method: body === undefined ? "GET" : "POST", headers: desktopChannel.headers(), ...(body === undefined ? {} : { payload: body }) });
     return { status: response.statusCode, body: response.json() };
   });
-  registerRoutes(app, db, bus, provider, llmService, projectRoot, modelAccounts, tasks);
+  registerRoutes(app, db, bus, provider, llmService, projectRoot, modelAccounts, tasks,continuationCipher);
   registerDesktopEvidenceRoutes(app, sqlite, new SqliteDesktopBrowserEvidenceReader(sqlite));
   registerDesktopExecutionRoutes(app, sqlite, {
     ready: () => llmService.hasProvider(),

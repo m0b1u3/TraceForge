@@ -7,5 +7,6 @@ export interface ModelAdapterOptions {
   embeddingModel?: string;
   fetch?: typeof fetch;
   maxOutputTokens?: number;
-  requestOptions?: { thinking?: "enabled" | "disabled"; reasoningEffort?: string; temperature?: number };
+  continuationScope?: string;
+  requestOptions?: { thinking?: "enabled" | "disabled"; reasoningEffort?: string; temperature?: number; includeReasoningContinuation?: boolean };
 }

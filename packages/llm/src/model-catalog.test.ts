@@ -3,6 +3,12 @@ import { discoverModels } from "./model-catalog.js";
 
 const config = { provider: "responses" as const, model: "unused", baseUrl: "https://models.example/v1", credentialRef: "first", authMode: "bearer" as const };
 describe("model discovery", () => {
+  it.each(["https://models.example/coding", "https://models.example/anthropic"])("preserves Messages API prefix %s",async baseUrl=>{
+    await discoverModels({provider:"anthropic",model:"unused",baseUrl,apiKey:"fixture"},{fetch:async input=>{
+      expect(new Request(input).url).toBe(`${baseUrl}/v1/models`);
+      return Response.json({data:[]});
+    }});
+  });
   it("does not send a cancelled discovery or guess models", async () => {
     const abort = new AbortController(); abort.abort(); const fetch = vi.fn();
     await expect(discoverModels(config, { fetch }, abort.signal)).rejects.toMatchObject({code:"unavailable"});

@@ -10,6 +10,7 @@ export * from "./wakeup.js";
 export * from "./loop.js";
 export * from "./compaction.js";
 export * from "./recall.js";
+export * from "./memory-retrieval.js";
 export * from "./anchors.js";
 export * from "./lineage.js";
 export * from "./run-planning.js";

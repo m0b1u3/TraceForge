@@ -11,19 +11,26 @@ import { DesktopReplyService, registerDesktopReplyRoutes } from "../desktop-repl
 export const desktopMemoryLimits = { maximumModelCalls: 16, modelCallTimeoutMs: 120000, maximumDurationMs: 600000 } as const;
 export async function runDesktopMemoryAcceptance(provider: LlmProvider, options: {
   outputParent: string; mode: "external_model" | "simulated_harness_test"; modelIdentity: { provider: string; name: string };
+  continuationRounds?: number;
 }) {
   if (!provider.streamTools) throw new Error("Streaming is required");
+  const rounds = options.continuationRounds ?? 0;
+  if (!Number.isSafeInteger(rounds) || rounds < 0 || rounds > 24) throw new Error("Invalid endurance rounds");
+  const limits = { ...desktopMemoryLimits, maximumModelCalls: desktopMemoryLimits.maximumModelCalls + rounds * 3,
+    maximumDurationMs: rounds ? 3000000 : desktopMemoryLimits.maximumDurationMs };
   await mkdir(options.outputParent, { recursive: true });
   const root = await mkdtemp(join(options.outputParent, "traceforge-desktop-memory-"));
-  const report = { root, mode: options.mode, model: options.modelIdentity, status: "failed", failure: null as string | null, limits: desktopMemoryLimits,
+  const report = { root, mode: options.mode, model: options.modelIdentity, status: "failed", failure: null as string | null, limits,
+    continuationRoundsRequested: rounds, continuationRoundsCompleted: 0,
+    endurance: [] as Array<{ round: number; answerCorrect: boolean; requestedOriginalsRead: boolean; successfulSourceIds: string[] }>,
     checks: { firstSummary: false, originalRecall: false, restartNoReplay: false, secondSummary: false, userCorrection: false },
     calls: [] as Array<{ stage: string; kind: string; elapsedMs: number; totalTokens: number | null; status: string }>,
     limitations: ["Real model through production conversation HTTP routes and SQLite; native window journey is a separate synthetic-protocol check",
       "History is synthetic; not hours-long endurance or blackbox outcome validation", "Consumer uses a 16k budget, not a claim about remote model maximum", "Logical call count does not include provider internal retries"] };
-  const stop = new AbortController(), timer = setTimeout(() => stop.abort(), desktopMemoryLimits.maximumDurationMs);
+  const stop = new AbortController(), timer = setTimeout(() => stop.abort(), limits.maximumDurationMs);
   let stage = "first";
   async function tracked<T>(kind: string, signal: AbortSignal | undefined, operation: (signal: AbortSignal, usage: (value: UsageSnapshot) => void) => Promise<T>): Promise<T> {
-    if (report.calls.length >= desktopMemoryLimits.maximumModelCalls) throw new Error("Call budget exhausted");
+    if (report.calls.length >= limits.maximumModelCalls) throw new Error("Call budget exhausted");
     const call = { stage, kind, elapsedMs: 0, totalTokens: null as number | null, status: "running" }; report.calls.push(call);
     const started = Date.now(), bounded = AbortSignal.any([stop.signal, AbortSignal.timeout(desktopMemoryLimits.modelCallTimeoutMs), ...(signal ? [signal] : [])]);
     try { const result = await waitForCancellation(() => operation(bounded, usage => { if (!bounded.aborted) call.totalTokens = (call.totalTokens ?? 0) + usage.totalTokens; }), bounded); call.status = "completed"; return result; }
@@ -54,7 +61,9 @@ export async function runDesktopMemoryAcceptance(provider: LlmProvider, options:
       for (let i = 0; i < 5000; i++) {
         stop.signal.throwIfAborted();
         const row = (await call(`${base}/replies?after=0`)).replies.find((item: any) => item.messageCommandId === id);
-        if (row.state === "completed") return row;
+        if (row.state === "completed") {
+          return row;
+        }
         if (row.state !== "streaming") throw new Error(`reply_${row.error ?? row.state}`);
         await new Promise(resolve => setTimeout(resolve, 50));
       }
@@ -74,9 +83,26 @@ export async function runDesktopMemoryAcceptance(provider: LlmProvider, options:
     const second = await answer("next", "Read the original saved message early again using conversation_read. Reply with its reference identifier and the current plan identifier from my latest correction, not the tentative earlier plan.");
     if (!second.contextTruncated || !report.calls.some(item => item.stage === "continued" && item.kind === "summary")) throw new Error("second_summary_not_exercised"); report.checks.secondSummary = true;
     if (!second.text.includes(detail) || !second.text.includes(latest) || !second.recallCount) throw new Error("correction_not_preserved"); report.checks.userCorrection = true;
+    for (let round = 0; round < rounds; round++) {
+      stage = `endurance_${round + 1}`;
+      if (round % 4 === 0) await addHistory(20 + round, 1);
+      const response = await answer(`endurance${round}`, "Use conversation_read to read original message early and correction now. Reply briefly with the exact saved reference and current plan identifier. No external actions.");
+      const reads = sql.prepare("SELECT tool,result_json FROM desktop_reply_reads WHERE conversation_id=? AND message_id=?").all(conversation.id, `endurance${round}`) as Array<{tool:string;result_json:string}>;
+      const successfulSourceIds = reads.flatMap(row => {
+        const result = JSON.parse(row.result_json);
+        if (row.tool === "conversation_read" && !result.error && result.digest) return [result.id as string];
+        if (row.tool === "conversation_read_sources") return (result.sources ?? []).map((source: {id:string}) => source.id);
+        return [];
+      });
+      report.endurance.push({ round: round + 1, answerCorrect: response.text.includes(detail) && response.text.includes(latest),
+        requestedOriginalsRead: ["early", "correction"].every(id => successfulSourceIds.includes(id)), successfulSourceIds });
+      report.continuationRoundsCompleted++;
+    }
+    if (report.endurance.some(round => !round.answerCorrect)) throw new Error("original_recall_failed");
+    if (report.endurance.some(round => !round.requestedOriginalsRead)) throw new Error("fresh_read_not_exercised");
     report.status = "passed";
   } catch (error) {
-    const known = ["summary_not_exercised", "original_recall_failed", "restart_replayed_model", "second_summary_not_exercised", "correction_not_preserved", "reply_timeout", "reply_context_limit", "reply_recall_limit", "reply_provider_failed"];
+    const known = ["summary_not_exercised", "original_recall_failed", "fresh_read_not_exercised", "restart_replayed_model", "second_summary_not_exercised", "correction_not_preserved", "reply_timeout", "reply_context_limit", "reply_recall_limit", "reply_provider_failed"];
     report.failure = error instanceof Error && known.includes(error.message) ? error.message : "desktop_memory_acceptance_failed";
   } finally { stop.abort(); clearTimeout(timer); await app.close(); sql.close(); await writeFile(join(root, "report.json"), JSON.stringify(report, null, 2), { mode: 0o600 }); }
   return report;

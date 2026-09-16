@@ -53,6 +53,20 @@ it("pins user-created guidance, preserves it for older clients and enforces inhe
   expect(source.selection(ctx).resources).toEqual([]);
 });
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
+it("projects resource provenance and revision history from pinned configuration without rewriting old Runs",()=>{
+  const f=fixture();
+  const user={id:"user.import",parentId:"first",kind:"skill" as const,title:"Imported guidance",content:"Original instructions",enabled:true,roles:["worker" as const],phases:[],source:{kind:"file" as const,name:"guide.md"}};
+  f.store.save({package:contextBinding,expectedRevision:0,resources:[],mcp:[],userResources:[user]});
+  f.start();
+  f.store.save({package:contextBinding,expectedRevision:1,resources:[],mcp:[],userResources:[{...user,content:"Updated instructions"}]});
+  const current=f.store.snapshot().packages[0]!;
+  expect(current.userResources[0]!.source).toEqual(user.source);
+  expect(current.inspection?.runCount).toBe(1);
+  expect(current.inspection?.runs).toEqual([{runId:"run",revision:1}]);
+  expect(current.inspection?.history[0]).toMatchObject({revision:2});
+  expect(current.inspection?.history[0]?.changes.join(" ")).toContain("来源文件：guide.md");
+  expect(current.inspection?.history[1]?.revision).toBe(1);
+});
 function fixture(beforeRun = true) {
   const sqlite = database(); cleanup.push(() => sqlite.close());
   const pkg = contextPackage(["observe"]); pkg.resourceManifest!.resources[0]!.context!.requiredCapabilities = ["observe"];

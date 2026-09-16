@@ -7,6 +7,15 @@ import type { DesktopReply } from "@traceforge/shared/desktop-replies";
 
 afterEach(()=>{vi.useRealTimers();document.body.replaceChildren();});
 const row:DesktopReply={conversationId:"conversation",messageCommandId:"message",revision:1,state:"streaming",text:"Saved partial",createdAt:"2026-09-08T00:00:00.000Z",updatedAt:"2026-09-08T00:00:00.000Z",contextMessages:1,contextTruncated:false,error:null};
+it("shows actual historical read activity without a separate review mode", async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
+  const node=document.createElement("div"),root=createRoot(node);
+  try {
+    await act(async()=>root.render(React.createElement(ConversationReply,{bridge:{protocolVersion:1,request:vi.fn()},conversationId:"conversation",messageId:"message",ready:true,otherActive:false,refresh(){},reply:{...row,state:"failed",text:"已经检查完成",error:"provider_failed",recallCount:3,originalReadCount:1}})));
+    expect(node.textContent).toContain("本次已查阅历史原文 1 段"); expect(node.textContent).not.toContain("已查阅本次对话原文 3 次");
+    expect(node.textContent).not.toContain("原文复核");
+  } finally { act(()=>root.unmount()); }
+});
 it("shows queued messages with an explicit withdrawal action, not a failure",async()=>{
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
   const request=vi.fn(async()=>({status:200,body:{...row,state:"cancelled",text:""}}));

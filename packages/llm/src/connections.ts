@@ -1,5 +1,6 @@
 import type { LlmEndpointConfig } from "./config.js";
 import { MODEL_SUPPLIERS } from "./suppliers.js";
+import type { ModelSupplierDefinition } from "./suppliers.js";
 export { MODEL_SUPPLIERS } from "./suppliers.js";
 export type { ModelSupplier } from "@traceforge/shared/model-protocol";
 
@@ -19,13 +20,15 @@ export interface ModelConnectionDependencies {
 }
 
 export function normalizeModelConnection(config: LlmEndpointConfig): LlmEndpointConfig {
-  const preset = config.supplier ? MODEL_SUPPLIERS[config.supplier] : undefined;
+  const preset: ModelSupplierDefinition | undefined = config.supplier ? MODEL_SUPPLIERS[config.supplier] : undefined;
   // A supplier is metadata, not a protocol constraint. Explicit protocol choice
   // must survive preset selection (compatible endpoints may expose several APIs).
   const baseUrl = config.baseUrl ?? preset?.baseUrl ?? (config.provider === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1");
   validateEndpoint(baseUrl);
   if (config.credentialRef && config.apiKey) throw new Error("Choose either a credential reference or an API key");
-  return { ...config, baseUrl, jsonMode: config.jsonMode ?? (preset?.protocol === config.provider ? preset.jsonMode : undefined) };
+  const defaults = preset?.protocol === config.provider ? preset.requestOptions : undefined;
+  return { ...config, baseUrl, jsonMode: config.jsonMode ?? (preset?.protocol === config.provider ? preset.jsonMode : undefined),
+    ...(defaults ? {requestOptions:{...defaults,...config.requestOptions} as LlmEndpointConfig["requestOptions"]} : {}) };
 }
 
 export function validateEndpoint(value: string): URL {

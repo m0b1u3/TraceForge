@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { DesktopReplyPageSchema, DesktopReplySchema, DesktopMemoryViewSchema, type DesktopReply } from "@traceforge/shared/desktop-replies";
 import type { DesktopConversations } from "./desktop-conversation-transport";
+import { useArtifactPreview } from "./artifact-preview";
 import { MessageMarkdown } from "./message-markdown";
 
 /** Cursor reads merge durable snapshots. Mounting, reconnecting and history reads never POST. */
@@ -41,6 +42,7 @@ const phases = { compacting: "正在整理上下文", recalling: "正在查阅�
 export function ConversationReply({ bridge, conversationId, messageId, reply, ready, otherActive, refresh }: {
   bridge: DesktopConversations; conversationId: string; messageId: string; reply?: DesktopReply; ready: boolean; otherActive: boolean; refresh(): void;
 }) {
+  const preview=useArtifactPreview();
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [memory, setMemory] = useState<Array<{ id: string; summary: string; user: string; assistant: string | null }> | null>(null);
   const [readingMemory, setReadingMemory] = useState(false);
@@ -86,13 +88,14 @@ export function ConversationReply({ bridge, conversationId, messageId, reply, re
         <summary>{tool.tool} · 已返回</summary><div className="trace-content">
           <small>调用参数</small><pre tabIndex={0}>{tool.input}</pre>
           <small>返回内容 · 有界预览</small><pre tabIndex={0}>{tool.output}</pre>
+          {preview&&<button onClick={()=>preview.open({kind:"text",conversationId,title:`${tool.tool} · 输出`,sourceId:`${messageId}:${tool.ordinal}`,text:tool.output})}>在侧栏查看输出</button>}
         </div>
       </details>)}
       {reply.text ? <MessageMarkdown text={reply.text} /> : <p className="local-receipt">{reply.state === "streaming" ? reply.phase === "compacting" ? "正在整理较早的对话，原文仍保留。你可以随时停止。" : reply.phase === "recalling" ? "正在从已保存的对话中查找细节，不会执行外部操作。" : reply.phase === "recovering" ? "模型未接受刚才的上下文，正在缩减历史后重试一次。" : "正在等待模型输出…" : "没有收到可保留的正文。"}</p>}
-      {reply.state !== "streaming" && reply.state !== "completed" && <p className="reply-explanation">{reply.error === "context_limit" ? "上下文仍超出模型可接受的范围。请检查模型窗口配置，或缩短本条消息后继续。" : reply.error === "recall_limit" ? "本次对话回读已达到上限，请缩小要查找的细节范围后继续。" : reply.error === "output_limit" ? "回复达到长度上限。" : reply.error === "timeout" ? "模型响应超时。" : reply.state === "cancelled" ? "你已停止这次回复。" : "这次回复没有正常完成。"}已收到的文字仍保留；不会自动续写或重试。需要继续时，请发送一条新消息。</p>}
-      {!!reply.recallCount && <small className="local-receipt">已查阅本次对话原文 {reply.recallCount} 次</small>}
+      {reply.state !== "streaming" && reply.state !== "completed" && <p className="reply-explanation">{reply.error === "attachment_input" ? "附件未发送：请在模型设置确认对应输入能力，并检查文件格式；音频仅接通 Chat Completions。" : reply.error === "context_limit" ? "上下文仍超出模型可接受的范围。请检查模型窗口配置，或缩短本条消息后继续。" : reply.error === "recall_limit" ? "本次对话回读已达到上限，请缩小要查找的细节范围后继续。" : reply.error === "output_limit" ? "回复达到长度上限。" : reply.error === "timeout" ? "模型响应超时。" : reply.state === "cancelled" ? "你已停止这次回复。" : "这次回复没有正常完成。"}已收到的文字仍保留；不会自动续写或重试。需要继续时，请发送一条新消息。</p>}
+      {!!reply.originalReadCount && <small className="local-receipt">本次已查阅历史原文 {reply.originalReadCount} 段</small>}
       {!!reply.recoveryAttempts && reply.state !== "streaming" && <small className="local-receipt">本次曾缩减上下文后重试一次</small>}
-      {(reply.contextTruncated || !!reply.recallCount) && <div className="local-receipt"><p>{reply.contextTruncated ? "较早对话未完整放入上下文；可用的历史摘要不替代原文。" : "本次回复查阅了已保存的对话原文。"}</p>
+      {(reply.contextTruncated || !!reply.recallCount) && <div className="local-receipt"><p>{reply.contextTruncated ? "较早对话未完整放入上下文；可用的历史摘要不替代原文。" : "检索结果与记忆笔记不等于完整读取原文。"}</p>
         <button disabled={readingMemory} onClick={() => void readMemory()}>{readingMemory ? "读取中…" : "查看历史摘要与原文"}</button>
         {memory && (memory.length ? memory.map(entry => <details key={entry.id}><summary>{entry.summary}</summary><div className="reply-text">用户：{entry.user}</div>{entry.assistant && <div className="reply-text">助手：{entry.assistant}</div>}</details>) : <p>本次没有可用的历史摘要，原始消息仍保存在对话中。</p>)}
       </div>}

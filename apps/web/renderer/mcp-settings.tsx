@@ -28,7 +28,8 @@ export function McpSettings({bridge,onDirty}:{bridge:DesktopConversations;onDirt
       const value=response.body as DesktopMcpSnapshot;
       if(!Array.isArray(value.connections)||!Array.isArray(value.packages))throw new Error("宿主返回无效配置。");
       if(alive.current){choose(value,draft?.id);setStatus(operation?.operation==="save"?"已保存草稿修订，尚未测试或启用。旧启用修订保持不变。":operation?.operation==="test"?"发现完成。请核对工具和资源字段，再审核启用。":operation?.operation==="activate"?"已启用。新任务使用该修订，已有任务保留原修订。":operation?.operation==="disable"?"已停用，已有任务也不能继续调用该连接。":operation?.operation==="delete"?"已移除连接。历史配置仍保留用于审计。":"已读取连接配置。");}
-    }catch(cause){if(alive.current)setError(`${(cause as Error).message} 配置草稿仍保留；凭证输入已清空，需要重新填写。结果不确定时请重新读取。`);}
+    }catch(cause){if(operation?.operation==="test"){try{const latest=await bridge.request({path:"/api/desktop/mcp",method:"GET"});if(alive.current&&latest.status===200&&Array.isArray((latest.body as DesktopMcpSnapshot).connections))setSnapshot(latest.body as DesktopMcpSnapshot);}catch{}}
+      if(alive.current)setError(`${(cause as Error).message} 配置草稿仍保留；凭证输入已清空，需要重新填写。结果不确定时请重新读取。`);}
     finally{locked.current=false;if(alive.current){setBusy(false);setConfirmation(null);setCredential("");}}
   }
   useEffect(()=>{alive.current=true;void perform();return()=>{alive.current=false;};},[]);
@@ -46,7 +47,16 @@ export function McpSettings({bridge,onDirty}:{bridge:DesktopConversations;onDirt
     {snapshot&&!draft&&snapshot.packages.length>0&&<p>还没有 MCP 连接。新建后输入服务地址，保存不会发送网络请求。</p>}
     {draft&&<div className="configuration-editor">
       <nav aria-label="MCP 连接列表">{snapshot?.connections.map(c=><button key={c.connection.id} disabled={busy||dirty||reviewDirty||!!confirmation} aria-current={draft.id===c.connection.id?"true":undefined} onClick={()=>choose(snapshot,c.connection.id)}><span>{c.connection.name}</span><small>{c.enabled?"有启用修订":"未启用"} · 修订 {c.revision}</small></button>)}</nav>
-      <div className="configuration-document"><fieldset disabled={busy||!!confirmation}>
+      <div className="configuration-document">
+        {current&&<section aria-label="连接状态与使用位置">
+          <p>来源：用户配置 · {current.connection.transport==="stdio"?"本地沙箱程序":"HTTP 服务"} · 场景 {pkg?.title??current.connection.package.id}</p>
+          <p>认证：{current.credentialConfigured?"凭证已存入安全存储；不代表当前认证成功":"未配置凭证；服务可能允许匿名访问"}。</p>
+          <p>连接测试：{current.inspection?.lastTest?.revision===current.revision?(current.inspection.lastTest.success?"本修订最近一次测试通过":"本修订最近一次测试失败"):"当前修订尚无有效测试记录"}。测试结果不是持续在线保证，保存不会连接服务。</p>
+          {current.inspection?.lastTest&&<p className="configuration-meta">修订 {current.inspection.lastTest.revision} · {current.inspection.lastTest.at}{!current.inspection.lastTest.success&&" · "+current.inspection.lastTest.recovery}</p>}
+          <p>运行生效：{current.effective?"修订 "+current.effective.revision+" · "+current.effective.tools.filter(t=>t.enabled).length+" 个工具":"未启用"}{current.effective&&current.effective.revision!==current.revision?"；编辑中的新修订尚未替换它":""}。</p>
+          {current.inspection&&<details><summary>连接历史与任务使用 · {current.inspection.runCount} 个绑定</summary><p>最近 20 条；绑定表示任务固定过该修订，不表示工具已实际执行。停用连接后既有任务也不能继续调用。</p>{current.inspection.runs.map(r=><p key={r.runId}>{r.runId} · 修订 {r.revision}</p>)}{current.inspection.history.map((r,i)=><p key={i}>{r.at} · 修订 {r.revision} · {{save:"保存",test:"测试",activate:"启用",disable:"停用",delete:"移除"}[r.operation]??r.operation} · {r.success?"已完成":"失败"}</p>)}</details>}
+        </section>}
+        <fieldset disabled={busy||!!confirmation}>
         <label>连接名称<input value={draft.name} maxLength={256} onChange={e=>patch({name:e.target.value})}/></label>
         <label>连接方式<select value={draft.transport} onChange={e=>{patch({transport:e.target.value as McpConnection["transport"],endpoint:""});setCredential("");setClearCredential(true);}}><option value="streamable-http">HTTP 服务</option><option value="stdio">本地 stdio 程序（沙箱）</option></select></label>
         {draft.transport==="streamable-http"?<>
