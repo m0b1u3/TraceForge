@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { allowsFileSystemPath, type PermissionProfile } from "@traceforge/orchestration-core";
 import type { ExecutionToolAdapter } from "./tool-gateway.js";
@@ -64,22 +64,22 @@ export class RunWorkspace {
   tools(): ExecutionToolAdapter[] {
     const text = { type: "string", maxLength: FILE_BYTES };
     const schemas: Record<Operation, { properties: Record<string, unknown>; required: string[] }> = {
-      read: { properties: { path: text }, required: ["path"] },
-      list: { properties: {}, required: [] },
+      read: { properties: { path: text, metadataOnly: { type: "boolean" } }, required: ["path"] },
+      list: { properties: { recovery: { type: "boolean" } }, required: [] },
       search: { properties: { text: { type: "string", minLength: 1, maxLength: 256 } }, required: ["text"] },
       write: { properties: { path: text, content: text, expectedDigest: { type: ["string", "null"] } }, required: ["path", "content", "expectedDigest"] },
       edit: { properties: { path: text, expectedDigest: text, before: text, after: text }, required: ["path", "expectedDigest", "before", "after"] },
-      remove: { properties: { path: text, expectedDigest: text }, required: ["path", "expectedDigest"] },
+      remove: { properties: { path: text, expectedDigest: text, expectedIdentity: text }, required: ["path"] },
       execute: { properties: { path: text, expectedDigest: text, terminal: { type: "boolean", description: "Use a managed terminal, only with interactiveWorkspace consent; use workspace_start for later workspace_input calls." }, timeoutSeconds: { type: "integer", minimum: 1, maximum: MAX_WORKSPACE_EXECUTION_SECONDS, description: "Requested execution time; defaults to 60 seconds and cannot exceed this Run's authorized maximumScriptSeconds." }, arguments: { type: "array", maxItems: 64, items: { type: "string", maxLength: 4096 } } }, required: ["path", "expectedDigest"] },
       stage: { properties: { projectId: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,80}$" } }, required: ["projectId"] },
     };
     const descriptions: Record<Operation, string> = {
-      read: "Read a UTF-8 Run workspace file and its SHA-256 revision (maximum 256 KiB).",
-      list: "List relative files in this Run workspace (bounded to 512 entries / 16 MiB).",
+      read: "Read a UTF-8 Run workspace file and its SHA-256 revision (maximum 256 KiB). metadataOnly=true inspects a regular file or plain directory's size and identity without reading contents, including oversized files, for explicit cleanup.",
+      list: "List relative files in this Run workspace (bounded to 512 entries / 16 MiB). recovery=true returns a bounded partial inventory even over capacity, for cleanup; inspect truncation before assuming coverage.",
       search: "Search literal text in this Run's UTF-8 files; return at most 100 matching lines, not regex execution.",
       write: "Create/replace a UTF-8 file in this Run. expectedDigest=null creates only; replacing requires the last read SHA-256. Parent folders are created within this workspace.",
       edit: "Replace exactly one literal occurrence in a Run file, conditional on its last read SHA-256.",
-      remove: "Delete one Run file, conditional on its last read SHA-256. No recursive deletion.",
+      remove: "Delete one regular Run file or one empty directory. Supply exactly one of expectedDigest (last read file SHA-256) or expectedIdentity (metadataOnly inspection identity). Works over workspace capacity but never across an unconfirmed process-cleanup fence. No recursive deletion.",
       execute: "Run a workspace Bash script pinned to its last read SHA-256 expectedDigest, without startup profiles, in the local native sandbox defaulting to 60 seconds; timeoutSeconds may request up to the separately authorized maximumScriptSeconds (at most 3600 seconds). Offline unless separately granted workspace.network; supported HTTP/SOCKS5 TCP clients then use the host-controlled destination scope. Opaque tunnels are connection-level, not per-path inspection. terminal=true requires interactiveWorkspace consent; use workspace_start and workspace_input for later interaction. No user home, other Runs or detached execution. System /bin and /usr/bin utilities are readable. Output is bounded and is not verified security evidence.",
       stage: "Copy an enabled source project from this Run's pinned tool library into its workspace, without running it or installing dependencies. Read tools_catalog first. Returns the saved entry script and digest for a separately approved workspace_execute call; missing dependencies must be reported, not installed through an unrestricted fallback.",
     };
@@ -109,7 +109,23 @@ export class RunWorkspace {
       this.directory(root);
       const marker = `${root}.busy`;
       if (existsSync(marker)) throw new Error("Workspace requires reconciliation: previous process cleanup is unconfirmed");
-      const entries = this.inventory(root);
+      if (args.metadataOnly !== undefined && typeof args.metadataOnly !== "boolean" || args.recovery !== undefined && typeof args.recovery !== "boolean") throw new Error("Invalid workspace read option");
+      // Exact-path reads and deletions remain available for capacity recovery.
+      // The ownership, permissions and process-cleanup fence above still apply.
+      if (op === "read" && args.metadataOnly === true) {
+        const value = this.identity(this.path(root, args.path, context, false));
+        return this.result({ path: args.path, ...value, contentRead: false });
+      }
+      if (op === "remove" && args.expectedIdentity !== undefined) {
+        if (args.expectedDigest !== undefined) throw new Error("Choose exactly one workspace revision precondition");
+        const path = this.path(root, args.path, context, true);
+        const current = this.identity(path);
+        if (args.expectedIdentity !== current.identity) throw new Error("Workspace revision conflict; inspect the current file before removing it");
+        if (current.type === "directory") rmdirSync(path); else unlinkSync(path);
+        this.syncDirectory(dirname(path)); return this.result({ path: args.path, removed: true });
+      }
+      const entries = ["read", "remove"].includes(op) ? [] : this.inventory(root, op === "list" && args.recovery === true);
+      if (op === "list" && args.recovery === true) return this.result({ entries, truncated: entries.length >= TREE_ENTRIES, recovery: true });
       if (op === "stage") {
         if (typeof args.projectId !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(args.projectId) || !this.loadProject) throw new Error("Invalid source project selection");
         const project = await this.loadProject(context, args.projectId);
@@ -249,19 +265,25 @@ export class RunWorkspace {
       return text;
     } finally { closeSync(fd); }
   }
-  private inventory(root: string): { path: string; type: "file" | "directory"; bytes: number }[] {
+  private identity(path: string): { bytes: number; identity: string; type: "file" | "directory" } {
+    const info = lstatSync(path, { bigint: true });
+    if (!info.isDirectory() && (!info.isFile() || info.nlink !== 1n)) throw new Error("Workspace entry must be a plain directory or unlinked regular file");
+    return { bytes: Number(info.size), type: info.isDirectory() ? "directory" : "file", identity: digest([info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(":")) };
+  }
+  private inventory(root: string, partial = false): { path: string; type: "file" | "directory"; bytes: number }[] {
     const entries: { path: string; type: "file" | "directory"; bytes: number }[] = [];
     let total = 0;
     const visit = (relative: string, depth: number) => {
       if (depth > 16) throw new Error("Workspace directory depth exceeded");
       const directory = opendirSync(join(root, relative));
       try { for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
+        if (partial && entries.length >= TREE_ENTRIES) break;
         const name = entry.name;
         const path = relative ? `${relative}/${name}` : name, info = lstatSync(join(root, path));
         if (info.isSymbolicLink() || (!info.isDirectory() && (!info.isFile() || info.nlink !== 1))) throw new Error("Workspace contains a link or special file; reconciliation required");
         total += info.isFile() ? info.size : 0;
         entries.push({ path, type: info.isDirectory() ? "directory" : "file", bytes: info.isFile() ? info.size : 0 });
-        if (entries.length > TREE_ENTRIES || total > TREE_BYTES) throw new Error("Workspace capacity exceeded; reconciliation required");
+        if (!partial && (entries.length > TREE_ENTRIES || total > TREE_BYTES)) throw new Error("Workspace capacity exceeded; use workspace_list recovery=true, inspect files with workspace_read metadataOnly=true, then explicitly remove unwanted files");
         if (info.isDirectory()) visit(path, depth + 1);
       } } finally { directory.closeSync(); }
     };

@@ -25,7 +25,8 @@ import { loadScenarioHostConfiguration } from "./scenario-host-configuration.js"
 import { loadBrowserInstallation } from "./browser-installation.js";
 import { ModelAccounts } from "./model-accounts.js";
 import { registerDesktopExecutionRoutes } from "./desktop-execution-routes.js";
-import { registerDesktopEvidenceRoutes, SqliteDesktopBrowserEvidenceReader } from "./desktop-evidence.js";
+import { registerDesktopEvidenceRoutes } from "./desktop-evidence.js";
+import { SqliteDesktopEvidenceReader } from "./desktop-record-evidence.js";
 
 // 运行时数据固定放在项目根目录 data/ 下，避免受 process.cwd() 影响（tsx watch 从 apps/server 启动）
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -63,15 +64,15 @@ export async function buildServer(
   llmConfigPath = DEFAULT_LLM_CONFIG_PATH,
   projectRoot = PROJECT_ROOT,
   webRoot?: string,
-  hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"|"deployment"|"browserDeployment"|"browserInstallation">
-    & { continuationCipher?:import("./conversation-continuations.js").ContinuationCipher; llmSecretStore?: LlmSecretStore; browserInstallationPath?: string; modelAccounts?: ModelAccounts; desktopMcp?: SecurityAgentFoundationOptions["desktopMcp"]; desktopResources?: SecurityAgentFoundationOptions["desktopResources"] } = {},
+  hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"|"deployment"|"browserDeployment"|"browserInstallation"|"embeddedBrowser">
+    & { closeActiveConnections?:boolean; continuationCipher?:import("./conversation-continuations.js").ContinuationCipher; llmSecretStore?: LlmSecretStore; browserInstallationPath?: string; modelAccounts?: ModelAccounts; desktopMcp?: SecurityAgentFoundationOptions["desktopMcp"]; desktopResources?: SecurityAgentFoundationOptions["desktopResources"] } = {},
 ) {
-  const { continuationCipher,llmSecretStore: suppliedLlmSecretStore, browserInstallationPath, modelAccounts, ...foundationHostOptions } = hostOptions;
+  const { closeActiveConnections=false,continuationCipher,llmSecretStore: suppliedLlmSecretStore, browserInstallationPath, modelAccounts, ...foundationHostOptions } = hostOptions;
   if (browserInstallationPath !== undefined) {
-    if (foundationHostOptions.browserInstallation || foundationHostOptions.browserDeployment) throw new Error("Choose one Browser installation source");
+    if (foundationHostOptions.browserInstallation || foundationHostOptions.browserDeployment || foundationHostOptions.embeddedBrowser) throw new Error("Choose one Browser installation source");
     foundationHostOptions.browserInstallation = await loadBrowserInstallation(browserInstallationPath);
   }
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true,...(closeActiveConnections?{forceCloseConnections:true}:{}) });
   app.addHook("onClose", async () => { modelAccounts?.close(); });
   await app.register(cors, {
     origin: (origin, callback) => callback(null, trustedUiOrigin(origin)),
@@ -126,10 +127,8 @@ export async function buildServer(
     save(secrets) { vault().put("llm-config-secrets:v1", secrets); },
   };
   const llmService = new LlmConfigService(llmConfigPath, { secretStore: llmSecretStore, gateway: modelAccounts?.gateway });
-  let llmConfigured = false;
   try {
     llmService.initializeFromConfig();
-    llmConfigured = true;
   } catch (err) {
     app.log.warn({ err }, "LLM provider not initialized from config; save settings before running Agent");
   }
@@ -171,7 +170,7 @@ export async function buildServer(
     return { status: response.statusCode, body: response.json() };
   });
   registerRoutes(app, db, bus, provider, llmService, projectRoot, modelAccounts, tasks,continuationCipher);
-  registerDesktopEvidenceRoutes(app, sqlite, new SqliteDesktopBrowserEvidenceReader(sqlite));
+  registerDesktopEvidenceRoutes(app, sqlite, new SqliteDesktopEvidenceReader(sqlite));
   registerDesktopExecutionRoutes(app, sqlite, {
     ready: () => llmService.hasProvider(),
     continueWork,
@@ -186,7 +185,7 @@ export async function buildServer(
     const executionNode = await executionNodeService.health();
     return {
       status: "ok",
-      llmConfigured,
+      llmConfigured: llmService.hasProvider(),
       mcpTools: 0,
       executionNodeReady: executionNode.state !== "stopped",
       executionProcessReady: executionNode.processReady,

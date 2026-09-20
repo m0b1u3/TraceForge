@@ -6,6 +6,7 @@ export class RequestScheduler {
   private reads = 0;
   private queue: Array<{ write: boolean; urgent: boolean; run(): void; reject(error: Error): void }> = [];
   private shared = new Map<string, Promise<unknown>>();
+  private activeRejects = new Set<(error:Error)=>void>();
   schedule<T>(write: boolean, operation: () => Promise<T>, readKey?: string, urgent = false): Promise<T> {
     if (this.closed) return Promise.reject(new Error("Desktop request scheduler closed"));
     if (!write && readKey && this.shared.has(readKey)) return this.shared.get(readKey)! as Promise<T>;
@@ -13,11 +14,12 @@ export class RequestScheduler {
     const promise = new Promise<T>((resolve, reject) => {
       this.queue.push({ write, urgent, reject, run: () => {
         this.running++; if (!write) this.reads++;
+        this.activeRejects.add(reject);
         void Promise.resolve().then(() => {
           if (this.closed) throw new Error("Desktop request scheduler closed");
           return operation();
         }).then(value => this.closed ? reject(new Error("Desktop request scheduler closed")) : resolve(value), reject)
-          .finally(() => { this.running--; if (!write) this.reads--; this.drain(); });
+          .finally(() => { this.activeRejects.delete(reject);this.running--; if (!write) this.reads--; this.drain(); });
       } });
       this.drain();
     });
@@ -30,6 +32,8 @@ export class RequestScheduler {
   close() {
     this.closed = true;
     for (const item of this.queue.splice(0)) item.reject(new Error("Desktop request scheduler closed"));
+    for (const reject of this.activeRejects) reject(new Error("Desktop request scheduler closed; dispatched outcome may be unknown"));
+    this.activeRejects.clear();
     this.shared.clear();
   }
   private drain() {
@@ -37,7 +41,9 @@ export class RequestScheduler {
       let index = this.queue.findIndex(item => item.urgent);
       if (index < 0 && this.running >= 3) return;
       if (index < 0) index = this.queue.findIndex(item => item.write);
-      if (index < 0) index = this.reads < 3 ? this.queue.findIndex(item => !item.write) : -1;
+      // Two reads, one ordinary command, one urgent control slot. Three
+      // stalled background reads must not prevent sending a new message.
+      if (index < 0) index = this.reads < 2 ? this.queue.findIndex(item => !item.write) : -1;
       if (index < 0) return;
       this.queue.splice(index, 1)[0]!.run();
     }

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, realpath, mkdtemp, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
-import { verifyInstalledBrowserRuntimeRelease, parseBrowserRuntimeReleaseManifest, type BrowserArtifactPort } from "@traceforge/browser-runtime";
+import { verifyInstalledBrowserRuntimeRelease, parseBrowserRuntimeReleaseManifest, launchOwnedChromium, type BrowserArtifactPort, type BrowserProcessConfiguration } from "@traceforge/browser-runtime";
 import { allowsFileSystemPath, satisfiesPermissionRequirements } from "@traceforge/orchestration-core";
 import type { ExecutionResourceLimits } from "@traceforge/execution-node";
 import type { ToolExecutionContext } from "@traceforge/worker-runtime";
@@ -11,6 +11,7 @@ import type { BrowserScratchStore } from "./browser-scratch.js";
 import { z } from "zod";
 
 export interface BrowserInstallation {
+  isolation?: "chromium";
   releaseDirectory: string;
   /** Independent trust anchor outside the release tree. */
   sourceAuthorityPath: string;
@@ -23,7 +24,7 @@ export interface BrowserInstallation {
   resources: ExecutionResourceLimits;
 }
 const installationPath = z.string().min(1).max(4096).refine(path => isAbsolute(path) && !path.includes("\0"), "Browser installation paths must be bounded and absolute");
-const installationSchema = z.object({ releaseDirectory: installationPath, sourceAuthorityPath: installationPath,
+const installationSchema = z.object({ isolation: z.literal("chromium").optional(), releaseDirectory: installationPath, sourceAuthorityPath: installationPath,
   nodeExecutable: installationPath, scratchDirectory: installationPath, nodeSha256: z.string().regex(/^[a-f0-9]{64}$/, "Browser installation requires measured launch identities"),
   expectedSandboxBackend: z.string().trim().min(1).max(256), expectedBackendMeasurement: z.string().regex(/^[a-f0-9]{64}$/),
   acceptedResourcePolicy: z.literal("sampled_terminate").optional(),
@@ -42,6 +43,7 @@ export function createInstalledBrowserDeployment(input: BrowserInstallation, art
   scratchStore?: BrowserScratchStore): ScenarioBrowserDeployment {
   const config = installationSchema.parse(structuredClone(input)), scratches = new Map<string, string>();
   const preparing = new Set<string>();
+  const ownedLaunches = new WeakMap<BrowserProcessConfiguration, Parameters<typeof launchOwnedChromium>[0]>();
   for (const path of [config.releaseDirectory, config.sourceAuthorityPath, config.nodeExecutable, config.scratchDirectory]) {
     if (!isAbsolute(path) || path.includes("\0") || path.length > 4096) throw new Error("Browser installation paths must be bounded and absolute");
   }
@@ -50,6 +52,12 @@ export function createInstalledBrowserDeployment(input: BrowserInstallation, art
   let recovery: Promise<void> | undefined;
   const recover = () => recovery ??= scratchStore?.recover(config.scratchDirectory) ?? Promise.resolve();
   return { artifacts, recover,
+    ...(config.isolation === "chromium" ? { chromiumProcess: async (configuration: BrowserProcessConfiguration) => {
+      const launch = ownedLaunches.get(configuration);
+      if (!launch || configuration.isolation !== "chromium") throw new Error("Browser launch was not prepared by this installation");
+      ownedLaunches.delete(configuration);
+      return launchOwnedChromium({ ...launch, timeoutMs: Math.min(launch.timeoutMs, configuration.timeoutMs) });
+    } } : {}),
     beforeDispatch: (context, processKey) => scratchStore?.beforeDispatch(context, processKey),
     async prepare(context, signal) {
       signal.throwIfAborted();
@@ -73,10 +81,10 @@ export function createInstalledBrowserDeployment(input: BrowserInstallation, art
       // Check overlapping descendants too, not only the entry-point binaries.
       if (profile.filesystem.write.some(grant => inside(root, grant.path) || (grant.scope === "tree" && inside(grant.path, root))))
         throw new Error("Browser release tree must be read-only");
-      for (const path of [config.nodeExecutable, controllerPath, browserPath, manifestPath, lockPath, reviewPath, attestationPath, authority]) {
+      for (const path of config.isolation === "chromium" ? [] : [config.nodeExecutable, controllerPath, browserPath, manifestPath, lockPath, reviewPath, attestationPath, authority]) {
         if (!allowsFileSystemPath(profile, "read", path) || allowsFileSystemPath(profile, "write", path)) throw new Error("Browser release and trust files require read-only invocation grants");
       }
-      if (!allowsFileSystemPath(profile, "write", scratchRoot)) throw new Error("Browser scratch is outside invocation write grants");
+      if (config.isolation !== "chromium" && !allowsFileSystemPath(profile, "write", scratchRoot)) throw new Error("Browser scratch is outside invocation write grants");
       if (await digest(config.nodeExecutable) !== config.nodeSha256) throw new Error("Browser controller Node executable changed");
       const verified = await verifyInstalledBrowserRuntimeRelease({ manifest, sourceLock: await json(lockPath, 262144), sourceReview: await json(reviewPath, 65536),
         sourceAuthority: await json(authority, 32768), buildAttestation: await json(attestationPath, 262144), platform: process.platform as "linux" | "win32" | "darwin",
@@ -86,7 +94,7 @@ export function createInstalledBrowserDeployment(input: BrowserInstallation, art
       scratches.set(invocation, scratch);
       try {
         signal.throwIfAborted();
-        if (!satisfiesPermissionRequirements(profile, { filesystem: { write: [{ path: scratch, scope: "tree" }] } }))
+        if (config.isolation !== "chromium" && !satisfiesPermissionRequirements(profile, { filesystem: { write: [{ path: scratch, scope: "tree" }] } }))
           throw new Error("Browser private scratch requires an authorized writable tree without denied descendants");
       } catch (error) {
         // No process was dispatched. Remove only this successfully allocated directory.
@@ -95,13 +103,17 @@ export function createInstalledBrowserDeployment(input: BrowserInstallation, art
         scratches.delete(invocation);
         throw error;
       }
-      return { controlTransport: "pipe", controllerIdentity: verified.identity, expectedSandboxBackend: config.expectedSandboxBackend,
+      const configuration: BrowserProcessConfiguration = { controlTransport: "pipe", controllerIdentity: verified.identity,
+        ...(config.isolation ? { isolation: config.isolation } : {}), expectedSandboxBackend: config.expectedSandboxBackend,
         expectedBackendMeasurement: config.expectedBackendMeasurement, executable: config.nodeExecutable,
         acceptedResourcePolicy: config.acceptedResourcePolicy,
         arguments: [controllerPath, `--release-manifest=${manifestPath}`, `--source-lock=${lockPath}`, `--source-review=${reviewPath}`,
           `--source-authority=${authority}`, `--build-attestation=${attestationPath}`, `--browser-root=${browserRoot}`, `--browser=${browserPath}`,
           `--working-directory=${scratch}`, `--user-data-directory=${join(scratch, "profile")}`],
-        workingDirectory: scratch, restrictWritesToWorkingDirectory: true, environment: {}, permissions: structuredClone(profile), resources: structuredClone(config.resources), timeoutMs: 30000, outputLimitBytes: 1048576 };
+        workingDirectory: scratch, ...(config.isolation === "chromium" ? {} : { restrictWritesToWorkingDirectory: true as const }), environment: {}, permissions: structuredClone(profile), resources: structuredClone(config.resources), timeoutMs: 900000, outputLimitBytes: 1048576 };
+      if (config.isolation === "chromium") ownedLaunches.set(configuration, { browserExecutable: browserPath, executableSha256: manifest.browser.executableSha256,
+        workingDirectory: scratch, identity: verified.identity, timeoutMs: configuration.timeoutMs });
+      return configuration;
       } finally { preparing.delete(invocation); }
     },
     async release(context, terminalConfirmed) {

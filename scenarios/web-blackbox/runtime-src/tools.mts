@@ -38,11 +38,23 @@ export async function callTool(request: RpcRequest, host: ScenarioRpcHost): Prom
     return succeeded("Retained Browser artifact chunk loaded", receipt.output, receipt.refs);
   }
   if (params.tool === "web.browser.inspect") {
-    const input = plainObject(params.input, "Browser input"); exact(input, ["url", "screenshot"]);
+    const input = plainObject(params.input, "Browser input"); exact(input, ["operation", "url", "screenshot", "sessionId", "pageId", "action", "durationMs"]);
+    const operation = input.operation ?? "inspect";
+    if (!["inspect", "open", "observe", "act", "close"].includes(operation)) throw new Error("Invalid browser operation");
+    if (["observe", "act", "close"].includes(operation)) {
+      exact(input, ["operation", "sessionId", ...(operation === "act" ? ["action"] : operation === "observe" ? ["pageId"] : [])]);
+      const receipt = await capability("traceforge.scenario.browser@1", operation, { operation, authorizationAction: "web.request.replay",
+        sessionId: requiredText(input.sessionId, "Browser session"), ...(operation === "act" ? { action: plainObject(input.action, "Browser action") } : {}),
+        ...(input.pageId ? { pageId: requiredText(input.pageId, "Browser page") } : {}),
+      }, `browser-${operation}`);
+      return succeeded("Browser session operation returned; inspect status before continuing", receipt.output, receipt.refs);
+    }
+    exact(input, ["operation", "url", "screenshot", ...(operation === "open" ? ["durationMs"] : [])]);
     const url = canonicalHttpUrl(input.url, "Browser URL");
     if (input.screenshot !== undefined && typeof input.screenshot !== "boolean") throw new Error("Screenshot option must be boolean");
-    const receipt = await capability("traceforge.scenario.browser@1", "inspect", {
-      operation: "inspect", authorizationAction: "web.request.replay", url, screenshot: input.screenshot ?? false,
+    const receipt = await capability("traceforge.scenario.browser@1", operation, {
+      operation, authorizationAction: "web.request.replay", url, screenshot: input.screenshot ?? false,
+      ...(operation === "open" ? { durationMs: boundedInteger(input.durationMs ?? 300000, 1000, 900000, "Browser session duration") } : {}),
     }, "browser-inspect");
     return succeeded("Browser observation retained; this is not a verified security finding", receipt.output, receipt.refs);
   }

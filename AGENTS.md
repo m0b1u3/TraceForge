@@ -38,6 +38,12 @@ TraceForge is a general-purpose AI security-agent workbench. It is not designed 
 
 Before committing an orchestration or reasoning change, review it against these rules and remove sample-specific assumptions.
 
+## Real-model testing
+
+- Use DeepSeek only for future real-model development tests (preferred model: `deepseek-flash`). Do not use Grok or other providers for acceptance without a new explicit user instruction.
+- Keep test credentials in secure storage, never in source, reports or logs. Do not change the user's normal model configuration just to run tests; use an isolated test configuration.
+- This testing restriction does not remove product support for other model providers.
+
 ## Plan and status synchronization
 
 Every completed code change must update the project plan in `docs/development-status-and-roadmap.md` in the same development cycle.

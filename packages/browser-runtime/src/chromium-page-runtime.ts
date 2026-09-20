@@ -54,10 +54,17 @@ export interface BrowserObservationResult extends Omit<BrowserObservationPayload
 }
 
 export type BrowserControlAction =
+  | { id: string; kind: "input"; view: BrowserViewIdentity; input: BrowserManualInput }
   | { id: string; kind: "navigate"; view: BrowserViewIdentity; url: string }
   | { id: string; kind: "click"; element: BrowserElementReference }
   | { id: string; kind: "fill"; element: BrowserElementReference; text: string }
   | { id: string; kind: "press"; element: BrowserElementReference; key: BrowserControlKey };
+
+export type BrowserManualInput =
+  | { type: "click"; x: number; y: number }
+  | { type: "scroll"; x: number; y: number; deltaY: number }
+  | { type: "text"; text: string }
+  | { type: "key"; key: BrowserControlKey };
 
 export type BrowserControlKey = "Enter" | "Escape" | "Tab" | "Backspace" | "Delete"
   | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "Home" | "End" | "PageUp" | "PageDown";
@@ -175,6 +182,7 @@ export class ChromiumPageRuntime {
 
   async act(action: BrowserControlAction): Promise<BrowserControlResult> {
     this.assertAgentControl();
+    if (action.kind === "input") throw new Error("Viewport input is manual-only");
     return this.performAction(action);
   }
 
@@ -185,6 +193,36 @@ export class ChromiumPageRuntime {
 
   private async performAction(action: BrowserControlAction): Promise<BrowserControlResult> {
     assertActionId(action.id);
+    if (action.kind === "input") {
+      if (this.controlState !== "manual_control") throw new Error("Viewport input is manual-only");
+      const view = await this.assertCurrentView(action.view), input = action.input;
+      if (!input || !["click", "scroll", "text", "key"].includes(input.type)) throw new Error("Invalid viewport input");
+      if (input.type === "click" || input.type === "scroll") {
+        if (![input.x, input.y].every(n => Number.isFinite(n) && n >= 0 && n < 1)) throw new Error("Viewport point is outside frame");
+        const metrics = record(await this.options.cdp.send("Page.getLayoutMetrics", {}, view.pageId), "Page layout metrics");
+        const viewport = record(metrics.cssVisualViewport ?? metrics.visualViewport, "Page visual viewport");
+        const width = Math.min(positiveNumber(viewport.clientWidth, "viewport width"), this.maximumScreenshotWidth);
+        const height = Math.min(positiveNumber(viewport.clientHeight, "viewport height"), this.maximumScreenshotHeight,
+          Math.max(1, Math.floor(this.maximumScreenshotPixels / width)));
+        const x = input.x * width, y = input.y * height;
+        if (input.type === "scroll") {
+          if (!Number.isFinite(input.deltaY) || Math.abs(input.deltaY) > 2000) throw new Error("Invalid scroll distance");
+          await this.options.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY: input.deltaY }, view.pageId);
+        } else {
+          await this.options.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }, view.pageId);
+          await this.options.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }, view.pageId);
+        }
+      } else if (input.type === "text") {
+        if (typeof input.text !== "string" || Buffer.byteLength(input.text) > 8192) throw new Error("Invalid input text");
+        await this.options.cdp.send("Input.insertText", { text: input.text }, view.pageId);
+      } else {
+        if (!controlKeys.has(input.key)) throw new Error("Unsupported browser key");
+        await this.options.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: input.key }, view.pageId);
+        await this.options.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: input.key }, view.pageId);
+      }
+      this.issuedElements.delete(view.pageId);
+      return { id: action.id, view: await this.currentView(view.pageId) };
+    }
     if (action.kind === "navigate") {
       const current = await this.assertCurrentView(action.view);
       const pageId = current.pageId;

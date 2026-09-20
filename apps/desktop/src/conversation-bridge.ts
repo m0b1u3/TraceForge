@@ -1,4 +1,5 @@
 import { DesktopEvidenceReadSchema } from "@traceforge/shared/desktop-evidence";
+import { DesktopBrowserCommandSchema } from "@traceforge/shared/desktop-browser";
 import { ApprovalPreferenceUpdateSchema } from "@traceforge/shared/desktop-approval-preference";
 import { RequestScheduler } from "./request-scheduler.js";
 import { DesktopReplyCommandSchema } from "@traceforge/shared/desktop-replies";
@@ -23,6 +24,11 @@ export function validateConversationRequest(value: unknown): ConversationBridgeR
       input.path.length > 256 || !["GET", "POST"].includes(String(input.method))) throw new Error("Invalid conversation request");
   const method = input.method as "GET" | "POST";
   const path = input.path;
+  if (/^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/execution\/[a-zA-Z0-9_-]{1,100}\/browser$/.test(path)) {
+    if (method === "GET" && input.body === undefined) return { path, method };
+    if (method !== "POST" || typeof input.body !== "string" || Buffer.byteLength(input.body) > 40000) throw new Error("Invalid browser command");
+    return { path, method, body: JSON.stringify(DesktopBrowserCommandSchema.parse(JSON.parse(input.body))) };
+  }
   if (/^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/attachments\/preview$/.test(path)) {
     if(method!=="POST"||typeof input.body!=="string"||input.body.length>1024)throw new Error("Invalid attachment preview");
     return {path,method,body:JSON.stringify(AttachmentPreviewRequestSchema.parse(JSON.parse(input.body)))};

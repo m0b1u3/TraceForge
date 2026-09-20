@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync, linkSync, existsSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync, linkSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -29,6 +29,42 @@ function setup(seconds = 60) {
 }
 
 describe("Run-owned offline workspace", () => {
+  it("rejects changed identities, links and nonempty directory cleanup",async()=>{
+    const f=setup();await f.json("write",{path:"keep",content:"original",expectedDigest:null});
+    const original=await f.json("read",{path:"keep",metadataOnly:true});writeFileSync(join(f.root,"keep"),"changed content");
+    await expect(f.call("remove",{path:"keep",expectedIdentity:original.identity})).rejects.toThrow("revision conflict");
+    symlinkSync(join(f.root,"keep"),join(f.root,"link"));
+    await expect(f.call("read",{path:"link",metadataOnly:true})).rejects.toThrow("plain directory");
+    mkdirSync(join(f.root,"folder"));writeFileSync(join(f.root,"folder","nested"),"keep");
+    const folder=await f.json("read",{path:"folder",metadataOnly:true});
+    await expect(f.call("remove",{path:"folder",expectedIdentity:folder.identity})).rejects.toThrow();
+    expect(existsSync(join(f.root,"folder","nested"))).toBe(true);
+    mkdirSync(join(f.root,"empty"));const empty=await f.json("read",{path:"empty",metadataOnly:true});
+    await f.call("remove",{path:"empty",expectedIdentity:empty.identity});expect(existsSync(join(f.root,"empty"))).toBe(false);
+  });
+  it("recovers an oversized workspace using bounded inspection and exact-file cleanup", async () => {
+    const f=setup();await f.json("write",{path:"keep.txt",content:"keep",expectedDigest:null});
+    writeFileSync(join(f.root,"large.bin"),Buffer.alloc(17*1024*1024));
+    await expect(f.call("list",{})).rejects.toThrow("capacity");
+    const partial=await f.json("list",{recovery:true});expect(partial.entries.some((e:any)=>e.path==="large.bin")).toBe(true);
+    const info=await f.json("read",{path:"large.bin",metadataOnly:true});expect(info.bytes).toBe(17*1024*1024);
+    await expect(f.call("remove",{path:"large.bin",expectedIdentity:"stale"})).rejects.toThrow("revision conflict");
+    writeFileSync(`${f.root}.busy`,"unconfirmed");
+    await expect(f.call("remove",{path:"large.bin",expectedIdentity:info.identity})).rejects.toThrow("cleanup is unconfirmed");
+    rmSync(`${f.root}.busy`);
+    await f.call("remove",{path:"large.bin",expectedIdentity:info.identity});
+    expect((await f.json("read",{path:"keep.txt"})).content).toBe("keep");expect(await f.json("list",{})).toHaveLength(1);
+  });
+  it("can inspect and delete known files beyond the entry limit without enabling writes", async () => {
+    const f=setup();await f.json("write",{path:"keep",content:"value",expectedDigest:null});
+    for(let i=0;i<513;i++)writeFileSync(join(f.root,`item-${i}`),"value");
+    expect(await f.json("list",{recovery:true})).toMatchObject({truncated:true,recovery:true});
+    expect((await f.json("list",{recovery:true})).entries).toHaveLength(512);
+    await expect(f.call("write",{path:"new",content:"x",expectedDigest:null})).rejects.toThrow("capacity");
+    const info=await f.json("read",{path:"item-512"});
+    await f.call("remove",{path:"item-512",expectedDigest:info.digest});
+    expect(existsSync(join(f.root,"item-512"))).toBe(false);
+  });
   it("shares only a host-selected namespace and preserves a process fence across Runs and restart",async()=>{
     const f=setup();
     const failed=vi.fn(async()=>{throw new Error("unknown execution");});

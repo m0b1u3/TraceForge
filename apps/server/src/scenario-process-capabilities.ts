@@ -9,6 +9,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { ExecutionCookie, ExecutionSessionGateway, SessionMaterial } from "./execution-session-gateway.js";
 import type { SqliteScenarioTrafficStore } from "./scenario-traffic-store.js";
 import { createScenarioBrowserHandler, type ScenarioBrowserDeployment } from "./scenario-browser-host.js";
+import type { DesktopBrowserSessions } from "./desktop-browser-sessions.js";
 import type { ProcessExecutionCapacity } from "./process-execution-capacity.js";
 
 /** Maps the generic Scenario SDK ports onto serializable, ownership-fixed RPC calls. */
@@ -19,11 +20,11 @@ export function createScenarioProcessCapabilityHandlers(
   executionNode?: ExecutionNode,
   sessions?: Pick<ExecutionSessionGateway,"listIdentities"|"openSession"|"use"|"updateCookies"|"updateValues"|"listSessions"|"close">,
   traffic?: Pick<SqliteScenarioTrafficStore,"recordHttpExchange"|"listRun">,
-  browser?: { deployment?: ScenarioBrowserDeployment; capacity: ProcessExecutionCapacity },
+  browser?: { deployment?: ScenarioBrowserDeployment; capacity: ProcessExecutionCapacity; sessions?: DesktopBrowserSessions },
 ): ScenarioPackageCapabilityHandler[] {
   const owner = { packageId: installation.id, packageVersion: installation.version };
   return [
-    createScenarioBrowserHandler(installation, context, executionNode, browser?.capacity, browser?.deployment),
+    createScenarioBrowserHandler(installation, context, executionNode, browser?.capacity, browser?.deployment, undefined, browser?.sessions),
     {
       capability: SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,
       actions: ["require", "authorize_resource"],

@@ -72,6 +72,15 @@ it("one conversation loop reads history then proposes a task and reopens without
   expect(model.streamTools).toHaveBeenCalledTimes(3);expect(request).toHaveBeenCalledTimes(1);restored.close();
 });
 afterEach(async()=>{for(const close of cleanup.splice(0))await close();});
+it("restored tool failures remain explicit even when the assistant claims success",async()=>{
+  const f=await fixture();await f.call(`${f.base}/replies/message`,{});
+  f.sql.prepare("INSERT INTO desktop_reply_reads VALUES (?,?,?,?,?,?)").run(f.conversation.id,"message",1,"memory_update","{}",JSON.stringify({detail:"x".repeat(4000),error:"source_changed"}));
+  f.handlers().onTextDelta?.("Saved successfully.");f.finish("Saved successfully.");
+  await vi.waitFor(()=>expect(f.service.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"completed",toolActivity:[{outcome:"failed"}]}]}));
+  f.service.close();const restored=new DesktopReplyService(f.sql,()=>f.provider);
+  expect(restored.read(f.conversation.id,0).body).toMatchObject({replies:[{text:"Saved successfully.",toolActivity:[{tool:"memory_update",outcome:"failed"}]}]});
+  expect(f.provider.streamTools).toHaveBeenCalledTimes(1);restored.close();
+});
 it("rejects retired review commands and never upgrades a saved read-only intent",async()=>{
   const f=await fixture();
   expect((await f.call(`${f.base}/replies/message`,{review:[{id:"source"}]})).statusCode).toBe(400);
@@ -173,6 +182,14 @@ it("host restart recovers interrupted snapshots without replaying inference",asy
   expect(restored.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"interrupted",text:"saved",error:"host_stopped"}]});
   expect(restored.start(f.conversation.id,"message").body).toMatchObject({state:"interrupted"});
   expect(factory).not.toHaveBeenCalled();restored.close();
+});
+it("application pre-close persists partial output and cancels inference before transport shutdown",async()=>{
+  const f=await fixture();await f.call(`${f.base}/replies/message`,{});f.handlers().onTextDelta?.("durable before quit");
+  await f.app.close();
+  expect(f.handlers().signal?.aborted).toBe(true);
+  expect(f.service.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"interrupted",text:"durable before quit"}]});
+  f.handlers().onTextDelta?.("late");f.finish("late");
+  expect(f.service.read(f.conversation.id,0).body).toMatchObject({replies:[{text:"durable before quit"}]});
 });
 it("recovers a crash-left streaming row with a new cursor",async()=>{
   const f=await fixture();await f.call(`${f.base}/replies/message`,{});f.service.close();

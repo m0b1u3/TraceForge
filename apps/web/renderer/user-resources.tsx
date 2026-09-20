@@ -71,7 +71,7 @@ export function UserResources({ resources, parents, busy, onChange, onBusy, onPe
           {item.kind==="prompt"&&<><p>角色指导会在所选角色和阶段自动加入模型上下文，不必等待工具读取。可插入任务变量：</p>
             <div className="configuration-actions">{guidanceVariables.map(name=><button type="button" key={name} onClick={()=>patch({content:`${item.content}{{${name}}}`})}>{`{{${name}}}`}</button>)}</div>
             <details><summary>模板预览（示例任务，不是真实运行）</summary><pre>{(()=>{try{return renderGuidanceTemplate(item.content,{goal:"示例任务目标",phase:item.phases[0]??parent?.phases[0]??"当前阶段",role:item.roles[0]??"worker",runId:"示例任务",caseId:"示例调查"});}catch{return "包含未知变量或渲染结果超限，请修正后保存。";}})()}</pre></details></>}
-          <label>导入正文（Markdown / TXT，最多 64 KiB）<input aria-label="导入资源正文" type="file" accept=".md,.txt,text/plain,text/markdown" onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; void importFile(file); }} /></label>
+          <label>导入正文（Markdown / TXT，最多 64 KiB）<input aria-label="导入资源正文" type="file" accept=".md,.txt" onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; void importFile(file); }} /></label>
           <button type="button" onClick={() => setRemove(true)}>删除此资源</button>
         </fieldset>
         {error && <p role="alert">{error}</p>}

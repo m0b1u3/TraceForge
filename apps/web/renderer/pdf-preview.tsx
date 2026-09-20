@@ -1,6 +1,8 @@
 import React,{useEffect,useRef,useState} from "react";
-import {getDocument,GlobalWorkerOptions} from "pdfjs-dist";
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+// Electron's pinned Chromium can lag PDF.js's modern browser baseline.
+// Use the matching compatibility builds in both the renderer and worker.
+import {getDocument,GlobalWorkerOptions} from "pdfjs-dist/legacy/build/pdf.mjs";
+import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 GlobalWorkerOptions.workerSrc=workerUrl;
 /** Canvas only: no annotation links, embedded JavaScript, forms or HTML layer. */
 export function PdfPreview({data}:{data:string}){

@@ -6,13 +6,16 @@ import { resolve, join } from "node:path";
 import { register } from "../apps/server/dist/development-loader.js";
 register();
 const args = process.argv.slice(2);
-if (![3,5].includes(args.length) || args[0] !== "--allow-model-api" || args[1] !== "--config-directory" || (args.length === 5 && (args[3] !== "--suite" || !["cognitive","recall","planning","rolling","desktop-memory","desktop-stream"].includes(args[4])))) {
+if (![3,5].includes(args.length) || args[0] !== "--allow-model-api" || args[1] !== "--config-directory" || (args.length === 5 && (args[3] !== "--suite" || !["cognitive","recall","planning","rolling","desktop-memory","desktop-stream","current-memory"].includes(args[4])))) {
   console.error("Use --allow-model-api --config-directory <desktop-config-directory>"); app.exit(2);
 } else {
   app.whenReady().then(async () => {
   let accounts;
   try {
     const configDirectory = resolve(args[2]);
+    // Project acceptance policy: do not silently spend another provider's quota.
+    const selected=JSON.parse(readFileSync(join(configDirectory,"llm.json"),"utf8"));
+    if(typeof selected.model!=="string"||!selected.model.startsWith("deepseek-")||new URL(selected.baseUrl).hostname!=="api.deepseek.com")throw new Error("acceptance_requires_deepseek");
     const { ModelAccounts, ModelAccountManifestSchema, defaultModelAccounts } = await import("../apps/server/src/model-settings-host.ts");
     const { LlmConfigService } = await import("../apps/server/src/llm-config-service.ts");
     const { createModelTokenStore } = await import("../apps/desktop/src/model-token-store.ts");
@@ -42,12 +45,14 @@ if (![3,5].includes(args.length) || args[0] !== "--allow-model-api" || args[1] !
     } });
     service.initializeFromConfig();
     const config = JSON.parse(readFileSync(configPath, "utf8"));
-    const recallLimits = args[4] === "desktop-stream" ? (await import("../apps/server/src/test-fixtures/desktop-stream-acceptance.ts")).desktopStreamLimits
+    const recallLimits = args[4] === "current-memory" ? (await import("../apps/server/src/test-fixtures/current-memory-acceptance.ts")).currentMemoryLimits
+      : args[4] === "desktop-stream" ? (await import("../apps/server/src/test-fixtures/desktop-stream-acceptance.ts")).desktopStreamLimits
       : args[4] === "desktop-memory" ? (await import("../apps/server/src/test-fixtures/desktop-memory-acceptance.ts")).desktopMemoryLimits
       : args[4] === "rolling" ? (await import("../apps/server/src/test-fixtures/rolling-memory-acceptance.ts")).rollingMemoryLimits
       : args[4] === "recall" ? (await import("../apps/server/src/test-fixtures/recall-model-acceptance.ts")).recallAcceptanceLimits : undefined;
     console.log(JSON.stringify({ status: "starting", provider: config.provider, model: config.model, maximumLogicalModelCalls: recallLimits?.maximumModelCalls ?? (args[4] === "planning" ? 8 : args[4] === "cognitive" ? 3 : 6), maximumDurationMs: recallLimits?.maximumDurationMs ?? (args[4] === "planning" ? 180000 : 120000), ...(recallLimits ? { modelCallTimeoutMs: recallLimits.modelCallTimeoutMs } : {}) }));
-    const runner = args[4] === "desktop-stream" ? (await import("../apps/server/src/test-fixtures/desktop-stream-acceptance.ts")).runDesktopStreamAcceptance
+    const runner = args[4] === "current-memory" ? (await import("../apps/server/src/test-fixtures/current-memory-acceptance.ts")).runCurrentMemoryAcceptance
+      : args[4] === "desktop-stream" ? (await import("../apps/server/src/test-fixtures/desktop-stream-acceptance.ts")).runDesktopStreamAcceptance
       : args[4] === "desktop-memory" ? (await import("../apps/server/src/test-fixtures/desktop-memory-acceptance.ts")).runDesktopMemoryAcceptance
       : args[4] === "rolling" ? (await import("../apps/server/src/test-fixtures/rolling-memory-acceptance.ts")).runRollingMemoryAcceptance
       : args[4] === "planning" ? (await import("../apps/server/src/test-fixtures/planning-model-acceptance.ts")).runPlanningModelAcceptance

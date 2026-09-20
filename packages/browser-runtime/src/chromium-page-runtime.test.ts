@@ -55,6 +55,19 @@ function domBody(bodyBase64: string) {
 }
 
 describe("ChromiumPageRuntime", () => {
+  it("accepts bounded viewport input only during manual ownership and rejects stale views", async () => {
+    const { runtime, cdp } = fixture();
+    const original = (await runtime.observe({ kind: "screenshot" })).view;
+    await expect(runtime.act({ id: "agent", kind: "input", view: original, input: { type: "click", x: .5, y: .5 } })).rejects.toThrow("manual-only");
+    const takeover = await runtime.beginTakeover(), view = (await runtime.observeManual(takeover.takeoverId, { kind: "screenshot" })).view;
+    await runtime.actManual(takeover.takeoverId, { id: "click", kind: "input", view, input: { type: "click", x: .5, y: .5 } });
+    expect(cdp.calls.filter(c => c.method === "Input.dispatchMouseEvent").at(-1)?.params).toMatchObject({ x: 640, y: 360, type: "mouseReleased" });
+    await runtime.actManual(takeover.takeoverId, { id: "text", kind: "input", view, input: { type: "text", text: "manual fixture" } });
+    expect(cdp.calls.at(-2)?.method).toBe("Input.insertText");
+    await expect(runtime.actManual(takeover.takeoverId, { id: "outside", kind: "input", view, input: { type: "click", x: 2, y: .5 } })).rejects.toThrow("outside");
+    cdp.loaderId = "changed";
+    await expect(runtime.actManual(takeover.takeoverId, { id: "stale", kind: "input", view, input: { type: "text", text: "never" } })).rejects.toThrow();
+  });
   it("creates bounded accessibility artifacts, stable element references and DOM change summaries", async () => {
     const { cdp, runtime } = fixture();
     const first = await runtime.observe({ kind: "dom" });

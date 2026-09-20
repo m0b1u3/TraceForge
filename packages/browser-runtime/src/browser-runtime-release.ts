@@ -6,7 +6,7 @@ import { BROWSER_CONTROLLER_PROTOCOL } from "./execution-node-controller.js";
 import { measureBrowserRuntimeTree, type BrowserRuntimeTreeMeasurement } from "./browser-runtime-tree.js";
 import { selectBrowserRuntimeSourceTarget } from "./browser-runtime-source-lock.js";
 import { verifyBrowserRuntimeSourceReview } from "./browser-runtime-source-review.js";
-import { verifyBrowserRuntimeBuildAttestation } from "./browser-runtime-build-attestation.js";
+import { verifyBrowserRuntimeProvenance } from "./browser-upstream-artifact.js";
 
 export const BROWSER_RUNTIME_RELEASE_PROFILE = "traceforge-browser-runtime-release-v3" as const;
 export { BROWSER_CONTROLLER_PROTOCOL as BROWSER_RUNTIME_CONTROLLER_PROTOCOL };
@@ -126,7 +126,7 @@ export async function verifyInstalledBrowserRuntimeRelease(input: {
     authority: input.sourceAuthority,
     ...(input.now ? { now: input.now } : {}),
   });
-  const built = verifyBrowserRuntimeBuildAttestation({
+  const built = verifyBrowserRuntimeProvenance({
     sourceLock: reviewed.lock,
     attestation: input.buildAttestation,
     platform: input.platform,

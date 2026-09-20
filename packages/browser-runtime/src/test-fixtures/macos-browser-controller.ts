@@ -1,5 +1,6 @@
 // Integration-only controller. Never bundled as the production entry point.
-// This fixture explicitly exercises the user-approved outer-only sandbox model.
+// Default to production launch flags. Outer-only is a separate diagnostic mode;
+// a pass in that mode is never production-installation acceptance.
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
@@ -15,7 +16,8 @@ const cdp = await ChromiumPipeTransport.launch({
   browserExecutable: browser, workingDirectory: directory, userDataDirectory: `${directory}/profile`,
   expectedIdentity: identity,
   launcher(spec) {
-    const child = spawn(spec.executable, [...spec.arguments, "--no-sandbox"], {
+    const child = spawn(spec.executable, [...spec.arguments,
+      ...(process.argv[5] === "--diagnostic-outer-only" ? ["--no-sandbox"] : [])], {
       cwd: spec.workingDirectory, env: spec.environment, stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
     });
     return Object.assign(child, {

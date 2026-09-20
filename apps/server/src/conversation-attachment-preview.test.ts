@@ -4,6 +4,7 @@ import {PDFDocument} from "pdf-lib";
 import {createDb,getSqliteClient} from "./db/client.js";
 import {registerConversationRoutes} from "./conversation-routes.js";
 import {validateConversationRequest} from "../../desktop/src/conversation-bridge.js";
+import {ConversationFileStore} from "./conversation-file-store.js";
 
 it("previews owned attachments without model calls, pages PDFs, rejects paths and changed identities",async()=>{
  const db=createDb(":memory:"),sql=getSqliteClient(db),app=Fastify();registerConversationRoutes(app,db);
@@ -25,5 +26,14 @@ it("previews owned attachments without model calls, pages PDFs, rejects paths an
   const second=await read({messageId:"message",index:1,page:2});expect(second.statusCode).toBe(200);expect(second.json()).toMatchObject({kind:"pdf",page:2,pages:2});
   expect((await PDFDocument.load(Buffer.from(second.json().data,"base64"))).getPageCount()).toBe(1);
   expect((await read({messageId:"message",index:1,page:3})).statusCode).toBe(409);
+  const stored=await new ConversationFileStore(sql).import("stored.pdf",Buffer.from(await pdf.save()));
+  expect((await app.inject({method:"POST",url:`/api/desktop/conversations/${c}/messages`,payload:{commandId:"stored",text:"Stored attachment",attachments:[stored]}})).statusCode).toBe(201);
+  const storedFirst=await read({messageId:"stored",index:0});expect(storedFirst.statusCode).toBe(200);
+  const storedNext={messageId:"stored",index:0,page:2,expectedDigest:storedFirst.json().digest};
+  expect(validateConversationRequest({path,method:"POST",body:JSON.stringify(storedNext)}).path).toBe(path);
+  const storedSecond=await read(storedNext);expect(storedSecond.statusCode).toBe(200);
+  expect(storedSecond.json()).toMatchObject({kind:"pdf",page:2,pages:2,digest:storedFirst.json().digest});
+  expect((await PDFDocument.load(Buffer.from(storedSecond.json().data,"base64"))).getPageCount()).toBe(1);
+  expect((await read({...storedNext,expectedDigest:"b".repeat(64)})).statusCode).toBe(409);
  }finally{await app.close();sql.close();}
 });

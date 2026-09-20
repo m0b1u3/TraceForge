@@ -13,6 +13,16 @@ const identity: BrowserControllerIdentity = {
   browserVersion: "Chromium 140.0.0",
   browserSha256: "b".repeat(64),
 };
+it("initializes only the embedded page and never discovers other desktop WebContents", async () => {
+  const cdp = new FakeCdp();
+  const adapter = new ChromiumCdpAdapter({ cdp, identity, isolation: "chromium", embeddedTarget: { sessionId: "owned", targetId: "owned" } });
+  await adapter.initialize();
+  expect(cdp.calls.map(call => call.method)).toEqual(["Target.setAutoAttach", "Fetch.enable", "Network.enable", "Runtime.runIfWaitingForDebugger"]);
+  expect(cdp.calls.every(call => call.sessionId === "owned")).toBe(true);
+  expect(adapter.proof.browserDirectNetwork).toBe("application_intercepted");
+  expect(adapter.proof.controlTransport).toBe("electron_debugger");
+  await adapter.close();
+});
 
 class FakeCdp implements ChromiumCdpPort {
   readonly calls: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
@@ -69,6 +79,17 @@ function fixture() {
 }
 
 describe("Chromium CDP Adapter", () => {
+  it("waits for the first attached page before observing and cancels the wait on close", async () => {
+    const { cdp, adapter } = fixture(); await adapter.initialize(); adapter.activate(vi.fn(), vi.fn());
+    const observe = vi.spyOn((adapter as any).pages, "observe").mockResolvedValue({ kind: "dom" });
+    const pending = adapter.observe({ kind: "dom" });
+    expect(observe).not.toHaveBeenCalled();
+    cdp.emit(attached()); await expect(pending).resolves.toEqual({ kind: "dom" });
+    await adapter.close();
+    const second = fixture(); await second.adapter.initialize(); second.adapter.activate(vi.fn(), vi.fn());
+    const waiting = expect(second.adapter.observe({ kind: "dom" })).rejects.toThrow("closed before page readiness");
+    await second.adapter.close(); await waiting;
+  });
   it("installs auto-attach, pre-network Fetch interception and deny-download policy before activation", async () => {
     const { cdp, adapter } = fixture();
     await adapter.initialize();

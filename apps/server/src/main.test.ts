@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildServer, resolveListenConfig, trustedUiOrigin } from "./main.js";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +8,32 @@ import { createDb, getSqliteClient } from "./db/client.js";
 import { FoundationBackupControl } from "./foundation-backup.js";
 
 describe("server listen configuration", () => {
+  it("assembles the desktop browser with durable artifact storage without launching a guest at startup", async () => {
+    const root = mkdtempSync(join(tmpdir(), "traceforge-embedded-composition-"));
+    const prepare = vi.fn(async () => { throw new Error("Not requested"); }), recover = vi.fn(async () => {});
+    let deployment: import("./scenario-browser-host.js").ScenarioBrowserDeployment | undefined;
+    const embeddedBrowser = vi.fn((artifacts: import("@traceforge/browser-runtime").BrowserArtifactPort) =>
+      deployment = { artifacts, prepare, recover });
+    const app = await buildServer(":memory:", join(root, "mcp.json"), join(root, "llm.json"), root, undefined, { embeddedBrowser });
+    try {
+      await app.ready();
+      expect(embeddedBrowser).toHaveBeenCalledOnce(); expect(recover).toHaveBeenCalledOnce();
+      expect(deployment?.persistArtifact).toBeTypeOf("function"); expect(deployment?.readContent).toBeTypeOf("function");
+      expect(prepare).not.toHaveBeenCalled();
+    } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+  it("health reflects a model saved after startup without exposing credentials", async () => {
+    const root=mkdtempSync(join(tmpdir(),"traceforge-health-"));
+    const app=await buildServer(":memory:",join(root,"mcp.json"),join(root,"llm.json"),root);
+    try{
+      expect((await app.inject({url:"/api/health"})).json().llmConfigured).toBe(false);
+      const saved=await app.inject({method:"POST",url:"/api/config/llm",headers:foundationHostControl(app).management().headers(),
+        payload:{provider:"openai",supplier:"deepseek",model:"deepseek-flash",baseUrl:"https://api.deepseek.com",apiKey:"fixture-not-real"}});
+      expect(saved.statusCode,saved.body).toBe(200);
+      const health=await app.inject({url:"/api/health"});expect(health.json().llmConfigured).toBe(true);
+      expect(health.body).not.toContain("fixture-not-real");
+    }finally{await app.close();rmSync(root,{recursive:true,force:true});}
+  });
   it("keeps concrete Scenario packages out of the application composition root",()=>{
     const source=readFileSync(new URL("./main.ts",import.meta.url),"utf8");
     expect(source).not.toMatch(/scenario-web-blackbox|WEB_BLACKBOX|web_blackbox/);

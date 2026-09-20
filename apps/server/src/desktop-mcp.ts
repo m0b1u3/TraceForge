@@ -25,6 +25,7 @@ const sourceName = (id: string, revision: number) => `desktop.mcp.${id}.r${revis
 export class DesktopMcpControl {
   private runtime?: ExecutionToolDiscoveryRuntime;
   private locked = false;
+  private pendingActivation?: { id: string; revision: number };
   private readonly calls=new Map<string,Set<AbortController>>();
   private reconcile: () => void = () => undefined;
   private assertAssembly: (id: string,digest: string) => void = () => {throw new Error("MCP assembly unavailable");};
@@ -85,7 +86,11 @@ export class DesktopMcpControl {
   }
   /** Includes retained revisions for old Runs; the Run pin controls which revision can be invoked. */
   sources(): ExecutionToolDiscoverySource[] {
-    return (this.sqlite.prepare("SELECT a.id,a.revision FROM desktop_mcp_activations a JOIN desktop_mcp_heads h ON h.id=a.id WHERE h.deleted=0 AND h.active IS NOT NULL").all() as Array<{id:string;revision:number}>).map(r => this.source(r.id, r.revision));
+    const revisions = this.sqlite.prepare(`SELECT a.id,a.revision FROM desktop_mcp_activations a JOIN desktop_mcp_heads h ON h.id=a.id
+      WHERE h.deleted=0 AND h.active IS NOT NULL AND (a.revision=h.active OR EXISTS
+      (SELECT 1 FROM desktop_mcp_runs p WHERE p.id=a.id AND p.revision=a.revision))`).all() as Array<{id:string;revision:number}>;
+    if (this.pendingActivation && !revisions.some(r=>r.id===this.pendingActivation!.id&&r.revision===this.pendingActivation!.revision)) revisions.push(this.pendingActivation);
+    return revisions.map(r => this.source(r.id, r.revision));
   }
   assemblyUnits() { return this.sources().map(s => { const match = /^(.*)\.r([0-9]+)$/.exec(s.source)!; const id = match[1]!.slice("desktop.mcp.".length), revision = Number(match[2]); return { id: s.source, digest: mcpDigest({ version: this.version(id, revision), activation: this.activation(id, revision) }) }; }); }
   attach(runtime: ExecutionToolDiscoveryRuntime, reconcile: () => void, assertAssembly:(id:string,digest:string)=>void) { this.runtime = runtime; this.reconcile = reconcile;this.assertAssembly=assertAssembly; }
@@ -131,9 +136,17 @@ export class DesktopMcpControl {
           for (const review of op.tools) { const tool = catalog.tools.find(t=>t.name===review.name); if (!tool) throw new Error("Unknown MCP tool"); if (review.enabled) this.inputPolicy(tool.inputSchema, review.resources); }
           const activation = { catalog,tools:op.tools }, prior = this.sqlite.prepare("SELECT value_json FROM desktop_mcp_activations WHERE id=? AND revision=?").get(id,head.revision) as {value_json:string}|undefined;
           if (prior && canonicalJson(JSON.parse(prior.value_json)) !== canonicalJson(activation)) throw new Error("Save a new revision before changing an approved tool review");
-          this.sqlite.transaction(() => { if (!prior) this.sqlite.prepare("INSERT INTO desktop_mcp_activations VALUES (?,?,?)").run(id,head.revision,JSON.stringify(activation)); this.sqlite.prepare("UPDATE desktop_mcp_heads SET active=? WHERE id=?").run(head.revision,id); })();
-          try { this.reconcile(); await this.runtime.activateSource(this.source(id,head.revision)); }
-          catch (error) { this.sqlite.prepare("UPDATE desktop_mcp_heads SET active=NULL WHERE id=?").run(id); this.reconcile(); throw error; }
+          if (!prior) this.sqlite.prepare("INSERT INTO desktop_mcp_activations VALUES (?,?,?)").run(id,head.revision,JSON.stringify(activation));
+          // Stage discovery without publishing the revision to newly created Runs.
+          // A failed replacement must not revoke the currently usable connection.
+          this.pendingActivation = { id, revision: head.revision };
+          try {
+            this.reconcile(); await this.runtime.activateSource(this.source(id,head.revision));
+            this.sqlite.prepare("UPDATE desktop_mcp_heads SET active=? WHERE id=?").run(head.revision,id);
+          } catch (error) {
+            if (head.active !== head.revision) await this.runtime.deactivateSource(sourceName(id,head.revision)).catch(()=>{});
+            throw error;
+          } finally { this.pendingActivation = undefined; this.reconcile(); }
         } else {
           this.sqlite.prepare("UPDATE desktop_mcp_heads SET active=NULL,deleted=? WHERE id=?").run(op.operation === "delete" ? 1 : 0,id); this.reconcile();
           for(const controller of this.calls.get(id)??[])controller.abort();

@@ -12,9 +12,10 @@ import { BrokeredBrowserRuntime, ExecutionNodeBrowserController, sha256File,
 import { MACOS_BROWSER_SYSTEM_SERVICES } from "./macos-system-services.js";
 
 const execute = promisify(execFile);
+const outerOnly = process.env.TRACEFORGE_TEST_MACOS_BROWSER_OUTER_ONLY === "1";
 // Explicit opt-in: real native execution, not part of default mock/fast coverage.
 it.skipIf(process.env.TRACEFORGE_TEST_MACOS_BROWSER !== "1")(
-  "runs real outer-sandbox Chromium through Execution Node, authorization, HTTP receipts and persisted artifacts", async () => {
+  `runs real Chromium through Execution Node, authorization, HTTP receipts and persisted artifacts (${outerOnly ? "diagnostic outer-only; not product acceptance" : "production sandbox flags"})`, async () => {
     expect(process.platform).toBe("darwin"); expect(process.arch).toBe("arm64");
     const browser = await realpath(process.env.TRACEFORGE_REAL_CHROMIUM_PATH!);
     const browserRoot = await realpath(process.env.TRACEFORGE_REAL_CHROMIUM_ROOT!);
@@ -81,7 +82,8 @@ it.skipIf(process.env.TRACEFORGE_TEST_MACOS_BROWSER !== "1")(
       const configuration: BrowserProcessConfiguration = {
         controlTransport: "pipe", controllerIdentity: identity, expectedSandboxBackend: "traceforge-macos-native",
         expectedBackendMeasurement: helper.sha256, acceptedResourcePolicy: "sampled_terminate",
-        executable: nodePath, arguments: [controllerPath, browser, scratch, JSON.stringify(identity)], workingDirectory: scratch, environment: {},
+        executable: nodePath, arguments: [controllerPath, browser, scratch, JSON.stringify(identity),
+          ...(outerOnly ? ["--diagnostic-outer-only"] : [])], workingDirectory: scratch, environment: {},
         timeoutMs: 60000, outputLimitBytes: 4 * 1024 * 1024,
         resources: { cpuTimeMs: 20000, memoryBytes: 1024 * 1024 * 1024, maximumProcesses: 32, writeBytes: 64 * 1024 * 1024 },
         permissions: { version: 1, platform: "darwin", network: "brokered", secrets: "deny", sources: ["diagnostic"],

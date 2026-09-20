@@ -26,6 +26,8 @@ traceforge-*.png
 data/
 workspace/
 apps/desktop/release/
+apps/desktop/runtime/browser-runtime/
+apps/desktop/runtime/browser-runtime-headless/
 **/target/
 packages/execution-node/native/
 .playwright-cli/

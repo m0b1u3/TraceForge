@@ -18,6 +18,16 @@ async function fixture(){
   const refs=["m1","m2"].map(id=>({id,digest:readConversationOriginal(sql,c.id,id,3)!.digest}));
   return {sql,c,memory,model,refs,execute,close:async()=>{await app.close();sql.close();}};
 }
+it("respects an explicit upper bound even for completed reordered messages",async()=>{
+  const f=await fixture();try{
+    f.sql.prepare("INSERT INTO desktop_replies VALUES(?,?,?,?)").run(f.c.id,"m2","completed","condition");
+    const memory=new ConversationKnowledge(f.sql,f.c.id,1);
+    const read=(input:unknown)=>memory.execute({id:"read",name:"memory_recall",input},"read",f.model,new AbortController().signal);
+    expect((await read({query:"condition"}) as any).matches.map((m:any)=>m.id)).toContain("m2");
+    expect((await read({query:"condition",before:1}) as any).matches.map((m:any)=>m.id)).not.toContain("m2");
+    expect((await read({query:"condition",after:1,before:1}) as any).totalCandidates).toBe(0);
+  }finally{await f.close();}
+});
 it("performs bounded semantic recall, validates source IDs and explicitly falls back",async()=>{
   const f=await fixture();try{
     const result=await f.execute("memory_recall",{query:"corrected hypothesis",semantic:true}) as any;
@@ -26,6 +36,23 @@ it("performs bounded semantic recall, validates source IDs and explicitly falls 
     const fallback=await f.execute("memory_recall",{query:"condition",semantic:true}) as any;
     expect(fallback.semanticStatus).toBe("unavailable_lexical_fallback");expect(fallback.matches[0].id).toBe("m1");
     const bounded=await f.execute("memory_recall",{query:"condition",before:1}) as any;expect(bounded.totalCandidates).toBe(1);
+  }finally{await f.close();}
+});
+it("user-message sources survive assistant completion but reject actual edits and invented digests",async()=>{
+  const f=await fixture();try{
+    f.sql.prepare("INSERT INTO desktop_replies VALUES(?,?,?,?)").run(f.c.id,"m3","streaming","partial");
+    const reader=new ConversationHistoryReader(f.sql,f.c.id,3);
+    const found=reader.execute({id:"find",name:"conversation_search",input:{query:"xxx"}}) as any;
+    const source=found.matches[0].messageSource;
+    const note={key:"current",kind:"topic",title:"Current statement",text:"User's statement",expectedRevision:0,status:"active",sources:[source]};
+    expect(await f.execute("memory_update",note)).toMatchObject({status:"saved"});
+    f.sql.prepare("UPDATE desktop_replies SET state='completed',text='assistant final'").run();
+    expect((await f.execute("memory_topics",{key:"current"}) as any).versions[0].sourceState).toBe("unchanged");
+    expect(reader.execute({id:"reread",name:"conversation_read",input:source})).toMatchObject({digest:source.digest,messageSource:source});
+    expect(reader.execute({id:"batch",name:"conversation_read_sources",input:{sources:[source],maxTokens:8192}})).toMatchObject({sources:[{id:"m3",digest:source.digest}]});
+    expect(await f.execute("memory_update",{...note,sources:[{id:"current",digest:"not-a-digest"}]},"invalid")).toMatchObject({error:"invalid_memory_update",recovery:expect.stringContaining("No memory was written")});
+    f.sql.prepare("UPDATE desktop_conversation_messages SET text='different' WHERE command_id='m3'").run();
+    expect((await f.execute("memory_topics",{key:"current"}) as any).versions[0].sourceState).toBe("changed_or_missing");
   }finally{await f.close();}
 });
 it("versions notes with provenance, CAS and idempotency; invalidates without losing history",async()=>{

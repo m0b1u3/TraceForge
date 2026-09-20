@@ -8,6 +8,7 @@ import { RunProgress } from "./run-progress";
 import { RunControl } from "./run-control";
 import { DesktopPendingApprovalSchema, type DesktopPendingApproval } from "@traceforge/shared/desktop-execution";
 import { RunInteraction } from "./run-interaction";
+import { BrowserSessionControl } from "./browser-session-control";
 import { ConversationReply, useConversationReplies } from "./conversation-replies";
 
 import { useArtifactPreview } from "./artifact-preview";
@@ -66,6 +67,7 @@ function RunReply({ run, bridge, conversationId, unified=false }: { run: Convers
     <div className="message-body"><div className="sender">TraceForge <span className="run-state">{executionStatus(run.status)}</span></div>
       <RunProgress key={`${conversationId}:${run.runId}`} bridge={bridge} conversationId={conversationId} runId={run.runId} run={run} terminal={["completed","cancelled","failed"].includes(run.status)} />
       <RunInteraction bridge={bridge} conversationId={conversationId} run={run} hideInput={unified}/>
+      {!['completed', 'cancelled', 'failed'].includes(run.status) && <BrowserSessionControl key={`browser:${conversationId}:${run.runId}`} bridge={bridge} conversationId={conversationId} runId={run.runId} />}
       {!run.outputs.length && <p className="run-waiting">{["completed", "cancelled", "failed"].includes(run.status)
         ? "本次运行已结束，尚无已保存的任务输出。" : "任务已交给执行系统，等待已保存的输出。"}</p>}
       {run.outputs.map(output => <section key={output.id} className="run-output"><p>{output.summary}</p>

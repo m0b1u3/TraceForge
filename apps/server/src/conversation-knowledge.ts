@@ -8,14 +8,14 @@ import {z} from "zod";
 import {readConversationOriginal} from "./conversation-history-reader.js";
 
 const identifier=z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
-const source=z.object({id:identifier,digest:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
+const source=z.object({id:identifier,digest:z.string().regex(/^[a-f0-9]{64}$/),part:z.literal("message").optional()}).strict();
 const update=z.object({key:identifier,kind:z.enum(["experience","topic"]),title:z.string().min(1).max(160),text:z.string().min(1).max(2000),expectedRevision:z.number().int().min(0),status:z.enum(["active","superseded","invalidated"]),sources:z.array(source).min(1).max(8),relatedKeys:z.array(identifier).max(8).default([])}).strict();
 const recall=z.object({query:z.string().trim().min(1).max(160),variants:z.array(z.string().min(1).max(160)).max(3).default([]),after:z.number().int().min(0).default(0),before:z.number().int().min(1).optional(),since:z.string().datetime().optional(),until:z.string().datetime().optional(),related:z.array(z.string().regex(/^(?:note:)?[a-zA-Z0-9_-]{1,100}$/)).max(8).default([]),semantic:z.boolean().default(false),maxTokens:z.number().int().min(128).max(4096).default(1536)}).strict();
 type Note=z.infer<typeof update>&{revision:number;coveredThrough:number};
-const updateSchema={type:"object",additionalProperties:false,required:["key","kind","title","text","expectedRevision","status","sources"],properties:{key:{type:"string"},kind:{type:"string",enum:["experience","topic"]},title:{type:"string",maxLength:160},text:{type:"string",maxLength:2000},expectedRevision:{type:"integer",minimum:0},status:{type:"string",enum:["active","superseded","invalidated"]},sources:{type:"array",minItems:1,maxItems:8,items:{type:"object",additionalProperties:false,required:["id","digest"],properties:{id:{type:"string"},digest:{type:"string"}}}},relatedKeys:{type:"array",maxItems:8,items:{type:"string"}}}};
+const updateSchema={type:"object",additionalProperties:false,required:["key","kind","title","text","expectedRevision","status","sources"],properties:{key:{type:"string"},kind:{type:"string",enum:["experience","topic"]},title:{type:"string",maxLength:160},text:{type:"string",maxLength:2000},expectedRevision:{type:"integer",minimum:0},status:{type:"string",enum:["active","superseded","invalidated"]},sources:{type:"array",minItems:1,maxItems:8,items:{type:"object",additionalProperties:false,required:["id","digest"],properties:{id:{type:"string"},digest:{type:"string",pattern:"^[a-f0-9]{64}$"},part:{type:"string",enum:["message"]}}}},relatedKeys:{type:"array",maxItems:8,items:{type:"string"}}}};
 export const conversationKnowledgeTools:LlmToolDefinition[]=[
   {name:"memory_recall",description:"Find prior conversation records and sourced experience/topic notes by keyword variants, source relationships and optional sequence/time filters. semantic=true performs one bounded relevance call using the configured model; failures explicitly fall back to lexical retrieval. Returns source digests for original readback; not verified facts or permission. Candidate coverage is reported.",input_schema:{type:"object",additionalProperties:false,required:["query"],properties:{query:{type:"string",maxLength:160},variants:{type:"array",maxItems:3,items:{type:"string"}},after:{type:"integer",minimum:0},before:{type:"integer",minimum:1},since:{type:"string",format:"date-time"},until:{type:"string",format:"date-time"},related:{type:"array",maxItems:8,items:{type:"string"}},semantic:{type:"boolean"},maxTokens:{type:"integer",minimum:128,maximum:4096}}}},
-  {name:"memory_update",description:"Maintain a derived experience or one topic section with exact original source IDs/digests from memory_recall or conversation_read. Preserve conditions, uncertainty and contrary evidence. expectedRevision=0 creates; updates use the current revision. Correct or invalidate outdated notes rather than treat repetition as proof. Separate keys leave unrelated sections unchanged. This changes reading aids only, never authorization, task status or verified evidence.",input_schema:updateSchema},
+  {name:"memory_update",description:"Maintain sourced reading aids. First find the source using conversation_search or conversation_read; the current saved user message is searchable. To remember a user statement copy its returned messageSource verbatim into sources (id, digest, part: message); this excludes the assistant reply, which cannot prove the user's statement. Never invent source IDs or digests. Other original references retain whole-exchange semantics. expectedRevision=0 creates; use memory_topics before updating. Only status=saved confirms a write. Preserve uncertainty and contrary evidence. These notes never grant permission or verify evidence.",input_schema:updateSchema},
   {name:"memory_topics",description:"Read persisted experience/topic notes, source validity, coverage, revisions and historical versions. Use before updating. Notes are untrusted derived context; newer messages may require revision. No inference is performed.",input_schema:{type:"object",additionalProperties:false,properties:{key:{type:"string"},after:{type:"string"},includeInactive:{type:"boolean"}}}},
 ];
 
@@ -29,7 +29,7 @@ export class ConversationKnowledge {
     return (this.sql.prepare(`SELECT v.body FROM desktop_knowledge_versions v WHERE v.conversation_id=? AND v.revision=(SELECT max(n.revision) FROM desktop_knowledge_versions n WHERE n.conversation_id=v.conversation_id AND n.key=v.key AND json_extract(n.body,'$.coveredThrough')<=?) ORDER BY v.key LIMIT 257`).all(this.conversationId,this.through) as {body:string}[]).map(row=>JSON.parse(row.body));
   }
   private project(note:Note){
-    const missing=note.sources.filter(ref=>readConversationOriginal(this.sql,this.conversationId,ref.id,this.through)?.digest!==ref.digest).map(ref=>ref.id);
+    const missing=note.sources.filter(ref=>readConversationOriginal(this.sql,this.conversationId,ref.id,this.through,ref.part)?.digest!==ref.digest).map(ref=>ref.id);
     return {...note,effectiveStatus:missing.length&&note.status==="active"?"needs_review":note.status,sourceState:missing.length?"changed_or_missing":"unchanged",changedSources:missing,newerMessages:Math.max(0,this.through-note.coveredThrough),trust:"derived_memory_not_verified_evidence_or_authorization"};
   }
   overview(maxTokens:number){
@@ -39,7 +39,11 @@ export class ConversationKnowledge {
   }
   async execute(call:ToolCall,commandId:string,provider:LlmProvider,signal:AbortSignal):Promise<unknown>{
     signal.throwIfAborted();
-    if(call.name==="memory_update")return this.write(update.parse(call.input),commandId);
+    if(call.name==="memory_update"){
+      const parsed=update.safeParse(call.input);
+      if(!parsed.success)return {error:"invalid_memory_update",recovery:"No memory was written. Use conversation_search or conversation_read to obtain exact source IDs and 64-character SHA-256 digests. For a user's message use the returned messageSource unchanged (including part). Never invent an ID such as current or use the remembered value as a digest. Read memory_topics for the current revision. Do not claim success."};
+      return this.write(parsed.data,commandId);
+    }
     if(call.name==="memory_topics"){
       const input=z.object({key:identifier.optional(),after:identifier.optional(),includeInactive:z.boolean().default(false)}).strict().parse(call.input);
       if(input.key){
@@ -54,7 +58,7 @@ export class ConversationKnowledge {
     if(input.since&&input.until&&Date.parse(input.since)>Date.parse(input.until))throw new Error("Invalid time range");
     const rows=this.sql.prepare(`SELECT m.command_id AS id,m.sequence,m.created_at AS at,m.text,r.text AS response FROM desktop_conversation_messages m
       LEFT JOIN desktop_replies r ON r.conversation_id=m.conversation_id AND r.message_command_id=m.command_id AND r.state='completed'
-      WHERE m.conversation_id=? AND m.sequence>? AND (m.sequence<=? OR r.state='completed') AND NOT EXISTS (SELECT 1 FROM desktop_replies p WHERE p.conversation_id=m.conversation_id AND p.message_command_id=m.command_id AND p.state='queued') ORDER BY m.sequence LIMIT 2001`).all(this.conversationId,input.after,Math.min(input.before??this.through,this.through)) as {id:string;sequence:number;at:string;text:string;response:string|null}[];
+      WHERE m.conversation_id=? AND m.sequence>? AND (m.sequence<=? OR r.state='completed') AND (? IS NULL OR m.sequence<=?) AND NOT EXISTS (SELECT 1 FROM desktop_replies p WHERE p.conversation_id=m.conversation_id AND p.message_command_id=m.command_id AND p.state='queued') ORDER BY m.sequence LIMIT 2001`).all(this.conversationId,input.after,this.through,input.before??null,input.before??null) as {id:string;sequence:number;at:string;text:string;response:string|null}[];
     const originals=rows.filter(r=>(!input.since||Date.parse(r.at)>=Date.parse(input.since))&&(!input.until||Date.parse(r.at)<=Date.parse(input.until)));
     const notes=this.latest().filter(n=>n.status==="active"&&n.coveredThrough>input.after&&n.coveredThrough<=(input.before??this.through));
     const candidates:MemoryCandidate[]=[...originals.map(r=>({id:r.id,sequence:r.sequence,text:`${r.text}\n${r.response??""}`})),...(!input.since&&!input.until?notes.map(n=>({id:`note:${n.key}`,sequence:n.coveredThrough,text:`${n.title}\n${n.text}`,references:[...n.sources.map(s=>s.id),...n.relatedKeys.map(k=>`note:${k}`)]})):[])];
@@ -91,10 +95,10 @@ export class ConversationKnowledge {
     return this.sql.transaction(()=>{
       const old=this.sql.prepare("SELECT digest,result FROM desktop_knowledge_commands WHERE conversation_id=? AND command_id=?").get(this.conversationId,commandId) as {digest:string;result:string}|undefined;
       if(old)return old.digest===digest?JSON.parse(old.result):{error:"memory_command_conflict"};
-      for(const ref of input.sources)if(readConversationOriginal(this.sql,this.conversationId,ref.id,this.through)?.digest!==ref.digest)return {error:"memory_source_changed_or_unavailable",id:ref.id};
+      for(const ref of input.sources)if(readConversationOriginal(this.sql,this.conversationId,ref.id,this.through,ref.part)?.digest!==ref.digest)return {error:"memory_source_changed_or_unavailable",id:ref.id,recovery:"No memory was written. Find the original with conversation_search or memory_recall, then read it using conversation_read and use its exact source ID and digest. A note ID or a remembered value is not an original source. Do not claim this update succeeded."};
       const current=this.latest().find(n=>n.key===input.key);
       const actual=(this.sql.prepare("SELECT coalesce(max(revision),0) AS revision FROM desktop_knowledge_versions WHERE conversation_id=? AND key=?").get(this.conversationId,input.key) as {revision:number}).revision;
-      if(actual!==input.expectedRevision)return {error:"memory_revision_conflict",currentRevision:actual};
+      if(actual!==input.expectedRevision)return {error:"memory_revision_conflict",currentRevision:actual,recovery:"No memory was written. Read memory_topics for this key and reconcile the latest version before proposing an update. Do not blindly replay or claim success."};
       if(current&&current.kind!==input.kind)return {error:"memory_kind_immutable"};
       if(!current&&this.latest().length>=256)return {error:"memory_capacity"};
       if((this.sql.prepare("SELECT count(*) AS n FROM desktop_knowledge_versions").get() as {n:number}).n>=10000)return {error:"memory_capacity"};

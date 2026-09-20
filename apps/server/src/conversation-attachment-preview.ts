@@ -28,7 +28,7 @@ export function registerAttachmentPreview(app:FastifyInstance,sql:Database.Datab
         return AttachmentPreviewSchema.parse({...base,kind:"text",text:source.text.slice(offset??0,end),nextOffset:end<source.text.length?end:null});
       }
       if(source.kind==="audio")return reply.code(415).send({error:"preview_unsupported"});
-      const isPdf=source.kind==="document"||(source.kind==="reference"&&new ConversationFileStore(sql).read(source.id,c,messageId)?.kind==="pdf");
+      const isPdf=source.kind==="document"||(source.kind==="reference"&&new ConversationFileStore(sql).read(source.id,c,messageId)?.kind==="document");
       if(isPdf&&offset!==undefined||!isPdf&&page!==undefined)return reply.code(400).send({error:"invalid_range"});
       const found=await new ConversationAttachmentReader(sql,c,row.sequence).executeAsync({id:"preview",name:"conversation_attachment_read",input:{messageId,index,digest,...(isPdf?{startPage:page??1,endPage:page??1}:offset!==undefined?{offset}:{})}});
       const attachment=found.attachment,info=found.result as {pages?:number;nextOffset?:number|null};

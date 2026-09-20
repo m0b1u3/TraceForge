@@ -10,7 +10,7 @@ import {
 import { measureBrowserRuntimeTree } from "./browser-runtime-tree.js";
 import { selectBrowserRuntimeSourceTarget } from "./browser-runtime-source-lock.js";
 import { verifyBrowserRuntimeSourceReview } from "./browser-runtime-source-review.js";
-import { verifyBrowserRuntimeBuildAttestation } from "./browser-runtime-build-attestation.js";
+import { verifyBrowserRuntimeProvenance } from "./browser-upstream-artifact.js";
 
 export interface AssembleBrowserRuntimeReleaseInput {
   destination: string;
@@ -46,7 +46,7 @@ export async function assembleBrowserRuntimeRelease(
     sourceReview: input.sourceReview,
     authority: input.sourceAuthority,
   });
-  const built = verifyBrowserRuntimeBuildAttestation({
+  const built = verifyBrowserRuntimeProvenance({
     sourceLock: reviewed.lock,
     attestation: input.buildAttestation,
     platform: input.platform,

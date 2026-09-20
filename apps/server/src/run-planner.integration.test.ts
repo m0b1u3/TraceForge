@@ -79,6 +79,16 @@ afterEach(() => {
 });
 
 describe("independent Run Planner", () => {
+  it.each(["known-work", "work:known-work"])("does not accept a Work identity as evidence: %s", async ref => {
+    const f = setup([{ action: "plan", rationale: "Follow up", proposals: [{ kind: "research", title: "Follow up",
+      objective: "Assess a second independent observation", priority: 50, requiredCapabilities: [], hypothesisIds: [],
+      evidenceRefs: [ref], maxAttempts: 1 }], cancellations: [], reprioritizations: [] }]);
+    f.runtime.execute({ runId: "run_1", commandId: "known", expectedRevision: 1,
+      command: { type: "propose_work", proposal: { id: "known-work", kind: "research", title: "First",
+        objective: "Assess first observation", idempotencyKey: "first" }, at } });
+    await expect(f.supervisor.tick()).rejects.toThrow("unknown Evidence");
+    expect(f.runtime.load("run_1")!.workItems).toHaveLength(1);
+  });
   it.each(["queued","blocked"])("rejects a renamed duplicate direction while original Work is %s",async(status)=>{
     const f=setup([{action:"plan",rationale:"Duplicate",proposals:[{kind:"research",title:"Different label",objective:"Inspect   first resource",priority:50,requiredCapabilities:[],hypothesisIds:[],evidenceRefs:[],maxAttempts:1}],cancellations:[],reprioritizations:[]}]);
     const command=(command:Parameters<typeof f.runtime.execute>[0]["command"])=>f.runtime.execute({runId:"run_1",commandId:`direction:${f.runtime.load("run_1")!.revision}`,expectedRevision:f.runtime.load("run_1")!.revision,command});

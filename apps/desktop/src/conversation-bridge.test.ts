@@ -4,6 +4,14 @@ import { createConversationBridge, validateConversationRequest } from "./convers
 const origin = "http://127.0.0.1:41234";
 const sender = { webContentsId: 7, mainFrame: true, url: `${origin}/` };
 const input = { path: "/api/desktop/conversations", method: "GET" };
+it("allows only typed owned browser controls and rejects code or authority injection", () => {
+  const path = "/api/desktop/conversations/first/execution/run/browser";
+  expect(validateConversationRequest({ path, method: "GET" }).path).toBe(path);
+  const body = { operation: "takeover", sessionId: "session", commandId: "takeover" };
+  expect(validateConversationRequest({ path, method: "POST", body: JSON.stringify(body) }).method).toBe("POST");
+  for (const extra of [{ caseId: "other" }, { evaluate: "code" }, { operation: "open" }])
+    expect(() => validateConversationRequest({ path, method: "POST", body: JSON.stringify({ ...body, ...extra }) })).toThrow();
+});
 it("accepts opaque file references but never exposes the host import endpoint or file paths",()=>{
   const path="/api/desktop/conversations/first/messages";
   const attachment={kind:"reference",id:"40f721bd-7662-4cb0-8f7d-27e99d4cce0e",name:"book.pdf"};

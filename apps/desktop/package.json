@@ -20,6 +20,7 @@
     "dist:linux": "node ../../scripts/desktop-release-unavailable.mjs"
   },
   "dependencies": {
+    "@traceforge/browser-runtime": "workspace:*",
     "@traceforge/shared": "workspace:*",
     "@traceforge/server": "workspace:*"
   },

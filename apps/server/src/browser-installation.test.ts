@@ -30,6 +30,13 @@ it("rejects incomplete installation identities at assembly", () => {
   expect(() => createInstalledBrowserDeployment({ ...f.config, releaseDirectory: "relative" }, f.artifacts)).toThrow("absolute");
   expect(() => createInstalledBrowserDeployment({ ...f.config, nodeSha256: "" }, f.artifacts)).toThrow("measured");
 });
+it("does not expose a general unrestricted launcher or accept an unprepared Chromium launch", async () => {
+  const f = fixture();
+  expect(createInstalledBrowserDeployment(f.config, f.artifacts).chromiumProcess).toBeUndefined();
+  const deployment = createInstalledBrowserDeployment({ ...f.config, isolation: "chromium" }, f.artifacts);
+  await expect(deployment.chromiumProcess!({ isolation: "chromium" } as any, "forged")).rejects.toThrow("not prepared");
+  expect(() => createInstalledBrowserDeployment({ ...f.config, isolation: "none" } as any, f.artifacts)).toThrow();
+});
 it("loads only an explicit bounded strict host configuration", async () => {
   const f = fixture(), path = join(f.config.scratchDirectory, "installation.json");
   writeFileSync(path, JSON.stringify(f.config)); expect(await loadBrowserInstallation(path)).toEqual(f.config);

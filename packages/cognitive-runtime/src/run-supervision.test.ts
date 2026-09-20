@@ -41,10 +41,23 @@ function definition(): ScenarioDefinition {
 }
 
 describe("package-owned Run decision supervision", () => {
+  it("keeps exact evidence reference choices outside lossy prose compaction", async () => {
+    const planner = new StructuredRunPlannerModel({ extractJson: async request => {
+      const input = JSON.parse(request.user);
+      expect(input.referenceCatalog).toEqual({ evidenceRefs: ["first_scope"] });
+      return { action: "wait", rationale: "No evidence yet" };
+    } }, undefined, undefined, undefined, undefined, undefined, {
+      async prepare() { return { context: { referenceCatalog: { evidenceRefs: ["work:invented"] } }, manifest: {} }; },
+    });
+    await planner.evaluate({ contextId: "compacted_planner", run: run(), definition: definition(), graph: graph(),
+      recentEvents: [], maximumGraphNodes: 10, maximumRunItems: 10 });
+  });
   it("builds and parses Planner and Observer model evaluations without Server adapters", async () => {
     const requests: string[] = [];
     const planner = new StructuredRunPlannerModel({ extractJson: async (request) => {
       requests.push(request.user);
+      expect(JSON.parse(request.user).referenceCatalog).toEqual({ evidenceRefs: ["first_scope"] });
+      expect(request.system).toContain("Work IDs, work: prefixes, result summaries and event IDs are not evidence references");
       return { action: "wait", rationale: "No state change is justified" };
     } });
     const observer = new StructuredRunObserverModel({ extractJson: async (request) => {

@@ -7,6 +7,15 @@ import type { DesktopReply } from "@traceforge/shared/desktop-replies";
 
 afterEach(()=>{vi.useRealTimers();document.body.replaceChildren();});
 const row:DesktopReply={conversationId:"conversation",messageCommandId:"message",revision:1,state:"streaming",text:"Saved partial",createdAt:"2026-09-08T00:00:00.000Z",updatedAt:"2026-09-08T00:00:00.000Z",contextMessages:1,contextTruncated:false,error:null};
+it("keeps failed tool results visible even when the model claims completion",async()=>{
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
+  const node=document.createElement("div"),root=createRoot(node);
+  try{
+    await act(async()=>root.render(React.createElement(ConversationReply,{bridge:{protocolVersion:1,request:vi.fn()},conversationId:"conversation",messageId:"message",ready:true,otherActive:false,refresh(){},reply:{...row,state:"completed",text:"已记住",toolActivity:[{ordinal:1,tool:"memory_update",outcome:"failed",input:"{}",output:'{"error":"memory_revision_conflict"}'}]}})));
+    expect(node.textContent).toContain("memory_update · 未成功");
+    expect(node.textContent).toContain("助手文字不代表该操作已完成");
+  }finally{act(()=>root.unmount());}
+});
 it("shows actual historical read activity without a separate review mode", async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
   const node=document.createElement("div"),root=createRoot(node);

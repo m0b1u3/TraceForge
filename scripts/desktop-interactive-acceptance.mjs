@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { register } from "../apps/server/dist/development-loader.js";
 register();
-const [mode,source]=process.argv.slice(2);
+const [mode,source,fixtureFlag]=process.argv.slice(2);
+if(fixtureFlag&&fixtureFlag!=="--with-fixtures")throw new Error("Unknown acceptance option");
 if(!["--config-directory","--restore"].includes(mode)||!source)throw new Error("Explicit configuration directory or isolated restore directory required");
 let root;
 if(mode==="--restore"){
@@ -20,5 +21,10 @@ if(mode==="--restore"){
   }
 }
 app.setPath("userData",root);
+if(fixtureFlag){
+  const fixtures=await import("./desktop-acceptance-fixtures.mjs");
+  await fixtures.installAcceptanceFixtures(root);
+  const close=await fixtures.startAcceptanceMcp(root);app.on("will-quit",close);
+}
 console.log(JSON.stringify({event:"isolated_desktop",root,restored:mode==="--restore"}));
 await import("../apps/desktop/dist/main.js");

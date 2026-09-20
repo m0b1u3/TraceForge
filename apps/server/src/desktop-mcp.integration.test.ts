@@ -4,7 +4,26 @@ import { foundationHost, eventually, type FoundationHost } from "./test-fixtures
 import { contextPackage, contextBinding, contextText } from "./test-fixtures/context-package.js";
 import type { BrokeredHttpTransport } from "@traceforge/execution-node";
 import { fixtureMcpNode } from "./test-fixtures/mcp-node.js";
+import { DesktopMcpControl } from "./desktop-mcp.js";
 const cleanup: Array<()=>Promise<void>>=[];
+it("keeps the previously active revision when replacement activation fails",async()=>{
+  const {h,f,secrets}=await setup();await enable(h);await h.start();
+  await eventually(async()=>!!(await h.state()).workItems[0]?.pendingApproval);
+  const control=new DesktopMcpControl(h.sqlite,new ScenarioPackageRegistry([contextPackage(["fixture.read","context.read"])]),()=>null,{transport:f.transport,secrets:{async read(ref){return secrets.get(ref);},async write(ref,value){secrets.set(ref,value);}}});
+  control.attach({async activateSource(){
+    expect(control.snapshot().connections[0].effective?.revision).toBe(1);
+    await h.request("/api/scenarios/runs",{commandId:"during",runId:"during-replacement",caseId:"case",goal:"Neutral pending review",scopeRef:"run:scope",scenarioKind:"neutral",definitionVersion:1});
+    throw new Error("injected activation failure");
+  },async deactivateSource(){}} as Parameters<DesktopMcpControl["attach"]>[0],()=>{},()=>{});
+  await control.operate({operation:"save",expectedRevision:1,connection:{...connection,name:"Replacement"}});
+  const tested=await control.operate({operation:"test",id:"first",expectedRevision:2,confirmed:true});
+  await expect(control.operate({operation:"activate",id:"first",expectedRevision:2,catalogDigest:tested.connections[0].catalog!.digest,tools:[{name:"observe",enabled:true,resources:[]}],confirmed:true})).rejects.toThrow();
+  expect(control.snapshot().connections[0].effective?.revision).toBe(1);
+  expect(control.allowed("run","desktop.mcp.first.r1")).toBe(true);
+  expect(control.allowed("run","desktop.mcp.first.r2")).toBe(false);
+  expect(control.allowed("during-replacement","desktop.mcp.first.r1")).toBe(true);
+  expect(control.sources().map(source=>source.source)).toEqual(["desktop.mcp.first.r1"]);
+});
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();});
 const connection={id:"first",name:"First connection",transport:"streamable-http",endpoint:"https://mcp.example/mcp",package:contextBinding,authorizationAction:"fixture.read",capability:"fixture.read"};
 function fixtureTransport() {

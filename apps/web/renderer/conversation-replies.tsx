@@ -85,12 +85,13 @@ export function ConversationReply({ bridge, conversationId, messageId, reply, re
     <div className="message-body"><div className="sender">TraceForge <span className="run-state" role="status">{reply.state === "streaming" ? phases[reply.phase ?? "generating"] : states[reply.state]}</span></div>
       {reply.reasoning && <ReasoningText text={reply.reasoning} active={reply.state === "streaming" && !reply.text} truncated={reply.reasoningTruncated} />}
       {reply.toolActivity?.map(tool => <details className="execution-trace-entry" key={tool.ordinal}>
-        <summary>{tool.tool} · 已返回</summary><div className="trace-content">
+        <summary>{tool.tool} · {tool.outcome === "failed" ? "未成功" : "已返回"}</summary><div className="trace-content">
           <small>调用参数</small><pre tabIndex={0}>{tool.input}</pre>
           <small>返回内容 · 有界预览</small><pre tabIndex={0}>{tool.output}</pre>
           {preview&&<button onClick={()=>preview.open({kind:"text",conversationId,title:`${tool.tool} · 输出`,sourceId:`${messageId}:${tool.ordinal}`,text:tool.output})}>在侧栏查看输出</button>}
         </div>
       </details>)}
+      {reply.toolActivity?.some(tool => tool.outcome === "failed") && <p className="inline-warning">本轮有工具未成功，请展开核对返回内容；助手文字不代表该操作已完成。</p>}
       {reply.text ? <MessageMarkdown text={reply.text} /> : <p className="local-receipt">{reply.state === "streaming" ? reply.phase === "compacting" ? "正在整理较早的对话，原文仍保留。你可以随时停止。" : reply.phase === "recalling" ? "正在从已保存的对话中查找细节，不会执行外部操作。" : reply.phase === "recovering" ? "模型未接受刚才的上下文，正在缩减历史后重试一次。" : "正在等待模型输出…" : "没有收到可保留的正文。"}</p>}
       {reply.state !== "streaming" && reply.state !== "completed" && <p className="reply-explanation">{reply.error === "attachment_input" ? "附件未发送：请在模型设置确认对应输入能力，并检查文件格式；音频仅接通 Chat Completions。" : reply.error === "context_limit" ? "上下文仍超出模型可接受的范围。请检查模型窗口配置，或缩短本条消息后继续。" : reply.error === "recall_limit" ? "本次对话回读已达到上限，请缩小要查找的细节范围后继续。" : reply.error === "output_limit" ? "回复达到长度上限。" : reply.error === "timeout" ? "模型响应超时。" : reply.state === "cancelled" ? "你已停止这次回复。" : "这次回复没有正常完成。"}已收到的文字仍保留；不会自动续写或重试。需要继续时，请发送一条新消息。</p>}
       {!!reply.originalReadCount && <small className="local-receipt">本次已查阅历史原文 {reply.originalReadCount} 段</small>}

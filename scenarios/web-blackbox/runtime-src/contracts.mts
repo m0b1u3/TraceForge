@@ -55,8 +55,12 @@ export const tools = Object.freeze([
   },
   {
     name: "web.browser.inspect", source: SOURCE, version: PACKAGE_VERSION, priority: 85,
-    description: "Observe one page through the reviewed local Browser Runtime and HTTP Broker; unavailable without a trusted deployment, never falls back to direct networking. Observations are not verified findings.",
-    inputSchema: { type: "object", additionalProperties: false, required: ["url"], properties: { url: { type: "string" }, screenshot: { type: "boolean" } } },
+    description: "Use the reviewed local Browser Runtime and HTTP Broker. inspect observes then closes; open keeps the same Work-owned session for observe/act/close and desktop human takeover. Use returned sessionId and fresh DOM element/view identities. When manual_control is returned, wait for the user; do not open a replacement. No direct-network fallback; observations are not verified findings.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {
+      operation: { enum: ["inspect", "open", "observe", "act", "close"] }, url: { type: "string" }, screenshot: { type: "boolean" },
+      sessionId: { type: "string" }, pageId: { type: "string" }, durationMs: { type: "integer", minimum: 1000, maximum: 900000 },
+      action: { type: "object", description: "A typed navigate(view,url), click(element), fill(element,text), or press(element,key) action with a unique id and the current observed view/element." },
+    } },
     providedCapabilities: ["web.browser.inspect"], dependencyCapabilities: [],
     permissionRequirements: { network: "brokered", process: "sandboxed" }, risk: "bounded_write", timeoutMs: 45000,
   },

@@ -4,6 +4,8 @@ import type { ConversationTransport } from "./conversation-client";
 export interface DesktopConversations {
   protocolVersion: 1;
   selectAttachments?():Promise<unknown>;
+  presentBrowser?(input: { hide: true } | { path: string; sessionId: string; takeoverId: string; focus?: boolean;
+    bounds: { x: number; y: number; width: number; height: number } }): Promise<{ url?: string; title?: string; hidden?: boolean }>;
   request(input: { path: string; method: "GET" | "POST"; body?: string }): Promise<{ status: number; body: unknown }>;
 }
 export function desktopConversationTransport(bridge: DesktopConversations): ConversationTransport {

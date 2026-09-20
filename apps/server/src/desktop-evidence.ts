@@ -26,7 +26,8 @@ export class SqliteDesktopBrowserEvidenceReader implements DesktopEvidenceReader
     if (!Buffer.isBuffer(body) || body.length > EVIDENCE_MAX_BYTES || body.length !== row.byte_size
       || `sha256:${createHash("sha256").update(body).digest("hex")}` !== row.digest || `sha256:${row.content_digest}` !== row.digest)
       throw new Error("Evidence integrity failure");
-    if (request.expectedDigest && request.expectedDigest !== row.digest) throw new Error("Evidence identity changed");
+    if ((request.offset > 0 && !request.expectedDigest) || (request.expectedDigest && request.expectedDigest !== row.digest))
+      throw new Error("Evidence identity changed or missing");
     if (request.offset > body.length) throw new Error("Evidence offset out of range");
     const end = Math.min(body.length, request.offset + EVIDENCE_PAGE_BYTES);
     return { runId: request.runId, ref: request.ref, artifactId: row.id, summary: row.summary, kind: row.kind,

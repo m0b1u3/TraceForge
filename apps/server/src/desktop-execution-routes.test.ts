@@ -51,6 +51,44 @@ it("conversation task proposal joins the governed authorization and Run routes",
   expect(catalog.runs).toHaveLength(1);expect(catalog.runs[0].messageCommandId).toBe("message");
 });
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
+it("reads and supplements an older task beyond the catalog window without exposing another conversation", async () => {
+  const f = await fixture();
+  await f.call(`${f.base}/execution/authorize`, f.authorization);
+  await f.call("/api/scenarios/workers", { id: "worker", roles: ["researcher"], capabilities: Object.values(WEB_BLACKBOX_CAPABILITIES), maxConcurrentWork: 1 });
+  const ids: string[] = [];
+  for (let index = 0; index < 21; index++) {
+    const messageCommandId = `request-${index}`;
+    await f.call(`${f.base}/messages`, { commandId: messageCommandId, text: "Review a neutral local observation" });
+    const started = await f.call(`${f.base}/execution`, { ...f.command, commandId: `dispatch-${index}`, messageCommandId });
+    expect([200, 201]).toContain(started.statusCode);
+    ids.push(started.json().runId);
+  }
+  const catalog = (await f.call(`${f.base}/execution`)).json();
+  expect(catalog.truncated).toBe(true); expect(catalog.runs).toHaveLength(20);
+  const runId = ids.find(value => !catalog.runs.some((run: any) => run.runId === value))!;
+  expect(runId).toBeTruthy();
+  const state = (await f.call(`/api/scenarios/runs/${runId}`)).json();
+  const proposed = await f.call(`/api/scenarios/runs/${runId}/work`, { commandId: "older-work", expectedRevision: state.revision,
+    proposal: { id: "work", kind: "research", title: "Neutral review", objective: "Review existing observations", idempotencyKey: "older-effect" } });
+  expect(proposed.statusCode, proposed.body).toBe(200);
+  await f.call(`${f.base}/messages`, { commandId: "supplement", text: "Keep this additional observation unverified." });
+  const request = async (path: string, body?: Record<string, unknown>) => {
+    const result = await f.call(path, body); return { status: result.statusCode, body: result.json() };
+  };
+  const execute = (name: string, input: unknown) => createConversationTaskPort(f.sql, request).execute(
+    f.conversation.id, "supplement", { id: "call", name, input }, new AbortController().signal);
+  const read = await execute("task_read", { runId }) as any;
+  expect(JSON.parse(read.content).runId).toBe(runId);
+  expect(await execute("task_input", { runId, workId: "work" })).toMatchObject({ state: "input_saved", resumed: false });
+  // A fresh adapter must return the saved receipt, not apply the instruction twice.
+  expect(await execute("task_input", { runId, workId: "work" })).toMatchObject({ state: "input_saved" });
+  const after = JSON.parse((await execute("task_read", { runId }) as any).content);
+  expect(after.directives.filter((item: any) => item.instruction === "Keep this additional observation unverified.")).toHaveLength(1);
+  const other = (await f.call("/api/desktop/conversations", { commandId: "foreign", title: "Other" })).json();
+  expect((await f.call(`/api/desktop/conversations/${other.id}/execution?runId=${runId}`)).statusCode).toBe(404);
+  expect((await f.call(`${f.base}/execution?runId=missing`)).statusCode).toBe(404);
+  expect((await f.call(`${f.base}/execution?runId=../invalid`)).statusCode).toBe(400);
+});
 async function fixture(continueWork?: DesktopExecutionPort["continueWork"]) {
   const app = Fastify(), db = createDb(":memory:"), sql = getSqliteClient(db);
   const projectRoot = realpathSync(mkdtempSync(join(tmpdir(),"traceforge-conversation-workspace-")));

@@ -5,6 +5,7 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
+    "./desktop-browser": "./src/desktop-browser.ts",
     "./message-attachments": "./src/message-attachments.ts",
     "./model-context": "./src/model-context.ts",
     "./desktop-approval-preference": "./src/desktop-approval-preference.ts",

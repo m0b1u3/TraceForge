@@ -30,6 +30,9 @@ export interface ChromiumCdpPort {
 }
 
 export interface ChromiumCdpAdapterOptions {
+  /** Page-scoped embedder: never discover or attach other application targets. */
+  embeddedTarget?: { sessionId: string; targetId: string };
+  isolation?: "chromium";
   cdp: ChromiumCdpPort;
   identity: BrowserControllerIdentity;
   maximumConcurrentRequests?: number;
@@ -62,6 +65,8 @@ export class ChromiumCdpAdapter {
   private unsubscribeFailure: (() => void) | undefined;
   private closed = false;
   private fatalError: Error | undefined;
+  private readonly readyPages = new Set<string>();
+  private readonly pageWaiters = new Set<() => void>();
 
   constructor(private readonly options: ChromiumCdpAdapterOptions) {
     this.maximumConcurrentRequests = options.maximumConcurrentRequests ?? 16;
@@ -72,9 +77,9 @@ export class ChromiumCdpAdapter {
     if (![this.maximumConcurrentRequests, this.responseLimitBytes, this.requestTimeoutMs]
       .every((value) => Number.isSafeInteger(value) && value > 0)) throw new Error("Chromium CDP Adapter limits are invalid");
     this.proof = {
-      controlTransport: "pipe",
+      controlTransport: options.embeddedTarget ? "electron_debugger" : "pipe",
       requestInterception: "before_network",
-      browserDirectNetwork: "os_denied",
+      browserDirectNetwork: options.isolation === "chromium" ? "application_intercepted" : "os_denied",
       serviceWorkers: "disabled",
       downloads: "intercepted",
       webSockets: "intercepted_or_blocked",
@@ -86,6 +91,14 @@ export class ChromiumCdpAdapter {
     if (this.unsubscribeEvent) throw new Error("Chromium CDP Adapter is already initialized");
     this.unsubscribeEvent = this.options.cdp.onEvent((event) => this.schedule(event));
     this.unsubscribeFailure = this.options.cdp.onFailure((error) => this.fail(error));
+    if (this.options.embeddedTarget) {
+      await this.options.cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, this.options.embeddedTarget.sessionId);
+      await this.attachTarget({ method: "Target.attachedToTarget", params: {
+        sessionId: this.options.embeddedTarget.sessionId,
+        targetInfo: { targetId: this.options.embeddedTarget.targetId, type: "page" },
+      } });
+      return;
+    }
     await this.options.cdp.send("Target.setDiscoverTargets", { discover: true });
     await this.options.cdp.send("Target.setAutoAttach", {
       autoAttach: true,
@@ -115,6 +128,7 @@ export class ChromiumCdpAdapter {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    for (const notify of this.pageWaiters) notify();
     this.intercept = undefined;
     this.unsubscribeEvent?.();
     this.unsubscribeFailure?.();
@@ -122,9 +136,23 @@ export class ChromiumCdpAdapter {
     await this.options.cdp.close();
   }
 
-  observe(request: BrowserObservationRequest): Promise<BrowserObservationPayload> {
+  async observe(request: BrowserObservationRequest): Promise<BrowserObservationPayload> {
     if (this.closed || !this.intercept) return Promise.reject(new Error("Chromium CDP Adapter is not active"));
+    if (!request.pageId) await this.waitForPage();
     return this.pages.observe(request);
+  }
+
+  private async waitForPage(): Promise<void> {
+    if (this.readyPages.size) return;
+    await new Promise<void>((resolve, reject) => {
+      const finish = () => {
+        if (!this.closed && !this.fatalError && !this.readyPages.size) return;
+        clearTimeout(timer); this.pageWaiters.delete(finish);
+        if (this.closed || this.fatalError) reject(this.fatalError ?? new Error("Browser closed before page readiness")); else resolve();
+      };
+      const timer = setTimeout(() => { this.pageWaiters.delete(finish); reject(new Error("Browser page readiness timed out")); }, this.requestTimeoutMs);
+      this.pageWaiters.add(finish); finish();
+    });
   }
 
   act(action: BrowserControlAction): Promise<BrowserControlResult> {
@@ -167,6 +195,7 @@ export class ChromiumCdpAdapter {
     if (event.method === "Target.detachedFromTarget") {
       const sessionId = text(event.params.sessionId, "CDP detached session id");
       this.targets.delete(sessionId);
+      this.readyPages.delete(sessionId);
       this.pages.removeTarget(sessionId);
       return;
     }
@@ -196,6 +225,8 @@ export class ChromiumCdpAdapter {
       return;
     }
     this.targets.set(sessionId, binding);
+    if (this.options.embeddedTarget && sessionId !== this.options.embeddedTarget.sessionId)
+      await this.options.cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId);
     await this.options.cdp.send("Fetch.enable", { patterns: [
       { urlPattern: "http://*/*", requestStage: "Request" },
       { urlPattern: "https://*/*", requestStage: "Request" },
@@ -203,6 +234,7 @@ export class ChromiumCdpAdapter {
     await this.options.cdp.send("Network.enable", { maxTotalBufferSize: 0, maxResourceBufferSize: 0 }, sessionId);
     this.pages.registerTarget(sessionId, binding.targetId, binding.type);
     await this.options.cdp.send("Runtime.runIfWaitingForDebugger", {}, sessionId);
+    if (binding.type === "page") { this.readyPages.add(sessionId); for (const notify of this.pageWaiters) notify(); }
   }
 
   private async requestPaused(event: ChromiumCdpEvent): Promise<void> {
@@ -290,6 +322,7 @@ export class ChromiumCdpAdapter {
   private fail(error: Error): void {
     if (this.closed) return;
     this.fatalError ??= error;
+    for (const notify of this.pageWaiters) notify();
     this.failure?.(error);
   }
 }

@@ -15,7 +15,7 @@ export const DesktopReplySchema = z.object({
   originalReadCount: z.number().int().min(0).max(48).optional(),
   reasoning: z.string().max(16000).optional(),
   reasoningTruncated: z.boolean().optional(),
-  toolActivity: z.array(z.object({ ordinal: z.number().int().positive(), tool: z.string().max(100), input: z.string().max(2000), output: z.string().max(2000) }).strict()).max(6).optional(),
+  toolActivity: z.array(z.object({ ordinal: z.number().int().positive(), tool: z.string().max(100), outcome: z.enum(["returned", "failed"]).optional(), input: z.string().max(2000), output: z.string().max(2000) }).strict()).max(6).optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   contextMessages: z.number().int().min(1).max(20000),

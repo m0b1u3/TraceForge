@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { permissionProfileFingerprint, resourceLimitsFingerprint, type ExecutionNode, type ProcessDescriptor, type StartProcessRequest } from "@traceforge/execution-node";
@@ -10,6 +12,8 @@ import { createScenarioBrowserHandler, type ScenarioBrowserDeployment } from "./
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteBrowserArtifactContent } from "./browser-artifact-content.js";
 import { SqliteScenarioArtifactStore } from "./scenario-runtime-state.js";
+import { DesktopBrowserSessions } from "./desktop-browser-sessions.js";
+import { ChromiumPipeTransport, ChromiumCdpAdapter, sha256File } from "@traceforge/browser-runtime";
 
 const owner: ToolExecutionContext = { caseId: "case", runId: "run", workId: "work", workerId: "worker", scopeRef: "scope", leaseId: "lease",
   leaseExpiresAt: "2099-01-01T00:00:00.000Z", idempotencyKey: "first-invocation", effectivePermissions: { version: 1, platform: "linux",
@@ -52,6 +56,10 @@ function fixture() {
     },
   } as BrowserControllerConnection;
   const controller: BrowserControllerPort = { attach: async () => connection };
+  connection.beginTakeover = async () => { view.generation++; return { takeoverId: "manual", generation: view.generation, state: "manual_control", pages: [{ ...view }] }; };
+  connection.resumeTakeover = async () => { view.generation++; return { takeoverId: "manual", generation: view.generation, state: "agent_control", pages: [{ ...view }] }; };
+  connection.observeManual = async (_id, request) => connection.observe(request);
+  connection.actManual = async (_id, action) => connection.act(action);
   const artifacts = { recordObservation: vi.fn(async value => ({ ref: `artifact:${value.sha256}` })), recordDownload: vi.fn(async () => ({ ref: "artifact:download" })) } satisfies ScenarioBrowserDeployment["artifacts"];
   const deployment: ScenarioBrowserDeployment = { artifacts, prepare: async context => ({ controlTransport: "pipe", controllerIdentity: identity,
     expectedSandboxBackend: "fixture-native", expectedBackendMeasurement: "c".repeat(64), executable: "/fixture/controller", arguments: [], workingDirectory: "/fixture",
@@ -64,6 +72,102 @@ function fixture() {
   return { handler, context, node, capacity, deployment, controller, startProcess, requestHttp, terminateProcess, finish, artifacts, revoke: () => { current = false; } };
 }
 describe("Scenario Browser host assembly", () => {
+  it("keeps capacity ownership and broker receipts for explicit Chromium-only deployment", async () => {
+    const f = fixture(), original = f.deployment.prepare;
+    f.deployment.prepare = async (...args) => ({ ...await original(...args), isolation: "chromium" });
+    const terminate = vi.fn(async () => undefined);
+    f.deployment.chromiumProcess = async () => {
+      const connection = await f.controller.attach({} as any);
+      connection.proof.browserDirectNetwork = "application_intercepted";
+      return { processId: "owned:fixture", connection, terminate };
+    };
+    const result = await f.handler.execute(input, owner, new AbortController().signal);
+    expect(f.startProcess).not.toHaveBeenCalled(); expect(f.terminateProcess).not.toHaveBeenCalled();
+    expect(f.capacity.acquire).toHaveBeenCalledOnce(); expect(f.requestHttp).toHaveBeenCalledOnce();
+    expect(terminate).toHaveBeenCalledOnce(); expect(f.finish).toHaveBeenCalledWith(true);
+    expect((result.output as any).network[0].receiptRef).toBeTruthy();
+  });
+  it.skipIf(!process.env.TRACEFORGE_REAL_CHROMIUM_PATH)("retains actual Chromium page state across host calls and human takeover (simulated execution proof)", async () => {
+    const f = fixture(), sqlite = getSqliteClient(createDb(":memory:")), sessions = new DesktopBrowserSessions(sqlite);
+    const directory = await mkdtemp(resolve(tmpdir(), "traceforge-browser-handoff-"));
+    const browserExecutable = process.env.TRACEFORGE_REAL_CHROMIUM_PATH!;
+    const measured = { ...identity, browserVersion: process.env.TRACEFORGE_REAL_CHROMIUM_PRODUCT!, browserSha256: await sha256File(browserExecutable) };
+    let adapter: ChromiumCdpAdapter | undefined;
+    sqlite.prepare(`INSERT INTO scenario_event_streams VALUES ('run','case','fixture',1,NULL,NULL,NULL,'running','phase',1,'now','now')`).run();
+    sqlite.prepare(`INSERT INTO scenario_work_leases VALUES ('run','work','worker','lease',?,'now')`).run(owner.leaseExpiresAt);
+    const store = new SqliteBrowserArtifactContent(sqlite), context = { ...f.context, artifacts: new SqliteScenarioArtifactStore(sqlite) };
+    f.deployment.persistArtifact = store.persistArtifact.bind(store); f.deployment.readContent = store.readBound.bind(store);
+    const prepare = f.deployment.prepare;
+    f.deployment.prepare = async (...args) => ({ ...await prepare(...args), controllerIdentity: measured, timeoutMs: 60000 });
+    const http = f.requestHttp.getMockImplementation()!;
+    f.requestHttp.mockImplementation(async request => {
+      const result = await http(request);
+      const body = Buffer.from('<!doctype html><html><body><input aria-label="Fixture input"><button onclick="sessionStorage.setItem(\'state\',\'retained\');document.getElementById(\'result\').textContent=\'State retained\'">Apply</button><p id="result">Ready</p></body></html>');
+      return { ...result, headers: [{ name: "content-type", value: "text/html" }], bodyBase64: body.toString("base64"), responseBytes: body.length,
+        receipt: { ...result.receipt, responseBytes: body.length } };
+    });
+    const controller: BrowserControllerPort = { attach: async () => {
+      const cdp = await ChromiumPipeTransport.launch({ browserExecutable, workingDirectory: directory, userDataDirectory: resolve(directory, "profile"), expectedIdentity: measured });
+      adapter = new ChromiumCdpAdapter({ cdp, identity: measured }); await adapter.initialize();
+      return { proof: adapter.proof, start: (intercept, failed) => adapter!.activate(intercept, failed), close: () => adapter!.close(),
+        observe: request => adapter!.observe(request), act: action => adapter!.act(action), beginTakeover: () => adapter!.beginTakeover(),
+        resumeTakeover: id => adapter!.resumeTakeover(id), observeManual: (id, request) => adapter!.observeManual(id, request), actManual: (id, action) => adapter!.actManual(id, action) };
+    } };
+    const handler = createScenarioBrowserHandler({ id: "fixture", version: "1" }, context, f.node, f.capacity, f.deployment, () => controller, sessions);
+    try {
+      const opened = await handler.execute({ ...input, operation: "open", screenshot: false }, owner, new AbortController().signal);
+      const sessionId = (opened.output as any).sessionId;
+      const takeover = await sessions.command("case", "run", { operation: "takeover", sessionId, commandId: "takeover" }) as any;
+      let observed: any;
+      for (let n = 0; n < 30; n++) {
+        observed = await sessions.command("case", "run", { operation: "observe", sessionId, commandId: `read:${n}`, takeoverId: takeover.takeoverId });
+        if (observed.document.nodes.some((node: any) => node.name === "Apply")) break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      const button = observed.document.nodes.find((node: any) => node.name === "Apply"); expect(button?.element).toBeDefined();
+      await sessions.command("case", "run", { operation: "act", sessionId, commandId: "apply", takeoverId: takeover.takeoverId,
+        action: { id: "apply", kind: "click", element: button.element } });
+      await sessions.command("case", "run", { operation: "resume", sessionId, commandId: "resume", takeoverId: takeover.takeoverId });
+      const next = await handler.execute({ operation: "observe", sessionId, authorizationAction: input.authorizationAction }, { ...owner, idempotencyKey: "next" }, new AbortController().signal);
+      const artifact = context.artifacts.list({ packageId: "fixture", packageVersion: "1", caseId: "case", runId: "run", limit: 100 }).find(a => a.contentRef === (next.output as any).artifactRef)!;
+      const body = store.readBound(artifact.contentRef, owner, artifact.id)!;
+      expect(body.toString()).toContain("State retained"); expect(f.startProcess).toHaveBeenCalledTimes(1);
+      await handler.execute({ operation: "close", sessionId, authorizationAction: input.authorizationAction }, owner, new AbortController().signal);
+      expect(f.finish).toHaveBeenCalledWith(true);
+    } finally { await sessions.shutdown(); await adapter?.close(); sqlite.close(); await rm(directory, { recursive: true, force: true }); }
+  }, 60000);
+  it("retains one browser across calls, desktop takeover and return, then closes on ownership loss", async () => {
+    const f = fixture(), sqlite = getSqliteClient(createDb(":memory:")), sessions = new DesktopBrowserSessions(sqlite);
+    sqlite.prepare(`INSERT INTO scenario_event_streams VALUES ('run','case','fixture',1,NULL,NULL,NULL,'running','phase',1,'now','now')`).run();
+    sqlite.prepare(`INSERT INTO scenario_work_leases VALUES ('run','work','worker','lease',?,'now')`).run(owner.leaseExpiresAt);
+    const store = new SqliteBrowserArtifactContent(sqlite), context = { ...f.context, artifacts: new SqliteScenarioArtifactStore(sqlite) };
+    f.deployment.persistArtifact = store.persistArtifact.bind(store); f.deployment.readContent = store.readBound.bind(store);
+    const handler = createScenarioBrowserHandler({ id: "fixture", version: "1" }, context, f.node, f.capacity, f.deployment, () => f.controller, sessions);
+    try {
+      const result = await handler.execute({ ...input, operation: "open" }, owner, new AbortController().signal);
+      const sessionId = (result.output as any).sessionId;
+      expect(f.terminateProcess).not.toHaveBeenCalled();
+      expect(sessions.list("case", "run")).toHaveLength(1);
+      const takeover = { operation: "takeover" as const, sessionId, commandId: "takeover" };
+      await sessions.command("case", "run", takeover);
+      await sessions.command("case", "run", takeover);
+      expect(sessions.list("case", "run")[0].status).toBe("manual_control");
+      const manual = await sessions.command("case", "run", { operation: "observe", sessionId, commandId: "read", takeoverId: "manual" }) as any;
+      expect(manual.document.sensitiveValues).toBe("omitted");
+      const waiting = await handler.execute({ operation: "observe", sessionId, authorizationAction: input.authorizationAction }, { ...owner, idempotencyKey: "second" }, new AbortController().signal);
+      expect((waiting.output as any).status).toBe("manual_control");
+      await expect(sessions.command("other", "run", { ...takeover, commandId: "bad" })).rejects.toThrow("unavailable");
+      await expect(sessions.command("case", "run", { operation: "resume", sessionId, commandId: "stale", takeoverId: "wrong" })).rejects.toThrow();
+      await sessions.command("case", "run", { operation: "resume", sessionId, commandId: "resume", takeoverId: "manual" });
+      const next = await handler.execute({ operation: "observe", sessionId, authorizationAction: input.authorizationAction }, { ...owner, idempotencyKey: "third" }, new AbortController().signal);
+      expect((next.output as any).view.generation).toBe(3);
+      expect(f.startProcess).toHaveBeenCalledTimes(1);
+      expect(sqlite.prepare("SELECT state FROM desktop_browser_commands WHERE command_id='resume'").get()).toEqual({ state: "completed" });
+      sqlite.prepare("DELETE FROM scenario_work_leases WHERE run_id='run'").run();
+      await expect(handler.execute({ operation: "observe", sessionId, authorizationAction: input.authorizationAction }, owner, new AbortController().signal)).rejects.toThrow("revoked");
+      await sessions.shutdown(); expect(f.terminateProcess).toHaveBeenCalledTimes(1); expect(f.finish).toHaveBeenCalledWith(true);
+    } finally { await sessions.shutdown(); sqlite.close(); }
+  });
   it("keeps host authorization unchanged while narrowing the child scratch writes", async () => {
     const f = fixture(), original = f.deployment.prepare;
     const invocation = structuredClone(owner);

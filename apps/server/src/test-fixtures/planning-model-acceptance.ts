@@ -12,6 +12,7 @@ import {SqliteRunObserverStore} from "../run-observer.js";
  * Only idle wait/continue responses are scripted to bound external-model cost. */
 export async function runPlanningModelAcceptance(provider:Pick<LlmProvider,"extractJson">,options:{
   outputParent:string;mode:"external_model"|"simulated_harness_test";modelIdentity:{provider:string;name:string};
+  maximumModelCalls?:number|null;
 }) {
   await mkdir(options.outputParent,{recursive:true});const root=await mkdtemp(join(options.outputParent,"traceforge-planning-"));
   const report={root,mode:options.mode,model:options.modelIdentity,status:"failed",failure:null as string|null,
@@ -19,7 +20,8 @@ export async function runPlanningModelAcceptance(provider:Pick<LlmProvider,"extr
     calls:[] as Array<{role:string;stage:string;status:string;elapsedMs:number;totalTokens:number|null}>,
     limitations:["Idle wait/continue responses are scripted; initial planning, tool decisions, result-driven replanning and final acknowledgements use the supplied model",
       "Neutral local RPC fixture, not native sandbox certification or security investigation effectiveness",
-      "Eight logical model calls and a local 180-second deadline; provider internal retries and remote billing are not capped"]};
+      "A local 180-second deadline; provider internal retries and remote billing are not capped"],
+    maximumModelCalls:options.maximumModelCalls===undefined?8:options.maximumModelCalls};
   const token=`observed-${randomBytes(12).toString("hex")}`;
   const pkg=contextPackage(["fixture.read","tool.recall"]);
   pkg.definition.authorizationActions.push("tool.recall");
@@ -43,7 +45,7 @@ export async function runPlanningModelAcceptance(provider:Pick<LlmProvider,"extr
           report.scriptedIdleDecisions++;return {action:role==="planner"?"wait":"continue",rationale:"Await pending work"};
         }
         const stage=role==="worker"?c.work.title:works.length===0?"initial":works.length===1?"replan":"acknowledge";
-        if(report.calls.length>=8) {report.failure="model_call_limit";throw new Error(report.failure);}
+        if(report.maximumModelCalls!==null&&report.calls.length>=report.maximumModelCalls) {report.failure="model_call_limit";throw new Error(report.failure);}
         const call={role,stage,status:"running",elapsedMs:0,totalTokens:null as number|null};report.calls.push(call);
         const started=Date.now(),signal=AbortSignal.any([stop.signal,args.signal??stop.signal,AbortSignal.timeout(30000)]);
         let onAbort!:()=>void;const aborted=new Promise<never>((_,reject)=>{onAbort=()=>reject(new Error("model_deadline"));signal.addEventListener("abort",onAbort,{once:true});});

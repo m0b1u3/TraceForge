@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+export { launchOwnedChromium } from "./chromium-owned-process.js";
 import {
   permissionProfileFingerprint,
   resourceLimitsFingerprint,
@@ -29,7 +30,9 @@ export interface BrowserSessionOwner extends Omit<ExecutionAttribution, "actionI
 }
 
 export interface BrowserProcessConfiguration {
-  controlTransport: "pipe";
+  /** Host-selected only. Never inferred after an outer sandbox launch fails. */
+  isolation?: "chromium";
+  controlTransport: "pipe" | "electron_debugger";
   controllerIdentity: BrowserControllerIdentity;
   expectedSandboxBackend?: string;
   expectedBackendMeasurement?: string;
@@ -63,9 +66,9 @@ export interface InterceptedBrowserRequest {
 }
 
 export interface BrowserControllerProof {
-  controlTransport: "pipe";
+  controlTransport: "pipe" | "electron_debugger";
   requestInterception: "before_network";
-  browserDirectNetwork: "os_denied";
+  browserDirectNetwork: "os_denied" | "application_intercepted";
   serviceWorkers: "disabled";
   downloads: "intercepted";
   webSockets: "intercepted_or_blocked";
@@ -176,6 +179,7 @@ export interface BrowserNetworkRecord {
 export interface BrowserSessionSnapshot {
   id: string;
   processId: string;
+  isolation?: "chromium";
   owner: BrowserSessionOwner;
   status: "active" | "manual_control" | "frozen" | "closed";
   openedAt: string;
@@ -214,6 +218,10 @@ export interface BrowserSessionSnapshot {
 export interface BrokeredBrowserRuntimeOptions {
   executionNode: ExecutionNode;
   controller: BrowserControllerPort;
+  /** Browser-only lifecycle port; not a general unrestricted Execution Node. */
+  chromiumProcess?: (configuration: BrowserProcessConfiguration, sessionId: string) => Promise<{
+    processId: string; connection: BrowserControllerConnection; terminate(): Promise<void>;
+  }>;
   authorization: BrowserAuthorizationPort;
   artifacts?: BrowserArtifactPort;
   limits?: Partial<BrokeredBrowserLimits>;
@@ -234,7 +242,7 @@ const methodName = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
 interface ActiveSession {
   snapshot: BrowserSessionSnapshot;
-  access: ProcessAccess;
+  terminate(): Promise<void>;
   connection: BrowserControllerConnection;
   hostPermissions: EffectivePermissionProfile;
   fingerprints: Map<string, string>;
@@ -288,6 +296,15 @@ export class BrokeredBrowserRuntime {
     const hostPermissions = structuredClone(process.permissions);
     hostPermissions.network = "brokered";
     const attribution = this.attribution(owner, `browser-process:${sessionId}`);
+    let connection: BrowserControllerConnection | undefined;
+    let terminate: (() => Promise<void>) | undefined;
+    let processId: string;
+    try {
+    if (process.isolation === "chromium") {
+      if (!this.options.chromiumProcess) throw new Error("Chromium-only browser deployment is unavailable");
+      const owned = await this.options.chromiumProcess(process, sessionId);
+      connection = owned.connection; terminate = () => owned.terminate(); processId = owned.processId;
+    } else {
     const started = await this.options.executionNode.startProcess({
       requestId: `browser-process:${sessionId}`,
       attribution,
@@ -302,9 +319,14 @@ export class BrokeredBrowserRuntime {
       permissions: processPermissions,
     });
     const access = { processId: started.process.id, adoptionToken: started.adoptionToken };
-    let connection: BrowserControllerConnection | undefined;
-    try {
+    terminate = () => this.terminate(access, sessionId);
+    processId = started.process.id;
       this.assertProcessProof(started.process, processPermissions, process, attribution);
+      connection = await this.options.controller.attach(
+        { sessionId, process: structuredClone(started.process), access: structuredClone(access),
+          expectedIdentity: structuredClone(process.controllerIdentity) },
+      );
+    }
       const openedAt = this.now();
       const expiresAt = Math.min(
         Date.parse(openedAt) + this.limits.maximumSessionMs,
@@ -312,7 +334,8 @@ export class BrokeredBrowserRuntime {
       );
       const snapshot: BrowserSessionSnapshot = {
         id: sessionId,
-        processId: started.process.id,
+        processId,
+        ...(process.isolation ? { isolation: process.isolation } : {}),
         owner: structuredClone(owner),
         status: "active",
         openedAt,
@@ -328,14 +351,10 @@ export class BrokeredBrowserRuntime {
         controlTransitions: [],
         records: [],
       };
-      connection = await this.options.controller.attach(
-        { sessionId, process: structuredClone(started.process), access: structuredClone(access),
-          expectedIdentity: structuredClone(process.controllerIdentity) },
-      );
-      this.assertControllerProof(connection.proof, process.controllerIdentity);
+      this.assertControllerProof(connection.proof, process.controllerIdentity, process.isolation, process.controlTransport);
       this.sessions.set(sessionId, {
         snapshot,
-        access,
+        terminate,
         connection,
         hostPermissions,
         fingerprints: new Map(),
@@ -354,7 +373,7 @@ export class BrokeredBrowserRuntime {
     } catch (error) {
       this.sessions.delete(sessionId);
       await Promise.resolve(connection?.close("Browser session initialization failed")).catch(() => undefined);
-      await this.terminate(access, sessionId).catch(() => undefined);
+      await terminate?.().catch(() => undefined);
       throw error;
     }
   }
@@ -370,7 +389,23 @@ export class BrokeredBrowserRuntime {
       () => session.connection.observe(structuredClone(request)));
   }
 
+  /** Host supplies a freshly checked renewal of the SAME ownership lease.
+   * This never extends the configured session lifetime or changes its owner. */
+  renewLease(sessionId: string, owner: BrowserSessionOwner): void {
+    const session = this.requireSession(sessionId);
+    if (!["active", "manual_control"].includes(session.snapshot.status)
+      || Date.parse(this.now()) >= Date.parse(session.snapshot.openedAt) + this.limits.maximumSessionMs) throw new Error("Browser session cannot renew");
+    this.assertOwner(owner);
+    for (const key of Object.keys(session.snapshot.owner) as Array<keyof BrowserSessionOwner>) {
+      if (key !== "leaseExpiresAt" && owner[key] !== session.snapshot.owner[key]) throw new Error("Browser lease owner changed");
+    }
+    if (Date.parse(owner.leaseExpiresAt) < Date.parse(session.snapshot.owner.leaseExpiresAt)) throw new Error("Browser lease renewal regressed");
+    session.snapshot.owner.leaseExpiresAt = owner.leaseExpiresAt;
+    session.snapshot.expiresAt = new Date(Math.min(Date.parse(session.snapshot.openedAt) + this.limits.maximumSessionMs, Date.parse(owner.leaseExpiresAt))).toISOString();
+  }
+
   async act(sessionId: string, input: BrowserControlAction): Promise<BrowserControlResult> {
+    if (input.kind === "input") throw new Error("Viewport input is manual-only");
     const session = this.requireInteractiveSession(sessionId);
     return this.actControlled(sessionId, session, input, "agent", (action) => session.connection.act(action));
   }
@@ -385,6 +420,20 @@ export class BrokeredBrowserRuntime {
   async actManual(sessionId: string, takeoverId: string, input: BrowserControlAction): Promise<BrowserControlResult> {
     const session = this.requireManualSession(sessionId, takeoverId);
     return this.actControlled(sessionId, session, input, "manual", (action) => session.connection.actManual(takeoverId, action));
+  }
+
+  /** Ephemeral display channel: no evidence artifact and no model context. */
+  async previewManual(sessionId: string, takeoverId: string, pageId?: string): Promise<BrowserObservationPayload> {
+    const session = this.requireManualSession(sessionId, takeoverId);
+    this.claimInteraction(session);
+    try {
+      await this.assertCurrentOrFreeze(sessionId, session);
+      const payload = validateObservationPayload(await session.connection.observeManual(takeoverId, { kind: "screenshot", pageId }),
+        session.snapshot.interactionGeneration, this.limits.maximumObservationBytes);
+      if (payload.kind !== "screenshot") throw new Error("Browser preview must be a screenshot");
+      await this.assertCurrentOrFreeze(sessionId, session);
+      return payload;
+    } finally { session.interactionActive = false; }
   }
 
   private async observeControlled(sessionId: string, session: ActiveSession, request: BrowserObservationRequest,
@@ -531,8 +580,9 @@ export class BrokeredBrowserRuntime {
 
   async close(sessionId: string, reason = "Browser session closed"): Promise<BrowserSessionSnapshot> {
     const session = this.requireSession(sessionId);
-    session.snapshot.status = "closed";
+    if (session.snapshot.status !== "closed") session.snapshot.status = "frozen";
     await this.teardown(session, reason);
+    session.snapshot.status = "closed";
     return structuredClone(session.snapshot);
   }
 
@@ -643,7 +693,9 @@ export class BrokeredBrowserRuntime {
   }
 
   private assertProcessConfiguration(process: BrowserProcessConfiguration): void {
-    if (process.controlTransport !== "pipe") throw new Error("Browser control transport must be a pipe");
+    if (process.isolation !== undefined && process.isolation !== "chromium") throw new Error("Unsupported Browser isolation");
+    if (process.controlTransport !== "pipe" && !(process.controlTransport === "electron_debugger" && process.isolation === "chromium"))
+      throw new Error("Unsupported Browser control transport");
     this.assertControllerIdentity(process.controllerIdentity);
     if (!process.executable.trim() || !process.workingDirectory.trim()) throw new Error("Browser process paths are required");
     if (process.permissions.network !== "brokered") throw new Error("Brokered Browser requires brokered host networking");
@@ -698,9 +750,9 @@ export class BrokeredBrowserRuntime {
     }
   }
 
-  private assertControllerProof(proof: BrowserControllerProof, expectedIdentity: BrowserControllerIdentity): void {
-    if (proof.controlTransport !== "pipe" || proof.requestInterception !== "before_network"
-      || proof.browserDirectNetwork !== "os_denied" || proof.serviceWorkers !== "disabled"
+  private assertControllerProof(proof: BrowserControllerProof, expectedIdentity: BrowserControllerIdentity, isolation: "chromium" | undefined, transport: BrowserProcessConfiguration["controlTransport"]): void {
+    if (proof.controlTransport !== transport || proof.requestInterception !== "before_network"
+      || proof.browserDirectNetwork !== (isolation === "chromium" ? "application_intercepted" : "os_denied") || proof.serviceWorkers !== "disabled"
       || proof.downloads !== "intercepted" || proof.webSockets !== "intercepted_or_blocked"
       || canonicalJson(proof.identity) !== canonicalJson(expectedIdentity)) {
       throw new Error("Browser controller cannot prove complete pre-network interception");
@@ -843,7 +895,7 @@ export class BrokeredBrowserRuntime {
     }
     try {
       if (!session.processTerminated) {
-        await this.terminate(session.access, session.snapshot.id);
+        await session.terminate();
         session.processTerminated = true;
       }
     } catch (error) {
@@ -943,10 +995,10 @@ function isExactRecord(value: unknown, keys: string[]): boolean {
 
 function assertActionGeneration(action: BrowserControlAction, generation: number): void {
   if (!action || typeof action !== "object" || typeof action.id !== "string" || !action.id.trim()
-    || Buffer.byteLength(action.id) > 4096 || !["navigate", "click", "fill", "press"].includes(action.kind)) {
+    || Buffer.byteLength(action.id) > 4096 || !["navigate", "click", "fill", "press", "input"].includes(action.kind)) {
     throw new Error("Browser action is invalid");
   }
-  if (action.kind === "navigate") {
+  if (action.kind === "navigate" || action.kind === "input") {
     if (!isBrowserView(action.view) || action.view.generation !== generation) {
       throw new Error("Browser action uses an invalid or stale page view");
     }
@@ -1022,3 +1074,4 @@ export * from "./browser-runtime-source-lock.js";
 export * from "./browser-runtime-archive.js";
 export * from "./browser-runtime-source-review.js";
 export * from "./browser-runtime-build-attestation.js";
+export * from "./browser-upstream-artifact.js";

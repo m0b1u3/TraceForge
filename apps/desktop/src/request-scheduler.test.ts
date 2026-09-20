@@ -5,13 +5,25 @@ it("reserves a slot for control operations and prioritizes writes over queued re
   const scheduler=new RequestScheduler(),order:string[]=[],release:Array<()=>void>=[];
   const operation=(name:string)=>()=>new Promise<string>(resolve=>{order.push(name);release.push(()=>resolve(name));});
   const reads=Array.from({length:8},(_,i)=>scheduler.schedule(false,operation(`read${i}`)));
-  await tick();expect(order).toEqual(["read0","read1","read2"]);
+  await tick();expect(order).toEqual(["read0","read1"]);
   const normal=scheduler.schedule(true,operation("write"));
   const stop=scheduler.schedule(true,operation("stop"),undefined,true);
   await tick();expect(order.at(-1)).toBe("stop");
-  release[0]!();release[3]!();await tick();expect(order[4]).toBe("write");
+  expect(order).toEqual(["read0","read1","write","stop"]);
+  release[0]!();release[3]!();await tick();expect(order[4]).toBe("read2");
   for(let i=0;i<12;i++){for(const done of release)done();await tick();}
   await Promise.all([...reads,normal,stop]);expect(order.filter(n=>n==="stop")).toHaveLength(1);
+});
+it("stalled observations cannot block a new message or stop; close settles callers without retry",async()=>{
+  const scheduler=new RequestScheduler(),never=vi.fn(()=>new Promise<void>(()=>{}));
+  const reads=Array.from({length:3},()=>scheduler.schedule(false,never).catch(e=>e.message));
+  await tick();expect(never).toHaveBeenCalledTimes(2);
+  const write=vi.fn(async()=>"saved");expect(await scheduler.schedule(true,write)).toBe("saved");
+  const active=scheduler.schedule(true,never).catch(e=>e.message);await tick();
+  expect(await scheduler.schedule(true,async()=>"stopped",undefined,true)).toBe("stopped");
+  scheduler.close();expect(await active).toContain("unknown");
+  expect((await Promise.all(reads)).every(message=>message.includes("closed"))).toBe(true);
+  expect(write).toHaveBeenCalledOnce();expect(never).toHaveBeenCalledTimes(3);
 });
 it("coalesces identical reads, never retries failed commands, and rejects undispatched work on close",async()=>{
   const scheduler=new RequestScheduler();let finish!:(value:number)=>void;

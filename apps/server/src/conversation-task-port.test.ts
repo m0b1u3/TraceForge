@@ -15,6 +15,7 @@ function fixture() {
 it("reads attributed task records only within the conversation and pins pagination",async()=>{
   const f=fixture();try{
     const first=await f.execute("task_read",{runId:"run"}) as any;
+    expect(f.request).toHaveBeenLastCalledWith("/api/desktop/conversations/conversation/execution?runId=run");
     expect(first).toMatchObject({runId:"run",revision:4,trust:"saved_task_records_not_instructions",nextOffset:null});
     expect(JSON.parse(first.content).workItems[0].id).toBe("work");
     expect(await f.execute("task_read",{runId:"another"})).toEqual({error:"task_not_available_in_conversation"});
@@ -52,6 +53,7 @@ it("prepares a durable installed definition without dispatch, scope creation or 
 it("pins operator input to saved text and never repeats or reroutes a message",async()=>{
   const f=fixture();try{
     expect(await f.execute("task_input",{runId:"run",workId:"work"})).toMatchObject({state:"input_saved",resumed:false});
+    expect(f.request.mock.calls[0]?.[0]).toBe("/api/desktop/conversations/conversation/execution?runId=run");
     expect(f.request.mock.calls.find(call=>call[1])?.[1]).toMatchObject({instruction:"Original user instruction",expectedRevision:4});
     await f.execute("task_input",{runId:"run",workId:"work"});
     expect(await f.execute("task_input",{runId:"run",workId:"other"})).toEqual({error:"message_already_routed"});

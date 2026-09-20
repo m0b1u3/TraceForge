@@ -23,6 +23,15 @@ import {
 
 const openedAt = "2026-09-04T02:00:00.000Z";
 const leaseExpiresAt = "2026-09-04T03:00:00.000Z";
+it("renews only the same lease without extending the session lifetime or reviving a closed session", async () => {
+  const subject = fixture(); const session = await subject.runtime.open(owner(), processConfiguration());
+  subject.runtime.renewLease(session.id, owner({ leaseExpiresAt: "2026-09-04T04:00:00.000Z" }));
+  expect(subject.runtime.snapshot(session.id)!.expiresAt).toBe(session.expiresAt);
+  expect(() => subject.runtime.renewLease(session.id, owner({ workId: "other" }))).toThrow("owner changed");
+  expect(() => subject.runtime.renewLease(session.id, owner())).toThrow("regressed");
+  await subject.runtime.close(session.id);
+  expect(() => subject.runtime.renewLease(session.id, owner())).toThrow("cannot renew");
+});
 const controllerIdentity: BrowserControllerIdentity = {
   protocol: "traceforge.browser-controller.v1",
   controllerVersion: "1.0.0",
@@ -168,6 +177,7 @@ const validProof: BrowserControllerProof = {
 };
 
 function fixture(options: {
+  chromium?: boolean;
   proof?: BrowserControllerProof;
   processEnforcement?: Partial<ProcessDescriptor["enforcement"]>;
   assertCurrent?: () => void;
@@ -270,9 +280,11 @@ function fixture(options: {
   }));
   const recordDownload = vi.fn(async () => ({ ref: "artifact_download_1" }));
   const recordObservation = vi.fn(async () => ({ ref: "artifact_observation_1" }));
+  const terminateOwned = vi.fn(async () => undefined);
   const runtime = new BrokeredBrowserRuntime({
     executionNode,
     controller: { attach },
+    ...(options.chromium ? { chromiumProcess: async () => ({ processId: "owned:fixture", connection: await attach(), terminate: terminateOwned }) } : {}),
     authorization: { assertSessionCurrent, authorizeRequest },
     ...(options.artifacts === false ? {} : { artifacts: { recordDownload, recordObservation } }),
     now: options.now ?? (() => openedAt),
@@ -280,6 +292,7 @@ function fixture(options: {
   });
   return {
     runtime,
+    terminateOwned,
     startProcess,
     requestHttp,
     terminateProcess,
@@ -308,6 +321,40 @@ function fixture(options: {
 }
 
 describe("Brokered Browser Runtime", () => {
+  it("binds embedded transport proof to Chromium-only configuration", async () => {
+    const configuration = processConfiguration({ isolation: "chromium", controlTransport: "electron_debugger" });
+    const subject = fixture({ chromium: true, proof: { ...validProof, controlTransport: "electron_debugger", browserDirectNetwork: "application_intercepted" } });
+    const session = await subject.runtime.open(owner(), configuration);
+    await subject.runtime.close(session.id);
+    const wrong = fixture({ chromium: true, proof: { ...validProof, browserDirectNetwork: "application_intercepted" } });
+    await expect(wrong.runtime.open(owner(), configuration)).rejects.toThrow("interception");
+    expect(wrong.terminateOwned).toHaveBeenCalledOnce();
+    const outer = fixture();
+    await expect(outer.runtime.open(owner(), processConfiguration({ controlTransport: "electron_debugger" }))).rejects.toThrow("transport");
+    expect(outer.startProcess).not.toHaveBeenCalled();
+  });
+  it("requires an explicit Chromium port and never falls back to it from OS isolation", async () => {
+    const configuration = processConfiguration({ isolation: "chromium" });
+    const unavailable = fixture();
+    await expect(unavailable.runtime.open(owner(), configuration)).rejects.toThrow("unavailable");
+    expect(unavailable.startProcess).not.toHaveBeenCalled();
+    const subject = fixture({ chromium: true, proof: { ...validProof, browserDirectNetwork: "application_intercepted" } });
+    const session = await subject.runtime.open(owner(), configuration);
+    expect(session.isolation).toBe("chromium"); expect(subject.startProcess).not.toHaveBeenCalled();
+    await subject.runtime.close(session.id);
+    expect(subject.terminateOwned).toHaveBeenCalledOnce(); expect(subject.terminateProcess).not.toHaveBeenCalled();
+  });
+  it("rejects false OS-network claims in Chromium-only mode and retains uncertain cleanup", async () => {
+    const falseProof = fixture({ chromium: true });
+    await expect(falseProof.runtime.open(owner(), processConfiguration({ isolation: "chromium" }))).rejects.toThrow("interception");
+    expect(falseProof.terminateOwned).toHaveBeenCalledOnce();
+    const subject = fixture({ chromium: true, proof: { ...validProof, browserDirectNetwork: "application_intercepted" } });
+    const session = await subject.runtime.open(owner(), processConfiguration({ isolation: "chromium" }));
+    subject.terminateOwned.mockRejectedValueOnce(new Error("cleanup unknown"));
+    await expect(subject.runtime.close(session.id)).rejects.toThrow("cleanup unknown");
+    expect(subject.runtime.snapshot(session.id)!.status).not.toBe("closed");
+    await subject.runtime.close(session.id); expect(subject.runtime.snapshot(session.id)!.status).toBe("closed");
+  });
   it("requires explicit acceptance of measured sampled-budget execution", async () => {
     const processEnforcement = { resourceLimitsApplied: false, resourcePolicy: "sampled_terminate" as const, atomicProcessTreeAssignment: true, processTreeEmptyBarrier: true };
     await expect(fixture({ processEnforcement }).runtime.open(owner(), processConfiguration())).rejects.toThrow("OS-enforced");

@@ -14,6 +14,7 @@ import { createConversationBridge } from "./conversation-bridge.js";
 import { createModelSettingsBridge } from "./model-settings-bridge.js";
 import {readSelectedAttachment} from "./attachment-file.js";
 import {MessageAttachmentsSchema} from "@traceforge/shared/message-attachments";
+import { EmbeddedBrowser } from "./embedded-browser.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
@@ -21,6 +22,7 @@ let server: FastifyInstance | null = null;
 let quitting = false;
 let createWindow: (() => Promise<void>) | undefined;
 let opening: Promise<void> | undefined;
+const embeddedBrowser = new EmbeddedBrowser();
 function showWindow() {
   if (quitting) return;
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -112,6 +114,9 @@ async function start(): Promise<void> {
     encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value),
   }, 2048);
   server = await buildServer(paths.database, paths.mcpConfig, paths.llmConfig, paths.root, webRoot, {
+    // The desktop owns its local HTTP server; incomplete requests must not
+    // prevent Quit. Lifecycle hooks still persist interruption and stop work.
+    closeActiveConnections:true,
     desktopResources: { secrets: { async read(ref) { return (await mcpSecrets.read(ref))?.accessToken; },
       async write(ref,value) { await mcpSecrets.write(ref,{accessToken:value,binding:ref,expiresAt:8640000000000000}); } } },
     desktopMcp: { secrets: { async read(ref) { return (await mcpSecrets.read(ref))?.accessToken; },
@@ -119,7 +124,7 @@ async function start(): Promise<void> {
     llmSecretStore: desktopLlmSecretStore(paths.llmSecrets),
     continuationCipher:{encrypt(value){if(!safeStorage.isEncryptionAvailable() || process.platform==="linux"&&safeStorage.getSelectedStorageBackend()==="basic_text")throw new Error("Secure storage unavailable");return safeStorage.encryptString(value);},decrypt:value=>safeStorage.decryptString(value)},
     modelAccounts: accounts,
-    browserInstallationPath: process.env.TRACEFORGE_BROWSER_INSTALLATION,
+    embeddedBrowser: artifacts => embeddedBrowser.deployment(artifacts),
   });
   await server.listen({ host: "127.0.0.1", port: 0 });
   const address = server.server.address();
@@ -192,6 +197,24 @@ async function start(): Promise<void> {
     webContentsId: event.sender.id, mainFrame: event.senderFrame === event.sender.mainFrame,
     url: event.senderFrame?.url ?? "",
   }, input));
+  ipcMain.handle("browser:present", async (event, input: unknown) => {
+    if (event.sender.id !== window.webContents.id || event.senderFrame !== event.sender.mainFrame
+      || new URL(event.senderFrame?.url ?? "").origin !== localOrigin) throw new Error("Invalid browser view sender");
+    if (!input || typeof input !== "object") throw new Error("Invalid browser view request");
+    const value = input as { path?: unknown; sessionId?: unknown; takeoverId?: unknown; bounds?: unknown; hide?: unknown; focus?: unknown };
+    if (value.hide === true) { embeddedBrowser.hide(); return { hidden: true }; }
+    if (typeof value.path !== "string" || !/^\/api\/desktop\/conversations\/[\w-]+\/execution\/[\w-]+\/browser$/.test(value.path)
+      || typeof value.sessionId !== "string" || typeof value.takeoverId !== "string" || !value.bounds || typeof value.bounds !== "object") throw new Error("Invalid browser view request");
+    const response = await conversationBridge.request({ webContentsId: event.sender.id, mainFrame: true, url: event.senderFrame!.url }, { path: value.path, method: "GET" });
+    const sessions = (response.body as { sessions?: Array<{ id: string; status: string; takeoverId: string }> }).sessions;
+    if (response.status !== 200 || !sessions?.some(s => s.id === value.sessionId && s.status === "manual_control" && s.takeoverId === value.takeoverId)) {
+      embeddedBrowser.hide(); throw new Error("Browser ownership is no longer current");
+    }
+    return embeddedBrowser.show(window, value.sessionId, value.takeoverId, value.bounds as { x: number; y: number; width: number; height: number }, value.focus === true);
+  });
+  window.on("hide", () => embeddedBrowser.hide());
+  window.webContents.on("render-process-gone", () => embeddedBrowser.hide());
+  window.on("closed", () => { embeddedBrowser.hide(); ipcMain.removeHandler("browser:present"); });
   const modelBridge = createModelSettingsBridge({ origin: localOrigin, webContentsId: mainWindow.webContents.id,
     async openLogin(id) {
       const url = new URL(accounts.authorizationUrl(id));
@@ -240,5 +263,8 @@ app.on("before-quit", (event) => {
   if (quitting || !server) return;
   event.preventDefault();
   quitting = true;
-  void server.close().finally(() => { server = null; app.quit(); });
+  void server.close().catch(error => { console.error("Desktop server cleanup incomplete", error); })
+    .then(() => embeddedBrowser.shutdown())
+    .catch(error => { console.error("Embedded browser cleanup incomplete", error); })
+    .finally(() => { server = null; app.quit(); });
 });

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { DesktopBrowserSessions, registerDesktopBrowserRoutes } from "./desktop-browser-sessions.js";
 import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { LlmProvider } from "@traceforge/llm";
@@ -163,6 +164,7 @@ export interface SecurityAgentFoundationOptions {
   /** Optional reviewed local Browser deployment. Absent means unavailable, never direct fallback. */
   browserDeployment?: import("./scenario-browser-host.js").ScenarioBrowserDeployment;
   browserInstallation?: import("./browser-installation.js").BrowserInstallation;
+  embeddedBrowser?: (artifacts: import("@traceforge/browser-runtime").BrowserArtifactPort) => import("./scenario-browser-host.js").ScenarioBrowserDeployment;
   /** Composition callback for Host services that must delegate to the exact assembled authorization registry. */
   onScenarioAuthorizationReady?: (authorization: ScenarioAuthorizationPort) => void;
   autoScheduleIntervalMs?: number;
@@ -304,9 +306,9 @@ export function registerSecurityAgentFoundation(
   const executionSessions=needsSessions
     ?new ExecutionSessionGateway(sqlite,new SqliteEncryptedSecretVault(sqlite,loadOrCreateVaultKey(projectRoot))):undefined;
   const scenarioTraffic=needsTraffic?new SqliteScenarioTrafficStore(sqlite):undefined;
-  if (options.browserInstallation && options.browserDeployment) throw new Error("Choose one Browser installation source");
-  const browserContent = options.browserInstallation ? new SqliteBrowserArtifactContent(sqlite) : undefined;
-  const browserDeployment = options.browserInstallation
+  if ([options.browserInstallation, options.browserDeployment, options.embeddedBrowser].filter(Boolean).length > 1) throw new Error("Choose one Browser installation source");
+  const browserContent = options.browserInstallation || options.embeddedBrowser ? new SqliteBrowserArtifactContent(sqlite) : undefined;
+  const browserDeployment = options.embeddedBrowser ? options.embeddedBrowser(browserContent!) : options.browserInstallation
     ? createInstalledBrowserDeployment(options.browserInstallation, browserContent!, new BrowserScratchStore(sqlite)) : options.browserDeployment;
   if (browserContent && browserDeployment) {
     browserDeployment.persistArtifact = browserContent.persistArtifact.bind(browserContent);
@@ -314,6 +316,9 @@ export function registerSecurityAgentFoundation(
     browserContent.pruneUnreferenced();
   }
   app.addHook("onReady", async () => { await browserDeployment?.recover?.(); });
+  const browserSessions = new DesktopBrowserSessions(sqlite);
+  registerDesktopBrowserRoutes(app, sqlite, browserSessions);
+  app.addHook("preClose", async () => { await browserSessions.shutdown(); });
   if(executionSessions)registerExecutionSessionRoutes(app,executionSessions);
   governedSources=new GovernedExecutionSources(executionNode,processCapacity,scenarioProcessSupervision);
   const customSources=(options.governedToolSources??[]).map(source=>governedSources.register(source));
@@ -322,7 +327,7 @@ export function registerSecurityAgentFoundation(
     {authorization,evidence:scenarioEvidence,artifacts:scenarioArtifacts,state:scenarioState,
       capabilities:createScenarioHostCapabilities(options.scenarioHostCapabilities ?? {})},
     options.scenarioSourceExecutionPolicies, options.scenarioProcessLaunches, allowInProcessScenarioDevelopment,
-    {sessions:executionSessions,traffic:scenarioTraffic,browser:browserDeployment});
+    {sessions:executionSessions,traffic:scenarioTraffic,browser:browserDeployment,browserSessions});
   const customProviderFactory=options.governedToolProviderFactory ? (installation:ToolProviderInstallation)=>
     governedSources.registerProvider(installation,options.governedToolProviderFactory!) : options.toolProviderSourceFactory;
   registerProcessCapacityRoutes(app,processCapacity,options.processCleanupAuthorizer,options.toolRecoveryEvidenceAuthority??(()=>undefined));

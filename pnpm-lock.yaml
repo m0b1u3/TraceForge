@@ -35,6 +35,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@traceforge/browser-runtime':
+        specifier: workspace:*
+        version: link:../../packages/browser-runtime
       '@traceforge/server':
         specifier: workspace:*
         version: link:../server

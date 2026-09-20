@@ -30,7 +30,11 @@ export function createConversationTaskPort(sql: Database.Database, request: (pat
     const message = sql.prepare("SELECT text FROM desktop_conversation_messages WHERE conversation_id=? AND command_id=?").get(conversationId, messageId) as { text: string } | undefined;
     if (!message) return { error: "message_not_found" };
     const path = `/api/desktop/conversations/${id.parse(conversationId)}/execution`;
-    const response = await request(path);
+    // The desktop catalog is deliberately bounded. Explicit task references must
+    // resolve independently of its recent-Run window, including after restart.
+    const selectedRun = call.name === "task_read" ? read.parse(call.input).runId
+      : call.name === "task_input" ? input.parse(call.input).runId : undefined;
+    const response = await request(selectedRun ? `${path}?runId=${encodeURIComponent(selectedRun)}` : path);
     signal.throwIfAborted();
     if (response.status !== 200) return { error: "task_context_unavailable" };
     const { definitions, runs, truncated } = response.body;

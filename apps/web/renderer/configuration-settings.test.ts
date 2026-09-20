@@ -38,6 +38,7 @@ it("edits, saves, restores with confirmation and keeps drafts on save failure", 
   await act(async () => { custom.value = "Custom guidance"; Simulate.change(custom); });
   await click("删除此资源");
   const upload = node.querySelector<HTMLInputElement>('[aria-label="导入资源正文"]')!;
+  expect(upload.accept).toBe(".md,.txt");
   Object.defineProperty(upload, "files", { configurable: true, value: [{ name: "guide.md", size: 8, arrayBuffer: async () => new TextEncoder().encode("Imported").buffer }] });
   await act(async () => { Simulate.change(upload); });
   expect(node.querySelector('[aria-label="删除资源确认"]')).toBeNull();

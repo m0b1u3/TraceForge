@@ -12,11 +12,13 @@ export const desktopStreamLimits = { maximumModelCalls: 4, modelCallTimeoutMs: 9
  * neutral history only. No credentials, model text or user data in the report. */
 export async function runDesktopStreamAcceptance(provider: LlmProvider, options: {
   outputParent: string; mode: "external_model" | "simulated_harness_test"; modelIdentity: { provider: string; name: string };
+  maximumModelCalls?: number | null;
 }) {
   if (!provider.streamTools) throw new Error("Streaming required");
   await mkdir(options.outputParent, { recursive: true });
   const root = await mkdtemp(join(options.outputParent, "traceforge-desktop-stream-"));
-  const report = { root, mode: options.mode, model: options.modelIdentity, status: "failed", failure: null as string | null, limits: desktopStreamLimits,
+  const maximumModelCalls = options.maximumModelCalls === undefined ? desktopStreamLimits.maximumModelCalls : options.maximumModelCalls;
+  const report = { root, mode: options.mode, model: options.modelIdentity, status: "failed", failure: null as string | null, limits: { ...desktopStreamLimits, maximumModelCalls },
     checks: { replyBeforeCompletion: false, toolRecorded: false, referenceCorrect: false, cancelPreservesPartial: false, lateWritesIgnored: false, restartNoReplay: false },
     observations: { firstVisibleTextMs: null as number | null, firstVisibleReasoningMs: null as number | null, reasoningCharacters: 0, visibleTextRevisions: 0, visibleReasoningRevisions: 0 },
     calls: [] as Array<{ elapsedMs: number; totalTokens: number | null; status: string; textDeltas: number; reasoningDeltas: number }>,
@@ -24,7 +26,7 @@ export async function runDesktopStreamAcceptance(provider: LlmProvider, options:
   const start = Date.now(), stop = new AbortController(), timer = setTimeout(() => stop.abort(), desktopStreamLimits.maximumDurationMs);
   const model: LlmProvider = { contextLimits: provider.contextLimits, extractJson: async () => { throw new Error("Compaction not expected in this small fixture"); }, runTools: async () => { throw new Error("Streaming only"); },
     streamTools: async (args, handlers) => {
-      if (report.calls.length >= desktopStreamLimits.maximumModelCalls) throw new Error("Call budget exhausted");
+      if (maximumModelCalls !== null && report.calls.length >= maximumModelCalls) throw new Error("Call budget exhausted");
       const call = { elapsedMs: 0, totalTokens: null as number | null, status: "running", textDeltas: 0, reasoningDeltas: 0 }; report.calls.push(call);
       const at = Date.now(), signal = AbortSignal.any([stop.signal, AbortSignal.timeout(desktopStreamLimits.modelCallTimeoutMs), ...(handlers.signal ? [handlers.signal] : [])]);
       try {

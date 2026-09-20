@@ -6,19 +6,22 @@ import { runDesktopStreamAcceptance } from "../apps/server/src/test-fixtures/des
 import { runDesktopMemoryAcceptance } from "../apps/server/src/test-fixtures/desktop-memory-acceptance.js";
 import { runRollingMemoryAcceptance } from "../apps/server/src/test-fixtures/rolling-memory-acceptance.js";
 import { runKnowledgeMemoryAcceptance } from "../apps/server/src/test-fixtures/knowledge-memory-acceptance.js";
+import { runCurrentMemoryAcceptance } from "../apps/server/src/test-fixtures/current-memory-acceptance.js";
+import { runPlanningModelAcceptance } from "../apps/server/src/test-fixtures/planning-model-acceptance.js";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 if (process.argv[2] !== "--allow-model-api") throw new Error("Explicit --allow-model-api required");
 const onlyKnowledge = process.argv[3] === "--knowledge-only";
 const onlyRolling = process.argv[3] === "--rolling-only";
 const onlyMemory = process.argv[3] === "--memory-only";
-if (process.argv[3] && !onlyKnowledge && !onlyRolling && !onlyMemory) throw new Error("Unknown acceptance suite");
+const onlyJourney = process.argv[3] === "--journey-only";
+if (process.argv[3] && !onlyKnowledge && !onlyRolling && !onlyMemory && !onlyJourney) throw new Error("Unknown acceptance suite");
 const input = createInterface({input:process.stdin,terminal:false});
 let started=Date.now(), deadline:ReturnType<typeof setTimeout>|undefined;
-const stop=new AbortController(), maximumCalls=onlyKnowledge?40:onlyRolling?32:100;
+const stop=new AbortController(), maximumCalls=onlyJourney?null:onlyKnowledge?40:onlyRolling?32:100;
 let physicalCalls=0;
-const outputParent="data/desktop-model-acceptance";
+const outputParent=resolve("data/desktop-model-acceptance");
 const report:any={status:"failed",maximumPhysicalModelCalls:maximumCalls,maximumDurationMs:3600000,suites:[],physicalCalls:0};
 try {
   let line = "";
@@ -26,12 +29,19 @@ try {
   input.close();
   if(line.length>16384) throw new Error("input_limit");
   const config=LlmConfigSchema.parse(JSON.parse(line));line="";
+  // The project's real-model acceptance policy is independent of production
+  // multi-provider support. Never fall back to another configured account.
+  const endpoint = new URL(config.baseUrl ?? "");
+  if (config.provider !== "openai" || !config.model.startsWith("deepseek-")
+    || endpoint.protocol !== "https:" || endpoint.hostname !== "api.deepseek.com"
+    || endpoint.username || endpoint.password || endpoint.port || config.alternativeRoutes?.length)
+    throw new Error("acceptance_requires_deepseek");
   started=Date.now();deadline=setTimeout(()=>stop.abort(),3600000);
   const transport:typeof fetch=async(input,init)=>{
     const request=new Request(input,init);
     stop.signal.throwIfAborted();
     if(request.method === "POST") {
-      if(physicalCalls>=maximumCalls) throw new Error("Physical call budget exhausted");
+      if(maximumCalls!==null && physicalCalls>=maximumCalls) throw new Error("Physical call budget exhausted");
       physicalCalls++;
     }
     const response=await fetch(new Request(request,{signal:AbortSignal.any([request.signal,stop.signal])}));
@@ -41,8 +51,12 @@ try {
   const catalog=await discoverModels(config,{fetch:transport},stop.signal);
   console.log(JSON.stringify({event:"catalog",requestedModel:config.model,listed:catalog.models.some(model=>model.id===config.model),models:catalog.models.map(model=>model.id),truncated:catalog.truncated}));
   const provider=createProvider(config,{fetch:transport});
-  const options={mode:"external_model" as const,outputParent,modelIdentity:{provider:config.provider,name:config.model}};
-  for(const [name,run] of (onlyKnowledge ? [
+  const options={mode:"external_model" as const,outputParent,modelIdentity:{provider:config.provider,name:config.model},...(onlyJourney?{maximumModelCalls:null}:{})};
+  for(const [name,run] of (onlyJourney ? [
+    ["current-message-memory",()=>runCurrentMemoryAcceptance(provider,options)],
+    ["result-driven-planning",()=>runPlanningModelAcceptance(provider,options)],
+    ["stream-stop-restart",()=>runDesktopStreamAcceptance(provider,options)],
+  ] : onlyKnowledge ? [
     ["sourced-knowledge",()=>runKnowledgeMemoryAcceptance(provider,options)],
   ] : onlyRolling ? [
     ["rolling-summary",()=>runRollingMemoryAcceptance(provider,options)],

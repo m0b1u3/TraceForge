@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { ConversationWorkspaces } from "./conversation-workspaces.js";
 import { executionDisplay } from "@traceforge/worker-runtime";
+import { desktopToolReceiptReference } from "./desktop-record-evidence.js";
 import { RunToolPolicy } from "./run-tool-policy.js";
 import { DesktopApprovalPreference } from "./desktop-approval-preference.js";
 import { readRunForensics } from "./scenario-run-disposal.js";
@@ -306,7 +307,9 @@ class EmbeddedScenarioWorkerPool {
             status: event.type === "tool_started" || event.type === "tool_progress" ? "inProgress" as const : event.status,
             risk: event.risk,
             summary: event.type === "tool_completed" ? executionDisplay(event.summary, 4000).text : null,
-            refs: event.type === "tool_completed" ? event.refs : [],
+            refs: event.type === "tool_completed" ? [...new Set([...event.refs,
+              ...desktopToolReceiptReference(this.sqlite, event.assignment.runContext.caseId, event.assignment.runId,
+                `${event.assignment.work.idempotencyKey}:${event.invocationId}`)])] : [],
             ...(event.type === "tool_started" ? { inputPreview: executionDisplay(event.input).text, rationale: executionDisplay(event.rationale ?? "", 2000).text, dispatchState: "requested" as const } : {
               outputPreview: executionDisplay(event.output ?? "", 12000).text,
               ...(event.type === "tool_progress" && event.command ? { commandPreview: executionDisplay(event.command).text } : {}),

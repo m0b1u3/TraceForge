@@ -118,16 +118,22 @@ export function registerDesktopExecutionRoutes(app: FastifyInstance, db: Databas
   });
   app.get(path, async (request, reply) => {
     const parsed = id.safeParse((request.params as any).conversationId);
+    const query = z.object({ runId: id.optional() }).strict().safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: "invalid_execution_read" });
     const conversation = parsed.success ? owner(parsed.data) : undefined;
     if (!conversation) return reply.code(404).send({ error: "conversation_not_found" });
     const [definitions, scopes, runs] = await Promise.all([
       host.request("/api/scenarios/definitions"),
       host.request(`/api/scenarios/authorizations?caseId=${encodeURIComponent(conversation.caseId)}`),
-      host.request(`/api/scenarios/runs?caseId=${encodeURIComponent(conversation.caseId)}`),
+      query.data.runId
+        ? Promise.resolve({ status: 200, body: [{ runId: query.data.runId }] })
+        : host.request(`/api/scenarios/runs?caseId=${encodeURIComponent(conversation.caseId)}`),
     ]);
     if ([definitions, scopes, runs].some(value => value.status !== 200)) return reply.code(503).send({ error: "execution_catalog_unavailable" });
     const states = await Promise.all(runs.body.slice(0, 20).map((run: { runId: string }) => host.request(`/api/scenarios/runs/${encodeURIComponent(run.runId)}`)));
-    if (states.some(value => value.status !== 200 || value.body?.caseId !== conversation.caseId)) return reply.code(503).send({ error: "execution_state_unavailable" });
+    if (query.data.runId && states.some(value => value.status === 404 || (value.status === 200 && value.body?.caseId !== conversation.caseId)))
+      return reply.code(404).send({ error: "run_not_found" });
+    if (states.some((value, index) => value.status !== 200 || value.body?.caseId !== conversation.caseId || value.body?.id !== runs.body[index].runId)) return reply.code(503).send({ error: "execution_state_unavailable" });
     const checkpoints = new SqliteWorkerCheckpointStore(db);
     for (const value of states) for (const work of value.body.workItems) {
       if (!["blocked", "failed"].includes(work.status)) continue;

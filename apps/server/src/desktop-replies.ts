@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { desktopToolOutcome } from "./desktop-tool-outcome.js";
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { LlmProvider, TurnMessage } from "@traceforge/llm";
@@ -7,7 +8,7 @@ import { DesktopConversationMemory } from "./desktop-conversation-memory.js";
 import { estimateContextTokens, resolveContextBudget, ModelContextOverflowError } from "@traceforge/shared/model-context";
 import { waitForCancellation, executionDisplay } from "@traceforge/worker-runtime";
 import { prepareConversationContext } from "./desktop-conversation-context.js";
-import { ConversationHistoryReader, conversationHistoryTools } from "./conversation-history-reader.js";
+import { ConversationHistoryReader, conversationHistoryTools,readConversationOriginal } from "./conversation-history-reader.js";
 import { ConversationAttachmentReader, conversationAttachmentTools } from "./conversation-attachment-reader.js";
 import {ConversationContinuations,type ContinuationCipher} from "./conversation-continuations.js";
 import type { ConversationTaskPort } from "./conversation-task-port.js";
@@ -73,15 +74,14 @@ export class DesktopReplyService {
     const reads = this.sql.prepare("SELECT input_json,result_json FROM desktop_reply_reads WHERE conversation_id=? AND message_id=? AND tool='conversation_read' ORDER BY ordinal LIMIT 6")
       .all(conversationId, messageId) as Array<{ input_json: string; result_json: string }>;
     const entries: Array<{ id: string; summary: string; user: string; assistant: string | null }> = [];
+    const through=(this.sql.prepare("SELECT sequence FROM desktop_conversation_messages WHERE conversation_id=? AND command_id=?").get(conversationId,messageId) as {sequence:number}).sequence;
     for (const read of reads) {
       const input = JSON.parse(read.input_json), result = JSON.parse(read.result_json);
       if (typeof input?.id !== "string" || typeof result?.digest !== "string" || entries.some(entry => entry.id === input.id)) continue;
-      const row = this.sql.prepare(`SELECT m.text AS user,r.text AS assistant,r.state AS assistantState FROM desktop_conversation_messages m LEFT JOIN desktop_replies r
-        ON r.conversation_id=m.conversation_id AND r.message_command_id=m.command_id AND r.state!='streaming'
-        WHERE m.conversation_id=? AND m.command_id=? AND m.sequence<(SELECT sequence FROM desktop_conversation_messages WHERE conversation_id=? AND command_id=?)`)
-        .get(conversationId, input.id, conversationId, messageId) as { user: string; assistant: string | null; assistantState: string | null } | undefined;
-      if (!row || createHash("sha256").update(JSON.stringify(row)).digest("hex") !== result.digest) continue;
-      entries.push({ id: input.id, summary: row.assistantState && row.assistantState !== "completed" ? "本次回读包含未完成的回复，仅是已保存的片段" : "本次模型回读的原文（不代表已验证的结论）", user: row.user, assistant: row.assistant });
+      const original=readConversationOriginal(this.sql,conversationId,input.id,through,input.part==="message"?"message":undefined);
+      if(!original||original.digest!==result.digest)continue;
+      const row=JSON.parse(original.text) as {user:string;assistant?:string|null;assistantState?:string|null};
+      entries.push({ id: input.id, summary: row.assistantState && row.assistantState !== "completed" ? "本次回读包含未完成的回复，仅是已保存的片段" : "本次模型回读的原文（不代表已验证的结论）", user: row.user, assistant: row.assistant??null });
     }
     return { status: 200, body: { ...memory, entries: [...entries, ...memory.entries.filter((entry: { id: string }) => !entries.some(read => read.id === entry.id))].slice(0, 16) } };
   }
@@ -93,7 +93,7 @@ export class DesktopReplyService {
     const taskRequest = this.sql.prepare("SELECT scenario_kind AS scenarioKind,definition_version AS definitionVersion FROM desktop_task_requests WHERE conversation_id=? AND message_id=?").get(row.conversationId, row.messageCommandId) as DesktopReply["taskRequest"];
     const reads = this.sql.prepare("SELECT ordinal,tool,input_json,result_json FROM desktop_reply_reads WHERE conversation_id=? AND message_id=? ORDER BY ordinal LIMIT 6").all(row.conversationId, row.messageCommandId) as Array<{ ordinal: number; tool: string; input_json: string; result_json: string }>;
     return { ...row, originalReadCount: conversationReadReceipts(this.sql, row.conversationId, row.messageCommandId).length, ...(taskRequest ? { taskRequest } : {}), contextTruncated: Boolean(row.contextTruncated), reasoningTruncated: Boolean(row.reasoningTruncated),
-      toolActivity: reads.map(read => ({ ordinal: read.ordinal, tool: read.tool, input: executionDisplay(read.input_json, 2000).text, output: executionDisplay(read.result_json, 2000).text })) };
+      toolActivity: reads.map(read => ({ ordinal: read.ordinal, tool: read.tool, outcome: desktopToolOutcome(read.result_json), input: executionDisplay(read.input_json, 2000).text, output: executionDisplay(read.result_json, 2000).text })) };
   }
   private update(conversationId: string, messageId: string, text: string, state: DesktopReply["state"], error: DesktopReply["error"] = null, reasoning?: string, truncated = false) {
     this.sql.transaction(() => {
@@ -202,8 +202,8 @@ export class DesktopReplyService {
       let recovery = 0, recalls = 0, calls = 0;
       const tools = [...conversationHistoryTools, ...conversationAttachmentTools, ...conversationKnowledgeTools, ...(this.tasks?.tools ?? [])];
       const phase = (value: NonNullable<DesktopReply["phase"]>) => { if (!settled && !abort.signal.aborted) this.progress(conversationId, messageId, value, recovery, recalls); };
-      const reader = new ConversationHistoryReader(this.sql, conversationId, through - 1);
-      const knowledge=new ConversationKnowledge(this.sql,conversationId,through-1);
+      const reader = new ConversationHistoryReader(this.sql, conversationId, through);
+      const knowledge=new ConversationKnowledge(this.sql,conversationId,through);
       const attachmentReader=new ConversationAttachmentReader(this.sql,conversationId,through);
       const loadedAttachments=new Set<string>();
       const history: TurnMessage[] = [];
@@ -346,6 +346,6 @@ export function registerDesktopReplyRoutes(app: FastifyInstance, service: Deskto
     const result = operation ? service.cancel(conversationId, messageId) : service.start(conversationId, messageId);
     return reply.code(result.status).send(result.body);
   });
-  app.addHook("onClose", async () => service.close());
+  app.addHook("preClose", async () => service.close());
 }
 import { AttachmentInputError } from "@traceforge/shared/message-attachments";
