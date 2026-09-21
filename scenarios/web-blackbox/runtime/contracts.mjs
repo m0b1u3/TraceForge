@@ -1,6 +1,6 @@
 export const PROTOCOL_VERSION = 1;
 export const PACKAGE_ID = "traceforge.web-blackbox";
-export const PACKAGE_VERSION = "0.5.13";
+export const PACKAGE_VERSION = "0.5.15";
 export const SOURCE = "scenario:web_blackbox@1";
 const comparisonRequest = { type: "object", additionalProperties: false, required: ["url"], properties: {
         url: { type: "string" }, method: { enum: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }, sessionId: { type: "string" },

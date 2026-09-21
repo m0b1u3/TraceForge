@@ -39,6 +39,7 @@ describe("security agent foundation protocol events", () => {
         payload: {
           id: "scope_1", caseId: "case_1", scenarioKind: "web_blackbox",
           scope: {
+            authorizedActions: [WEB_BLACKBOX_CAPABILITIES.scopeRead, WEB_BLACKBOX_CAPABILITIES.evidenceWrite],
             targets: ["https://authorized.example"],
             allowedActions: [WEB_BLACKBOX_CAPABILITIES.scopeRead, WEB_BLACKBOX_CAPABILITIES.evidenceWrite],
             deniedActions: [],

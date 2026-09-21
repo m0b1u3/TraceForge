@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
+import { executionSourceProvenance } from "./execution-provenance.js";
 import { z } from "zod";
-import type { EvidenceGraphCommand, EvidenceSource, KnowledgeNode } from "@traceforge/evidence-graph";
+import type { EvidenceGraphCommand, KnowledgeNode } from "@traceforge/evidence-graph";
 import {projectCaseHistory} from "@traceforge/evidence-graph";
 import type { ExecutionToolAdapter, ToolExecutionResult } from "@traceforge/worker-runtime";
 import { EvidenceGraphRevisionConflictError, SqliteEvidenceGraphStore } from "./evidence-graph-store.js";
@@ -136,7 +137,7 @@ export class EvidenceGraphMutateTool implements ExecutionToolAdapter {
     const at = this.now();
     let command: EvidenceGraphCommand;
     if (parsed.type === "add_node") {
-      const verifiedSource = parsed.node.source ? this.verifySource(context.caseId, parsed.node.source, context, at) : null;
+      const verifiedSource = parsed.node.source ? executionSourceProvenance(this.sqlite, parsed.node.source, context) : null;
       const node: Omit<KnowledgeNode, "version" | "createdAt" | "updatedAt" | "invalidatedAt" | "invalidationReason"> = {
         ...parsed.node,
         caseId: context.caseId,
@@ -176,20 +177,4 @@ export class EvidenceGraphMutateTool implements ExecutionToolAdapter {
     throw lastConflict ?? new Error("Evidence Graph mutation failed after concurrency retries");
   }
 
-  private verifySource(caseId: string, source: { type: "tool_result" | "traffic" | "artifact"; ref: string }, context: ToolContext, at: string): EvidenceSource {
-    let integrity: EvidenceSource["integrity"];
-    if (source.type === "traffic") {
-      const row = this.sqlite.prepare("SELECT 1 FROM traffic_entries WHERE id = ? AND case_id = ?").get(source.ref, caseId);
-      if (!row) throw new Error(`Evidence source traffic ${source.ref} does not exist in the assigned Case`);
-    } else if (source.type === "artifact") {
-      const row = this.sqlite.prepare("SELECT digest FROM scenario_artifacts WHERE id = ? AND case_id = ? AND run_id = ?").get(source.ref, caseId, context.runId) as { digest: string } | undefined;
-      if (!row) throw new Error(`Evidence source artifact ${source.ref} does not exist in the assigned Case`);
-      if (!/^sha256:[a-f0-9]{64}$/.test(row.digest)) throw new Error("Evidence source artifact digest is invalid");
-      integrity = { algorithm: "sha256", digest: row.digest.slice("sha256:".length) };
-    } else {
-      const row = this.sqlite.prepare("SELECT 1 FROM worker_tool_receipts WHERE idempotency_key = ?").get(source.ref);
-      if (!row) throw new Error(`Evidence source tool result ${source.ref} has no durable receipt`);
-    }
-    return { type: source.type, ref: source.ref, observedAt: at, producerId: `${context.workerId}:${context.idempotencyKey}`, integrity };
-  }
 }

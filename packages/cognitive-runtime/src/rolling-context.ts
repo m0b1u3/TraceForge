@@ -13,13 +13,13 @@ export class RollingContextCompaction implements ContextCompactionPolicy {
   readonly maximumTextCharacters = 16000;
   constructor(private readonly compactor: ContextCompactor, private readonly cache: EntrySummaryCache,
     private readonly limits: (consumer: string) => ModelContextLimits,
-    private readonly timeoutMs: number | ((consumer: string) => number) = 120000,
-    private readonly narrative?: (maximumCharacters: number, timeoutMs: number) => ContextCompactionPolicy) {}
+    private readonly timeoutMs?: number | ((consumer: string) => number | undefined),
+    private readonly narrative?: (maximumCharacters: number, timeoutMs: number | undefined) => ContextCompactionPolicy) {}
 
   async prepare(input: Parameters<ContextCompactionPolicy["prepare"]>[0]): ReturnType<ContextCompactionPolicy["prepare"]> {
     input.signal?.throwIfAborted();
-    const timeoutMs = typeof this.timeoutMs === "number" ? this.timeoutMs : this.timeoutMs(input.consumer);
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("Invalid compaction deadline");
+    const timeoutMs = typeof this.timeoutMs === "function" ? this.timeoutMs(input.consumer) : this.timeoutMs;
+    if (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)) throw new Error("Invalid compaction deadline");
     const budget = resolveContextBudget(this.limits(input.consumer));
     const original = structuredClone(input.context);
     const transcript = Array.isArray(original.transcript) ? original.transcript : [];
@@ -81,7 +81,7 @@ export class RollingContextCompaction implements ContextCompactionPolicy {
     try {
       const cancelled = new Promise<never>((_, reject) => { rejectAbort = () => reject(controller.signal.reason); controller.signal.addEventListener("abort", rejectAbort, { once: true }); if (controller.signal.aborted) rejectAbort(); });
       const history = await Promise.race([summarize(), new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { const error = new Error("Context compaction timed out"); controller.abort(error); reject(error); }, timeoutMs);
+        if (timeoutMs !== undefined) timer = setTimeout(() => { const error = new Error("Context compaction timed out"); controller.abort(error); reject(error); }, timeoutMs);
       }), cancelled]);
       controller.signal.throwIfAborted();
       const keys = [...new Set(historical.flatMap(entry => typeof (entry as { receiptKey?: unknown }).receiptKey === "string" ? [(entry as { receiptKey: string }).receiptKey] : []))];

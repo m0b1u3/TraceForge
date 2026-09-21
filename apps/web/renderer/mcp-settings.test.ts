@@ -4,6 +4,24 @@ import React,{act} from "react";
 import {createRoot} from "react-dom/client";
 import {Simulate} from "react-dom/test-utils";
 import {McpSettings} from "./mcp-settings";
+it("edits address bindings without connecting, validates input, and preserves typed separators",async()=>{
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
+  const binding={id:"neutral",version:"1",schemaRevision:1};
+  const state={secureStorage:true,connections:[{connection:{id:"first",name:"First",transport:"streamable-http",endpoint:"https://first.example/mcp",package:binding,authorizationAction:"read",capability:"read"},revision:1,enabled:false,credentialConfigured:false,catalog:null,reviewedTools:[]}],packages:[{package:binding,title:"Neutral",actions:["read"],capabilities:["read"],resourceKinds:[]}]};
+  const operations:any[]=[];const node=document.createElement("div");document.body.append(node);const root=createRoot(node);
+  try{
+    await act(async()=>root.render(React.createElement(McpSettings,{bridge:{protocolVersion:1,request:async input=>{if(input.method==="POST")operations.push(JSON.parse(input.body!));return{status:200,body:state};}}})));
+    const field=node.querySelector('[aria-describedby="mcp-address-help mcp-address-error"]') as HTMLInputElement;
+    const save=[...node.querySelectorAll("button")].find(b=>b.textContent==="保存连接")!;
+    await act(async()=>{field.value="invalid";Simulate.change(field);});
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    await act(async()=>save.click());expect(operations).toEqual([]);
+    await act(async()=>{field.value="10.0.0.1, ";Simulate.change(field);});expect(field.value).toBe("10.0.0.1, ");
+    await act(async()=>{field.value="10.0.0.1, fd00::1";Simulate.change(field);});
+    await act(async()=>save.click());
+    expect(operations).toEqual([expect.objectContaining({operation:"save",connection:expect.objectContaining({destinationAddresses:["10.0.0.1","fd00::1"]})})]);
+  }finally{act(()=>root.unmount());node.remove();}
+});
 it("requires confirmation before discovery and retains editable configuration on failure",async()=>{
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
   const binding={id:"neutral",version:"1",schemaRevision:1};

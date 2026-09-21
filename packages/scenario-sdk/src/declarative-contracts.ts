@@ -6,6 +6,8 @@ export interface ScenarioScopePolicyV1 {
   format: "traceforge.scenario-scope-policy.v1";
   /** Reviewed presentation bound to this policy; not executable validation code. */
   form?: AuthorizationForm;
+  /** Require explicit per-grant action selection; omission never means all. */
+  actionSelection?: boolean;
   allowedActions: readonly string[];
   deniedActions: readonly string[];
   payload: { maximumBytes: number; maximumDepth: number };
@@ -57,6 +59,14 @@ export function parseDeclarativeScope(policy: ScenarioScopePolicyV1, input: unkn
     const value=readPath(payload,field.path);
     if(field.type==="integer"&&value!==undefined&&(!Number.isSafeInteger(value)||typeof value!=="number"||value<field.minimum!||value>field.maximum!))throw new Error(`Invalid authorization budget: ${field.label}`);
   }
+  if (policy.actionSelection) {
+    const selected = readPath(payload, ["authorizedActions"]);
+    if (!Array.isArray(selected) || selected.length > 256 || new Set(selected).size !== selected.length
+      || selected.some(action => typeof action !== "string" || !policy.allowedActions.includes(action) || policy.deniedActions.includes(action)))
+      throw new Error("Explicit authorizedActions must be a subset of the Scenario policy");
+    return { payload, allowedActions: policy.allowedActions.filter(action => selected.includes(action)),
+      deniedActions: [...policy.deniedActions, ...policy.allowedActions.filter(action => !selected.includes(action))] };
+  }
   return { payload, allowedActions: [...policy.allowedActions], deniedActions: [...policy.deniedActions] };
 }
 
@@ -105,7 +115,8 @@ export function mapDeclarativeEvidence(contract: ScenarioOutputContractV1, run: 
 
 function validatePolicy(policy: ScenarioScopePolicyV1): void {
   record(policy, "Declarative scope policy");
-  exact(policy,["format","allowedActions","deniedActions","payload","resources","form"]);
+  exact(policy,["format","allowedActions","deniedActions","payload","resources","form","actionSelection"]);
+  if (policy.actionSelection !== undefined && typeof policy.actionSelection !== "boolean") throw new Error("Invalid action selection policy");
   if (policy.format !== "traceforge.scenario-scope-policy.v1") throw new Error("Invalid declarative scope policy format");
   record(policy.payload, "Declarative scope payload limits");
   exact(policy.payload,["maximumBytes","maximumDepth"]);
@@ -137,6 +148,7 @@ function validatePolicy(policy: ScenarioScopePolicyV1): void {
   })) throw new Error("Invalid declarative resource rule");
   if (policy.form !== undefined) {
     const form = AuthorizationFormSchema.parse(policy.form);
+    if (policy.actionSelection && form.fields.some(field => field.path[0] === "authorizedActions")) throw new Error("Reserved authorization action field");
     if (Object.keys(form.actionLabels ?? {}).some(action => ![...policy.allowedActions, ...policy.deniedActions].includes(action)))
       throw new Error("Authorization form labels must refer to declared actions");
     const paths = policy.resources.flatMap(rule => rule.payloadPath ? [rule.payloadPath] : rule.payloadPrefixPath ? [rule.payloadPrefixPath] : []);

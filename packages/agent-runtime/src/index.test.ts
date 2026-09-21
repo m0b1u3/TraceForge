@@ -3,6 +3,12 @@ import { AgentHarness, createAgentExecutionJournal, migrateLegacyAgentExecutionJ
   recordAgentJournalTerminal, resumeAgentExecutionJournal, validateAgentExecutionJournal } from "./index.js";
 
 describe("AgentHarness", () => {
+  it("runs beyond former default counts without a configured limit and still cancels",async()=>{
+    const session=new AgentHarness().openSession("unlimited",{});
+    expect(await session.run(1,new AbortController().signal,async turn=>turn===300?{outcome:"finished",value:turn}:{outcome:"continue"})).toEqual({outcome:"finished",value:300});
+    const abort=new AbortController();
+    await expect(session.run(1,abort.signal,async()=>{abort.abort();return {outcome:"continue"};})).rejects.toThrow();
+  });
   it("owns the turn budget and returns a terminal session value", async () => {
     const turns: number[] = [];
     const session = new AgentHarness().openSession<string>("session", { maxTurns: 3 });

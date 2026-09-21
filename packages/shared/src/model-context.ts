@@ -23,7 +23,10 @@ export function estimateContextTokens(value: unknown): number {
 }
 export function resolveContextBudget(limits: ModelContextLimits = {}) {
   const window = limits.contextWindowTokens ?? 32768;
-  const output = limits.maxOutputTokens ?? Math.min(4096, Math.floor(window / 8));
+  // Unknown-window sizing is a compaction estimate, not a wire-level cap.
+  const output = limits.contextWindowTokens === undefined
+    ? Math.min(limits.maxOutputTokens ?? 4096, Math.floor(window / 8))
+    : limits.maxOutputTokens ?? Math.min(4096, Math.floor(window / 8));
   const multiplier = limits.inputTokenMultiplier ?? 1;
   if (!Number.isSafeInteger(window) || window < 1024 || !Number.isSafeInteger(output) || output < 1 || output >= window)
     throw new Error("Invalid model context/output budget");

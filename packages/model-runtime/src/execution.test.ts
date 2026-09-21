@@ -30,7 +30,7 @@ class MemoryExecutionStore implements ModelExecutionStore {
     const accounted = this.calls
       .filter((call) => call.context.runId === input.context.runId && call.context.role === input.context.role)
       .reduce((total, call) => total + Math.max(call.reservedTokens, call.usage.totalTokens), 0);
-    if (accounted + input.reservedTokens > input.maximumRunTokens) {
+    if (input.maximumRunTokens !== undefined && accounted + input.reservedTokens > input.maximumRunTokens) {
       throw new ModelBudgetExceededError(input.context.runId, input.context.role, input.maximumRunTokens, accounted, input.reservedTokens);
     }
     this.calls.push({
@@ -95,6 +95,16 @@ function setup(routes: Array<[string, ModelJsonProviderPort]>, workerPolicy: Par
 }
 
 describe("model execution runtime integration harness", () => {
+  it("does not invent per-call or cumulative spending caps in default role policies",async()=>{
+    const {runtime,store}=setup([["primary",provider(async args=>{args.onUsage?.({promptTokens:900000,completionTokens:200000,totalTokens:1100000});return {ok:true};})]]);
+    const large={system:"Task",user:"x".repeat(300000),schema:{}};
+    await runtime.extractJson(context(),large);await runtime.extractJson(context(),large);
+    expect(store.calls).toHaveLength(2);
+    expect(store.calls.every(call=>call.status==="completed")).toBe(true);
+    for(const policy of Object.values(DEFAULT_MODEL_ROLE_POLICIES)){
+      expect(policy.timeoutMs).toBeUndefined();expect(policy.maximumRunTokens).toBeUndefined();expect(policy.maximumEstimatedCallTokens).toBeUndefined();
+    }
+  });
   it("flushes public reasoning before completion and ignores callbacks after cancellation", async () => {
     const events: any[] = []; let callback!: (text: string) => void;
     const runtime = new ModelExecutionRuntime(new Map([["primary", provider(async args => {

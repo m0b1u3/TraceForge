@@ -11,6 +11,27 @@ const messages: SavedMessage[] = [{ conversationId: "first", commandId: "message
   createdAt: "2026-09-08", role: "user", persistence: "saved", delivery: "not_dispatched", reason: "conversation_dispatch_not_connected" }];
 const run = { runId: "run", messageCommandId: "message", goal: "检查已授权范围", status: "running", revision: 1,
   workItems: [{ id: "work", title: "收集观察", status: "running" }], outputs: [{ id: "output", summary: "已保存观察，结论仍待核查。", refs: ["evidence:first"] }] };
+it("shows a newly streamed task proposal without switching pages or dispatching",async()=>{
+  vi.useFakeTimers();(globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
+  let proposed=false;
+  const calls:Array<{path:string;method:string}>=[];
+  const reply={conversationId:"first",messageCommandId:"message",revision:1,state:"streaming",text:"Preparing",createdAt:"2026-09-08T00:00:00.000Z",updatedAt:"2026-09-08T00:00:00.000Z",error:null,contextMessages:1,contextTruncated:false};
+  const catalog={runs:[],scopes:[],truncated:false,modelReady:true,definitions:[{kind:"review",version:1,authorizationForm:{version:1,description:"Resources",fields:[{path:["resources"],label:"Resources",description:"Literal resources",type:"string-list",required:true,maximumItems:8,maximumLength:100}]},authorizationReview:{allowedActions:["resource.read"],deniedActions:[],resources:[]}}]};
+  const bridge={protocolVersion:1 as const,async request(input:any){
+    calls.push(input);
+    if(input.path.includes("/replies?")){
+      const revision=proposed?2:1,after=Number(input.path.split("after=")[1]);
+      return {status:200,body:{conversationId:"first",replies:after<revision?[{...reply,revision,...(proposed?{state:"completed",taskRequest:{scenarioKind:"review",definitionVersion:1}}:{})}]:[],nextAfter:Math.max(after,revision),hasMore:false}};
+    }
+    return {status:200,body:input.path.endsWith("/browser")?{sessions:[]}:input.path.endsWith("/reply-queue")?{conversationId:"first",revision:0,paused:false,items:[]}:catalog};
+  }};
+  const node=document.createElement("div");document.body.append(node);const root=createRoot(node);dispose=()=>root.unmount();
+  await act(async()=>root.render(React.createElement(ConversationExecution,{bridge,conversationId:"first",messages})));
+  expect(node.querySelector('[aria-label="任务授权"]')).toBeNull();
+  proposed=true;await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+  expect(node.querySelector('[aria-label="任务授权"] textarea')).not.toBeNull();
+  expect(calls.every(call=>call.method==="GET")).toBe(true);
+});
 async function mount(request: (input: { path: string; method: "GET" | "POST" }) => Promise<{ status: number; body: unknown }>) {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const node = document.createElement("div"); document.body.append(node); const root = createRoot(node); dispose = () => root.unmount();

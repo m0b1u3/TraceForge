@@ -10,7 +10,8 @@ type Attribution = { runId: string; runContext: { caseId: string; scopeRef: stri
 export class RunToolPolicy {
   constructor(private readonly definition: ScenarioDefinition, private readonly authorization: SqliteScenarioAuthorizationService | undefined,
     private readonly workspace: RunWorkspace | undefined, private readonly platform: PermissionProfile["platform"],
-    private readonly liveInquiryMode?: () => boolean) {}
+    private readonly liveInquiryMode?: () => boolean,
+    private readonly browserToolAvailable?: (tool: ExecutionToolSpec) => boolean) {}
 
   private rule(tool: ExecutionToolSpec) {
     const rules = this.definition.toolPolicies?.filter(rule => rule.source === tool.source && tool.providedCapabilities.includes(rule.capability)) ?? [];
@@ -34,6 +35,14 @@ export class RunToolPolicy {
   }
   layers(assignment: Attribution, tool: ExecutionToolSpec): Array<{ source: string; profile: PermissionProfile }> {
     const rule = this.rule(tool), action = workspaceAction(tool.name);
+    if (rule?.profile === "browser-host") {
+      if (!this.browserToolAvailable?.(tool)) return this.denied();
+      try { this.approvedAction(assignment, rule.authorizationAction); } catch { return this.denied(); }
+      return [{ source: `scenario:${this.definition.kind}@${this.definition.version}:browser-host`, profile: {
+        version: 1, platform: this.platform, filesystem: { read: [], write: [], deny: [] }, network: "brokered",
+        process: { access: "sandboxed", interactive: false, background: false }, secrets: "handles_only",
+      } }];
+    }
     // Old packages keep their prior workspace behavior, never gain autonomy.
     const workspaceProfile = rule?.profile === "run-workspace" || (!this.definition.toolPolicies && action && tool.source === "traceforge.builtin");
     if (workspaceProfile) {

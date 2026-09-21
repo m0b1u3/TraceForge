@@ -62,7 +62,7 @@ describe("Scenario collaboration snapshot", () => {
     await app.inject({
       method: "POST", url: "/api/scenarios/authorizations", payload: {
         id: "scope_1", caseId: "case_1", scenarioKind: "web_blackbox",
-        scope: { targets: ["https://authorized.example"], allowedActions: Object.values(WEB_BLACKBOX_CAPABILITIES), deniedActions: [] },
+        scope: { targets: ["https://authorized.example"], authorizedActions: ["scope.read", "evidence.write", "web.request.replay", "web.traffic.read", "report.write"] },
         approvedBy: "operator_1", expiresAt: "2026-08-25T09:00:00.000Z",
       },
     });

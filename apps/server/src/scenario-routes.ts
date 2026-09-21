@@ -180,7 +180,7 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
   app.get("/api/scenarios/definitions", async () => definitions.list().map(definition => {
     const policy = packages.requireForScenario(definition.kind, definition.version).authorizationPolicy;
     return { ...definition, ...("format" in policy && policy.form ? { authorizationForm: policy.form,
-      authorizationReview: { allowedActions: policy.allowedActions, deniedActions: policy.deniedActions,
+      authorizationReview: { actionSelection: policy.actionSelection, allowedActions: policy.allowedActions, deniedActions: policy.deniedActions,
         resources: policy.resources } } : {}) };
   }));
 

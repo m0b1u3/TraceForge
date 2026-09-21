@@ -4,6 +4,21 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { BrowserSessionControl } from "./browser-session-control";
 let dispose: (() => void) | undefined;
+it("shows uncertain cleanup and retries only on an explicit click", async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  let closed = false;
+  const request = vi.fn(async (input: { method: string; body?: string }) => {
+    if (input.method === "GET") return { status: 200, body: { sessions: closed ? [] : [{ id: "session", status: "cleanup_unknown", takeoverId: null, expiresAt: "2099-01-01", workId: "work" }] } };
+    expect(JSON.parse(input.body!).operation).toBe("close"); closed = true; return { status: 200, body: {} };
+  });
+  const node = document.createElement("div"); document.body.append(node); const root = createRoot(node); dispose = () => root.unmount();
+  await act(async () => root.render(React.createElement(BrowserSessionControl, { bridge: { protocolVersion: 1, request }, conversationId: "conversation", runId: "run" })));
+  expect(node.textContent).toContain("关闭尚未确认"); expect(node.textContent).not.toContain("接管浏览器");
+  expect(request.mock.calls.every(([v]) => v.method === "GET")).toBe(true);
+  await act(async () => { [...node.querySelectorAll("button")].find(b => b.textContent === "重试关闭")!.click(); });
+  expect(request.mock.calls.filter(([v]) => v.method === "POST")).toHaveLength(1);
+  expect(node.textContent).toBe("");
+});
 afterEach(() => { act(() => dispose?.()); document.body.replaceChildren(); });
 it("keeps actions explicit, shows ownership, clears entered text and never retries failed writes", async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

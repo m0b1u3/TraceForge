@@ -12,7 +12,7 @@ it("uses a real route's input budget instead of mixing incompatible window and o
     }]]), modelPolicies: { worker: { routeIds: ["primary", "large"], maximumAttemptsPerRoute: 1 } } },
     model: async request => {
       const context = JSON.parse(request.user);
-      expect(context.manifest.contextCompaction.timeoutMs).toBe(120000);
+      expect(context.manifest.contextCompaction.timeoutMs).toBeUndefined();
       budgets.push(context.manifest.contextCompaction.budget);
       return context.transcript.some((entry: { kind: string }) => entry.kind === "tool") ? { type: "complete", summary: "Observation preserved", outputs: [] }
         : { type: "invoke_tool", invocation: { id: "read", tool: "fixture.read", input: { candidate: "first" }, rationale: "Read assigned item" } };

@@ -4,7 +4,7 @@ import { continuation, continuationState } from "./model-continuation.js";
 import { modelStreamEvents } from "./stream-events.js";
 import type { ModelStreamEvent, TurnMessage } from "./provider.js";
 
-const options = { apiKey: "fixture", model: "neutral", baseUrl: "https://model.example/v1" };
+const options = { apiKey: "fixture", model: "neutral", baseUrl: "https://model.example/v1", maxOutputTokens:8192 };
 const args = { system: "Task", messages: [{role:"user" as const,content:"Read"}], tools: [{name:"read",description:"Read",input_schema:{type:"object"}}] };
 const replies = {
   openai: {choices:[{message:{content:"",reasoning_content:"  original reasoning  ",tool_calls:[{id:"call",type:"function",function:{name:"read",arguments:"{}"}}]},finish_reason:"tool_calls"}]},

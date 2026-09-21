@@ -25,12 +25,17 @@ export class AnthropicProvider implements LlmProvider {
     };
   }
 
+  private outputTokens(): number {
+    if (this.opts.maxOutputTokens === undefined) throw new Error("Anthropic requires max_tokens: select the model's declared output capacity in the connection configuration");
+    return this.opts.maxOutputTokens;
+  }
+
   async extractJson(args: ExtractJsonArgs): Promise<unknown> {
     // thinking:adaptive 与 output_config 字段名取自 claude-api 文档；
     // 当前安装的 SDK 类型尚未包含这两个字段，故整体断言兜底（运行时由 API 接受）。
     const params = {
       model: this.opts.model,
-      max_tokens: this.opts.maxOutputTokens ?? 4096,
+      max_tokens: this.outputTokens(),
       ...this.parameters(),
       ...(this.opts.jsonMode === "json_schema" ? { output_config: { format: { type: "json_schema", schema: args.schema } } } : {}),
       system: `${args.system}\nReturn JSON matching: ${JSON.stringify(args.schema)}`,
@@ -133,7 +138,7 @@ export class AnthropicProvider implements LlmProvider {
     }
     const params = {
       model: this.opts.model,
-      max_tokens: this.opts.maxOutputTokens ?? 4096,
+      max_tokens: this.outputTokens(),
       ...this.parameters(),
       system: args.system,
       tools: args.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })),

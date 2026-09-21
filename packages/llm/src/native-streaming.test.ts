@@ -57,7 +57,7 @@ it("Chat Completions never replays a broken stream or accepts missing completion
   }
 });
 it("Anthropic consumes native text events and confirms final message before success",async()=>{
-  const u=upstream(),provider=new AnthropicProvider({apiKey:"test",model:"neutral",fetch:u.fetch});
+  const u=upstream(),provider=new AnthropicProvider({apiKey:"test",model:"neutral",maxOutputTokens:8192,fetch:u.fetch});
   const delta=vi.fn(), reasoning=vi.fn();let done=false;
   const result=provider.streamTools(args,{onTextDelta:delta,onReasoningDelta:reasoning}).then(value=>{done=true;return value;});
   await vi.waitFor(()=>expect(u.fetch).toHaveBeenCalledOnce());
@@ -76,7 +76,7 @@ it("Anthropic consumes native text events and confirms final message before succ
 });
 it("native protocols abort without a retry",async()=>{
   for(const Provider of [OpenAICompatibleProvider,AnthropicProvider]){
-    const u=upstream(),provider=new Provider({apiKey:"test",model:"neutral",fetch:u.fetch}),abort=new AbortController();
+    const u=upstream(),provider=new Provider({apiKey:"test",model:"neutral",maxOutputTokens:8192,fetch:u.fetch}),abort=new AbortController();
     const result=provider.streamTools(args,{signal:abort.signal});const rejected=expect(result).rejects.toThrow();
     await vi.waitFor(()=>expect(u.fetch).toHaveBeenCalledOnce());abort.abort();await rejected;expect(u.fetch).toHaveBeenCalledOnce();
   }

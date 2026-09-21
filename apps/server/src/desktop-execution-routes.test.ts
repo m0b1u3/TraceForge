@@ -113,7 +113,7 @@ async function fixture(continueWork?: DesktopExecutionPort["continueWork"]) {
   const base = `/api/desktop/conversations/${conversation.id}`;
   await call(`${base}/messages`, { commandId: "message", text: "Inspect the explicitly authorized scope" });
   const authorization = { commandId: "scope", scenarioKind: pkg.definition.kind, definitionVersion: pkg.definition.version,
-    scope: { targets: ["https://authorized.example"], allowedActions: ["scope.read", "evidence.write", "web.request.replay", "report.write"], deniedActions: [] },
+    scope: { targets: ["https://authorized.example"], authorizedActions: ["scope.read", "evidence.write", "web.request.replay", "report.write"] },
     expiresAt: "2099-01-01T00:00:00.000Z", confirmed: true };
   const command = { commandId: "dispatch", messageCommandId: "message", scopeRef: "scope", scenarioKind: pkg.definition.kind, definitionVersion: pkg.definition.version };
   return { app, call, base, authorization, command, sql, events, workspaces, conversation, setReady(value: boolean) { ready = value; }, lose() { loseResponse = true; },
@@ -279,7 +279,8 @@ it("projects the installed form and registers its literal scope before explicit 
   const f = await fixture();
   const catalog = (await f.call(`${f.base}/execution`)).json(), definition = catalog.definitions[0];
   const form = AuthorizationFormSchema.parse(definition.authorizationForm);
-  const scope = buildAuthorizationScope(form, form.fields.map(field => field.type === "integer" ? String(field.defaultValue) : field.path[0] === "targets" ? "https://first.example/exact" : ""));
+const scope = buildAuthorizationScope(form, form.fields.map(field => field.type === "integer" ? String(field.defaultValue ?? "") : field.path[0] === "targets" ? "https://first.example/exact" : ""));
+  scope.authorizedActions = ["scope.read", "evidence.write"];
   expect(definition.authorizationReview.allowedActions).toContain("scope.read");
   expect((await f.call(`${f.base}/execution/authorize`, { ...f.authorization, scope })).statusCode).toBe(201);
   const registered = (await f.call(`${f.base}/execution`)).json();

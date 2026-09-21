@@ -95,6 +95,39 @@ const resolvedCatalog = (tools: Awaited<ReturnType<ExecutionToolGateway["catalog
 });
 
 describe("WorkerHost", () => {
+  it("waits without inference, renews ownership and resumes after Host interaction", async () => {
+    const current = assignment(); current.leaseExpiresAt = new Date(Date.now() + 10000).toISOString();
+    const control = new FakeControl(current); let held = true, renewals = 0, calls = 0;
+    control.renew = async value => { renewals++; control.current = { ...value, leaseExpiresAt: new Date(Date.now() + 120000).toISOString() }; return control.current; };
+    const host = new WorkerHost(worker, control, { async decide() { calls++; return { type: "complete", summary: "Done", outputs: [] }; } },
+      { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("unexpected"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(),
+      { executionHoldReason: () => held ? "Host interaction" : undefined, renewBeforeMs: 30000 });
+    const running = host.execute(current);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(calls).toBe(0); expect(renewals).toBe(1); expect(control.completed).toBeUndefined();
+    held = false; expect((await running).outcome).toBe("completed"); expect(calls).toBe(1);
+  });
+  it.each(["complete", "block"] as const)("discards %s when takeover begins while the terminal checkpoint is saved", async type => {
+    const control = new FakeControl(); let held = false, calls = 0, release!: () => void;
+    const saved = control.checkpoint.bind(control);
+    const entered = new Promise<void>(resolve => { release = resolve; });
+    control.checkpoint = async (value, input) => { const result = await saved(value, input); if (calls === 1) { held = true; release(); } return result; };
+    const host = new WorkerHost(worker, control, { async decide() { calls++; return type === "block" && calls === 1 ? { type: "block", reason: "Old decision" } : { type: "complete", summary: `Decision ${calls}`, outputs: [] }; } },
+      { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("unexpected"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(),
+      { executionHoldReason: () => held ? "Host interaction" : undefined }, () => "2026-08-24T08:30:00.000Z");
+    const running = host.execute(assignment()); await entered;
+    await new Promise(resolve => setTimeout(resolve, 120)); expect(control.completed).toBeUndefined(); expect(calls).toBe(1);
+    control.checkpoint = saved; held = false;
+    expect((await running).outcome).toBe("completed"); expect(control.completed?.summary).toBe("Decision 2"); expect(control.blocked).toBeUndefined();
+  });
+  it("stops promptly during Host interaction without invoking the model", async () => {
+    const control = new FakeControl(); let calls = 0;
+    const host = new WorkerHost(worker, control, { async decide() { calls++; return { type: "complete", summary: "Done", outputs: [] }; } },
+      { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("unexpected"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(),
+      { executionHoldReason: () => "Host interaction" }, () => "2026-08-24T08:30:00.000Z");
+    const running = host.execute(assignment()); await new Promise(resolve => setTimeout(resolve, 30)); host.cancelAll("User stopped");
+    expect((await running).outcome).toBe("lease_lost"); expect(calls).toBe(0); expect(control.completed).toBeUndefined();
+  });
   it.each(["read_only", "privileged"] as const)("only exempts Host-selected read-only status polling from identical-action guard (%s)", async risk => {
     const control = new FakeControl(), checkpoints = new MemoryCheckpoints(); let calls = 0, effects = 0;
     const gateway: ExecutionToolGateway = { async catalog() { return resolvedCatalog([{ name: "status", source: "fixture", version: "1", priority: 1, description: "Status", inputSchema: {}, providedCapabilities: ["fixture.poll"], dependencyCapabilities: [], permissionRequirements: {}, risk, timeoutMs: 1000 }]); },

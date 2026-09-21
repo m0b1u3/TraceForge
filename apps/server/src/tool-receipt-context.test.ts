@@ -36,6 +36,7 @@ async function fixture(shippedPolicy=false,denyNamespace=false) {
     {kind:"tool.receipt.reader",values:["worker"]},{kind:"tool.source",values:["neutral.provider"]}]};
   const packages=new ScenarioPackageRegistry([pkg]);
   sqlite.prepare("INSERT INTO scenario_authorizations(id,case_id,scenario_kind,scope_json,status,approved_by,expires_at,created_at,updated_at) VALUES ('scope','case','neutral','{}','active','test','2099-01-01','2026-01-01','2026-01-01')").run();
+  if(shippedPolicy)sqlite.prepare("UPDATE scenario_authorizations SET scope_json=? WHERE id='scope'").run(JSON.stringify({authorizedActions:["tool.recall"]}));
   new SqliteScenarioAuthorizationService(sqlite,packages).pin("scope","case",contextBinding,0);
   let effects=0;
   const origin:ExecutionToolAdapter={name:"neutral.action",source:"neutral.provider",version:"1",priority:1,description:"An ordinary bounded action",

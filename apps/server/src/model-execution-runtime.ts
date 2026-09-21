@@ -58,11 +58,11 @@ export class SqliteModelExecutionStore implements ModelExecutionStore {
 
   reserve(input: {
     id: string; context: ModelCallContext; routeId: string; routeAttempt: number;
-    reservedTokens: number; maximumRunTokens: number; at: string;
+    reservedTokens: number; maximumRunTokens?: number; at: string;
   }): void {
     this.sqlite.transaction(() => {
       const usage = this.usage(input.context.runId, input.context.role);
-      if (usage.accountedTokens + input.reservedTokens > input.maximumRunTokens) {
+      if (input.maximumRunTokens !== undefined && usage.accountedTokens + input.reservedTokens > input.maximumRunTokens) {
         throw new ModelBudgetExceededError(
           input.context.runId, input.context.role, input.maximumRunTokens, usage.accountedTokens, input.reservedTokens,
         );

@@ -13,7 +13,7 @@ export const AuthorizationFormSchema = z.object({
     description: z.string().min(1).max(1000),
     type: z.enum(["string-list", "boolean", "integer"]),
     minimum: z.number().int().nonnegative().optional(),
-    maximum: z.number().int().positive().max(1000000).optional(),
+    maximum: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     defaultValue: z.number().int().nonnegative().optional(),
     required: z.boolean(),
     advanced: z.boolean().optional(),
@@ -22,8 +22,8 @@ export const AuthorizationFormSchema = z.object({
   }).strict()).min(1).max(24),
 }).strict().superRefine((form, context) => {
   for (const field of form.fields) if (field.type === "integer" && (field.minimum === undefined || field.maximum === undefined
-    || field.defaultValue === undefined || field.minimum > field.maximum || field.defaultValue < field.minimum || field.defaultValue > field.maximum)) {
-    context.addIssue({code:"custom",message:"Integer authorization fields require valid bounds and default"});
+    || field.minimum > field.maximum || field.defaultValue !== undefined && (field.defaultValue < field.minimum || field.defaultValue > field.maximum))) {
+    context.addIssue({code:"custom",message:"Integer authorization fields require valid bounds and an in-range default when supplied"});
   }
   for (let i = 0; i < form.fields.length; i++) for (let j = i + 1; j < form.fields.length; j++) {
     const a = form.fields[i]!.path, b = form.fields[j]!.path;
@@ -33,6 +33,7 @@ export const AuthorizationFormSchema = z.object({
 });
 export type AuthorizationForm = z.infer<typeof AuthorizationFormSchema>;
 export const AuthorizationReviewSchema = z.object({
+  actionSelection: z.boolean().optional(),
   allowedActions: z.array(z.string().min(1).max(256)).max(256),
   deniedActions: z.array(z.string().min(1).max(256)).max(256),
   resources: z.array(z.object({
@@ -53,6 +54,7 @@ export function buildAuthorizationScope(form: AuthorizationForm, inputs: string[
     if (field.required && (field.type === "boolean" ? inputs[index] !== "true" : !values.length)) throw new Error(`请填写${field.label}。`);
     if (values.length > field.maximumItems || values.some(value => value.length > field.maximumLength))
       throw new Error(`${field.label}超出数量或长度限制。`);
+    if (field.type === "integer" && !field.required && !values.length && field.defaultValue === undefined) return;
     let target = scope;
     for (const part of field.path.slice(0, -1)) target = (target[part] ??= {}) as Record<string, unknown>;
     target[field.path.at(-1)!] = values;

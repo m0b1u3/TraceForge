@@ -27,7 +27,7 @@ export type DesktopBrowserCommand = z.infer<typeof DesktopBrowserCommandSchema>;
 export const DesktopBrowserFrameSchema = z.object({ frameId: id, view: BrowserViewSchema,
   bodyBase64: z.string().max(5592408).regex(/^[A-Za-z0-9+/]+={0,2}$/), width: z.number().int().positive().max(2048),
   height: z.number().int().positive().max(2048) }).strict();
-export const DesktopBrowserListSchema = z.object({ sessions: z.array(z.object({ id, status: z.enum(["active", "manual_control", "frozen", "closed"]),
+export const DesktopBrowserListSchema = z.object({ sessions: z.array(z.object({ id, status: z.enum(["active", "manual_control", "frozen", "closed", "closing", "cleanup_unknown"]),
   isolation: z.literal("chromium").optional(),
   takeoverId: id.nullable(), expiresAt: z.string(), workId: id }).strict()).max(16) }).strict();
 export const DesktopBrowserDocumentSchema = z.object({ document: z.object({ nodes: z.array(z.object({

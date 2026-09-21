@@ -21,8 +21,8 @@ describe("Web Scenario playbooks and passive discovery", () => {
     expect(fields.find((f: any) => f.path[0] === "interactiveWorkspace").description).toContain("不逐次询问");
     expect(manifest.definition.toolPolicies.find((p: any) => p.capability === "workspace.input"))
       .toMatchObject({ source: "traceforge.builtin", profile: "run-workspace", authorizationAction: "workspace.execute" });
-    expect(fields.find((f: any) => f.path[0] === "maximumWorkTurns")).toMatchObject({ defaultValue: 240, minimum: 24, maximum: 10000 });
-    expect(fields.find((f: any) => f.path[0] === "maximumWorkMinutes")).toMatchObject({ defaultValue: 120, minimum: 1, maximum: 1440 });
+    expect(fields.find((f: any) => f.path[0] === "maximumWorkTurns")).not.toHaveProperty("defaultValue");
+    expect(fields.find((f: any) => f.path[0] === "maximumWorkMinutes")).not.toHaveProperty("defaultValue");
     expect(manifest.authorizationPolicy.allowedActions).not.toContain("continuousExecution");
   });
   it("ships reviewed phase-local playbooks with exact content digests and resolvable references", () => {
@@ -31,7 +31,7 @@ describe("Web Scenario playbooks and passive discovery", () => {
     const ids = new Set(resources.map(item => item.id));
     for (const id of ids) expect(authorizeScenarioResource(descriptor.authorizationPolicy, {}, "context.resource", id)).toBe(id);
     expect(() => authorizeScenarioResource(descriptor.authorizationPolicy, {}, "context.resource", "unregistered")).toThrow();
-    expect(descriptor.version).toBe("0.5.13");
+    expect(descriptor.version).toBe("0.5.15");
     for (const resource of resources) {
       const bytes = readFileSync(resolve(root, resource.locator.slice("package://".length)));
       expect(resource.digest, resource.id).toBe(`sha256:${createHash("sha256").update(bytes).digest("hex")}`);

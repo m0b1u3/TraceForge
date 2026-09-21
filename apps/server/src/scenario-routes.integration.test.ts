@@ -54,6 +54,7 @@ async function authorize(app: Awaited<ReturnType<typeof setup>>, routineApproval
       caseId: "case_1",
       scenarioKind: "web_blackbox",
       scope: {
+        authorizedActions: ["scope.read", "evidence.write", "web.traffic.read", "web.request.replay", "report.write"],
         ...(routineApprovalRequired === undefined ? {} : { routineApprovalRequired }),
         targets: ["https://authorized.example"],
         allowedActions: [
@@ -77,6 +78,20 @@ afterEach(() => {
 });
 
 describe("scenario control-plane routes", () => {
+  it("rejects omitted or forged action grants before persistence and returns the selectable policy", async () => {
+    const app = await setup();
+    try {
+      const definitions = (await app.inject({url:"/api/scenarios/definitions"})).json();
+      expect(definitions[0].authorizationReview.actionSelection).toBe(true);
+      const base={id:"selection",caseId:"case_1",scenarioKind:"web_blackbox",approvedBy:"test",expiresAt:"2099-01-01T00:00:00.000Z"};
+      for(const scope of [{targets:[]},{authorizedActions:["unknown"]},{authorizedActions:["scope.read","scope.read"]}]) {
+        expect((await app.inject({method:"POST",url:"/api/scenarios/authorizations",payload:{...base,scope}})).statusCode).toBe(400);
+      }
+      expect((await app.inject({url:"/api/scenarios/authorizations?caseId=case_1"})).json()).toEqual([]);
+      expect((await app.inject({method:"POST",url:"/api/scenarios/authorizations",payload:{...base,scope:{authorizedActions:["scope.read"]}}})).statusCode).toBe(201);
+      expect((await app.inject({url:"/api/scenarios/authorizations?caseId=case_1"})).json()[0].scope.authorizedActions).toEqual(["scope.read"]);
+    } finally { await app.close(); }
+  });
   it("persists explicit inquiry preference in the authorization and rejects malformed consent", async () => {
     const app = await setup();
     const invalid = await authorize(app, "false"); expect(invalid.statusCode).toBe(400);
@@ -187,7 +202,7 @@ describe("scenario control-plane routes", () => {
     expect(started.statusCode).toBe(201);
     expect(started.json().state.revision).toBe(1);
     expect(started.json().state.scenarioPackage).toEqual({
-      id: "traceforge.web-blackbox", version: "0.5.13", schemaRevision: 1,
+      id: "traceforge.web-blackbox", version: "0.5.15", schemaRevision: 1,
     });
     const replayed = await app.inject({ method: "POST", url: "/api/scenarios/runs", payload: startPayload });
     expect(replayed.statusCode).toBe(200);
@@ -195,7 +210,7 @@ describe("scenario control-plane routes", () => {
 
     const bindingList = await app.inject({ method: "GET", url: "/api/scenarios/runs?caseId=case_1" });
     expect(bindingList.json()[0]).toMatchObject({
-      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.5.13", schemaRevision: 1 },
+      scenarioPackage: { id: "traceforge.web-blackbox", version: "0.5.15", schemaRevision: 1 },
       packageAvailability: "available",
       packageDiagnostic: null,
     });

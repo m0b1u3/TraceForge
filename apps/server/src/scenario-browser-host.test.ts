@@ -7,7 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 import { permissionProfileFingerprint, resourceLimitsFingerprint, type ExecutionNode, type ProcessDescriptor, type StartProcessRequest } from "@traceforge/execution-node";
 import type { BrowserControllerConnection, BrowserControllerPort, BrowserResponseDirective, InterceptedBrowserRequest } from "@traceforge/browser-runtime";
 import { parseScenarioPackageDescriptor, type ScenarioToolHostContext } from "@traceforge/scenario-sdk";
-import { ScenarioProcessRuntime, type ToolExecutionContext } from "@traceforge/worker-runtime";
+import { ScenarioProcessRuntime, PolicyExecutionToolGateway, createExecutionToolRegistry, type ToolExecutionContext } from "@traceforge/worker-runtime";
+import { RunToolPolicy } from "./run-tool-policy.js";
+import { assignment } from "../../../packages/worker-runtime/src/test-fixtures.js";
+import type { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
 import { createScenarioBrowserHandler, type ScenarioBrowserDeployment } from "./scenario-browser-host.js";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteBrowserArtifactContent } from "./browser-artifact-content.js";
@@ -72,6 +75,26 @@ function fixture() {
   return { handler, context, node, capacity, deployment, controller, startProcess, requestHttp, terminateProcess, finish, artifacts, revoke: () => { current = false; } };
 }
 describe("Scenario Browser host assembly", () => {
+  it("keeps a retained cleanup lease retryable after controller close fails", async () => {
+    const f = fixture(), sqlite = getSqliteClient(createDb(":memory:")), sessions = new DesktopBrowserSessions(sqlite);
+    sqlite.prepare(`INSERT INTO scenario_event_streams VALUES ('run','case','fixture',1,NULL,NULL,NULL,'running','phase',1,'now','now')`).run();
+    sqlite.prepare(`INSERT INTO scenario_work_leases VALUES ('run','work','worker','lease',?,'now')`).run(owner.leaseExpiresAt);
+    const store = new SqliteBrowserArtifactContent(sqlite), context = { ...f.context, artifacts: new SqliteScenarioArtifactStore(sqlite) };
+    f.deployment.persistArtifact = store.persistArtifact.bind(store); f.deployment.readContent = store.readBound.bind(store);
+    const release = vi.fn(async () => {}); f.deployment.release = release;
+    const connection = await f.controller.attach({} as any);
+    vi.mocked(connection.close).mockRejectedValueOnce(new Error("controller close uncertain"));
+    const handler = createScenarioBrowserHandler({ id: "fixture", version: "1" }, context, f.node, f.capacity, f.deployment, () => f.controller, sessions);
+    try {
+      const opened = await handler.execute({ ...input, operation: "open" }, owner, new AbortController().signal);
+      const id = (opened.output as any).sessionId;
+      await expect(sessions.close(id)).rejects.toThrow("controller close uncertain");
+      expect(f.finish).not.toHaveBeenCalled(); expect(release).toHaveBeenLastCalledWith(expect.anything(), false);
+      expect(sessions.list("case", "run")[0].status).toBe("cleanup_unknown");
+      await sessions.close(id); expect(f.finish).toHaveBeenCalledExactlyOnceWith(true);
+      expect(release).toHaveBeenLastCalledWith(expect.anything(), true); expect(sessions.list("case", "run")).toEqual([]);
+    } finally { await sessions.shutdown(); sqlite.close(); }
+  });
   it("keeps capacity ownership and broker receipts for explicit Chromium-only deployment", async () => {
     const f = fixture(), original = f.deployment.prepare;
     f.deployment.prepare = async (...args) => ({ ...await original(...args), isolation: "chromium" });
@@ -152,6 +175,7 @@ describe("Scenario Browser host assembly", () => {
       await sessions.command("case", "run", takeover);
       await sessions.command("case", "run", takeover);
       expect(sessions.list("case", "run")[0].status).toBe("manual_control");
+      expect(sessions.manualControlPending("run", "work")).toBe(true);
       const manual = await sessions.command("case", "run", { operation: "observe", sessionId, commandId: "read", takeoverId: "manual" }) as any;
       expect(manual.document.sensitiveValues).toBe("omitted");
       const waiting = await handler.execute({ operation: "observe", sessionId, authorizationAction: input.authorizationAction }, { ...owner, idempotencyKey: "second" }, new AbortController().signal);
@@ -159,6 +183,7 @@ describe("Scenario Browser host assembly", () => {
       await expect(sessions.command("other", "run", { ...takeover, commandId: "bad" })).rejects.toThrow("unavailable");
       await expect(sessions.command("case", "run", { operation: "resume", sessionId, commandId: "stale", takeoverId: "wrong" })).rejects.toThrow();
       await sessions.command("case", "run", { operation: "resume", sessionId, commandId: "resume", takeoverId: "manual" });
+      expect(sessions.manualControlPending("run", "work")).toBe(false);
       const next = await handler.execute({ operation: "observe", sessionId, authorizationAction: input.authorizationAction }, { ...owner, idempotencyKey: "third" }, new AbortController().signal);
       expect((next.output as any).view.generation).toBe(3);
       expect(f.startProcess).toHaveBeenCalledTimes(1);
@@ -225,7 +250,15 @@ describe("Scenario Browser host assembly", () => {
         ...descriptor.runtime!.hostCapabilities.filter(capability => capability !== f.handler.capability).map(capability => ({ capability, actions: ["unused"], async execute(): Promise<never> { throw new Error("Unused fixture capability"); } }))], transport: { allowUnsandboxedDevelopment: true } });
     try {
       const tool = (await runtime.discover()).find(tool => tool.name === "web.browser.inspect")!;
-      const result = await tool.execute({ url: input.url, screenshot: true }, owner);
+      const policy = new RunToolPolicy(descriptor.definition, f.context.authorization as unknown as SqliteScenarioAuthorizationService, undefined, "linux", undefined, () => true);
+      const current = assignment(); current.worker.id = owner.workerId; current.worker.capabilities = [...tool.providedCapabilities];
+      current.assignment.runId = owner.runId; current.assignment.leaseId = owner.leaseId; current.assignment.leaseExpiresAt = owner.leaseExpiresAt;
+      current.assignment.runContext.caseId = owner.caseId; current.assignment.runContext.scopeRef = owner.scopeRef;
+      current.assignment.work.id = owner.workId; current.assignment.work.requiredCapabilities = [...tool.providedCapabilities];
+      const gateway = new PolicyExecutionToolGateway(createExecutionToolRegistry([tool]), { async authorize() { return { decision: "approved" }; } },
+        { async get() { return undefined; }, async put() {} }, { allowedRisks: ["bounded_write"], permissionLayers: ({ assignment, tool }) => policy.layers(assignment, tool) });
+      expect((await gateway.catalog(current.worker, current.assignment)).tools.map(item => item.name)).toContain(tool.name);
+      const result = await gateway.execute({ ...current, invocation: { id: "browser-through-policy", tool: tool.name, input: { url: input.url, screenshot: true }, rationale: "Observe authorized page" }, idempotencyKey: "browser-through-policy" });
       expect(JSON.parse(result.raw).validation).toBe("observation_only"); expect(result.refs).toContain("network-receipt:receipt");
       expect(f.startProcess.mock.calls[0][0].permissions.network).toBe("deny");
       expect(f.requestHttp.mock.calls[0][0].permissions.network).toBe("brokered");

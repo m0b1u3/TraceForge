@@ -17,7 +17,10 @@ const resources=z.object({cpuTimeMs:z.number().int().positive().max(86_400_000),
   maximumProcesses:z.number().int().positive().max(1024),writeBytes:z.number().int().nonnegative()}).strict();
 const launch=z.object({source:text,executable:text,arguments:z.array(z.string().max(4096)).max(128).default([]),workingDirectory:text,
   environment:z.record(z.string().max(16_384)).optional(),attribution,permissions,resources,expectedSandboxBackend:text.optional(),
-  processTimeoutMs:z.number().int().positive().max(86_400_000).optional(),outputLimitBytes:z.number().int().positive().max(64*1024*1024).optional()}).strict();
+  expectedBackendMeasurement:z.string().regex(/^[a-f0-9]{64}$/).optional(),acceptedResourcePolicy:z.literal("sampled_terminate").optional(),
+  processTimeoutMs:z.number().int().positive().max(86_400_000).optional(),outputLimitBytes:z.number().int().positive().max(64*1024*1024).optional()}).strict()
+  .refine(value=>value.acceptedResourcePolicy!=="sampled_terminate"||!!value.expectedSandboxBackend&&!!value.expectedBackendMeasurement,
+    "Sampled resource policy requires a pinned sandbox backend and measurement");
 const authority=z.object({keyId:text,publicKeyPem:z.string().min(1).max(16*1024),packageIds:z.array(text).min(1).max(256),
   validFrom:date,validUntil:date,revoked:z.boolean().optional()}).strict();
 const envelope=z.object({format:z.literal("traceforge.scenario-host.v1"),installations:z.array(z.object({root:text,
@@ -42,6 +45,8 @@ export function loadScenarioHostConfiguration(path:string):ScenarioHostConfigura
       workingDirectory:resolvePath(base,item.workingDirectory),...(item.environment?{environment:{...item.environment}}:{}),
       attribution:structuredClone(item.attribution),permissions:structuredClone(item.permissions),resources:structuredClone(item.resources),
       ...(item.expectedSandboxBackend?{expectedSandboxBackend:item.expectedSandboxBackend}:{}),
+      ...(item.expectedBackendMeasurement?{expectedBackendMeasurement:item.expectedBackendMeasurement}:{}),
+      ...(item.acceptedResourcePolicy?{acceptedResourcePolicy:item.acceptedResourcePolicy}:{}),
       ...(item.processTimeoutMs?{processTimeoutMs:item.processTimeoutMs}:{}),...(item.outputLimitBytes?{outputLimitBytes:item.outputLimitBytes}:{})};}
   return {trust:{installations,authority:key=>{const item=authorities.get(key);return item?structuredClone(item):undefined;}},launches:Object.freeze(launches)};
 }

@@ -7,11 +7,11 @@ export function ModelProfileSettings({form,discovered,onChange}:{form:ModelConfi
   const edit=(patch:Partial<ModelProfile>)=>onChange({...profile,model:form.model,baseUrl:form.baseUrl,protocol:form.provider,source:"operator",...patch});
   const state=(value:boolean|undefined)=>value === undefined ? "" : String(value);
   const window=form.contextWindowTokens ?? profile?.contextWindowTokens ?? 32768;
-  const output=form.maxOutputTokens ?? Math.min(4096,Math.floor(window/8),profile?.maxOutputTokens ?? Infinity);
+  const output=form.maxOutputTokens ?? profile?.maxOutputTokens;
   return <details className="model-advanced"><summary>模型能力与自动预算</summary>
     <p className="field-help" role="status">{profile ? profile.source === "catalog" ? "来源：本次保存的供应商目录声明，并非实测结论。" : profile.source === "documentation" ? "来源：厂商文档默认值（保守取整），可手动覆盖；不代表当前账号额度。" : "来源：用户手动声明。" : "供应商未提供或尚未选择能力信息，未知不代表不支持。"}</p>
-    <p className="field-help">当前将使用上下文 {window.toLocaleString()}、单次输出上限 {output.toLocaleString()} tokens。高级参数中的手动预算优先；不会自动把单次输出设成模型支持的最大值。</p>
-    {profile?.maxOutputTokens !== undefined && output>profile.maxOutputTokens && <p className="model-error" role="alert">单次输出预算超过模型最大输出声明。请调低高级参数，或核对后修正能力声明。</p>}
+    <p className="field-help">上下文整理按 {window.toLocaleString()} tokens 计算{!form.contextWindowTokens&&!profile?.contextWindowTokens ? "（窗口未知时的估算，不作为输出限制）" : ""}。{output === undefined ? "未指定输出额度，不额外添加请求上限；Anthropic 协议需要先提供模型的输出能力声明。" : `输出参数遵循接入配置：${output.toLocaleString()} tokens，不额外压低。`}</p>
+    {profile?.maxOutputTokens !== undefined && output!==undefined && output>profile.maxOutputTokens && <p className="model-error" role="alert">接入配置超出模型的输出能力声明，请核对供应商信息。</p>}
     <fieldset disabled={!form.model || !form.baseUrl}><legend className="sr-only">模型能力声明</legend><div className="model-fields">
       <label>模型窗口声明<input aria-label="模型窗口声明" type="number" min={1024} max={100000000} value={profile?.contextWindowTokens ?? ""} placeholder="未知"
         onChange={event=>edit({contextWindowTokens:event.target.value ? Number(event.target.value) : undefined})} /></label>

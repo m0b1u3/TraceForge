@@ -27,6 +27,22 @@ it("applies saved profile to real request output limit and context budget",async
   expect(body.max_tokens).toBe(1024);expect(body).not.toHaveProperty("modelProfile");
   expect(applyModelProfile({...config,modelProfile:profile,contextWindowTokens:32000,maxOutputTokens:512})).toMatchObject({contextWindowTokens:32000,maxOutputTokens:512});
 });
+it("uses the full supplied model capacity instead of a 4096-token product default",async()=>{
+  const declared={...profile,contextWindowTokens:1000000,maxOutputTokens:384000};
+  let body:any;
+  const provider=createProvider({...config,modelProfile:declared},{fetch:async(input,init)=>{body=await new Request(input,init).json();return Response.json({choices:[{message:{content:'{}'},finish_reason:"stop"}]});}});
+  await provider.extractJson({system:"JSON",user:"hello",schema:{}});
+  expect(body.max_tokens).toBe(declared.maxOutputTokens);
+});
+it.each(["openai","responses"] as const)("omits an invented output cap for %s when the connection declares none",async protocol=>{
+  let body:any;
+  const provider=createProvider({...config,provider:protocol},{fetch:async(input,init)=>{
+    body=await new Request(input,init).json();
+    return Response.json(protocol==="openai"?{choices:[{message:{content:'{}'},finish_reason:"stop"}]}:{status:"completed",output:[{type:"message",status:"completed",role:"assistant",content:[{type:"output_text",text:"{}"}]}]});
+  }});
+  await provider.extractJson({system:"JSON",user:"hello",schema:{}});
+  expect(body).not.toHaveProperty("max_tokens");expect(body).not.toHaveProperty("max_output_tokens");
+});
 it("rejects mismatched profiles and unsupported declarations before network activity",async()=>{
   for(const change of [{model:"other"},{baseUrl:"https://other.example"},{provider:"responses" as const}]) expect(()=>createProvider({...config,modelProfile:profile,...change})).toThrow("another connection");
   expect(()=>createProvider({...config,modelProfile:profile,maxOutputTokens:4096})).toThrow("maximum");

@@ -140,8 +140,8 @@ describe("durable Evidence Graph", () => {
     }, context)).rejects.toThrow(/does not exist/);
     sqlite.prepare(`
       INSERT INTO traffic_entries
-        (id, case_id, url, method, request_headers_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+        (id, case_id, url, method, request_headers_json, created_at, run_id, response_status)
+      VALUES (?, ?, ?, ?, ?, ?, 'run_1', 200)
     `).run("traffic_1", "case_1", "https://authorized.example", "GET", "{}", at);
     const result = await tool.execute({
       type: "add_node", node: {

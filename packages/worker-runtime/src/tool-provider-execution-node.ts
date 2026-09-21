@@ -60,6 +60,9 @@ export interface ExecutionNodeToolProviderOptions {
   permissions: EffectivePermissionProfile;
   resources: ExecutionResourceLimits;
   expectedSandboxBackend?: string;
+  expectedBackendMeasurement?: string;
+  /** Trusted host acceptance, never a tool/model argument. */
+  acceptedResourcePolicy?: "sampled_terminate";
   processTimeoutMs?: number;
   outputLimitBytes?: number;
   requestTimeoutMs?: number;
@@ -224,10 +227,11 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
         structuredClone(this.options.attribution)) ?? this.options.attribution;
       const leaseRemainingMs = Date.parse(generationAttribution.leaseExpiresAt) - Date.now();
       if (leaseRemainingMs <= 0) throw new Error(`Tool Provider service lease ${generationAttribution.leaseId} has expired`);
-      await this.options.node.handshake({
+      const handshake = await this.options.node.handshake({
         clientId: `tool-provider:${this.options.attribution.workerId}`,
         protocol: EXECUTION_PROTOCOL_VERSION,
-        requiredCapabilities: ["process.spawn", "process.stdio", "process.resource_limits"],
+        requiredCapabilities: ["process.spawn", "process.stdio", ...(this.options.acceptedResourcePolicy === "sampled_terminate"
+          && this.options.expectedSandboxBackend && this.options.expectedBackendMeasurement ? [] : ["process.resource_limits" as const])],
       });
       if (this.closing) throw new Error("Tool Provider closed before process dispatch");
       const requestId = `tool-provider:${this.options.attribution.idempotencyKey}:generation:${candidateGeneration}`;
@@ -242,7 +246,8 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
         environment: this.options.environment ?? {},
         stdin: "pipe",
         timeoutMs: Math.min(this.processTimeoutMs, leaseRemainingMs),
-        outputLimitBytes: this.outputLimitBytes,
+        outputLimitBytes: this.options.outputLimitBytes ?? Math.min(this.outputLimitBytes,
+          handshake.node?.limits.maximumOutputBytesPerProcess ?? this.outputLimitBytes),
         resources: this.options.resources,
         permissions: this.options.permissions,
       });
@@ -288,11 +293,18 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
       throw new Error("Execution Node returned a process for a different launch identity");
     }
     const enforcement = process.enforcement;
-    if (!enforcement.sandboxed || !enforcement.filesystemPolicyApplied || !enforcement.resourceLimitsApplied) {
+    if (!enforcement.sandboxed || !enforcement.filesystemPolicyApplied
+      || (enforcement.resourcePolicy === "sampled_terminate"
+        ? this.options.acceptedResourcePolicy !== "sampled_terminate" || !this.options.expectedSandboxBackend
+          || !this.options.expectedBackendMeasurement || !enforcement.atomicProcessTreeAssignment || !enforcement.processTreeEmptyBarrier
+        : !enforcement.resourceLimitsApplied)) {
       throw new Error("Execution Node did not enforce the Tool Provider sandbox policy");
     }
     if (this.options.expectedSandboxBackend && enforcement.sandboxBackend !== this.options.expectedSandboxBackend) {
       throw new Error(`Execution Node used unexpected Tool Provider sandbox backend ${enforcement.sandboxBackend}`);
+    }
+    if (this.options.expectedBackendMeasurement && enforcement.backendMeasurement !== this.options.expectedBackendMeasurement) {
+      throw new Error("Execution Node Tool Provider backend measurement mismatch");
     }
     if (enforcement.permissionProfileFingerprint !== permissionProfileFingerprint(this.options.permissions)) {
       throw new Error("Execution Node Tool Provider permission attestation does not match the requested profile");

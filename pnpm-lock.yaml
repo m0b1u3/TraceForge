@@ -232,6 +232,9 @@ importers:
 
   packages/resource-runtime:
     dependencies:
+      '@traceforge/execution-node':
+        specifier: workspace:*
+        version: link:../execution-node
       parse5:
         specifier: ^8.0.1
         version: 8.0.1

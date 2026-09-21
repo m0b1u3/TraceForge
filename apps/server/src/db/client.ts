@@ -70,7 +70,7 @@ export function createDb(path: string, options: { activeCandidate?: { candidateI
       request_bytes INTEGER NOT NULL, response_bytes INTEGER NOT NULL,
       response_body_truncated INTEGER NOT NULL, permission_profile_fingerprint TEXT NOT NULL,
       redirect_followed INTEGER NOT NULL, traffic_id TEXT NOT NULL,
-      started_at TEXT NOT NULL, completed_at TEXT NOT NULL
+      started_at TEXT NOT NULL, completed_at TEXT NOT NULL, destination_json TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_execution_network_receipts_run
       ON execution_network_receipts(case_id, run_id, completed_at);
@@ -823,6 +823,8 @@ export function createDb(path: string, options: { activeCandidate?: { candidateI
   if (!trafficColumns.some((c) => c.name === "identity_version")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN identity_version INTEGER");
   if (!trafficColumns.some((c) => c.name === "attribution_source")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN attribution_source TEXT");
   if (!trafficColumns.some((c) => c.name === "parent_traffic_id")) sqlite.exec("ALTER TABLE traffic_entries ADD COLUMN parent_traffic_id TEXT");
+  const networkReceiptColumns = sqlite.prepare("PRAGMA table_info(execution_network_receipts)").all() as { name: string }[];
+  if (!networkReceiptColumns.some(c => c.name === "destination_json")) sqlite.exec("ALTER TABLE execution_network_receipts ADD COLUMN destination_json TEXT");
   const ensureColumns = (table: string, columns: Array<{ name: string; definition: string }>) => {
     const existing = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     for (const column of columns) {

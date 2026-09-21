@@ -3,6 +3,17 @@ import { withContextBudget } from "./context-budget-provider.js";
 import type { LlmProvider } from "./provider.js";
 import { AnthropicProvider } from "./anthropic-provider.js";
 
+it("does not reject input against an invented window when supplier metadata is unknown",async()=>{
+  const raw:LlmProvider={extractJson:vi.fn(async()=>({ok:true})),runTools:vi.fn()};
+  await expect(withContextBudget(raw,{}).extractJson({system:"Task",user:"x".repeat(200000),schema:{}})).resolves.toEqual({ok:true});
+  expect(raw.extractJson).toHaveBeenCalledOnce();
+});
+it("does not manufacture a required Anthropic output value",async()=>{
+  const fetch=vi.fn();const model=new AnthropicProvider({model:"unknown",apiKey:"fixture",fetch});
+  await expect(model.extractJson({system:"JSON",user:"hello",schema:{}})).rejects.toThrow("requires max_tokens");
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it("guards the complete request and calibrates from real input usage without treating cache as free context", async () => {
   const onUsage = vi.fn();
   const raw: LlmProvider = { extractJson: vi.fn(async args => {

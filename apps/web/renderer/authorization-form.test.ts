@@ -17,6 +17,21 @@ it("shows an explicit integer budget in review and submits it only after confirm
   await act(async()=>f.node.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());await f.click("确认登记授权");
   expect(f.register).toHaveBeenCalledWith({budget:6},expect.any(String));
 });
+it("starts action selection empty, reviews only checked operations and retains draft after rejection", async () => {
+  const f = await render(contract, false, { actionSelection: true, allowedActions: ["resource.read", "resource.write"], deniedActions: ["resource.remove"], resources: [] });
+  const actions = () => [...f.node.querySelectorAll<HTMLInputElement>('.authorization-actions input')];
+  expect(actions().map(input => input.checked)).toEqual([false, false]);
+  await act(async () => actions()[0]!.click());
+  await f.fill("first"); await f.click("核对授权");
+  expect(f.node.querySelector('.authorization-permissions')!.textContent).toContain("resource.read");
+  expect(f.node.querySelector('.authorization-permissions')!.textContent).not.toContain("resource.write");
+  await f.click("返回修改"); expect(actions().map(input => input.checked)).toEqual([true, false]);
+  await f.click("核对授权"); expect(f.node.querySelector<HTMLInputElement>('input')!.checked).toBe(false);
+  f.register.mockResolvedValue(false);
+  await act(async () => f.node.querySelector<HTMLInputElement>('input')!.click()); await f.click("确认登记授权");
+  expect(f.register).toHaveBeenCalledWith({ items: ["first"], authorizedActions: ["resource.read"] }, expect.any(String));
+  await f.click("返回修改"); expect(actions()[0]!.checked).toBe(true);
+});
 afterEach(() => { act(() => dispose?.()); document.body.replaceChildren(); });
 it("defaults autonomy off, reviews explicit choice and preserves it when returning to edit", async () => {
   const f = await render({ ...contract, fields: [{ path: ["autonomous"], label: "允许任务内自主执行", description: "仅本次工作目录", type: "boolean", required: false }] });

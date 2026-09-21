@@ -4,6 +4,12 @@ import { AuthorizationFormSchema, buildAuthorizationScope, type AuthorizationFor
 const form: AuthorizationForm = { version: 1, description: "Reviewed resources", fields: [
   { path: ["scope", "items"], label: "资源", description: "Literal identifiers", type: "string-list", required: true, maximumItems: 2, maximumLength: 100 },
 ] };
+it("omits an optional numeric budget when blank instead of manufacturing a default",()=>{
+  const policy=AuthorizationFormSchema.parse({version:1,description:"Optional budget",fields:[{path:["turns"],label:"Turns",description:"Optional",type:"integer",required:false,minimum:1,maximum:Number.MAX_SAFE_INTEGER}]});
+  expect(buildAuthorizationScope(policy,[""])).toEqual({});
+  expect(buildAuthorizationScope(policy,[])).toEqual({});
+  expect(buildAuthorizationScope(policy,["1234567"])).toEqual({turns:1234567});
+});
 it("never infers boolean consent from prose, arrays or missing input", () => {
   const policy = AuthorizationFormSchema.parse({ ...form, fields: [{ ...form.fields[0], type: "boolean", required: false }] });
   expect(buildAuthorizationScope(policy, [])).toEqual({ scope: { items: false } });

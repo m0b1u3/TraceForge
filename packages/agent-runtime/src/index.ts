@@ -3,7 +3,7 @@ export type AgentTurnResult<T> =
   | { outcome: "finished"; value: T };
 
 export interface AgentSessionOptions {
-  maxTurns: number;
+  maxTurns?: number;
 }
 
 export interface AgentToolIntent { id: string; name: string; }
@@ -148,7 +148,7 @@ export class AgentSession<T> {
     private readonly options: AgentSessionOptions,
   ) {
     if (!id.trim()) throw new Error("Agent Session id is required");
-    if (!Number.isSafeInteger(options.maxTurns) || options.maxTurns < 1) {
+    if (options.maxTurns !== undefined && (!Number.isSafeInteger(options.maxTurns) || options.maxTurns < 1)) {
       throw new Error("Agent Session maxTurns must be a positive integer");
     }
   }
@@ -159,13 +159,13 @@ export class AgentSession<T> {
     executeTurn: (turn: number) => Promise<AgentTurnResult<T>>,
   ): Promise<{ outcome: "finished"; value: T } | { outcome: "budget_exhausted"; turns: number }> {
     if (!Number.isSafeInteger(firstTurn) || firstTurn < 1) throw new Error("Agent Session firstTurn must be positive");
-    for (let turn = firstTurn; turn <= this.options.maxTurns; turn += 1) {
+    for (let turn = firstTurn; this.options.maxTurns === undefined || turn <= this.options.maxTurns; turn += 1) {
       signal.throwIfAborted();
       const result = await executeTurn(turn);
       signal.throwIfAborted();
       if (result.outcome === "finished") return result;
     }
-    return { outcome: "budget_exhausted", turns: this.options.maxTurns };
+    return { outcome: "budget_exhausted", turns: this.options.maxTurns! };
   }
 
   /** Runs the invariant cognitive phase order before a host applies effects. */

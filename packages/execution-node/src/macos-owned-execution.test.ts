@@ -36,6 +36,14 @@ describe.skipIf(process.env.TRACEFORGE_TEST_MACOS_SEATBELT !== "1")("macOS nativ
     expect(result).toMatchObject({ reason: "exited", cleanupConfirmed: true, exitCode: 0, resourcePolicy: "sampled_terminate" });
     expect(result.stdout.toString()).toBe("owned");
   });
+  it("accepts a long host service deadline without imposing a separate one-hour limit", async () => {
+    const input=request("process.stdout.write('service-ready')");input.timeoutMs=86400000;
+    const result=await runMacosOwnedExecution(input,helper,new AbortController().signal);
+    expect(result).toMatchObject({reason:"exited",cleanupConfirmed:true,exitCode:0});
+    expect(result.stdout.toString()).toBe("service-ready");
+    input.timeoutMs=2147483648;
+    await expect(runMacosOwnedExecution(input,helper,new AbortController().signal)).rejects.toThrow("execution bounds");
+  });
   it("supports streaming input and reports only the confirmed group terminal", async () => {
     const input = request("process.stdin.on('data',b=>process.stdout.write(b));process.stdin.on('end',()=>process.exit(0))"); input.stdin = "pipe";
     const launched = await new MacosProcessLauncher(helper).launch(input);

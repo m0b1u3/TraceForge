@@ -110,7 +110,7 @@ export class EmbeddedBrowser {
         observe: request => current.observe(request), act: action => current.act(action),
         observeManual: (takeover, request) => current.observeManual(takeover, request),
         actManual: (takeover, action) => current.actManual(takeover, action),
-        beginTakeover: async () => { const result = await current.beginTakeover(); entry.manual = true; entry.takeoverId = result.takeoverId; return result; },
+        beginTakeover: async () => { const result = await current.beginTakeover(); if (entry.closed) throw new Error("Embedded page closed during takeover"); entry.manual = true; entry.takeoverId = result.takeoverId; return result; },
         resumeTakeover: async takeover => { entry.manual = false; this.hide(id); const result = await current.resumeTakeover(takeover); entry.takeoverId = undefined; return result; },
         close: async () => { entry.manual = false; this.hide(id); await current.close(); },
       };

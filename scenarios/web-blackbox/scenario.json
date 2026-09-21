@@ -1,12 +1,13 @@
 {
   "format": "traceforge.scenario-package.v1",
-  "package": { "id": "traceforge.web-blackbox", "version": "0.5.13", "schemaRevision": 1 },
+  "package": { "id": "traceforge.web-blackbox", "version": "0.5.15", "schemaRevision": 1 },
   "definition": {
     "kind": "web_blackbox",
     "version": 1,
     "title": "Web black-box security investigation",
     "authorizationActions": ["tool.recall", "scope.read", "web.request.replay", "web.session.use", "web.traffic.read", "evidence.write", "report.write", "workspace.read", "workspace.write", "workspace.execute", "workspace.network", "research.search", "research.repositories", "research.fetch", "tools.use"],
     "toolPolicies": [
+      { "source": "scenario:web_blackbox@1", "capability": "web.browser.inspect", "authorizationAction": "web.request.replay", "profile": "browser-host" },
       { "source": "traceforge.builtin", "capability": "workspace.input", "authorizationAction": "workspace.execute", "profile": "run-workspace" },
       { "source": "traceforge.builtin", "capability": "workspace.start", "authorizationAction": "workspace.execute", "profile": "run-workspace", "autonomousScopeFlag": "autonomousWorkspace" },
       { "source": "traceforge.builtin", "capability": "workspace.poll", "authorizationAction": "workspace.read", "profile": "run-workspace" },
@@ -49,6 +50,7 @@
   },
   "authorizationPolicy": {
     "format": "traceforge.scenario-scope-policy.v1",
+    "actionSelection": true,
     "form": {
       "version": 1,
       "description": "指定本次调查可以访问的范围。只有你确认后，授权才会生效。",
@@ -59,8 +61,8 @@
         { "path": ["workspaceWebSocket"], "label": "允许工作区 WebSocket 连接", "description": "仅对已授权的工作区网络目标允许 HTTP 升级为双向连接；记录连接及字节量，不把消息内容当作已验证证据。未授权网络时此选项无效。加密隧道仍按原连接范围授权。", "type": "boolean", "required": false },
         { "path": ["maximumScriptSeconds"], "label": "单次脚本最长执行时间（秒）", "description": "默认 60 秒，可授权更长操作，最高 3600 秒。模型仍须在工具参数中请求所需时长；不会扩大文件、网络、安装或后台运行权限。停止任务仍会终止对应进程。", "type": "integer", "required": false, "advanced": true, "minimum": 1, "maximum": 3600, "defaultValue": 60 },
         { "path": ["continuousExecution"], "label": "允许长任务自动续接", "description": "在本次授权范围内自动接续内部执行段，无需反复点击继续；完成、依赖阻塞、停滞、预算耗尽或你停止时结束。不会新增工具、联网或文件权限。", "type": "boolean", "required": false },
-        { "path": ["maximumWorkTurns"], "label": "每项工作的累计回合上限", "description": "包括恢复前已使用的回合；修改默认值不影响已有任务。", "type": "integer", "required": false, "advanced": true, "minimum": 24, "maximum": 10000, "defaultValue": 240 },
-        { "path": ["maximumWorkMinutes"], "label": "每项工作的累计时长（分钟）", "description": "从首次执行开始计算，包含暂停时间；到期不再开启下一回合，当前操作仍受自身超时与停止控制约束。", "type": "integer", "required": false, "advanced": true, "minimum": 1, "maximum": 1440, "defaultValue": 120 },
+        { "path": ["maximumWorkTurns"], "label": "每项工作的累计回合上限（可选）", "description": "留空不设置回合上限；填写后包括恢复前已使用的回合。", "type": "integer", "required": false, "advanced": true, "minimum": 24, "maximum": 9007199254740991 },
+        { "path": ["maximumWorkMinutes"], "label": "每项工作的累计时长（分钟，可选）", "description": "留空不设置总时长；填写后从首次执行开始计算，包含暂停时间。停止、撤权和单次工具的执行控制始终有效。", "type": "integer", "required": false, "advanced": true, "minimum": 1, "maximum": 150119987579 },
         { "path": ["budgets", "urls"], "label": "每个发现会话的 URL 上限", "description": "控制发现范围；不会增加目标授权。", "type": "integer", "required": false, "advanced": true, "minimum": 1, "maximum": 512, "defaultValue": 64 },
         { "path": ["budgets", "hypotheses"], "label": "任务假设上限", "description": "保留的独立假设数量；仍逐一验证。", "type": "integer", "required": false, "advanced": true, "minimum": 1, "maximum": 128, "defaultValue": 16 },
         { "path": ["budgets", "variants"], "label": "单个实验的变体上限", "description": "同一假设内顺序执行的对照变体。", "type": "integer", "required": false, "advanced": true, "minimum": 1, "maximum": 16, "defaultValue": 1 },
@@ -240,7 +242,7 @@
   },
   "runtime": {
     "protocol": "traceforge-scenario-process-rpc", "protocolVersion": 1,
-    "id": "traceforge.web-blackbox", "version": "0.5.13", "source": "scenario:web_blackbox@1",
+    "id": "traceforge.web-blackbox", "version": "0.5.15", "source": "scenario:web_blackbox@1",
     "entrypoint": "package://runtime/main.mjs",
     "providedCapabilities": ["web.investigation.snapshot", "scope.read", "web.hypothesis.register", "web.validation.execute", "web.validation.review", "web.report.build", "web.request.replay", "web.validation.compare", "web.surface.explore", "web.session.use", "web.traffic.read", "web.browser.inspect", "web.browser.read"],
     "hostCapabilities": ["traceforge.scenario.authorization@1", "traceforge.scenario.execution@1", "traceforge.scenario.artifacts@1", "traceforge.scenario.state@1", "traceforge.scenario.evidence@1", "traceforge.scenario.sessions@1", "traceforge.scenario.traffic@1", "traceforge.scenario.browser@1"]

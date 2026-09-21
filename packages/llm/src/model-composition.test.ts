@@ -3,7 +3,7 @@ import { createProvider } from "./factory.js";
 import { normalizeModelConnection } from "./connections.js";
 import type { ModelStreamEvent, TurnMessage } from "./provider.js";
 
-const options = { model: "neutral", apiKey: "fixture", baseUrl: "https://provider.example/v1" };
+const options = { model: "neutral", apiKey: "fixture", baseUrl: "https://provider.example/v1", maxOutputTokens:8192 };
 const args = { system: "Neutral task", messages: [{ role: "user" as const, content: "Read" }], tools: [{ name: "read", description: "Read", input_schema: { type: "object" } }] };
 const completed = { status: "completed", output: [{ type: "function_call", call_id: "first", name: "read", arguments: '{"path":"a"}', status: "completed" }] };
 const events = {

@@ -41,6 +41,16 @@ function definition(): ScenarioDefinition {
 }
 
 describe("package-owned Run decision supervision", () => {
+  it("projects declared capability/action mappings without turning them into a grant", async () => {
+    const configured=definition();
+    configured.toolPolicies=[{source:"neutral",capability:"records.preview",authorizationAction:"records.inspect",profile:"browser-host"}];
+    const planner=new StructuredRunPlannerModel({async extractJson(request){
+      expect(JSON.parse(request.user).scenario.capabilityAuthorization).toEqual([{source:"neutral",capability:"records.preview",authorizationAction:"records.inspect"}]);
+      expect(request.system).toContain("do not grant permission");
+      return {action:"wait",rationale:"Await actual readiness"};
+    }});
+    await planner.evaluate({contextId:"mapping",run:run(),definition:configured,graph:graph(),recentEvents:[],maximumGraphNodes:10,maximumRunItems:10});
+  });
   it("keeps exact evidence reference choices outside lossy prose compaction", async () => {
     const planner = new StructuredRunPlannerModel({ extractJson: async request => {
       const input = JSON.parse(request.user);

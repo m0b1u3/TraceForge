@@ -23,6 +23,16 @@ import {
 
 const openedAt = "2026-09-04T02:00:00.000Z";
 const leaseExpiresAt = "2026-09-04T03:00:00.000Z";
+it("does not revive a closed session when takeover completes late", async () => {
+  const subject = fixture(), session = await subject.runtime.open(owner(), processConfiguration());
+  let finish!: () => void;
+  const result = { takeoverId: "late", generation: 2, state: "manual_control" as const, pages: [] };
+  subject.beginTakeover.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve(result); }));
+  const pending = subject.runtime.beginManualControl(session.id);
+  await Promise.resolve(); await subject.runtime.close(session.id); finish();
+  await expect(pending).rejects.toThrow("closed during takeover");
+  expect(subject.runtime.snapshot(session.id)?.status).toBe("closed");
+});
 it("renews only the same lease without extending the session lifetime or reviving a closed session", async () => {
   const subject = fixture(); const session = await subject.runtime.open(owner(), processConfiguration());
   subject.runtime.renewLease(session.id, owner({ leaseExpiresAt: "2026-09-04T04:00:00.000Z" }));

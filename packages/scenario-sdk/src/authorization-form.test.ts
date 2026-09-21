@@ -7,8 +7,8 @@ const descriptor = () => JSON.parse(readFileSync(new URL("../../../scenarios/web
 it("round-trips a Scenario-owned form through the installed policy without widening resources", () => {
   const pkg = parseScenarioPackageDescriptor(descriptor()), policy = pkg.authorizationPolicy;
   if (!("form" in policy) || !policy.form) throw new Error("Missing form");
-  const scope = buildAuthorizationScope(policy.form, policy.form.fields.map(field => field.type === "integer" ? String(field.defaultValue) : field.path[0] === "targets" ? "https://first.example/exact" : field.path[0] === "urlPrefixes" ? "https://second.example/" : ""));
-  const parsed = parseScenarioScope(policy, scope);
+const scope = buildAuthorizationScope(policy.form, policy.form.fields.map(field => field.type === "integer" ? String(field.defaultValue ?? "") : field.path[0] === "targets" ? "https://first.example/exact" : field.path[0] === "urlPrefixes" ? "https://second.example/" : ""));
+  const parsed = parseScenarioScope(policy, { ...scope, authorizedActions: ["web.request.replay"] });
   expect(authorizeScenarioResource(policy, parsed.payload, "network.url", "https://first.example/exact")).toBe("https://first.example/exact");
   expect(() => authorizeScenarioResource(policy, parsed.payload, "network.url", "https://first.example/other")).toThrow();
   expect(() => authorizeScenarioResource(policy, parsed.payload, "network.url", "https://second.example.evil/")).toThrow();

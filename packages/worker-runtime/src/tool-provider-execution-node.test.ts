@@ -159,6 +159,30 @@ function client(
 }
 
 describe("ExecutionNodeToolProviderClient", () => {
+  it.each([undefined,2048])("negotiates the default output limit without silently changing an explicit limit: %s",async(outputLimitBytes)=>{
+    const fixture=new FakeProviderNode(),node=fixture.asNode();let actual=0;
+    node.handshake=async()=>({node:{limits:{maximumOutputBytesPerProcess:1024}}} as never);
+    const start=node.startProcess;node.startProcess=async(request)=>{actual=request.outputLimitBytes;return start(request);};
+    const rpc=new ExecutionNodeToolProviderClient({node,executable:"C:\\provider.exe",workingDirectory:"C:\\provider",
+      attribution:fixture.descriptor.attribution,permissions,resources,outputLimitBytes});
+    try{await rpc.listTools();expect(actual).toBe(outputLimitBytes??1024);}finally{await rpc.close();}
+  });
+  it.each(["accepted", "not_accepted", "wrong_measurement", "no_cleanup"] as const)("validates host-accepted sampled resource enforcement: %s",async(mode)=>{
+    const fixture=new FakeProviderNode(),node=fixture.asNode(),measurement="a".repeat(64);
+    Object.assign(fixture.descriptor.enforcement,{resourceLimitsApplied:false,resourcePolicy:"sampled_terminate",
+      backendMeasurement:measurement,atomicProcessTreeAssignment:true,processTreeEmptyBarrier:mode!=="no_cleanup"});
+    let required: string[]=[];
+    node.handshake=async(request)=>{required=request.requiredCapabilities??[];return {} as never;};
+    const rpc=new ExecutionNodeToolProviderClient({node,executable:"C:\\provider.exe",workingDirectory:"C:\\provider",
+      attribution:fixture.descriptor.attribution,permissions,resources,expectedSandboxBackend:"appcontainer",
+      expectedBackendMeasurement:mode==="wrong_measurement"?"b".repeat(64):measurement,
+      ...(mode!=="not_accepted"?{acceptedResourcePolicy:"sampled_terminate" as const}:{})});
+    try{
+      if(mode==="accepted"){await expect(rpc.listTools()).resolves.toHaveLength(1);expect(required).not.toContain("process.resource_limits");}
+      else {await expect(rpc.listTools()).rejects.toThrow(/sandbox policy|measurement mismatch/);expect(fixture.inputWrites).toBe(0);expect(fixture.terminated).toBe(1);}
+      if(mode==="not_accepted")expect(required).toContain("process.resource_limits");
+    }finally{await rpc.close();}
+  });
   it("never dispatches when the durable capacity barrier refuses admission",async()=>{
     const fixture=new FakeProviderNode(),node=fixture.asNode();let starts=0;
     const original=node.startProcess;node.startProcess=async(request)=>{starts++;return original(request);};

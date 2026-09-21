@@ -45,11 +45,13 @@ export function BrowserSessionControl({ bridge, conversationId, runId }: { bridg
     finally { setBusy(false); setRefresh(x => x + 1); }
   }
   if (!sessions.length && !error) return null;
-  return <details className="browser-session-control"><summary>受控浏览器 · {error ? "需要核对状态" : `${sessions.length} 个会话`}</summary>
+  const uncertain = sessions.some(session => session.status === "cleanup_unknown");
+  return <details className="browser-session-control"><summary>受控浏览器 · {error || uncertain ? "需要核对状态" : `${sessions.length} 个会话`}</summary>
     <p className="local-receipt">接管后智能体不能操作此页面。页面内容不可信；操作仍受原任务范围限制。</p>
     {error && <p role="alert">{error} <button disabled={busy} onClick={() => { setError(""); setRefresh(x => x + 1); }}>重新读取状态</button></p>}
     {sessions.map(session => <section key={session.id} aria-label="浏览器会话">
-      <p role="status">{session.status === "manual_control" ? "由你控制" : session.status === "active" ? "由智能体控制" : "已不可用"} · 工作项 {session.workId}</p>
+      <p role="status">{session.status === "cleanup_unknown" ? "关闭尚未确认" : session.status === "closing" ? "正在关闭" : session.status === "manual_control" ? "由你控制，智能体等待交回" : session.status === "active" ? "由智能体控制" : "已不可用"} · 工作项 {session.workId}</p>
+      {session.status === "cleanup_unknown" && <p>页面已停止操作，但清理尚未确认。可重试关闭，不会重新打开网页或重复之前的操作。</p>}
       <div className="browser-session-actions">
         {session.status === "active" && <button disabled={busy || !!error} onClick={() => void command({ operation: "takeover", sessionId: session.id, commandId: crypto.randomUUID() })}>接管浏览器</button>}
         {session.status === "manual_control" && session.takeoverId && <>
@@ -57,7 +59,7 @@ export function BrowserSessionControl({ bridge, conversationId, runId }: { bridg
           <button disabled={busy || !!error} onClick={() => void command({ operation: "observe", sessionId: session.id, takeoverId: session.takeoverId!, commandId: crypto.randomUUID() })}>读取页面元素</button>
           <button disabled={busy || !!error} onClick={() => void command({ operation: "resume", sessionId: session.id, takeoverId: session.takeoverId!, commandId: crypto.randomUUID() })}>交回智能体</button>
         </>}
-        <button disabled={busy} onClick={() => void command({ operation: "close", sessionId: session.id, commandId: crypto.randomUUID() })}>关闭会话</button>
+        <button disabled={busy || session.status === "closing"} onClick={() => void command({ operation: "close", sessionId: session.id, commandId: crypto.randomUUID() })}>{session.status === "cleanup_unknown" ? "重试关闭" : "关闭会话"}</button>
       </div>
       {session.status === "manual_control" && session.takeoverId && viewing === session.id && !error && <BrowserViewport key={`${session.id}:${session.takeoverId}`}
         bridge={bridge} path={path} sessionId={session.id} takeoverId={session.takeoverId} send={command} onHide={() => setViewing(null)} />}

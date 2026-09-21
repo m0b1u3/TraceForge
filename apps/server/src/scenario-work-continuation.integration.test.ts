@@ -191,7 +191,7 @@ describe("Authorized partial Work continuation", () => {
     expect((await next.run()).outcome).toBe("completed"); expect(modelCalls).toBe(1); expect(toolCalls).toBe(1);
   });
 
-  it.each(["unknown-action", "missing-receipt", "wrong-input", "wrong-contract", "wrong-case", "turn-budget", "failure-budget", "legacy"])("rejects %s checkpoint/ledger disagreement", async (kind) => {
+  it.each(["unknown-action", "missing-receipt", "wrong-input", "wrong-contract", "wrong-case", "failure-budget", "legacy"])("rejects %s checkpoint/ledger disagreement", async (kind) => {
     const c = await setup();
     if (kind === "unknown-action") await c.bind("second");
     if (kind === "missing-receipt") { await c.bind(); c.checkpoint.pendingInvocation = null; c.checkpoint.completedInvocationIds = ["first"]; }
@@ -201,7 +201,6 @@ describe("Authorized partial Work continuation", () => {
       else c.checkpoint.pendingInvocation!.contractFingerprint = "b".repeat(64);
     }
     if (kind === "wrong-case") c.checkpoint.caseId = "other";
-    if (kind === "turn-budget") { c.checkpoint.turn = 24; c.checkpoint.pendingInvocation = null; }
     if (kind === "failure-budget") c.checkpoint.consecutiveFailures = 3;
     if (kind === "legacy") { c.checkpoint.version = 1; delete c.checkpoint.pendingInvocation; }
     await c.save(); c.block();

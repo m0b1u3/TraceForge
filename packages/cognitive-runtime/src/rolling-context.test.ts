@@ -124,7 +124,7 @@ it("allows multiple slow summary batches under the bounded model deadline, not a
     const pending = runtime.prepare({ caseId: "case", runId: "run", consumer: "worker", sourceFingerprint: "source",
       context: { transcript: Array.from({ length: 40 }, (_, turn) => ({ turn, kind: "tool", summary: "x".repeat(900) })) } });
     await vi.advanceTimersByTimeAsync(100000);
-    expect((await pending).manifest.contextCompaction).toMatchObject({ status: "completed", timeoutMs: 120000 });
+    expect((await pending).manifest.contextCompaction).toMatchObject({ status: "completed", timeoutMs: undefined });
     expect(calls).toBeGreaterThan(1);
   } finally { vi.useRealTimers(); }
 });

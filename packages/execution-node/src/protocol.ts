@@ -435,6 +435,7 @@ export interface BrokeredHttpRequest {
 }
 
 export interface BrokeredNetworkReceipt {
+  destination?: import("./network-destination.js").NetworkDestination;
   id: string;
   nodeId: string;
   requestId: string;

@@ -62,7 +62,7 @@ it("opens network receipts independently of response content without crossing ow
   const f = await fixture();
   f.sql.prepare(`INSERT INTO execution_network_receipts VALUES
     ('receipt','local','request',?,'run','work','worker','scope','lease','key','grant','observe',
-     'https://example.test','GET',200,0,40000,1,'fingerprint',0,'capture','start','end')`).run(f.conversation.caseId);
+     'https://example.test','GET',200,0,40000,1,'fingerprint',0,'capture','start','end',NULL)`).run(f.conversation.caseId);
   const request = { runId: "run", ref: "network-receipt:receipt", offset: 0 };
   const response = await f.call(f.path, request);
   expect(response.statusCode).toBe(200);

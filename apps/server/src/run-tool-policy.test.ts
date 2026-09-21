@@ -4,6 +4,32 @@ import { RunWorkspace, PolicyExecutionToolGateway, createExecutionToolRegistry, 
 import type { ScenarioDefinition } from "@traceforge/orchestration-core";
 import type { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
 import { assignment } from "../../../packages/worker-runtime/src/test-fixtures.js";
+import { readFileSync } from "node:fs";
+import { tools as scenarioTools } from "../../../scenarios/web-blackbox/runtime/contracts.mjs";
+
+it("admits the shipped browser through the real gateway only with Host readiness and current scope", async () => {
+  const definition = JSON.parse(readFileSync(new URL("../../../scenarios/web-blackbox/scenario.json", import.meta.url), "utf8")).definition as ScenarioDefinition;
+  let ready = true, revoked = false;
+  const authorization = { requireAction: () => { if (revoked) throw new Error("revoked"); return { scopePayload: {} }; } } as unknown as SqliteScenarioAuthorizationService;
+  const spec = scenarioTools.find(tool => tool.name === "web.browser.inspect")!;
+  const execute = vi.fn(async (_input, context) => {
+    expect(context.effectivePermissions).toMatchObject({ network: "brokered", process: { access: "sandboxed", interactive: false, background: false }, filesystem: { read: [], write: [] } });
+    return { status: "succeeded" as const, raw: "observed", summary: "observed", refs: [], retryable: false };
+  });
+  const tool = { ...spec, execute } as ExecutionToolAdapter;
+  const policy = new RunToolPolicy(definition, authorization, undefined, "darwin", undefined, () => ready);
+  const current = assignment(); current.worker.capabilities = [...tool.providedCapabilities]; current.assignment.work.requiredCapabilities = [...tool.providedCapabilities];
+  const gateway = new PolicyExecutionToolGateway(createExecutionToolRegistry([tool]), { async authorize() { return { decision: "approved" }; } },
+    { async get() { return undefined; }, async put() {} }, { allowedRisks: ["read_only", "bounded_write"], permissionLayers: ({ assignment, tool }) => policy.layers(assignment, tool) });
+  expect((await gateway.catalog(current.worker, current.assignment)).tools.map(tool => tool.name)).toContain(tool.name);
+  await gateway.execute({ ...current, invocation: { id: "browser", tool: tool.name, input: { url: "https://first.example/" }, rationale: "Observe authorized page" }, idempotencyKey: "browser" });
+  expect(execute).toHaveBeenCalledTimes(1);
+  ready = false; expect((await gateway.catalog(current.worker, current.assignment)).tools).toEqual([]);
+  ready = true; revoked = true; expect((await gateway.catalog(current.worker, current.assignment)).tools).toEqual([]);
+  revoked = false;
+  expect(new RunToolPolicy(definition, authorization, undefined, "darwin").layers(current.assignment, tool)[0].profile.process.access).toBe("deny");
+  expect(policy.layers(current.assignment, { ...tool, source: "untrusted" })[0].profile.process.access).toBe("deny");
+});
 
 it("uses the pinned desktop inquiry mode without granting high-risk legacy autonomy", () => {
   let payload: Record<string, unknown> = { routineApprovalRequired: false, autonomous: true };

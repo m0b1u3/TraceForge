@@ -43,11 +43,18 @@ describe("application-owned browser assembly", () => {
     await rm(node); await writeFile(node, "fixture"); await symlink(f.resources, join(f.user, "browser-scratch"));
     await expect(bundledBrowserInstallation(f.resources, f.user)).rejects.toThrow("private");
   });
-  it("uses bundled assembly for packaged desktop and keeps release gates enabled", () => {
+  it("uses Electron-owned embedded assembly instead of the retired standalone bundle and keeps release gates enabled", () => {
     const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
-    expect(main).toContain("app.isPackaged ? { browserInstallation: await bundledBrowserInstallation");
+    expect(main).toContain("const embeddedBrowser = new EmbeddedBrowser()");
+    expect(main).toContain("embeddedBrowser: artifacts => embeddedBrowser.deployment(artifacts)");
+    expect(main).not.toContain("bundledBrowserInstallation");
+    const embedded = readFileSync(new URL("./embedded-browser.ts", import.meta.url), "utf8");
+    expect(embedded).toContain("new WebContentsView");
+    expect(embedded).toContain("sandbox: true");
+    expect(embedded).toContain("nodeIntegration: false");
+    expect(embedded).not.toContain("--no-sandbox");
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-    expect(pkg.build.extraResources).toContainEqual({ from: "runtime/browser-runtime", to: "browser-runtime", filter: ["**/*"] });
+    expect(pkg.build.extraResources).not.toContainEqual({ from: "runtime/browser-runtime", to: "browser-runtime", filter: ["**/*"] });
     expect(pkg.scripts.pack).toContain("desktop-release-unavailable");
   });
 });

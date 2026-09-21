@@ -30,6 +30,22 @@ it("changes a paused Run scope atomically, preserves expiry, records previous sc
   expect(()=>f.control.change("conversation",{...input,scope:{targets:["second"]}})).toThrow("另一份");
   expect(()=>f.sqlite.exec("DELETE FROM desktop_permission_changes")).toThrow("immutable");
 });
+it("edits selected actions through the existing revisioned authorization and retains the package ceiling",()=>{
+  const f=setup();
+  if (!("format" in f.source.authorizationPolicy)) throw new Error("Expected declarative fixture");
+  f.source.authorizationPolicy.actionSelection=true;
+  f.sqlite.prepare("UPDATE scenario_authorizations SET scope_json=? WHERE id='scope'").run(JSON.stringify({targets:[],authorizedActions:[]}));
+  f.authorization.pin("scope","case",f.from,1);
+  expect(f.control.read("conversation","run").policy).toMatchObject({actionSelection:true,allowedActions:["observe"],deniedActions:[]});
+  expect(()=>f.authorization.requireAction("scope","case","observe")).toThrow("denied");
+  const input={...f.request(),scope:{targets:["first"],authorizedActions:["observe"]}};
+  f.control.change("conversation",input);
+  expect(f.authorization.requireAction("scope","case","observe")).toBeDefined();
+  expect(f.control.change("conversation",input)).toMatchObject({replayed:true});
+  expect(()=>f.control.change("conversation",{...f.request(),commandId:"bad",scope:{targets:[],authorizedActions:["unknown"]}})).toThrow();
+  f.control.change("conversation",{...f.request(),commandId:"narrow",scope:{targets:[],authorizedActions:[]}});
+  expect(()=>f.authorization.requireAction("scope","case","observe")).toThrow("denied");
+});
 it("rejects running, revoked, stale, unconfirmed and cross-conversation requests",()=>{
   const f=setup(),input=f.request();
   expect(()=>f.control.change("missing",input)).toThrow();

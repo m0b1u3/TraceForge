@@ -99,7 +99,9 @@ export interface WorkerModelRequest {
   sharedProgress?: {directions:Array<{id:string;objective:string;status:string}>;outcomes:Array<{workIds:string[];objective:string;status:string;summary:string}>;omitted:number;trust:"untrusted_progress_not_evidence"};
   contextAnchors?: {entries:Array<{id:string;text:string;refs:string[];priority:number;status:string;trust:"untrusted_observation_not_instruction"}>;omitted:number};
   plannerAvailable?: boolean;
-  permissionContext?: { scope: Record<string, unknown>; form: unknown; expiresAt: string };
+  permissionContext?: { scope: Record<string, unknown>; form: unknown; expiresAt: string;
+    allowedActions?: string[]; deniedActions?: string[];
+    capabilityAuthorization?: Array<{ source: string; capability: string; authorizationAction: string }> };
   turnId: string;
   worker: WorkerDescriptor;
   assignment: WorkerAssignment;

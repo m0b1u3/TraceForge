@@ -60,7 +60,7 @@ function validateDefinition(value: unknown): void {
       object(rule, "Tool policy"); exact(rule, ["source", "capability", "authorizationAction", "profile", "autonomousScopeFlag"]);
       for (const key of ["source", "capability", "authorizationAction"]) boundedText(rule[key], 128, `Tool policy ${key}`);
       if (!(value.authorizationActions as string[]).includes(rule.authorizationAction as string)) throw new Error("Tool policy uses undeclared authorization action");
-      if (!["run-workspace", "brokered-host"].includes(String(rule.profile))) throw new Error("Unsupported tool permission profile");
+      if (!["run-workspace", "brokered-host", "browser-host"].includes(String(rule.profile))) throw new Error("Unsupported tool permission profile");
       if (rule.autonomousScopeFlag !== undefined && (typeof rule.autonomousScopeFlag !== "string" || !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(rule.autonomousScopeFlag) || ["constructor", "prototype", "__proto__"].includes(rule.autonomousScopeFlag))) throw new Error("Invalid autonomous Scope flag");
       const identity = JSON.stringify([rule.source, rule.capability]); if (identities.has(identity)) throw new Error("Duplicate tool policy"); identities.add(identity);
     }

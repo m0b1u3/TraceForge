@@ -36,7 +36,7 @@ export function registerRoutes(
   registerDesktopReplyRoutes(app, new DesktopReplyService(sqlite, () => {
     if (!llmService) throw new Error("Model not configured");
     return llmService.getConversationProvider();
-  }, 240000, tasks,continuationCipher));
+  }, undefined, tasks,continuationCipher));
 
   app.get("/api/cases", async () => cases.list());
 

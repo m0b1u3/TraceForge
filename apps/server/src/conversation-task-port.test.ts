@@ -12,6 +12,15 @@ function fixture() {
   const execute=(name:string,input:unknown)=>port.execute("conversation","message",{id:"call",name,input},signal);
   return {sql,port,request,execute};
 }
+it("projects declared capabilities and workflow without mistaking them for authorization",async()=>{
+  const f=fixture();try{
+    f.request.mockResolvedValue({status:200,body:{definitions:[{kind:"neutral",version:1,title:"Neutral review",requiredCapabilities:["scope.read"],agentTopology:{workerPools:[{capabilities:["document.read","scope.read"]},{capabilities:["document.read"]}]},phases:[{id:"review",title:"Review",objective:"Read authorized documents",requiredCapabilities:["document.read"],internal:"not exposed"}],toolPolicies:[{capability:"document.inspect",authorizationAction:"document.read",profile:"host-only"}],authorizationActions:["document.read"],privateConfiguration:"not exposed"}],runs:[],truncated:false}});
+    const result=await f.execute("task_context",{}) as any;
+    expect(result.definitions).toEqual([{kind:"neutral",version:1,title:"Neutral review",capabilityStatus:"declared_not_authorized_or_runtime_verified",requiredCapabilities:["scope.read"],workerCapabilities:["document.read","scope.read"],phases:[{id:"review",title:"Review",objective:"Read authorized documents",requiredCapabilities:["document.read"]}],capabilityAuthorization:[{capability:"document.inspect",authorizationAction:"document.read"}],authorizationActions:["document.read"]}]);
+    expect(f.request.mock.calls.every(call=>call[1]===undefined)).toBe(true);
+    expect(f.sql.prepare("SELECT count(*) AS n FROM desktop_task_requests").get()).toEqual({n:0});
+  }finally{f.sql.close();}
+});
 it("reads attributed task records only within the conversation and pins pagination",async()=>{
   const f=fixture();try{
     const first=await f.execute("task_read",{runId:"run"}) as any;

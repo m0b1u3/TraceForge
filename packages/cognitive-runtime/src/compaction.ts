@@ -44,8 +44,8 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
   readonly preservesRecall=true;
   get maximumTextCharacters():number{return this.limits.maximumTextCharacters;}
   constructor(private readonly store: ContextCompactionStore, private readonly compactor: ContextCompactor = new ExtractiveContextCompactor(),
-    private readonly limits = { triggerCharacters: 24000, maximumTextCharacters: 16000, maximumContextBytes: 262144, timeoutMs: 1000 }) {
-    if (Object.values(limits).some((n) => !Number.isSafeInteger(n) || n < 1) || limits.maximumContextBytes > 1048576
+    private readonly limits: { triggerCharacters: number; maximumTextCharacters: number; maximumContextBytes: number; timeoutMs?: number } = { triggerCharacters: 24000, maximumTextCharacters: 16000, maximumContextBytes: 262144 }) {
+    if (Object.values(limits).some((n) => n !== undefined && (!Number.isSafeInteger(n) || n < 1)) || limits.maximumContextBytes > 1048576
       || !compactor.version.trim() || compactor.version.length > 128) throw new Error("Invalid compaction configuration");
   }
 
@@ -111,7 +111,7 @@ export class ContextCompactionRuntime implements ContextCompactionPolicy {
       let rejectAbort!: () => void;
       try {
         const cancelled = new Promise<never>((_, reject) => { rejectAbort = () => reject(controller.signal.reason); controller.signal.addEventListener("abort", rejectAbort, { once: true }); if (controller.signal.aborted) rejectAbort(); });
-        const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error("Compaction deadline exceeded")); }, this.limits.timeoutMs); });
+        const timeout = new Promise<never>((_, reject) => { if (this.limits.timeoutMs !== undefined) timer = setTimeout(() => { controller.abort(); reject(new Error("Compaction deadline exceeded")); }, this.limits.timeoutMs); });
         const workId = (original.work as { id?: unknown } | undefined)?.id;
         const result = await Promise.race([Promise.resolve().then(() => this.compactor.compact(structuredClone(entries), remainingTextCharacters, controller.signal,
           { id, runId: input.runId, caseId: input.caseId, consumer: input.consumer, ...(typeof workId === "string" ? { workId } : {}) })), timeout, cancelled]);

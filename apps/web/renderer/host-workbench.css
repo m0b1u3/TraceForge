@@ -58,6 +58,9 @@
 .host-workbench .authorization-policy { font-size: 12px; color: #707070; margin: 12px 0 20px; }
 .host-workbench .execution-confirm { display: flex; flex-direction: row; align-items: flex-start; gap: 9px; font-size: 13px; line-height: 1.6; margin: 18px 0; }
 .host-workbench .execution-confirm input { flex: 0 0 auto; width: 15px; height: 15px; margin-top: 3px; accent-color: #282828; }
+.host-workbench .authorization-actions { margin-block: 20px; }
+.host-workbench .authorization-actions legend { font-size: 14px; font-weight: 600; }
+.host-workbench .authorization-actions .execution-confirm { margin-block: 8px; overflow-wrap: anywhere; }
 .host-workbench .authorization-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 22px; }
 .host-workbench .authorization-footer button { font-size: 13px; min-height: 36px; border-radius: 7px; padding: 7px 14px; }
 .host-workbench .authorization-footer .primary { background: #292929; color: #fff; border: 1px solid #292929; }

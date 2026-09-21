@@ -1,6 +1,6 @@
 import {McpDiagnosticError} from "./mcp-diagnostics.js";
 import { randomUUID, createHash } from "node:crypto";
-import { BrokeredHttpGateway, type BrokeredHttpTransport, type ExecutionAttribution, type BrokeredNetworkReceipt } from "@traceforge/execution-node";
+import { BrokeredHttpGateway, resolveNetworkDestination, requestPinnedHttp, type BrokeredHttpTransport, type ExecutionAttribution, type BrokeredNetworkReceipt } from "@traceforge/execution-node";
 import { canonicalJson, type EffectivePermissionProfile } from "@traceforge/orchestration-core";
 import type { McpCatalog, McpConnection } from "@traceforge/shared/desktop-mcp";
 
@@ -8,19 +8,21 @@ export const mcpDigest = (value: unknown) => `sha256:${createHash("sha256").upda
 const object = (value: unknown): value is Record<string, any> => !!value && typeof value === "object" && !Array.isArray(value);
 
 /** Runs only behind BrokeredHttpGateway's exact endpoint grant. Stop SSE after the matching response. */
-function httpTransport(signal?:AbortSignal):BrokeredHttpTransport{return async request=>{
-  const response=await fetch(request.url,{method:request.method,headers:request.headers,body:request.body?new Uint8Array(request.body):undefined,redirect:"manual",signal:AbortSignal.any([AbortSignal.timeout(request.timeoutMs),...(signal?[signal]:[])])});
-  const headers=[...response.headers.entries()].map(([name,value])=>({name,value}));
-  const reader=response.body?.getReader();if(!reader)return {status:response.status,headers,body:Buffer.alloc(0),bodyTruncated:false};
-  const chunks:Buffer[]=[];let bytes=0,truncated=false;
+function httpTransport(signal?:AbortSignal,allowedAddresses?:readonly string[]):BrokeredHttpTransport{return async request=>{
+  if (!request.authorizeDestination) throw new Error("MCP destination authorization required");
+  const activeSignal=AbortSignal.any([AbortSignal.timeout(request.timeoutMs),...(signal?[signal]:[])]);
+  const destination=await resolveNetworkDestination(request.url,{authorize:request.authorizeDestination,signal:activeSignal,allowedAddresses});
   const expected=request.body?JSON.parse(request.body.toString()).id:undefined;
-  try{while(true){const part=await reader.read();if(part.done)break;bytes+=part.value.length;if(bytes>request.responseLimitBytes){truncated=true;break;}chunks.push(Buffer.from(part.value));
-    if(response.headers.get("content-type")?.includes("text/event-stream")){
-      const completed=Buffer.concat(chunks).toString("utf8").split(/\r?\n\r?\n/).slice(0,-1);
-      if(completed.some(block=>{const data=block.split(/\r?\n/).filter(l=>l.startsWith("data:")).map(l=>l.slice(5).trimStart()).join("\n");if(!data)return false;const value=JSON.parse(data);return value.id===expected||value.method&&value.id!==undefined;}))break;
-    }
-  }}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
-  return {status:response.status,headers,body:Buffer.concat(chunks),bodyTruncated:truncated};
+  const response=await requestPinnedHttp(destination,{...request,maximumBytes:request.responseLimitBytes,signal:activeSignal,
+    stopAfterChunk(body,headers){
+      if(!String(headers["content-type"]??"").includes("text/event-stream"))return false;
+      return body.toString("utf8").split(/\r?\n\r?\n/).slice(0,-1).some(block=>{
+        const data=block.split(/\r?\n/).filter(l=>l.startsWith("data:")).map(l=>l.slice(5).trimStart()).join("\n");
+        if(!data)return false;const value=JSON.parse(data);return value.id===expected||value.method&&value.id!==undefined;
+      });
+    }});
+  const headers=Object.entries(response.headers).flatMap(([name,value])=>value===undefined?[]:(Array.isArray(value)?value:[value]).map(value=>({name,value})));
+  return {...response,headers,destination};
 };}
 
 /** A single bounded session to one operator-approved endpoint. No redirects, reverse RPC or automatic retry. */
@@ -34,8 +36,13 @@ export class DesktopMcpSession {
   constructor(private readonly connection: McpConnection, private readonly credential: string | undefined,
     private readonly attribution: ExecutionAttribution, private readonly authorize: () => void,
     transport?: BrokeredHttpTransport, private readonly signal?: AbortSignal) {
-    this.broker = new BrokeredHttpGateway({ transport:transport??httpTransport(signal), limits: { maximumRequestBytes: 65536, maximumResponseBytes: 262144, maximumTimeoutMs: 15000, maximumConcurrentRequests: 1 },
-      authorizer: { authorize: ({ url }) => { this.check(); if (url !== new URL(connection.endpoint).href) throw new McpDiagnosticError("contract","MCP endpoint changed");
+    this.broker = new BrokeredHttpGateway({ transport:transport??httpTransport(signal,connection.destinationAddresses), limits: { maximumRequestBytes: 65536, maximumResponseBytes: 262144, maximumTimeoutMs: 15000, maximumConcurrentRequests: 1 },
+      authorizer: { authorize: ({ url }) => { this.check();
+        const endpoint = new URL(connection.endpoint);
+        const allowed = url === endpoint.href || (connection.destinationAddresses??[]).some(address => {
+          const literal = new URL(endpoint); literal.hostname = address.includes(":") ? `[${address}]` : address; return literal.href === url;
+        });
+        if (!allowed) throw new McpDiagnosticError("contract","MCP endpoint changed");
         return { canonicalUrl: url, authorizationRef: `desktop-mcp:${connection.id}`, expiresAt: attribution.leaseExpiresAt }; } } });
   }
   private check() { this.signal?.throwIfAborted(); this.authorize(); }

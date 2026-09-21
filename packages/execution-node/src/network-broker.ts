@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { resolveNetworkDestination, type NetworkDestination } from "./network-destination.js";
+import { requestPinnedHttp } from "./pinned-http.js";
 import { permissionProfileFingerprint } from "./protocol.js";
 import type {
   BrokeredHttpHeader,
@@ -22,6 +24,7 @@ export interface BrokeredHttpAuthorizer {
 }
 
 export interface BrokeredHttpTransportRequest {
+  authorizeDestination?: (url: string) => Promise<BrokeredHttpAuthorizationGrant>;
   url: string;
   method: string;
   headers: Record<string, string>;
@@ -31,6 +34,7 @@ export interface BrokeredHttpTransportRequest {
 }
 
 export interface BrokeredHttpTransportResponse {
+  destination?: NetworkDestination;
   status: number;
   headers: BrokeredHttpHeader[];
   body: Buffer;
@@ -147,48 +151,14 @@ function validateResponseHeaders(headers: BrokeredHttpHeader[], maximumHeaders: 
   });
 }
 
-async function defaultTransport(request: BrokeredHttpTransportRequest): Promise<BrokeredHttpTransportResponse> {
-  const response = await fetch(request.url, {
-    method: request.method,
-    headers: request.headers,
-    body: request.body ? new Uint8Array(request.body) : undefined,
-    redirect: "manual",
-    signal: AbortSignal.timeout(request.timeoutMs),
-  });
-  const headers: BrokeredHttpHeader[] = [];
-  response.headers.forEach((value, name) => {
-    if (name !== "set-cookie") headers.push({ name, value });
-  });
-  const setCookies = (response.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.()
-    ?? (response.headers.get("set-cookie") ? [response.headers.get("set-cookie")!] : []);
-  for (const value of setCookies) headers.push({ name: "set-cookie", value });
-
-  if (!response.body) return { status: response.status, headers, body: Buffer.alloc(0), bodyTruncated: false };
-  const reader = response.body.getReader();
-  const chunks: Buffer[] = [];
-  let retained = 0;
-  let bodyTruncated = false;
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      const chunk = Buffer.from(next.value);
-      const remaining = request.responseLimitBytes - retained;
-      if (remaining > 0) {
-        const kept = chunk.subarray(0, remaining);
-        chunks.push(kept);
-        retained += kept.length;
-      }
-      if (chunk.length > remaining) {
-        bodyTruncated = true;
-        await reader.cancel("TraceForge broker response limit reached").catch(() => undefined);
-        break;
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return { status: response.status, headers, body: Buffer.concat(chunks, retained), bodyTruncated };
+export async function defaultBrokeredHttpTransport(request: BrokeredHttpTransportRequest): Promise<BrokeredHttpTransportResponse> {
+  if (!request.authorizeDestination) throw new Error("Destination authorization required");
+  const signal = AbortSignal.timeout(request.timeoutMs);
+  const destination = await resolveNetworkDestination(request.url, { authorize: request.authorizeDestination, signal });
+  const result = await requestPinnedHttp(destination, { ...request, maximumBytes: request.responseLimitBytes, signal });
+  const headers = Object.entries(result.headers).flatMap(([name, value]) => value === undefined ? []
+    : (Array.isArray(value) ? value : [value]).map(value => ({ name, value })));
+  return { ...result, headers, destination };
 }
 
 export class BrokeredHttpGateway implements ExecutionHttpBroker {
@@ -201,7 +171,7 @@ export class BrokeredHttpGateway implements ExecutionHttpBroker {
 
   constructor(options: BrokeredHttpGatewayOptions) {
     this.authorizer = options.authorizer;
-    this.transport = options.transport ?? defaultTransport;
+    this.transport = options.transport ?? defaultBrokeredHttpTransport;
     this.now = options.now ?? (() => new Date().toISOString());
     this.limits = {
       maximumRequestBytes: options.limits?.maximumRequestBytes ?? 1024 * 1024,
@@ -242,6 +212,8 @@ export class BrokeredHttpGateway implements ExecutionHttpBroker {
       if (!Number.isFinite(grantExpiry) || grantExpiry <= Date.parse(this.now())) throw new Error(`Network authorization ${grant.authorizationRef} is expired`);
 
       const transported = await this.transport({
+        authorizeDestination: async url => this.authorizer.authorize({ attribution: structuredClone(request.attribution),
+          authorizationAction: request.authorizationAction, url, method: prepared.method }),
         url: grantedUrl,
         method: prepared.method,
         headers: prepared.headers,
@@ -262,6 +234,7 @@ export class BrokeredHttpGateway implements ExecutionHttpBroker {
           requestId: request.requestId,
           attribution: structuredClone(request.attribution),
           authorizationRef: grant.authorizationRef,
+          ...(transported.destination ? { destination: transported.destination } : {}),
           authorizationAction: request.authorizationAction,
           url: grantedUrl,
           method: prepared.method,

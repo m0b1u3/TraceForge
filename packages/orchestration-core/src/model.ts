@@ -170,7 +170,7 @@ export interface ScenarioDefinition {
     source: string;
     capability: string;
     authorizationAction: string;
-    profile: "run-workspace" | "brokered-host";
+    profile: "run-workspace" | "brokered-host" | "browser-host";
     /** Explicit boolean in the user-approved Scope payload; absent means ask. */
     autonomousScopeFlag?: string;
   }>;

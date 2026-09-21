@@ -47,6 +47,16 @@ function provider(result: unknown): LlmProvider {
 }
 
 describe("StructuredWorkerModel", () => {
+  it("keeps exact output references outside compaction and distinguishes recall handles",async()=>{
+    const input=request();input.transcript=[{turn:1,kind:"tool",summary:"Observed",refs:["artifact:first"],receiptKey:"lookup:first"}];
+    const compact={maximumTextCharacters:4800,async prepare(){return {context:{referenceCatalog:{evidenceRefs:["invented"]}},manifest:{}};}} as unknown as NonNullable<ConstructorParameters<typeof StructuredWorkerModel>[6]>;
+    const model=new StructuredWorkerModel({async extractJson(value){
+      expect(JSON.parse(value.user).referenceCatalog).toEqual({evidenceRefs:["scope_1","artifact:first"]});
+      expect(value.system).toContain("receiptKey is a lookup handle");
+      return {type:"complete",summary:"Observed only",outputs:[]};
+    }},undefined,undefined,undefined,undefined,undefined,compact);
+    await model.decide(input);
+  });
   it("does not suspend for a Planner reported unavailable",async()=>{
     const input=request();input.plannerAvailable=false;
     const model=new StructuredWorkerModel(provider({type:"inquire",reason:"Which next?",refs:[]}));
@@ -65,10 +75,12 @@ describe("StructuredWorkerModel", () => {
     await model.decide(input);
   });
   it("exposes the current declarative scope and parses a permission proposal without granting it", async () => {
-    const input=request(); input.permissionContext={scope:{targets:["first"]},form:{fields:[{path:["targets"],type:"string-list"}]},expiresAt:"2099-01-01T00:00:00.000Z"};
+    const input=request(); input.permissionContext={scope:{targets:["first"]},form:{fields:[{path:["targets"],type:"string-list"}]},expiresAt:"2099-01-01T00:00:00.000Z",
+      allowedActions:["records.inspect"],deniedActions:["records.modify"],capabilityAuthorization:[{source:"neutral",capability:"records.preview",authorizationAction:"records.inspect"}]};
     const model=new StructuredWorkerModel({async extractJson(value){
       expect(JSON.parse(value.user).authorization).toEqual(input.permissionContext);
       expect(value.system).toContain("it grants nothing");
+      expect(value.system).toContain("different namespaces");
       return {type:"request_permissions",reason:"Need another resource",scope:{targets:["first","second"]}};
     }});
     expect(await model.decide(input)).toMatchObject({type:"request_permissions",scope:{targets:["first","second"]}});

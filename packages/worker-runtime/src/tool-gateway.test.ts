@@ -71,6 +71,24 @@ const policy: ToolGatewayPolicy = {
 };
 
 describe("PolicyExecutionToolGateway", () => {
+  it("projects contracts without leaking private adapter services or callbacks into model snapshots",async()=>{
+    const adapter={name:"read",source:"test",version:"1",priority:1,description:"Read",inputSchema:{type:"object"},
+      providedCapabilities:["evidence.read"],dependencyCapabilities:[],permissionRequirements:{},risk:"read_only" as const,timeoutMs:1000,
+      internalService:{listeners:new Set([()=>undefined]),privateValue:"host-only"},
+      async execute():Promise<ToolExecutionResult>{return {status:"succeeded",summary:"Read",raw:"",refs:[],retryable:false};}};
+    const runtime=new ExecutionToolDiscoveryRuntime([{source:"test",async discover(){return [adapter];}}]);
+    await runtime.refresh();
+    try{
+      const gateway=new PolicyExecutionToolGateway(runtime.registry,{async authorize(){return {decision:"approved"};}},new Receipts(),policy);
+      const current=assignment();current.assignment.work.requiredCapabilities=["evidence.read"];
+      const catalog=await gateway.catalog(current.worker,current.assignment);
+      expect(structuredClone(catalog)).toEqual(catalog);
+      expect(catalog.tools[0]).not.toHaveProperty("internalService");
+      expect(catalog.tools[0]).not.toHaveProperty("execute");
+      expect(structuredClone(runtime.snapshot()).providers[0].tool).toEqual(catalog.tools[0]);
+      expect(JSON.stringify(catalog)).not.toContain("host-only");
+    }finally{await runtime.close();}
+  });
   it.each([
     ["bounded_write", false, "succeeded"], ["bounded_write", true, "approval_required"],
     ["privileged", false, "approval_required"], ["destructive", false, "approval_required"],

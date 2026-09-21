@@ -15,7 +15,9 @@ it("keeps the previously active revision when replacement activation fails",asyn
     await h.request("/api/scenarios/runs",{commandId:"during",runId:"during-replacement",caseId:"case",goal:"Neutral pending review",scopeRef:"run:scope",scenarioKind:"neutral",definitionVersion:1});
     throw new Error("injected activation failure");
   },async deactivateSource(){}} as Parameters<DesktopMcpControl["attach"]>[0],()=>{},()=>{});
-  await control.operate({operation:"save",expectedRevision:1,connection:{...connection,name:"Replacement"}});
+  await control.operate({operation:"save",expectedRevision:1,connection:{...connection,name:"Replacement",destinationAddresses:["10.0.0.1"]}});
+  expect(control.snapshot().connections[0].connection.destinationAddresses).toEqual(["10.0.0.1"]);
+  expect(control.snapshot().connections[0].effective?.connection.destinationAddresses).toBeUndefined();
   const tested=await control.operate({operation:"test",id:"first",expectedRevision:2,confirmed:true});
   await expect(control.operate({operation:"activate",id:"first",expectedRevision:2,catalogDigest:tested.connections[0].catalog!.digest,tools:[{name:"observe",enabled:true,resources:[]}],confirmed:true})).rejects.toThrow();
   expect(control.snapshot().connections[0].effective?.revision).toBe(1);

@@ -16,7 +16,9 @@ export function createProvider(input: LlmEndpointConfig, dependencies: ModelConn
   if (!apiKey) throw new Error("apiKey is missing");
   if (/[\r\n]/.test(apiKey)) throw new Error("Invalid API key");
   const fetchImpl = modelConnectionFetch(config, { ...dependencies, fetch: dependencies.fetch ?? proxyFetch() ?? globalThis.fetch });
-  const outputTokens = resolveContextBudget(config).output;
+  // Compaction reservations are local estimates, never wire-level output caps.
+  resolveContextBudget(config);
+  const outputTokens = config.maxOutputTokens;
   const opts = { apiKey, model: config.model, embeddingModel: config.embeddingModel, baseUrl: config.baseUrl, jsonMode: config.jsonMode,
     fetch: fetchImpl, requestOptions: config.requestOptions, maxOutputTokens: outputTokens, continuationScope: config.credentialRef };
   // Exhaustive protocol registry. Supplier selection never selects a constructor.

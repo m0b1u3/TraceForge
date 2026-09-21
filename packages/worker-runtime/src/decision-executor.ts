@@ -10,10 +10,10 @@ export class WorkerDecisionExecutor {
     signal.throwIfAborted();
     return decision;
   }
-  async conclude(request:WorkerModelRequest,signal:AbortSignal,timeoutMs:number):Promise<string>{
+  async conclude(request:WorkerModelRequest,signal:AbortSignal,timeoutMs?:number):Promise<string>{
     signal.throwIfAborted();
-    if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>60000)throw new Error("Invalid conclusion time budget");
-    const deadline=new AbortController(),timer=setTimeout(()=>deadline.abort(new Error("Conclusion time budget exhausted")),timeoutMs);
+    if(timeoutMs!==undefined&&(!Number.isSafeInteger(timeoutMs)||timeoutMs<1))throw new Error("Invalid conclusion time budget");
+    const deadline=new AbortController(),timer=timeoutMs===undefined?undefined:setTimeout(()=>deadline.abort(new Error("Conclusion time budget exhausted")),timeoutMs);
     const bounded=AbortSignal.any([signal,deadline.signal]);
     try{
     const result=await this.decide({...request,executionMode:"conclude",tools:[],

@@ -1,13 +1,11 @@
 import { createHash } from "node:crypto";
-import { lookup } from "node:dns/promises";
-import { request as requestHttp } from "node:http";
-import { connect } from "node:net";
 import type Database from "better-sqlite3";
-import { openProcessNetworkEndpoint, type MacosExecutionBinding, type StartProcessRequest } from "@traceforge/execution-node";
+import { openProcessNetworkEndpoint, resolveNetworkDestination, requestPinnedHttp, connectPinnedTcp, upgradePinnedWebSocket, type NetworkDestination, type MacosExecutionBinding, type StartProcessRequest } from "@traceforge/execution-node";
 import type { ScenarioAuthorizationPort } from "@traceforge/scenario-sdk";
 import { ConversationWorkspaces } from "./conversation-workspaces.js";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const connectionReceipt = ({ canonicalUrl: _url, ...connection }: NetworkDestination) => connection;
 
 export function readWorkspaceNetworkReceipts(sqlite: Database.Database, owner: { caseId: string; runId: string; idempotencyKey: string }) {
   if (!sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_network_receipts'").get()) return [];
@@ -57,15 +55,13 @@ export class WorkspaceNetworkHost {
       this.authorization.requireAction(owner.scopeRef, owner.caseId, "workspace.execute");
       this.authorization.requireAction(owner.scopeRef, owner.caseId, "workspace.network");
     };
-    const authorize = async (url: URL) => {
-      current();
-      const grant = this.authorization.authorizeResource(owner.scopeRef, owner.caseId, "workspace.network", "workspace.network", url.href);
-      if (grant.canonicalValue !== url.href) throw new Error("Workspace destination changed during authorization");
-      const address = await lookup(url.hostname.replace(/^\[|\]$/g, ""));
-      current();
-      this.authorization.authorizeResource(owner.scopeRef, owner.caseId, "workspace.network", "workspace.network", url.href);
-      return address;
-    };
+    const authorize = (url: URL, signal: AbortSignal) => resolveNetworkDestination(url.href, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]), authorize: target => {
+        current();
+        const grant = this.authorization.authorizeResource(owner.scopeRef, owner.caseId, "workspace.network", "workspace.network", target);
+        return { authorizationRef: grant.id, canonicalUrl: grant.canonicalValue, expiresAt: grant.expiresAt };
+      },
+    });
     const begin = (id: string, kind: string, url: URL, input: unknown) => {
       current();
       // No request credentials/body/token in audit storage; target path is hashed.
@@ -79,60 +75,42 @@ export class WorkspaceNetworkHost {
     current();
     const endpoint = await openProcessNetworkEndpoint({ assertCurrent: current,
       http: async (input, signal) => {
-        const url = new URL(input.url), address = await authorize(url);
+        const url = new URL(input.url), address = await authorize(url, signal);
         signal.throwIfAborted(); begin(input.id, "http", url, input);
         try {
-          const result = await new Promise<{ status: number; headers: import("node:http").IncomingHttpHeaders; body: Buffer }>((done, reject) => {
-            const outgoing = requestHttp(url, { method: input.method, headers: input.headers, signal, family: address.family,
-              lookup: (_hostname, _options, callback) => callback(null, address.address, address.family), agent: false }, incoming => {
-              const chunks: Buffer[] = []; let bytes = 0;
-              incoming.on("error", reject);
-              incoming.on("data", chunk => { bytes += chunk.length; if (bytes > 16 * 1024 * 1024) outgoing.destroy(new Error("Response capacity exceeded")); else chunks.push(chunk); });
-              incoming.on("end", () => done({ status: incoming.statusCode!, headers: incoming.headers, body: Buffer.concat(chunks) }));
-            });
-            outgoing.on("error", reject); outgoing.setTimeout(30000, () => outgoing.destroy(new Error("Network timeout"))); outgoing.end(input.body);
-          });
+          const result = await requestPinnedHttp(address, { ...input, maximumBytes: 16 * 1024 * 1024,
+            signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) });
+          if (result.bodyTruncated) throw new Error("Response capacity exceeded");
           current(); signal.throwIfAborted();
-          end(input.id, "completed", { status: result.status, bytes: result.body.length, bodyDigest: hash(result.body), redirectFollowed: false });
+          end(input.id, "completed", { destination: connectionReceipt(address), status: result.status, bytes: result.body.length, bodyDigest: hash(result.body), redirectFollowed: false });
           return { ...result, headers: Object.fromEntries(Object.entries(result.headers).filter((entry): entry is [string, string | string[]] => entry[1] !== undefined)) };
         } catch (error) { end(input.id, "unknown", {}); throw error; }
       },
       websocket: async (input, signal) => {
         if ((this.authorization.requireAction(owner.scopeRef, owner.caseId, "workspace.network").scopePayload as Record<string,unknown>)?.workspaceWebSocket !== true) throw new Error("WebSocket connections require explicit consent");
-        const url = new URL(input.url), address = await authorize(url);
+        const url = new URL(input.url), address = await authorize(url, signal);
         signal.throwIfAborted(); begin(input.id, "websocket_connection", url, input);
         try {
-          const upgraded = await new Promise<{ stream: import('node:net').Socket; headers: import('node:http').IncomingHttpHeaders }>((done,reject) => {
-            const request = requestHttp(url, { method: 'GET', headers: {...input.headers, connection:'Upgrade',upgrade:'websocket'}, signal, agent:false,
-              lookup: (_host,_options,callback)=>callback(null,address.address,address.family) });
-            request.once('upgrade',(response,stream,head)=>{
-              stream.pause(); if(head.length)stream.unshift(head);
-              done({stream,headers:response.headers});
-            });
-            request.once('response',response=>{response.destroy();reject(new Error('WebSocket upgrade rejected'));});
-            request.once('error',reject); request.setTimeout(30000,()=>request.destroy(new Error('Upgrade timeout')));request.end();
-          });
+          const upgraded = await upgradePinnedWebSocket(address, input.headers, signal);
           const socket = upgraded.stream;
           const stop = () => socket.destroy(); signal.addEventListener('abort',stop,{once:true});
           socket.on('error',()=>undefined);
-          socket.once('close',()=>{signal.removeEventListener('abort',stop);end(input.id,'closed',{incoming:socket.bytesRead,outgoing:socket.bytesWritten,applicationOutcome:'not_observable'});});
+          socket.once('close',()=>{signal.removeEventListener('abort',stop);end(input.id,'closed',{destination:connectionReceipt(address),incoming:socket.bytesRead,outgoing:socket.bytesWritten,applicationOutcome:'not_observable'});});
           try { current(); signal.throwIfAborted(); } catch(error) { socket.destroy(); throw error; }
           return {stream:socket,headers:Object.fromEntries(Object.entries(upgraded.headers).filter((entry):entry is [string,string|string[]]=>entry[1]!==undefined))};
         } catch(error) {end(input.id,'unknown',{});throw error;}
       },
       tunnel: async (input, signal) => {
-        const url = new URL(`https://${input.hostname}:${input.port}/`), address = await authorize(url);
+        const url = new URL(`https://${input.hostname.includes(":") && !input.hostname.startsWith("[") ? `[${input.hostname}]` : input.hostname}:${input.port}/`), address = await authorize(url, signal);
         signal.throwIfAborted(); begin(input.id, "opaque_connection", url, input);
-        const socket = connect({ host: address.address, family: address.family, port: input.port });
+        let socket: Awaited<ReturnType<typeof connectPinnedTcp>> | undefined;
         try {
-          const stop = () => socket.destroy(); signal.addEventListener("abort", stop, { once: true });
-          let connected = false, incoming = 0, outgoing = 0;
-          socket.on("data", bytes => incoming += bytes.length);
-          socket.once("close", () => { signal.removeEventListener("abort", stop); outgoing = socket.bytesWritten; end(input.id, connected ? "closed" : "unknown", { incoming, outgoing, transport: input.transport ?? "connect", applicationOutcome: "not_observable" }); });
-          socket.setTimeout(30000, () => socket.destroy(new Error("Tunnel timeout")));
-          await new Promise<void>((done, reject) => { socket.once("connect", () => { connected = true; done(); }); socket.once("error", reject); socket.once("close", () => { if (!connected) reject(new Error("Tunnel closed before connection")); }); });
+          socket = await connectPinnedTcp(address, signal);
+          const owned = socket;
+          socket.once("close", () => end(input.id, "closed", { destination: connectionReceipt(address), incoming: owned.bytesRead, outgoing: owned.bytesWritten,
+            transport: input.transport ?? "connect", applicationOutcome: "not_observable" }));
           current(); signal.throwIfAborted(); return socket;
-        } catch (error) { socket.destroy(); end(input.id, "unknown", {}); throw error; }
+        } catch (error) { socket?.destroy(); end(input.id, "unknown", {}); throw error; }
       },
     }, { signal: new AbortController().signal, maximumRequests: 128, maximumBytes: 16 * 1024 * 1024, timeoutMs: Math.min(request.timeoutMs, 3600000) });
     return { brokerPort: endpoint.port, signal: endpoint.signal, assertCurrent: current, release: endpoint.close,

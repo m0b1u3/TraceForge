@@ -1,8 +1,25 @@
 import {expect,it} from "vitest";
+import {createServer} from "node:http";
 import {DesktopMcpSession} from "./desktop-mcp-session.js";
 import {McpConnectionSchema} from "@traceforge/shared/desktop-mcp";
 import type {BrokeredHttpTransport} from "@traceforge/execution-node";
 const connection=McpConnectionSchema.parse({id:"first",name:"First",transport:"streamable-http",endpoint:"https://mcp.example/mcp",package:{id:"neutral",version:"1",schemaRevision:1},authorizationAction:"read",capability:"read"});
+it.each([false,true])("uses pinned HTTP with explicit IP or domain address binding (%s) and stops open SSE",async(domain)=>{
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    const message=JSON.parse(Buffer.concat(chunks).toString());
+    res.writeHead(200,{"content-type":"text/event-stream"});
+    res.write(`data: ${JSON.stringify({jsonrpc:"2.0",id:message.id,result:{observed:true}})}\n\n`);
+    // Deliberately keep the stream open: matching RPC, not remote EOF, terminates the read.
+  });
+  await new Promise<void>(resolve=>server.listen(0,"::",resolve));
+  try{
+    const client=new DesktopMcpSession({...connection,endpoint:`http://${domain?"localhost":"127.0.0.1"}:${(server.address() as {port:number}).port}/mcp`,...(domain?{destinationAddresses:["127.0.0.1","::1"]}:{})},undefined,
+      {caseId:"case",runId:"run",workId:"work",workerId:"worker",scopeRef:"scope",leaseId:"lease",leaseExpiresAt:new Date(Date.now()+60000).toISOString(),actionId:"test",idempotencyKey:"test"},()=>{});
+    expect(await client.rpc("tools/list")).toEqual({observed:true});
+    expect(["127.0.0.1","::1"]).toContain(client.receipts[0]?.destination?.address);
+  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});
 function session(transport:BrokeredHttpTransport,signal?:AbortSignal){return new DesktopMcpSession(connection,"private-token",{caseId:"case",runId:"run",workId:"work",workerId:"worker",scopeRef:"scope",leaseId:"lease",leaseExpiresAt:new Date(Date.now()+60000).toISOString(),actionId:"test",idempotencyKey:"test"},()=>{},transport,signal);}
 it("redacts echoed credentials and rejects reverse RPC",async()=>{
   const response=(body:unknown)=>({status:200,headers:[{name:"content-type",value:"application/json"}],body:Buffer.from(JSON.stringify(body)),bodyTruncated:false});

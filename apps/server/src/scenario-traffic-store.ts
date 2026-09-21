@@ -20,6 +20,9 @@ export class SqliteScenarioTrafficStore implements ScenarioTrafficPort {
   constructor(private readonly sqlite: Database.Database) {}
 
   recordHttpExchange(input: Parameters<ScenarioTrafficPort["recordHttpExchange"]>[0]): void {
+    if (input.receipt.attribution.caseId !== input.caseId || input.receipt.attribution.runId !== input.runId
+      || input.receipt.url !== input.url || input.receipt.method !== input.method || input.receipt.status !== input.responseStatus)
+      throw new Error("Traffic exchange does not match its execution receipt");
     this.sqlite.transaction(() => {
       this.sqlite.prepare(`
         INSERT INTO traffic_entries
@@ -39,8 +42,8 @@ export class SqliteScenarioTrafficStore implements ScenarioTrafficPort {
           (id, node_id, request_id, case_id, run_id, work_id, worker_id, scope_ref, lease_id,
            idempotency_key, authorization_ref, authorization_action, url, method, status,
            request_bytes, response_bytes, response_body_truncated, permission_profile_fingerprint,
-           redirect_followed, traffic_id, started_at, completed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           redirect_followed, traffic_id, started_at, completed_at, destination_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         receipt.id, receipt.nodeId, receipt.requestId, receipt.attribution.caseId,
         receipt.attribution.runId, receipt.attribution.workId, receipt.attribution.workerId,
@@ -49,6 +52,7 @@ export class SqliteScenarioTrafficStore implements ScenarioTrafficPort {
         receipt.status, receipt.requestBytes, receipt.responseBytes,
         receipt.responseBodyTruncated ? 1 : 0, receipt.permissionProfileFingerprint,
         receipt.redirectFollowed ? 1 : 0, input.trafficId, receipt.startedAt, receipt.completedAt,
+        receipt.destination ? JSON.stringify(receipt.destination) : null,
       );
     })();
   }

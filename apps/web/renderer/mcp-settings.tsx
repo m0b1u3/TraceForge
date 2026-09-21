@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { DesktopMcpOperationSchema, type DesktopMcpOperation, type DesktopMcpSnapshot, type McpConnection } from "@traceforge/shared/desktop-mcp";
+import { DesktopMcpOperationSchema, McpConnectionSchema, type DesktopMcpOperation, type DesktopMcpSnapshot, type McpConnection } from "@traceforge/shared/desktop-mcp";
 import type { DesktopConversations } from "./desktop-conversation-transport";
 import "./configuration-settings.css";
 
@@ -8,15 +8,19 @@ import "./configuration-settings.css";
 export function McpSettings({bridge,onDirty}:{bridge:DesktopConversations;onDirty?:(dirty:boolean)=>void}) {
   const [snapshot,setSnapshot] = useState<DesktopMcpSnapshot|null>(null),[draft,setDraft]=useState<McpConnection|null>(null);
   const [credential,setCredential]=useState(""),[clearCredential,setClearCredential]=useState(false);
+  const [addressText,setAddressText]=useState("");
   const [dirty,setDirty]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(""),[status,setStatus]=useState("");
   const [confirmation,setConfirmation]=useState<"test"|"activate"|"delete"|"reload"|null>(null);
   const [reviews,setReviews]=useState<Extract<DesktopMcpOperation,{operation:"activate"}>["tools"]>([]),[reviewDirty,setReviewDirty]=useState(false);
   const locked=useRef(false),alive=useRef(true);
   const current=snapshot?.connections.find(c=>c.connection.id===draft?.id);
   const pkg=snapshot?.packages.find(p=>JSON.stringify(p.package)===JSON.stringify(draft?.package));
+  const checked = draft ? McpConnectionSchema.safeParse(draft) : null;
+  const addressError = checked && !checked.success ? checked.error.issues.find(issue=>issue.path[0]==="destinationAddresses")?.message : undefined;
   function choose(value:DesktopMcpSnapshot,id?:string) {
     const entry=value.connections.find(c=>c.connection.id===id)??value.connections[0];
     setSnapshot(value);setDraft(entry?.connection??null);setCredential("");setClearCredential(false);setDirty(false);setReviewDirty(false);setConfirmation(null);
+    setAddressText((entry?.connection.destinationAddresses??[]).join(", "));
     setReviews(entry?.catalog?.tools.map(t=>entry.reviewedTools.find(r=>r.name===t.name)??{name:t.name,enabled:false,resources:[]})??[]);
   }
   async function perform(operation?:DesktopMcpOperation) {
@@ -61,6 +65,9 @@ export function McpSettings({bridge,onDirty}:{bridge:DesktopConversations;onDirt
         <label>连接方式<select value={draft.transport} onChange={e=>{patch({transport:e.target.value as McpConnection["transport"],endpoint:""});setCredential("");setClearCredential(true);}}><option value="streamable-http">HTTP 服务</option><option value="stdio">本地 stdio 程序（沙箱）</option></select></label>
         {draft.transport==="streamable-http"?<>
         <label>服务地址<input type="url" placeholder="https://your-service.example/mcp" value={draft.endpoint} onChange={e=>patch({endpoint:e.target.value})}/></label>
+        <label>绑定的目标 IP（可选，用逗号分隔）<input maxLength={1500} aria-invalid={!!addressError} aria-describedby="mcp-address-help mcp-address-error" value={draft.destinationAddresses===undefined?"":addressText} onChange={e=>{setAddressText(e.target.value);patch({destinationAddresses:e.target.value.split(",").map(v=>v.trim()).filter(Boolean)});}}/></label>
+        <p id="mcp-address-error" role={addressError?"alert":undefined}>{addressError}</p>
+        <p id="mcp-address-help" className="configuration-meta">内网域名需明确填写其 IP；填写后只允许这些解析地址，仍使用服务域名验证 TLS。留空不允许域名转向内网。保存不会连接服务，新配置需测试并启用，已有任务保持原修订。</p>
         <p className="configuration-meta">Streamable HTTP，支持 JSON 与有界 SSE 响应。不跟随重定向。</p></>:<>
         <label>可执行文件绝对路径<input value={draft.executable??""} onChange={e=>patch({executable:e.target.value})}/></label>
         <label>工作目录绝对路径<input value={draft.workingDirectory??""} onChange={e=>patch({workingDirectory:e.target.value})}/></label>

@@ -29,7 +29,7 @@ it("finishes a bounded autonomous Work with a read-only model conclusion through
   let steps=0,conclusions=0;
   let failure="";const conclude=WorkerDecisionExecutor.prototype.conclude;
   const spy=vi.spyOn(WorkerDecisionExecutor.prototype,"conclude").mockImplementation(async function(...args){try{return await conclude.apply(this,args);}catch(error){failure=String(error);throw error;}});
-  const host=await foundationHost({model:async args=>{
+  const host=await foundationHost({longTaskScope:{continuousExecution:true,maximumWorkTurns:24},model:async args=>{
     const context=JSON.parse(args.user);
     if(context.executionMode==="conclude"){
       conclusions++;expect(context.tools).toEqual([]);expect(context.sharedProgress.trust).toBe("untrusted_progress_not_evidence");

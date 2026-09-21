@@ -10,7 +10,7 @@ const text:MessageAttachment={kind:"text",name:"sample.txt",text:"neutral refere
 
 it.each(["openai","responses","anthropic"] as const)("dispatches image, PDF and text through %s without dropping bytes",async protocol=>{
   let body:any;
-  const provider=createProvider({provider:protocol,model:"neutral",baseUrl:"https://models.example/v1",apiKey:"fixture",modelProfile:{model:"neutral",baseUrl:"https://models.example/v1",protocol,source:"operator",imageInput:true,documentInput:true}},{fetch:async(input,init)=>{
+  const provider=createProvider({provider:protocol,model:"neutral",baseUrl:"https://models.example/v1",apiKey:"fixture",modelProfile:{model:"neutral",baseUrl:"https://models.example/v1",protocol,source:"operator",maxOutputTokens:8192,imageInput:true,documentInput:true}},{fetch:async(input,init)=>{
     body=await new Request(input,init).json();return Response.json(protocol==="responses"?{status:"completed",output:[]}:protocol==="anthropic"?{content:[{type:"text",text:"ok"}],stop_reason:"end_turn",usage:{input_tokens:1,output_tokens:1}}:{choices:[{message:{content:"ok"},finish_reason:"stop"}]});
   }});
   await provider.runTools({system:"Task",messages:[{role:"user",content:"Read",attachments:[image,pdf,text]}],tools:[]});

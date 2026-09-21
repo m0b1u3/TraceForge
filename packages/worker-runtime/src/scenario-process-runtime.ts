@@ -56,6 +56,8 @@ export interface ScenarioExecutionNodeProcessLaunch {
   permissions: EffectivePermissionProfile;
   resources: ExecutionResourceLimits;
   expectedSandboxBackend?: string;
+  expectedBackendMeasurement?: string;
+  acceptedResourcePolicy?: "sampled_terminate";
   processTimeoutMs?: number;
   outputLimitBytes?: number;
 }
@@ -370,6 +372,7 @@ export class ScenarioProcessRuntime implements ExecutionToolDiscoverySource {
         workingDirectory: options.launch.workingDirectory, environment: options.launch.environment ?? {},
         attribution: options.launch.attribution, permissions: options.launch.permissions, resources: options.launch.resources,
         expectedSandboxBackend: options.launch.expectedSandboxBackend, processTimeoutMs: options.launch.processTimeoutMs,
+        expectedBackendMeasurement: options.launch.expectedBackendMeasurement, acceptedResourcePolicy: options.launch.acceptedResourcePolicy,
         outputLimitBytes: options.launch.outputLimitBytes, requestTimeoutMs: options.transport?.requestTimeoutMs,
         maximumFrameBytes: options.transport?.maximumFrameBytes, maximumInFlightRequests: options.transport?.maximumInFlightRequests,
         maximumStderrBytes: options.transport?.maximumStderrBytes, expectedProviderId: manifest.id,

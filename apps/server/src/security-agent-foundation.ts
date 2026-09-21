@@ -520,6 +520,14 @@ export function registerSecurityAgentFoundation(
     workRetry, options.toolRecoveryEvidenceAuthority, contextPolicy, compaction,processCapacity,hostControl,authorization,extensionAssembly,
     runtime => desktopMcp.attach(runtime, () => extensionAssembly.reconcileDesktopMcp(),(id,digest)=>extensionAssembly.assertDesktopMcpAvailable(id,digest)),
     (context, id) => desktopResources.stage(context, id),
+    { sessions: browserSessions, allowsTool: (definition, tool) => !!browserDeployment && !!executionNode && scenarioPackages.list().some(pkg => {
+      if (pkg.definition.kind !== definition.kind || pkg.definition.version !== definition.version
+        || pkg.runtime?.source !== tool.source || pkg.version !== tool.version
+        || !pkg.runtime.hostCapabilities.includes(SCENARIO_PROCESS_HOST_CAPABILITIES.browser)) return false;
+      try { scenarioPackages.assertAvailable(pkg); } catch { return false; }
+      return pkg.definition.toolPolicies?.some(rule => rule.profile === "browser-host" && rule.source === tool.source
+        && tool.providedCapabilities.includes(rule.capability)) === true;
+    }) },
   );
   registerScenarioRunMigrationRoutes(app,new ScenarioRunMigrationControl(sqlite,scenarioPackages,contextStore,
     new SqliteWorkerCheckpointStore(sqlite,new JsonFileCheckpointStore(resolve(projectRoot,"data","worker-checkpoints"))),

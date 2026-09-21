@@ -30,8 +30,8 @@ export interface WorkContinuationAudit extends ContinuationRequest {
 /** Same Work/key, unlike whole-Work retry. Audit shares the bounded immutable Work-recovery ledger. */
 export function continuationBudgetExhausted(checkpoint: WorkerCheckpointDocument, now: string): boolean {
   const journal = workerCheckpointJournal(checkpoint);
-  return journal.turn >= (checkpoint.longTask?.policy.maximumTurns ?? defaultWorkerRuntimeOptions.maxTurns)
-    || !!checkpoint.longTask && Date.parse(now) >= Date.parse(checkpoint.longTask.startedAt) + checkpoint.longTask.policy.maximumDurationMs
+  return journal.turn >= (checkpoint.longTask?.policy.maximumTurns ?? defaultWorkerRuntimeOptions.maxTurns ?? Infinity)
+    || checkpoint.longTask?.policy.maximumDurationMs !== undefined && Date.parse(now) >= Date.parse(checkpoint.longTask.startedAt) + checkpoint.longTask.policy.maximumDurationMs
     || journal.consecutiveFailures >= defaultWorkerRuntimeOptions.repeatedFailureLimit;
 }
 

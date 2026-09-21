@@ -19,6 +19,16 @@ function config(overrides:Record<string,unknown>={}){
 }
 
 describe("Scenario Host deployment configuration",()=>{
+  it("requires pinned host identity for sampled resource policy and preserves the accepted profile",()=>{
+    const path=join(root(),"scenarios.json"),value=config();
+    const launch={...value.launches[0],acceptedResourcePolicy:"sampled_terminate",expectedSandboxBackend:"native",expectedBackendMeasurement:"a".repeat(64)};
+    writeFileSync(path,JSON.stringify({...value,launches:[launch]}));
+    expect(loadScenarioHostConfiguration(path).launches["scenario:neutral"]).toMatchObject({acceptedResourcePolicy:"sampled_terminate",expectedSandboxBackend:"native",expectedBackendMeasurement:"a".repeat(64)});
+    for(const field of ["expectedSandboxBackend","expectedBackendMeasurement"]){
+      writeFileSync(path,JSON.stringify({...value,launches:[{...launch,[field]:undefined}]}));
+      expect(()=>loadScenarioHostConfiguration(path)).toThrow(/pinned sandbox/);
+    }
+  });
   it("defaults to no installed scenarios when the deployment file is absent",()=>{
     expect(loadScenarioHostConfiguration(join(root(),"config/scenarios.json"))).toEqual({trust:{installations:[]},launches:{}});
   });

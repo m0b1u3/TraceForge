@@ -20,6 +20,7 @@ import type {
 } from "./model.js";
 import type { ExecutionToolDiscoveryRuntime } from "./tool-discovery.js";
 import { executionToolContractFingerprint, toolInvocationInputFingerprint } from "./tool-provider-contract.js";
+import { snapshotToolSpec } from "./tool-discovery-state.js";
 
 export interface ExecutionToolAdapter extends ExecutionToolSpec {
   execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult>;
@@ -151,7 +152,7 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
       return satisfiesPermissionRequirements(effective, tool.permissionRequirements);
     });
     const tools = resolution.providers
-      .map(({ execute: _execute, ...spec }) => spec)
+      .map(snapshotToolSpec)
       .sort((left, right) => left.name.localeCompare(right.name));
     return { tools, requestedCapabilities: resolution.requestedCapabilities, unresolvedCapabilities: resolution.unresolvedCapabilities, registryRevision: resolution.registryRevision };
   }

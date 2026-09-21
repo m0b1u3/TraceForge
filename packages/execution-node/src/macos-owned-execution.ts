@@ -35,7 +35,9 @@ export async function runMacosOwnedExecution(request: StartProcessRequest, helpe
   signal.throwIfAborted();
   if (process.platform !== "darwin" || process.arch !== "arm64" || (!ports && request.stdin !== "closed")) throw new Error("macOS execution requires Apple Silicon");
   if (request.terminal && (!request.permissions.process.interactive || ![request.terminal.columns, request.terminal.rows].every(n => Number.isSafeInteger(n) && n >= 1 && n <= 500))) throw new Error("Invalid or unauthorized macOS terminal");
-  if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > 3600000
+  // Use the timer's representable range, not a second one-hour policy ceiling.
+  // The host request/lease determines duration; cancellation and supervision remain active.
+  if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > 2147483647
     || !Number.isSafeInteger(request.outputLimitBytes) || request.outputLimitBytes < 1 || request.outputLimitBytes > 4194304) throw new Error("Invalid macOS execution bounds");
   // No loader injection into the unsandboxed supervisor itself.
   if (Object.keys(request.environment).length) throw new Error("macOS supervisor currently requires an empty environment");

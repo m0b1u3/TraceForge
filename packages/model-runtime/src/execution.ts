@@ -29,12 +29,12 @@ export interface ModelJsonProviderPort {
 
 export interface ModelRolePolicy {
   routeIds: string[];
-  timeoutMs: number;
+  timeoutMs?: number;
   maximumAttemptsPerRoute: number;
   circuitFailureThreshold: number;
   circuitResetMs: number;
-  maximumRunTokens: number;
-  maximumEstimatedCallTokens: number;
+  maximumRunTokens?: number;
+  maximumEstimatedCallTokens?: number;
 }
 
 export interface ModelCallRecord {
@@ -58,16 +58,16 @@ export interface ModelCallRecord {
 
 export const DEFAULT_MODEL_ROLE_POLICIES: Record<CognitiveModelRole, ModelRolePolicy> = {
   planner: {
-    routeIds: ["primary"], timeoutMs: 120_000, maximumAttemptsPerRoute: 2,
-    circuitFailureThreshold: 3, circuitResetMs: 60_000, maximumRunTokens: 250_000, maximumEstimatedCallTokens: 64_000,
+    routeIds: ["primary"], maximumAttemptsPerRoute: 2,
+    circuitFailureThreshold: 3, circuitResetMs: 60_000,
   },
   observer: {
-    routeIds: ["primary"], timeoutMs: 90_000, maximumAttemptsPerRoute: 2,
-    circuitFailureThreshold: 3, circuitResetMs: 60_000, maximumRunTokens: 150_000, maximumEstimatedCallTokens: 48_000,
+    routeIds: ["primary"], maximumAttemptsPerRoute: 2,
+    circuitFailureThreshold: 3, circuitResetMs: 60_000,
   },
   worker: {
-    routeIds: ["primary"], timeoutMs: 120_000, maximumAttemptsPerRoute: 2,
-    circuitFailureThreshold: 3, circuitResetMs: 60_000, maximumRunTokens: 500_000, maximumEstimatedCallTokens: 64_000,
+    routeIds: ["primary"], maximumAttemptsPerRoute: 2,
+    circuitFailureThreshold: 3, circuitResetMs: 60_000,
   },
 };
 
@@ -86,7 +86,7 @@ export interface ModelExecutionStore {
     routeId: string;
     routeAttempt: number;
     reservedTokens: number;
-    maximumRunTokens: number;
+    maximumRunTokens?: number;
     at: string;
   }): void;
   finish(id: string, status: "completed" | "failed" | "timed_out", usage: ModelUsageSnapshot, error: string | null, at: string, terminationKind?: "cancelled"): void;
@@ -161,8 +161,8 @@ export class ModelExecutionRuntime {
   ) {
     this.store.recoverInterrupted(this.now());
     for (const [role, policy] of Object.entries(policies)) {
-      if (!policy.routeIds.length || policy.timeoutMs < 1 || policy.maximumAttemptsPerRoute < 1 || policy.circuitFailureThreshold < 1
-        || policy.circuitResetMs < 1 || policy.maximumRunTokens < 1 || policy.maximumEstimatedCallTokens < 1) {
+      if (!policy.routeIds.length || policy.maximumAttemptsPerRoute < 1 || policy.circuitFailureThreshold < 1
+        || policy.circuitResetMs < 1 || [policy.timeoutMs, policy.maximumRunTokens, policy.maximumEstimatedCallTokens].some(value => value !== undefined && (!Number.isSafeInteger(value) || value < 1))) {
         throw new Error(`Invalid model policy for ${role}`);
       }
       if (!policy.routeIds.some((routeId) => routes.has(routeId))) throw new Error(`Model policy for ${role} has no configured route`);
@@ -172,7 +172,7 @@ export class ModelExecutionRuntime {
   async extractJson(context: ModelCallContext, request: ModelJsonRequest): Promise<unknown> {
     const policy = this.policies[context.role];
     const estimate = estimateTokens(request);
-    if (estimate > policy.maximumEstimatedCallTokens) {
+    if (policy.maximumEstimatedCallTokens !== undefined && estimate > policy.maximumEstimatedCallTokens) {
       throw new ModelBudgetExceededError(context.runId, context.role, policy.maximumEstimatedCallTokens, 0, estimate);
     }
     let lastError: unknown = new Error(`No available model route for ${context.role}`);
@@ -206,8 +206,8 @@ export class ModelExecutionRuntime {
         }
         const usage = emptyUsage();
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(new DOMException("model call timed out", "TimeoutError")), policy.timeoutMs);
-        timer.unref();
+        const timer = policy.timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(new DOMException("model call timed out", "TimeoutError")), policy.timeoutMs);
+        timer?.unref();
         const externalAbort = () => controller.abort(request.signal?.reason ?? new DOMException("model call cancelled", "AbortError"));
         request.signal?.addEventListener("abort", externalAbort, { once: true });
         if (request.signal?.aborted) externalAbort();

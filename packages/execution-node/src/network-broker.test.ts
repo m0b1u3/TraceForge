@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
 import type { EffectivePermissionProfile } from "@traceforge/orchestration-core";
 import { BrokeredHttpGateway, type BrokeredHttpTransport } from "./network-broker.js";
 import type { BrokeredHttpRequest, ExecutionAttribution, StartProcessRequest } from "./protocol.js";
@@ -62,6 +63,26 @@ function fixture(options: { authorize?: () => never; transport?: BrokeredHttpTra
 }
 
 describe("Execution Node brokered HTTP gateway", () => {
+  it("uses the real pinned transport and records the authorized destination without following redirects", async () => {
+    let calls = 0;
+    const server = createServer((_req, res) => { calls++; res.writeHead(302, { location: "http://unapproved.invalid/" }); res.end("local observation"); });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
+      const authorize = vi.fn(({ url: target }: { url: string }) => {
+        if (target !== url) throw new Error("not in scope");
+        return { canonicalUrl: target, authorizationRef: "scope_1", expiresAt: "2099-01-01T00:00:00.000Z" };
+      });
+      const broker = new BrokeredHttpGateway({ authorizer: { authorize } });
+      const input = request({ url, attribution: attribution({ leaseExpiresAt: "2099-01-01T00:00:00.000Z" }) });
+      const first = await broker.execute("local", input);
+      expect(first.receipt.destination).toMatchObject({ address: "127.0.0.1", family: 4, addressAuthorizationRefs: ["scope_1"] });
+      expect(first.status).toBe(302);
+      expect((await broker.execute("local", input)).replayed).toBe(true);
+      expect(calls).toBe(1);
+      expect(authorize.mock.calls.length).toBeGreaterThan(1);
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
   it("re-authorizes attributed requests, returns an audit receipt, and replays idempotently", async () => {
     const { authorize, transport, node } = fixture();
     const first = await node.requestHttp(request());

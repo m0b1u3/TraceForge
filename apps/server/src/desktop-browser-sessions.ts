@@ -12,6 +12,8 @@ interface Session {
   commands: Map<string, { digest: string; result: Promise<unknown> }>; busy: boolean;
   frame?: { id: string; takeoverId: string; view: import("@traceforge/browser-runtime").BrowserViewIdentity; expires: number };
   previewAt?: number;
+  cleanupState?: "closing" | "cleanup_unknown";
+  takeoverPending?: boolean;
 }
 
 /** Live handles never survive a host restart. Scratch/process journals recover
@@ -30,6 +32,7 @@ export class DesktopBrowserSessions {
       UPDATE desktop_browser_sessions SET state='interrupted' WHERE state IN ('active','manual_control');
       UPDATE desktop_browser_commands SET state='unknown' WHERE state='started';`);
     this.timer = setInterval(() => { for (const [id, entry] of this.entries) {
+      if (entry.cleanupState) continue;
       try { entry.check(); } catch { void this.close(id).catch(() => undefined); }
     } }, 1000);
     this.timer.unref();
@@ -51,9 +54,9 @@ export class DesktopBrowserSessions {
   async close(id: string): Promise<void> {
     const pending = this.closing.get(id); if (pending) return pending;
     const entry = this.entries.get(id); if (!entry) return;
-    this.entries.delete(id);
-    const cleanup = Promise.resolve().then(() => entry.close()).then(() => { this.state(id, "closed"); }, error => {
-      this.state(id, "cleanup_unknown"); throw error;
+    entry.cleanupState = "closing"; entry.frame = undefined; this.state(id, "closing");
+    const cleanup = Promise.resolve().then(() => entry.close()).then(() => { this.state(id, "closed"); this.entries.delete(id); }, error => {
+      entry.cleanupState = "cleanup_unknown"; this.state(id, "cleanup_unknown"); throw error;
     }).finally(() => { this.closing.delete(id); });
     this.closing.set(id, cleanup); return cleanup;
   }
@@ -64,13 +67,15 @@ export class DesktopBrowserSessions {
   async shutdown(): Promise<void> { clearInterval(this.timer); await Promise.allSettled([...this.entries.keys()].map(id => this.close(id)).concat([...this.closing.values()])); }
   list(caseId: string, runId: string) {
     return [...this.entries].filter(([, e]) => e.owner.caseId === caseId && e.owner.runId === runId).map(([id, e]) => {
-      e.check(); const s = e.runtime.snapshot(id)!;
-      return { id, status: s.status, takeoverId: s.takeoverId, expiresAt: s.expiresAt, workId: e.owner.workId,
+      if (!e.cleanupState) { try { e.check(); } catch { void this.close(id).catch(() => undefined); } }
+      const s = e.runtime.snapshot(id)!;
+      return { id, status: e.cleanupState ?? s.status, takeoverId: e.cleanupState ? null : s.takeoverId, expiresAt: s.expiresAt, workId: e.owner.workId,
         ...(s.isolation ? { isolation: s.isolation } : {}) };
     });
   }
   agent(id: string, owner: ToolExecutionContext, packageId: string, packageVersion: string) {
     const e = this.required(id, owner.caseId, owner.runId);
+    if (e.cleanupState) throw new Error("Browser cleanup pending; only explicit cleanup is available");
     if (e.packageId !== packageId || e.packageVersion !== packageVersion || e.owner.workId !== owner.workId
       || e.owner.workerId !== owner.workerId || e.owner.leaseId !== owner.leaseId || e.owner.scopeRef !== owner.scopeRef
       || permissionProfileFingerprint(e.owner.effectivePermissions) !== permissionProfileFingerprint(owner.effectivePermissions))
@@ -83,7 +88,13 @@ export class DesktopBrowserSessions {
     return e;
   }
   async command(caseId: string, runId: string, input: DesktopBrowserCommand): Promise<unknown> {
+    if (input.operation === "close" && !this.entries.has(input.sessionId)) {
+      const closed = this.db.prepare("SELECT 1 FROM desktop_browser_sessions WHERE id=? AND case_id=? AND run_id=? AND state='closed'").get(input.sessionId, caseId, runId);
+      const previous = this.db.prepare("SELECT operation FROM desktop_browser_commands WHERE session_id=? AND command_id=?").get(input.sessionId, input.commandId) as { operation: string } | undefined;
+      if (closed && (!previous || previous.operation === "close")) return { status: "closed" };
+    }
     const e = this.required(input.sessionId, caseId, runId);
+    if (e.cleanupState && input.operation !== "close") throw new Error("Browser cleanup pending");
     if (input.operation === "preview") {
       e.check();
       if (e.busy || Date.now() - (e.previewAt ?? 0) < 400) throw new Error("Browser preview busy");
@@ -114,6 +125,7 @@ export class DesktopBrowserSessions {
     this.db.prepare("INSERT INTO desktop_browser_commands VALUES (?,?,?,'started',?)")
       .run(input.sessionId, input.commandId, input.operation, new Date().toISOString());
     e.busy = true;
+    if (input.operation === "takeover") e.takeoverPending = true;
     const result = Promise.resolve().then(async () => {
       if (input.operation === "close") { await this.close(input.sessionId); return { status: "closed" }; }
       if (input.operation === "takeover") return e.runtime.beginManualControl(input.sessionId);
@@ -123,7 +135,7 @@ export class DesktopBrowserSessions {
       return e.runtime.observeManual(input.sessionId, input.takeoverId, { kind: "dom", pageId: input.pageId });
     }).then(value => {
       const snapshot = e.runtime.snapshot(input.sessionId);
-      if (input.operation !== "close" && snapshot && this.entries.has(input.sessionId)) this.state(input.sessionId, snapshot.status);
+      if (input.operation !== "close" && !e.cleanupState && snapshot && this.entries.has(input.sessionId)) this.state(input.sessionId, snapshot.status);
       this.db.prepare("UPDATE desktop_browser_commands SET state='completed',updated_at=? WHERE session_id=? AND command_id=?")
         .run(new Date().toISOString(), input.sessionId, input.commandId);
       return value;
@@ -131,9 +143,17 @@ export class DesktopBrowserSessions {
       this.db.prepare("UPDATE desktop_browser_commands SET state='unknown',updated_at=? WHERE session_id=? AND command_id=?")
         .run(new Date().toISOString(), input.sessionId, input.commandId);
       throw error;
-    }).finally(() => { e.busy = false; });
+    }).finally(() => { e.busy = false; e.takeoverPending = false; });
     e.commands.set(input.commandId, { digest, result });
     return this.present(e, input, await result);
+  }
+  /** Host-owned hold. It grants no new lease, authority or session lifetime. */
+  manualControlPending(runId: string, workId: string): boolean {
+    return [...this.entries].some(([id, e]) => {
+      if (e.owner.runId !== runId || e.owner.workId !== workId || e.cleanupState) return false;
+      try { e.check(); } catch { void this.close(id).catch(() => undefined); return false; }
+      return e.takeoverPending === true || e.runtime.snapshot(id)?.status === "manual_control";
+    });
   }
   private present(e: Session, input: DesktopBrowserCommand, value: unknown): unknown {
     if (input.operation !== "observe") return value;

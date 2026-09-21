@@ -59,6 +59,30 @@ it("persists uncertain cleanup and never resurrects handles after restart", asyn
   finally { await restarted.shutdown(); }
   expect(f.close).toHaveBeenCalledTimes(1);
 });
+it("retains failed cleanup for an explicit retry even after ownership is revoked", async () => {
+  const f = await fixture(); f.close.mockRejectedValueOnce(new Error("cleanup uncertain"));
+  const command = { operation: "close" as const, sessionId: "session", commandId: "close-first" };
+  await expect(f.sessions.command(f.owner.caseId, "run", command)).rejects.toThrow("cleanup uncertain");
+  expect(f.sessions.list(f.owner.caseId, "run")[0]).toMatchObject({ status: "cleanup_unknown" });
+  await expect(f.sessions.command(f.owner.caseId, "run", { operation: "takeover", sessionId: "session", commandId: "takeover-after-failure" })).rejects.toThrow();
+  f.sql.prepare("UPDATE scenario_event_streams SET status='paused'").run();
+  const retry = { ...command, commandId: "close-retry" };
+  await f.sessions.command(f.owner.caseId, "run", retry);
+  await f.sessions.command(f.owner.caseId, "run", retry);
+  expect(f.close).toHaveBeenCalledTimes(2);
+  expect(f.sessions.list(f.owner.caseId, "run")).toEqual([]);
+  expect(f.sql.prepare("SELECT state FROM desktop_browser_sessions").get()).toEqual({ state: "closed" });
+});
+it("holds work while takeover is pending and while the user controls the page", async () => {
+  const f = await fixture(); let finish!: () => void;
+  f.runtime.beginManualControl.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ state: "manual_control" }); }));
+  const pending = f.sessions.command(f.owner.caseId, "run", { operation: "takeover", sessionId: "session", commandId: "pending" });
+  await Promise.resolve();
+  expect(f.sessions.manualControlPending("run", "work")).toBe(true);
+  expect(f.sessions.manualControlPending("run", "other")).toBe(false);
+  finish(); await pending;
+  expect(f.sessions.manualControlPending("run", "work")).toBe(false);
+});
 it("revokes current ownership on pause and still allows explicit cleanup", async () => {
   const f = await fixture(); f.sql.prepare("UPDATE scenario_event_streams SET status='paused'").run();
   expect(() => f.sessions.currentLease(f.owner)).toThrow("revoked");

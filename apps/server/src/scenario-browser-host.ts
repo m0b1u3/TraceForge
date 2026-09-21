@@ -176,9 +176,11 @@ export function createScenarioBrowserHandler(
         const id = sessionId;
         sessions!.add(id, { runtime, owner: structuredClone(attribution), packageId: installation.id, packageVersion: installation.version,
           check, read: ref => { const artifact = recordedArtifacts.find(a => a.contentRef === ref); return artifact && deployment.readContent?.(ref, attribution, artifact.id); },
-          close: async () => { try { await runtime.close(id); } finally {
+          close: async () => {
+            try { await runtime.close(id); }
+            catch (error) { await deployment.release?.(attribution, false); throw error; }
             try { permit?.finish(!dispatched || terminal); } finally { await deployment.release?.(attribution, !dispatched || terminal); }
-          } } });
+          } });
         retained = true;
       }
       return { output: { ...(retained ? { sessionId, expiresAt: snapshot.expiresAt } : {}), dom, screenshot, artifacts: recordedArtifacts, network: snapshot.records, validation: "observation_only" }, refs };

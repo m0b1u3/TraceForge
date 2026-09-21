@@ -521,6 +521,7 @@ export class BrokeredBrowserRuntime {
     try {
       await this.assertCurrentOrFreeze(sessionId, session);
       const rawTakeover = await session.connection.beginTakeover();
+      if (session.snapshot.status !== "active") throw new Error("Browser closed during takeover");
       let takeover: BrowserTakeoverState;
       try {
         takeover = validateTakeover(rawTakeover, "manual_control",
@@ -554,6 +555,7 @@ export class BrokeredBrowserRuntime {
     try {
       await this.assertCurrentOrFreeze(sessionId, session);
       const rawTakeover = await session.connection.resumeTakeover(takeoverId);
+      if (session.snapshot.status !== "manual_control") throw new Error("Browser closed during handback");
       let takeover: BrowserTakeoverState;
       try {
         takeover = validateTakeover(rawTakeover, "agent_control",

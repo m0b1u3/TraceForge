@@ -3,6 +3,8 @@ import { ConversationWorkspaces } from "./conversation-workspaces.js";
 import { executionDisplay } from "@traceforge/worker-runtime";
 import { desktopToolReceiptReference } from "./desktop-record-evidence.js";
 import { RunToolPolicy } from "./run-tool-policy.js";
+import type { DesktopBrowserSessions } from "./desktop-browser-sessions.js";
+
 import { DesktopApprovalPreference } from "./desktop-approval-preference.js";
 import { readRunForensics } from "./scenario-run-disposal.js";
 import type Database from "better-sqlite3";
@@ -92,6 +94,11 @@ import type { ScenarioWorkRetryControl } from "./scenario-work-retry.js";
 import { SqliteWorkerCheckpointStore } from "./worker-checkpoint-store.js";
 import type { ExtensionAssemblyControl } from "./extension-assembly.js";
 
+export interface EmbeddedBrowserServices {
+  sessions: DesktopBrowserSessions;
+  allowsTool(definition: ScenarioDefinition, tool: import("@traceforge/worker-runtime").ExecutionToolSpec): boolean;
+}
+
 function serverBaseUrl(app: FastifyInstance): string {
   const address = app.server.address();
   if (!address || typeof address === "string") throw new Error("Embedded workers require a TCP server address");
@@ -135,6 +142,7 @@ class EmbeddedScenarioWorkerPool {
     private readonly workspace?: RunWorkspace,
     private readonly plannerReady:()=>boolean=()=>false,
     private readonly workspaceJobs?: WorkspaceJobs,
+    private readonly browser?: EmbeddedBrowserServices,
   ) {}
 
   reconcile(): Promise<void> {
@@ -215,6 +223,8 @@ class EmbeddedScenarioWorkerPool {
           && "form" in current.package.authorizationPolicy && current.package.authorizationPolicy.form) {
           projection.request = { ...projection.request, permissionContext: {
             scope: current.scope.payload as Record<string, unknown>, form: current.package.authorizationPolicy.form, expiresAt: current.row.expires_at,
+            allowedActions: [...current.scope.allowedActions], deniedActions: [...current.scope.deniedActions],
+            capabilityAuthorization: (current.package.definition.toolPolicies ?? []).map(({ source, capability, authorizationAction }) => ({ source, capability, authorizationAction })),
           } };
         }
         return projection;
@@ -236,7 +246,7 @@ class EmbeddedScenarioWorkerPool {
     const control=new HttpWorkerControlPlaneClient(serverBaseUrl(this.app),channel.fetch);
     const approvalPreference = new DesktopApprovalPreference(this.sqlite);
     const toolPolicy = new RunToolPolicy(definition, this.authorization, this.workspace, executorPlatform(),
-      () => approvalPreference.read().routineApprovalRequired);
+      () => approvalPreference.read().routineApprovalRequired, tool => this.browser?.allowsTool(definition, tool) === true);
     const gateway = new PolicyExecutionToolGateway(
       this.toolRuntime.registry,
       { async authorize(input) { return toolPolicy.approval(input.assignment, input.tool) ?? { decision: "pending", approvalRef: `approval:${input.invocation.id}` }; } },
@@ -270,6 +280,8 @@ class EmbeddedScenarioWorkerPool {
       new BoundedOutputDistiller(),
       {
         repeatableReadCapabilities: ["workspace.poll"],
+        executionHoldReason: assignment => this.browser?.sessions.manualControlPending(assignment.runId, assignment.work.id)
+          ? "User is controlling an owned browser; wait for handback without another model call." : undefined,
         completionBlockReason: assignment => this.workspaceJobs?.pending(assignment.runId, assignment.work.id)
           ? "An owned script is unfinished or uncertain. Poll its handle and confirm its terminal result before completing this Work; unknown execution requires reconciliation." : undefined,
         longTaskPolicy: assignment => {
@@ -279,9 +291,9 @@ class EmbeddedScenarioWorkerPool {
           catch { return undefined; } // Existing Scenarios need not declare this optional capability.
           const payload = grant.scopePayload as Record<string, unknown>;
           if (payload?.continuousExecution !== true) return undefined;
-          const turns = payload.maximumWorkTurns ?? 240, minutes = payload.maximumWorkMinutes ?? 120;
-          if (typeof turns !== "number" || typeof minutes !== "number" || !Number.isSafeInteger(minutes)) throw new Error("Invalid long task authorization budgets");
-          return { segmentTurns: 24, maximumTurns: turns, maximumDurationMs: minutes * 60000 };
+          const turns = payload.maximumWorkTurns, minutes = payload.maximumWorkMinutes;
+          if (turns !== undefined && (typeof turns !== "number" || !Number.isSafeInteger(turns)) || minutes !== undefined && (typeof minutes !== "number" || !Number.isSafeInteger(minutes))) throw new Error("Invalid long task authorization budgets");
+          return { segmentTurns: 24, ...(typeof turns === "number" ? { maximumTurns: turns } : {}), ...(typeof minutes === "number" ? { maximumDurationMs: minutes * 60000 } : {}) };
         },
         onLifecycleEvent: (event) => {
           if (event.type === "turn_progress") {
@@ -373,6 +385,7 @@ export function registerEmbeddedWorkers(
   extensionAssembly?: ExtensionAssemblyControl,
   onToolRuntime?: (runtime: ExecutionToolDiscoveryRuntime) => void,
   workspaceProject?: (context: ToolExecutionContext, id: string) => Promise<WorkspaceProject>,
+  browser?: EmbeddedBrowserServices,
 ): () => ReturnType<ExecutionToolDiscoveryRuntime["snapshot"]> {
   let workspaceJobs: WorkspaceJobs | undefined;
   const conversationWorkspaces = new ConversationWorkspaces(sqlite,projectRoot);
@@ -552,7 +565,7 @@ export function registerEmbeddedWorkers(
   registerToolProviderRefreshRoutes(app, providerRefresh);
   const pool = new EmbeddedScenarioWorkerPool(
     app, sqlite, provider, projectRoot, cognitiveSnapshots, modelRuntime, agentEvents, toolRuntime, definitions, bindingValidator,
-    invocationBindings, contextPolicy, compaction,hostControl,authorization,workspace,providerReady,workspaceJobs,
+    invocationBindings, contextPolicy, compaction,hostControl,authorization,workspace,providerReady,workspaceJobs,browser,
   );
   let listening = false;
   let startup: Promise<void> | undefined;

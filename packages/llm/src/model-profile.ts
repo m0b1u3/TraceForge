@@ -30,8 +30,8 @@ export function applyModelProfile(config: LlmEndpointConfig): LlmEndpointConfig 
   if (profile.model !== config.model || profile.protocol !== config.provider || profile.baseUrl.replace(/\/+$/,"") !== config.baseUrl?.replace(/\/+$/,""))
     throw new Error("Model capability profile belongs to another connection");
   const contextWindowTokens=config.contextWindowTokens ?? profile.contextWindowTokens;
-  const maxOutputTokens=config.maxOutputTokens ?? Math.min(4096,Math.floor((contextWindowTokens ?? 32768)/8),profile.maxOutputTokens ?? Infinity);
-  if (profile.maxOutputTokens !== undefined && maxOutputTokens>profile.maxOutputTokens) throw new Error("Configured output exceeds declared model maximum");
+  const maxOutputTokens=config.maxOutputTokens ?? profile.maxOutputTokens;
+  if (profile.maxOutputTokens !== undefined && maxOutputTokens !== undefined && maxOutputTokens>profile.maxOutputTokens) throw new Error("Configured output exceeds declared model maximum");
   if (profile.reasoning === false && (config.requestOptions?.thinking === "enabled" || config.requestOptions?.reasoningEffort && config.requestOptions.reasoningEffort !== "none"))
     throw new Error("Declared model does not support reasoning");
   if (profile.adaptiveThinking === false && config.provider === "anthropic" && config.requestOptions?.thinking === "enabled")

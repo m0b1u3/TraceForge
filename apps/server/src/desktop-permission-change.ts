@@ -28,7 +28,7 @@ export class DesktopPermissionChange {
     const run = this.owned(conversationId, runId), current = this.authorization.requireRun(run);
     if (!("form" in current.package.authorizationPolicy) || !current.package.authorizationPolicy.form) throw new Error("当前场景没有可编辑的授权表单");
     return { runId, expectedRevision: run.revision, expectedScopeRevision: current.binding.revision, scope: current.scope.payload,
-      form: current.package.authorizationPolicy.form, policy: {allowedActions:current.scope.allowedActions,deniedActions:current.scope.deniedActions,resources:"resources" in current.package.authorizationPolicy?current.package.authorizationPolicy.resources:[]},
+      form: current.package.authorizationPolicy.form, policy: {actionSelection:current.package.authorizationPolicy.actionSelection,allowedActions:current.package.authorizationPolicy.allowedActions,deniedActions:current.package.authorizationPolicy.deniedActions,resources:current.package.authorizationPolicy.resources},
       requests: run.workItems.filter(work => work.status === "blocked" && work.permissionRequest?.status === "pending")
         .map(work => ({ workId: work.id, ...work.permissionRequest! })),
       status: run.status, expiresAt:current.row.expires_at, automaticResume: false };
@@ -61,6 +61,8 @@ export class DesktopPermissionChange {
         if(field.type==="boolean") { if(typeof value!=="boolean")throw new Error("授权选项必须明确选择"); return String(value); }
         if(!Array.isArray(value)||!value.every(item=>typeof item==="string"))throw new Error("授权范围必须按表单填写"); return value.join("\n");
       }));
+      if ("actionSelection" in current.package.authorizationPolicy && current.package.authorizationPolicy.actionSelection)
+        reconstructed.authorizedActions = input.scope.authorizedActions;
       if(canonicalJson(reconstructed)!==canonicalJson(input.scope))throw new Error("授权包含未声明或未规范化字段");
       }
       if((this.db.prepare("SELECT count(*) AS n FROM desktop_permission_changes").get() as {n:number}).n>=2048)throw new Error("授权变更历史已达到容量上限");

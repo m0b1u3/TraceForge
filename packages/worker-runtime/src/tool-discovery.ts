@@ -260,7 +260,7 @@ export class ExecutionToolDiscoveryRuntime {
       })
       .sort((left, right) => left.source.localeCompare(right.source));
     const providers = this.registry.list().map(({ provider, ...state }) => {
-      const { execute: _execute, ...tool } = provider;
+      const tool = snapshotToolSpec(provider);
       return { tool, lifecycle: state.lifecycle, health: state.health, consecutiveFailures: state.consecutiveFailures, lastFailure: state.lastFailure, revision: state.revision };
     });
     return {

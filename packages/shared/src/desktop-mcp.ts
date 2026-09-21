@@ -5,6 +5,7 @@ const boundedPath = (path: string) => path.startsWith("/") && !path.includes("\0
 export const McpConnectionSchema = z.object({
   id, name: text, transport: z.enum(["streamable-http","stdio"]),
   endpoint: z.string().max(2048),
+  destinationAddresses: z.array(z.string().ip({message:"请填写有效的 IPv4 或 IPv6 地址，不含端口或网段。"})).max(32).optional(),
   executable:z.string().max(4096).optional(),arguments:z.array(z.string().max(4096)).max(64).optional(),workingDirectory:z.string().max(4096).optional(),
   readPaths:z.array(z.string().max(4096)).max(32).optional(),writePaths:z.array(z.string().max(4096)).max(32).optional(),
   package: z.object({ id: text, version: text, schemaRevision: z.number().int().positive() }).strict(),

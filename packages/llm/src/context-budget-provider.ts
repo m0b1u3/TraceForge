@@ -14,7 +14,7 @@ export function withContextBudget(provider: LlmProvider, limits: ModelContextLim
   };
   const check = (request: unknown) => {
     const estimate = estimateContextTokens(request);
-    if (estimate > resolveContextBudget(current()).input) {
+    if ((limits.contextWindowTokens !== undefined || limits.maximumInputTokens !== undefined) && estimate > resolveContextBudget(current()).input) {
       throw new ModelContextOverflowError("local_guard");
     }
     return estimate;

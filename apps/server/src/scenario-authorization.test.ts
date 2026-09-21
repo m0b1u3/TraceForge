@@ -93,15 +93,18 @@ describe("SqliteScenarioAuthorizationService", () => {
       .run("case_2","Declarative","active","{}","2026-08-28T00:00:00.000Z");
     sqlite.prepare(`INSERT INTO scenario_authorizations
       (id,case_id,scenario_kind,scope_json,approved_by,status,expires_at,created_at,updated_at)
-      VALUES (?,?,?,?,?,'active',?,?,?)`).run("scope_2","case_2",definition.kind,JSON.stringify({subjects:["first"]}),"operator",
+      VALUES (?,?,?,?,?,'active',?,?,?)`).run("scope_2","case_2",definition.kind,JSON.stringify({subjects:["first"],authorizedActions:["fixture.read"]}),"operator",
         "2027-08-28T00:00:00.000Z","2026-08-28T00:00:00.000Z","2026-08-28T00:00:00.000Z");
-    const pkg:ScenarioPackageInstallation={...scenarioPackage,authorizationPolicy:{format:"traceforge.scenario-scope-policy.v1",
-      allowedActions:["fixture.read"],deniedActions:[],payload:{maximumBytes:1024,maximumDepth:4},
+    const pkg:ScenarioPackageInstallation={...scenarioPackage,definition:{...definition,authorizationActions:["fixture.read","fixture.write"]},authorizationPolicy:{format:"traceforge.scenario-scope-policy.v1",actionSelection:true,
+      allowedActions:["fixture.read","fixture.write"],deniedActions:[],payload:{maximumBytes:1024,maximumDepth:4},
       resources:[{kind:"fixture.subject",payloadPath:["subjects"]}]},outputSchemas:[{kind:"first_output",version:1,
         format:"traceforge.scenario-output-contract.v1",maximumSummaryBytes:1024,maximumRefs:8}]};
     const service=new SqliteScenarioAuthorizationService(sqlite,new ScenarioPackageRegistry([pkg]),()=>Date.parse("2026-08-28T01:00:00.000Z"));
     service.pin("scope_2","case_2",{id:pkg.id,version:pkg.version,schemaRevision:pkg.schemaRevision},0);
     expect(service.authorizeResource("scope_2","case_2","fixture.read","fixture.subject","first").canonicalValue).toBe("first");
     expect(()=>service.authorizeResource("scope_2","case_2","fixture.read","fixture.subject","second")).toThrow(/does not authorize/);
+    const restarted = new SqliteScenarioAuthorizationService(sqlite,new ScenarioPackageRegistry([pkg]),()=>Date.parse("2026-08-28T01:00:00.000Z"));
+    expect(()=>restarted.requireAction("scope_2","case_2","fixture.write")).toThrow("explicitly denied");
+    expect(()=>restarted.parse({...restarted.row("scope_2","case_2"),scope_json:JSON.stringify({subjects:["first"]})},pkg)).toThrow("authorizedActions");
   });
 });

@@ -4,6 +4,18 @@ import { assertDeclarativeScenarioContract, authorizeScenarioResource, mapScenar
   parseScenarioPackageDescriptor, SCENARIO_PROCESS_PROTOCOL, ScenarioPackageRegistry, validateScenarioOutput, validateSkillContract, validateSkillRecord,
   type ScenarioSkillContract, type ScenarioPackageInstallation } from "./index.js";
 
+it("requires explicit action subsets and cannot enable undeclared or denied operations", () => {
+  const policy = { format: "traceforge.scenario-scope-policy.v1" as const, actionSelection: true,
+    allowedActions: ["resource.read", "resource.write"], deniedActions: ["resource.remove"],
+    payload: { maximumBytes: 4096, maximumDepth: 4 }, resources: [] };
+  expect(parseScenarioScope(policy, { authorizedActions: ["resource.read"] })).toMatchObject({
+    allowedActions: ["resource.read"], deniedActions: ["resource.remove", "resource.write"] });
+  expect(parseScenarioScope(policy, { authorizedActions: [] }).allowedActions).toEqual([]);
+  for (const input of [{}, { authorizedActions: null }, { authorizedActions: "resource.read" },
+    { authorizedActions: ["resource.remove"] }, { authorizedActions: ["unknown"] },
+    { authorizedActions: ["resource.read", "resource.read"] }]) expect(() => parseScenarioScope(policy, input)).toThrow();
+});
+
 const definition: ScenarioDefinition = {
   kind: "fixture.first-scenario",
   version: 1,

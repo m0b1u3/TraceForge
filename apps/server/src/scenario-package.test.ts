@@ -64,7 +64,7 @@ describe("ScenarioPackageRegistry", () => {
   it("resolves only the exact Package version and Schema revision bound to a Run", () => {
     const registry = new ScenarioPackageRegistry([WEB_BLACKBOX_PACKAGE]);
     const binding = registry.bindingFor(WEB_BLACKBOX_PACKAGE);
-    expect(binding).toEqual({ id: "traceforge.web-blackbox", version: "0.5.13", schemaRevision: 1 });
+    expect(binding).toEqual({ id: "traceforge.web-blackbox", version: "0.5.15", schemaRevision: 1 });
     expect(registry.requireBinding(binding, "web_blackbox", 1)).toBe(WEB_BLACKBOX_PACKAGE);
     expect(registry.bindingStatus({ ...binding, version: "0.0.9" }, "web_blackbox", 1)).toMatchObject({
       status: "recovery_required",

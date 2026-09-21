@@ -5,6 +5,6 @@
   "main": "./src/index.ts",
   "exports": { ".": "./src/index.ts" },
   "scripts": { "build": "tsc -p tsconfig.json" },
-  "dependencies": { "yauzl": "^3.4.0", "parse5": "^8.0.1" },
+  "dependencies": { "@traceforge/execution-node": "workspace:*", "yauzl": "^3.4.0", "parse5": "^8.0.1" },
   "devDependencies": { "@types/yauzl": "^3.4.0" }
 }

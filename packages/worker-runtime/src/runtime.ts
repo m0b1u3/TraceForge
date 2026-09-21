@@ -23,10 +23,12 @@ export interface WorkerHostOptions {
   /** Host-owned lifecycle views may be polled; never exempts effectful actions. */
   repeatableReadCapabilities?: readonly string[];
   completionBlockReason?: (assignment: WorkerAssignment) => string | undefined;
+  /** Host-owned interaction pauses inference, not authorization or cancellation. */
+  executionHoldReason?: (assignment: WorkerAssignment) => string | undefined;
   /** Host resolves explicit, pinned user consent; never supplied by model output. */
   longTaskPolicy?: (assignment: WorkerAssignment) => LongTaskPolicy | undefined;
   concludeTimeoutMs?: number;
-  maxTurns: number;
+  maxTurns?: number;
   maxDistilledCharacters: number;
   renewBeforeMs: number;
   repeatedFailureLimit: number;
@@ -53,8 +55,6 @@ export interface WorkerRunResult {
 }
 
 export const defaultWorkerRuntimeOptions: Readonly<WorkerHostOptions> = {
-  concludeTimeoutMs:10000,
-  maxTurns: 24,
   maxDistilledCharacters: 8_000,
   renewBeforeMs: 20_000,
   repeatedFailureLimit: 3,
@@ -99,10 +99,10 @@ export class WorkerHost {
     private readonly now: () => string = () => new Date().toISOString(),
   ) {
     this.options = { ...defaultWorkerRuntimeOptions, ...options };
-    if(!Number.isSafeInteger(this.options.concludeTimeoutMs??10000)||(this.options.concludeTimeoutMs??10000)<1||(this.options.concludeTimeoutMs??10000)>60000)throw new Error("Invalid conclusion time budget");
+    if(this.options.concludeTimeoutMs!==undefined&&(!Number.isSafeInteger(this.options.concludeTimeoutMs)||this.options.concludeTimeoutMs<1))throw new Error("Invalid conclusion time budget");
     this.journalCheckpoints = new AgentJournalCheckpointAdapter(checkpoints, now);
     if (!Number.isSafeInteger(this.options.ownershipPollMs) || this.options.ownershipPollMs < 10 || this.options.ownershipPollMs > 30000) throw new Error("Invalid ownership polling interval");
-    if (this.options.maxTurns < 1 || this.options.maxDistilledCharacters < 256 || this.options.renewBeforeMs < 1 || this.options.repeatedFailureLimit < 1) {
+    if (this.options.maxTurns !== undefined && (!Number.isSafeInteger(this.options.maxTurns) || this.options.maxTurns < 1) || this.options.maxDistilledCharacters < 256 || this.options.renewBeforeMs < 1 || this.options.repeatedFailureLimit < 1) {
       throw new Error("Worker runtime limits must be positive and distilled output must allow at least 256 characters");
     }
   }
@@ -165,9 +165,32 @@ export class WorkerHost {
     }
     let repeatedFailureCount = checkpoint.journal.consecutiveFailures;
     let activeTurnId: string | undefined;
+    const waitForHost = async (): Promise<boolean> => {
+      let waited = false;
+      while (this.options.executionHoldReason?.(assignment)) {
+        waited = true; signal.throwIfAborted();
+        assignment = await waitForCancellation(() => this.control.refresh(assignment), signal);
+        if (checkpoint.longTask) {
+          const current = this.options.longTaskPolicy?.(assignment);
+          if (!current || JSON.stringify(validateLongTaskPolicy(current)) !== JSON.stringify(checkpoint.longTask.policy))
+            throw new ToolInvocationRecoveryRequiredError("Long task authorization no longer current during host interaction");
+        }
+        if (checkpoint.longTask?.policy.maximumDurationMs !== undefined && Date.parse(this.now()) - Date.parse(checkpoint.longTask.startedAt) >= checkpoint.longTask.policy.maximumDurationMs)
+          throw new ToolInvocationRecoveryRequiredError("Long task total duration exhausted during host interaction");
+        if (Date.parse(assignment.leaseExpiresAt) - Date.parse(this.now()) <= this.options.renewBeforeMs)
+          assignment = await waitForCancellation(() => this.control.renew(assignment, `renew:${assignment.leaseId}:host:${assignment.runRevision}`), signal);
+        this.active.get(initialAssignment.leaseId)!.assignment = assignment;
+        await waitForCancellation(() => new Promise<void>(resolve => setTimeout(resolve, 100)), signal);
+      }
+      signal.throwIfAborted();
+      return waited;
+    };
 
     try {
-      if (checkpoint.pendingControl?.leaseId === assignment.leaseId) return await this.replayPendingControl(assignment, checkpoint);
+      if (checkpoint.pendingControl?.leaseId === assignment.leaseId) {
+        await waitForHost();
+        return await this.replayPendingControl(assignment, checkpoint);
+      }
       if (checkpoint.pendingControl) {
         if (checkpoint.pendingControl.type === "complete") {
           throw new ToolInvocationRecoveryRequiredError("Completed Agent terminal command belongs to another lease and cannot be resumed");
@@ -183,22 +206,24 @@ export class WorkerHost {
         assignment = await this.persistCheckpoint(assignment, checkpoint, 0, "Long task authorization and start time saved",
           `worker:${this.worker.id}:run:${assignment.runId}:work:${assignment.work.id}:lease:${assignment.leaseId}:start`);
       }
-      const totalTurns = checkpoint.longTask?.policy.maximumTurns ?? this.options.maxTurns;
+      const configuredTurns = checkpoint.longTask ? checkpoint.longTask.policy.maximumTurns : this.options.maxTurns;
+      const totalTurns = configuredTurns ?? Infinity;
       if (checkpoint.journal.terminal) resumeAgentExecutionJournal(checkpoint.journal);
       if (repeatedFailureCount >= this.options.repeatedFailureLimit || checkpoint.journal.turn >= totalTurns) {
         throw new ToolInvocationRecoveryRequiredError("Checkpoint execution budget exhausted; continuation cannot reset safety limits");
       }
-      const session = new AgentHarness().openSession<WorkerRunResult>(checkpoint.journal.sessionId, { maxTurns: totalTurns });
+      const session = new AgentHarness().openSession<WorkerRunResult>(checkpoint.journal.sessionId, { maxTurns: configuredTurns });
       const sessionResult = await session.run(checkpoint.journal.turn + 1, signal, async (turn) => {
         // Work names and attempt numbers are only local identities; a new lease is a distinct model evaluation.
         const turnId = `worker:${encodeURIComponent(this.worker.id)}:run:${encodeURIComponent(assignment.runId)}:work:${encodeURIComponent(assignment.work.id)}:lease:${encodeURIComponent(assignment.leaseId)}:attempt:${assignment.work.attempt}:turn:${turn}`;
         activeTurnId = undefined;
         assignment = await waitForCancellation(() => this.control.refresh(assignment), signal);
+        await waitForHost();
         if (checkpoint.longTask) {
           const current = this.options.longTaskPolicy?.(assignment);
           if (!current || JSON.stringify(validateLongTaskPolicy(current)) !== JSON.stringify(checkpoint.longTask.policy))
             throw new ToolInvocationRecoveryRequiredError("Long task authorization no longer current");
-          if (Date.parse(this.now()) - Date.parse(checkpoint.longTask.startedAt) >= checkpoint.longTask.policy.maximumDurationMs)
+          if (checkpoint.longTask.policy.maximumDurationMs !== undefined && Date.parse(this.now()) - Date.parse(checkpoint.longTask.startedAt) >= checkpoint.longTask.policy.maximumDurationMs)
             throw new ToolInvocationRecoveryRequiredError("Long task total duration exhausted; progress retained");
         }
         this.applyRunDirectives(assignment, checkpoint);
@@ -246,11 +271,18 @@ export class WorkerHost {
             }), evaluationSignal),
           });
         const decision = evaluation.intent;
+        if (await waitForHost()) {
+          checkpoint.journal.steering.push("Host interaction changed the current state. Observe again before acting; the prior decision was not dispatched.");
+          assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Decision superseded by host interaction", turnId);
+          this.turnCompleted(assignment, turnId, "continue", assignment.work.latestCheckpoint?.payloadRef ?? null);
+          return { outcome: "continue" };
+        }
         const observation = evaluation.observation;
         if (observation.action === "stop") {
           this.turnProgress(assignment, turnId, "observationApplied", observation.reason, []);
           this.prepareBlock(checkpoint, turn, `block:${assignment.leaseId}:observer:${turn}`, observation.reason, "blocked");
           assignment = await this.persistCheckpoint(assignment, checkpoint, turn, observation.reason, turnId);
+          await waitForHost();
           await this.control.block(assignment, checkpoint.pendingControl!.commandId, observation.reason);
           this.turnCompleted(assignment, turnId, "blocked", assignment.work.latestCheckpoint?.payloadRef ?? null);
           return { outcome: "finished", value: { runId: assignment.runId, workId: assignment.work.id, outcome: "blocked", turns: turn, reason: observation.reason } };
@@ -286,6 +318,16 @@ export class WorkerHost {
             leaseId: assignment.leaseId,
             summary: decision.summary, outputs: structuredClone(decision.outputs) };
           assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Completion decision persisted", turnId);
+          if (await waitForHost()) {
+            checkpoint.pendingControl = null;
+            // Only the local intent was saved; control.complete has NOT been
+            // dispatched. This is not reopening an externally completed Work.
+            checkpoint.journal.terminal = null;
+            checkpoint.journal.steering.push("Host interaction superseded completion; observe the current state again.");
+            assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Completion superseded by host interaction", turnId, "host_interaction");
+            this.turnCompleted(assignment, turnId, "continue", assignment.work.latestCheckpoint?.payloadRef ?? null);
+            return { outcome: "continue" };
+          }
           await this.control.complete(assignment, checkpoint.pendingControl.commandId, decision.summary, decision.outputs);
           this.turnCompleted(assignment, turnId, "finish", null);
           return { outcome: "finished", value: { runId: assignment.runId, workId: assignment.work.id, outcome: "completed", turns: turn } };
@@ -298,6 +340,14 @@ export class WorkerHost {
             id: pending.commandId, scope: structuredClone(decision.scope),
           };
           assignment = await this.persistCheckpoint(assignment, checkpoint, turn, decision.reason, turnId);
+          if (await waitForHost()) {
+            checkpoint.pendingControl = null;
+            resumeAgentExecutionJournal(checkpoint.journal);
+            checkpoint.journal.steering.push("Host interaction superseded the blocked decision; reassess the current state.");
+            assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Block superseded by host interaction", turnId, "host_interaction");
+            this.turnCompleted(assignment, turnId, "continue", assignment.work.latestCheckpoint?.payloadRef ?? null);
+            return { outcome: "continue" };
+          }
           await this.control.block(assignment, pending.commandId, decision.reason, pending.type === "block" ? pending.permissionRequest : undefined,pending.type==="block"?pending.inquiry:undefined);
           this.turnCompleted(assignment, turnId, "blocked", assignment.work.latestCheckpoint?.payloadRef ?? null);
           return { outcome: "finished", value: { runId: assignment.runId, workId: assignment.work.id, outcome: "blocked", turns: turn, reason: decision.reason } };
@@ -339,6 +389,7 @@ export class WorkerHost {
             checkpoint.journal.consecutiveFailures = repeatedFailureCount;
             assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Exact invocation persisted before dispatch", turnId, "pending");
           }
+          await waitForHost();
           this.options.onLifecycleEvent?.({
             type: "tool_started", assignment, turnId, invocationId: decision.invocation.id,
             tool: decision.invocation.tool, risk, input: decision.invocation.input, rationale: decision.invocation.rationale,
@@ -395,6 +446,7 @@ export class WorkerHost {
           repeatedFailureCount = observationPolicy.consecutiveFailures;
           failureLimitReached = observationPolicy.failureLimitReached;
           if (observationPolicy.requiresApproval) {
+            await waitForHost();
             const approvalId = result.approvalRef ?? `approval:${assignment.work.id}:${decision.invocation.id}`;
             const actionKey = `${assignment.work.idempotencyKey}:${decision.invocation.id}`;
             const reason = `Tool ${decision.invocation.tool} requires approval (${approvalId}); retry this exact invocation after approval.`;
@@ -404,6 +456,7 @@ export class WorkerHost {
             assignment = await this.persistCheckpoint(assignment, checkpoint, turn, reason, turnId, "approval");
             const inputRef = assignment.work.latestCheckpoint?.payloadRef;
             if (!inputRef) throw new Error("Approval checkpoint was not reflected in the assignment");
+            await waitForHost();
             await this.control.requestApproval(assignment, {
               commandId: `request-approval:${approvalId}`,
               approvalId,
@@ -426,6 +479,7 @@ export class WorkerHost {
           this.prepareBlock(checkpoint, turn, `block:${assignment.leaseId}:failures`, reason, "blocked");
         }
         assignment = await this.persistCheckpoint(assignment, checkpoint, turn, `Turn ${turn} committed`, turnId);
+        await waitForHost();
         if (failureLimitReached) {
           const pendingControl = checkpoint.pendingControl!;
           const reason = pendingControl.type === "block" ? pendingControl.reason : "Execution failure budget exhausted";
@@ -444,6 +498,7 @@ export class WorkerHost {
         return { outcome: "continue" };
       });
       if (sessionResult.outcome === "finished") return sessionResult.value;
+      await waitForHost();
       let reason = `Agent Session turn budget exhausted after ${sessionResult.turns} turns`;
       this.prepareBlock(checkpoint, checkpoint.journal.turn, `block:${assignment.leaseId}:budget`, reason, "budget_exhausted");
       if (!activeTurnId) throw new Error("Agent Session exhausted without a durable turn identity");
@@ -454,8 +509,9 @@ export class WorkerHost {
         let summary:string|undefined;
         try {
           assignment=await waitForCancellation(()=>this.control.refresh(assignment),signal);
+          await waitForHost();
           const proposedSummary=await new WorkerDecisionExecutor(this.model).conclude({turnId:`${activeTurnId}:conclude`,worker:this.worker,assignment,
-            tools:[],toolResolution:{requestedCapabilities:[],unresolvedCapabilities:[],registryRevision:0},transcript:checkpoint.journal.entries,steering:checkpoint.journal.steering},signal,this.options.concludeTimeoutMs??10000);
+            tools:[],toolResolution:{requestedCapabilities:[],unresolvedCapabilities:[],registryRevision:0},transcript:checkpoint.journal.entries,steering:checkpoint.journal.steering},signal,this.options.concludeTimeoutMs);
           assignment=await waitForCancellation(()=>this.control.refresh(assignment),signal);
           signal.throwIfAborted();
           summary=proposedSummary;
@@ -470,6 +526,7 @@ export class WorkerHost {
           assignment=await this.persistCheckpoint(assignment,checkpoint,checkpoint.journal.turn,reason,activeTurnId,"conclusion_committed");
         }
       }
+      await waitForHost();
       await this.control.block(assignment, checkpoint.pendingControl!.commandId, reason);
       if (activeTurnId) this.turnCompleted(assignment, activeTurnId, "blocked", assignment.work.latestCheckpoint?.payloadRef ?? null);
       return { runId: assignment.runId, workId: assignment.work.id, outcome: "blocked", turns: sessionResult.turns, reason };
@@ -551,7 +608,7 @@ export class WorkerHost {
     turn: number,
     progressSummary: string,
     turnId: string,
-    phase: "committed" | "pending" | "approval" | "conclusion_pending" | "conclusion_committed" = "committed",
+    phase: "committed" | "pending" | "approval" | "conclusion_pending" | "conclusion_committed" | "host_interaction" = "committed",
   ): Promise<WorkerAssignment> {
     const signal = this.active.get(assignment.leaseId)?.controller.signal;
     signal?.throwIfAborted();

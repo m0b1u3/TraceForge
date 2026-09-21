@@ -72,6 +72,31 @@ it("one conversation loop reads history then proposes a task and reopens without
   expect(model.streamTools).toHaveBeenCalledTimes(3);expect(request).toHaveBeenCalledTimes(1);restored.close();
 });
 afterEach(async()=>{for(const close of cleanup.splice(0))await close();});
+it("has no implicit four-minute deadline and remains cancellable",async()=>{
+  const f=await fixture();f.service.close();
+  const service=new DesktopReplyService(f.sql,()=>f.provider);
+  vi.useFakeTimers();
+  try {
+    expect(service.start(f.conversation.id,"message").status).toBe(202);
+    await vi.advanceTimersByTimeAsync(300000);
+    expect(service.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"streaming"}]});
+    service.cancel(f.conversation.id,"message");
+    expect(service.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"cancelled"}]});
+  } finally { service.close();vi.useRealTimers(); }
+});
+it("continues beyond eight turns and six lookups without an implicit call budget",async()=>{
+  const f=await fixture();let turns=0;
+  vi.mocked(f.provider.streamTools!).mockImplementation(async(_args,handlers)=>{
+    if(turns++<12)return {text:"",done:false,toolCalls:[{id:`lookup-${turns}`,name:"conversation_search",input:{query:`neutral ${turns}`}}]};
+    handlers.onTextDelta?.("Completed after twelve lookups");
+    return {text:"Completed after twelve lookups",done:true,toolCalls:[]};
+  });
+  await f.call(`${f.base}/replies/message`,{});
+  await vi.waitFor(()=>expect(f.service.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"completed",recallCount:12}]}));
+  const reply=(f.service.read(f.conversation.id,0).body as any).replies[0];
+  expect(DesktopReplySchema.parse(reply).toolActivity).toHaveLength(12);
+  expect(turns).toBe(13);f.service.close();
+});
 it("restored tool failures remain explicit even when the assistant claims success",async()=>{
   const f=await fixture();await f.call(`${f.base}/replies/message`,{});
   f.sql.prepare("INSERT INTO desktop_reply_reads VALUES (?,?,?,?,?,?)").run(f.conversation.id,"message",1,"memory_update","{}",JSON.stringify({detail:"x".repeat(4000),error:"source_changed"}));
@@ -198,7 +223,7 @@ it("recovers a crash-left streaming row with a new cursor",async()=>{
   const restored=new DesktopReplyService(f.sql,()=>f.provider);
   expect(restored.read(f.conversation.id,old.revision).body).toMatchObject({replies:[{state:"interrupted",text:"durable partial"}]});restored.close();
 });
-it("bounds concurrency, output, runtime and hides provider errors",async()=>{
+it("keeps concurrency, explicit timeouts and error redaction without a 64 KiB reply cutoff",async()=>{
   const f=await fixture();await f.call(`${f.base}/replies/message`,{});
   await f.call(`${f.base}/messages`,{commandId:"second",text:"Second message"});
   expect((await f.call(`${f.base}/replies/second`,{})).json()).toMatchObject({state:"queued"});
@@ -207,8 +232,9 @@ it("bounds concurrency, output, runtime and hides provider errors",async()=>{
   expect((await f.call(`${f.base}/replies?after=0`)).body).not.toContain("upstream secret");
   await f.call(`${f.base}/replies/second`,{});
   await vi.waitFor(()=>expect(f.provider.streamTools).toHaveBeenCalledTimes(2));
-  expect(()=>f.handlers().onTextDelta?.("字".repeat(22000))).toThrow();
-  expect((await f.call(`${f.base}/replies?after=0`)).body).toContain("output_limit");
+  const longText="字".repeat(22000);
+  expect(()=>f.handlers().onTextDelta?.(longText)).not.toThrow();f.finish(longText);
+  await vi.waitFor(()=>expect(f.service.read(f.conversation.id,0).body).toMatchObject({replies:expect.arrayContaining([expect.objectContaining({state:"completed",text:longText})])}));
   const timed=await fixture(10);await timed.call(`${timed.base}/replies/message`,{});
   await vi.waitFor(async()=>expect((await timed.call(`${timed.base}/replies?after=0`)).body).toContain('"error":"timeout"'));
 });
