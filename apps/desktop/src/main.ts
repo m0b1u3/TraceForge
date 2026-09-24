@@ -8,13 +8,19 @@ import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync, renameSync, writeFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
-import { buildServer, foundationHostControl, type LlmSecretBundle, type LlmSecretStore } from "@traceforge/server";
+import { buildServer, foundationHostControl, loadBundledScenarios, type LlmSecretBundle, type LlmSecretStore } from "@traceforge/server";
 import { ensureDesktopData, resolveDesktopPaths } from "./desktop-paths.js";
 import { createConversationBridge } from "./conversation-bridge.js";
 import { createModelSettingsBridge } from "./model-settings-bridge.js";
 import {readSelectedAttachment} from "./attachment-file.js";
 import {MessageAttachmentsSchema} from "@traceforge/shared/message-attachments";
 import { EmbeddedBrowser } from "./embedded-browser.js";
+import { configureDesktopStorage } from "./storage-bootstrap.js";
+import { createDiagnostics } from "./desktop-diagnostics.js";
+import { createStorageBridge } from "./desktop-storage.js";
+
+const storageLayout = configureDesktopStorage();
+const diagnostics = createDiagnostics(storageLayout.logs);
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
@@ -64,10 +70,11 @@ function desktopLlmSecretStore(path: string): LlmSecretStore {
 }
 
 async function start(): Promise<void> {
+  diagnostics.record("started");
   const webRoot = app.isPackaged ? join(process.resourcesPath, "web") : resolve(moduleDirectory, "../../web/renderer/dist");
   requireDesktopRenderer(webRoot);
-  if (process.platform === "darwin" && app.isPackaged) {
-    const helperRoot = join(process.resourcesPath, "native", "darwin-arm64");
+  if (process.platform === "darwin") {
+    const helperRoot = app.isPackaged ? join(process.resourcesPath, "native", "darwin-arm64") : resolve(moduleDirectory,"../../../packages/execution-node/native/darwin-arm64");
     process.env.TRACEFORGE_MACOS_SANDBOX_HELPER = join(helperRoot, "traceforge-macos-sandbox");
     process.env.TRACEFORGE_NATIVE_HELPER_RELEASE_MANIFEST = join(helperRoot, "release.json");
     process.env.TRACEFORGE_REQUIRE_NATIVE_HELPER_RELEASE_MANIFEST = "1";
@@ -114,9 +121,18 @@ async function start(): Promise<void> {
     encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value),
   }, 2048);
   server = await buildServer(paths.database, paths.mcpConfig, paths.llmConfig, paths.root, webRoot, {
+    desktopTaskPreferences:()=>desktopJournal.request({operation:"get",key:"traceforge.desktop.task-preferences.v1"}),
+    ...(process.platform==="darwin"&&process.arch==="arm64"?{bundledScenarioConfiguration:loadBundledScenarios(app.isPackaged?join(process.resourcesPath,"scenarios"):resolve(moduleDirectory,"../bundled-scenarios"),process.env.TRACEFORGE_MACOS_SANDBOX_HELPER!)}:{}),
     // The desktop owns its local HTTP server; incomplete requests must not
     // prevent Quit. Lifecycle hooks still persist interruption and stop work.
     closeActiveConnections:true,
+    diagnosticStream: diagnostics.stream,
+    publishReplyDelta: event => {
+      const window = mainWindow;
+      if (window && !window.isDestroyed() && !window.webContents.isDestroyed() &&
+          [localOrigin, `${localOrigin}/`].includes(window.webContents.getURL()))
+        window.webContents.send("conversations:reply-delta", event);
+    },
     desktopResources: { secrets: { async read(ref) { return (await mcpSecrets.read(ref))?.accessToken; },
       async write(ref,value) { await mcpSecrets.write(ref,{accessToken:value,binding:ref,expiresAt:8640000000000000}); } } },
     desktopMcp: { secrets: { async read(ref) { return (await mcpSecrets.read(ref))?.accessToken; },
@@ -197,6 +213,12 @@ async function start(): Promise<void> {
     webContentsId: event.sender.id, mainFrame: event.senderFrame === event.sender.mainFrame,
     url: event.senderFrame?.url ?? "",
   }, input));
+  const storage = createStorageBridge({ layout: storageLayout, webContentsId: window.webContents.id, origin: localOrigin,
+    open: path => shell.openPath(path), cache: window.webContents.session, diagnostics });
+  ipcMain.handle("storage:request", (event, input: unknown) => storage.request({ webContentsId: event.sender.id,
+    mainFrame: event.senderFrame === event.sender.mainFrame, url: event.senderFrame?.url ?? "" }, input));
+  window.on("closed", () => { storage.close(); ipcMain.removeHandler("storage:request"); });
+  window.webContents.on("render-process-gone", () => diagnostics.record("renderer_gone"));
   ipcMain.handle("browser:present", async (event, input: unknown) => {
     if (event.sender.id !== window.webContents.id || event.senderFrame !== event.sender.mainFrame
       || new URL(event.senderFrame?.url ?? "").origin !== localOrigin) throw new Error("Invalid browser view sender");
@@ -204,10 +226,10 @@ async function start(): Promise<void> {
     const value = input as { path?: unknown; sessionId?: unknown; takeoverId?: unknown; bounds?: unknown; hide?: unknown; focus?: unknown };
     if (value.hide === true) { embeddedBrowser.hide(); return { hidden: true }; }
     if (typeof value.path !== "string" || !/^\/api\/desktop\/conversations\/[\w-]+\/execution\/[\w-]+\/browser$/.test(value.path)
-      || typeof value.sessionId !== "string" || typeof value.takeoverId !== "string" || !value.bounds || typeof value.bounds !== "object") throw new Error("Invalid browser view request");
+      || typeof value.sessionId !== "string" || (value.takeoverId!==null&&typeof value.takeoverId !== "string") || !value.bounds || typeof value.bounds !== "object") throw new Error("Invalid browser view request");
     const response = await conversationBridge.request({ webContentsId: event.sender.id, mainFrame: true, url: event.senderFrame!.url }, { path: value.path, method: "GET" });
-    const sessions = (response.body as { sessions?: Array<{ id: string; status: string; takeoverId: string }> }).sessions;
-    if (response.status !== 200 || !sessions?.some(s => s.id === value.sessionId && s.status === "manual_control" && s.takeoverId === value.takeoverId)) {
+    const sessions = (response.body as { sessions?: Array<{ id: string; status: string; takeoverId: string | null }> }).sessions;
+    if (response.status !== 200 || !sessions?.some(s => s.id === value.sessionId && (value.takeoverId===null?s.status==="active":s.status === "manual_control" && s.takeoverId === value.takeoverId))) {
       embeddedBrowser.hide(); throw new Error("Browser ownership is no longer current");
     }
     return embeddedBrowser.show(window, value.sessionId, value.takeoverId, value.bounds as { x: number; y: number; width: number; height: number }, value.focus === true);
@@ -250,9 +272,11 @@ async function start(): Promise<void> {
   catch (error) { if (!window.isDestroyed()) window.destroy(); throw error; }
   };
   await createWindow();
+  diagnostics.record("ready");
 }
 
 app.whenReady().then(() => { if (hasLock) return start(); }).catch((error) => {
+  diagnostics.record("startup_failed");
   dialog.showErrorBox("TraceForge failed to start", error instanceof Error ? error.stack ?? error.message : String(error));
   app.exit(1);
 });
@@ -263,8 +287,9 @@ app.on("before-quit", (event) => {
   if (quitting || !server) return;
   event.preventDefault();
   quitting = true;
-  void server.close().catch(error => { console.error("Desktop server cleanup incomplete", error); })
+  diagnostics.record("shutdown");
+  void server.close().catch(() => { diagnostics.record("cleanup_failed"); })
     .then(() => embeddedBrowser.shutdown())
-    .catch(error => { console.error("Embedded browser cleanup incomplete", error); })
+    .catch(() => { diagnostics.record("cleanup_failed"); })
     .finally(() => { server = null; app.quit(); });
 });

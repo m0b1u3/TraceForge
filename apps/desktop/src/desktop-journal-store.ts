@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 
 const validKey = (key: string) => ["traceforge.desktop.session-drafts.v1", "traceforge.desktop.last-conversation.v1", "traceforge.desktop.conversation-command.v1"].includes(key)
+  || key === "traceforge.desktop.task-preferences.v1"
   || /^traceforge\.reply-queue\.[a-zA-Z0-9_-]{1,100}$/.test(key)
   || /^traceforge\.execution\.[a-zA-Z0-9_-]{1,100}$/.test(key)
   || /^traceforge:permission-change:[a-zA-Z0-9_-]{1,100}:[a-zA-Z0-9_-]{1,100}$/.test(key);

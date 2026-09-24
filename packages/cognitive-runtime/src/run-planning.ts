@@ -64,6 +64,12 @@ export interface CognitiveGovernedModelPort {
     context: { role: "planner" | "observer" | "worker"; snapshotId: string; runId: string; caseId: string; workId?: string },
     request: CognitiveModelRequest & { beforeDispatch?: () => void | Promise<void>; signal?: AbortSignal },
   ): Promise<unknown>;
+  runTools?(
+    context: { role: "worker"; snapshotId: string; runId: string; caseId: string; workId: string },
+    request: { system: string; messages: Array<{ role: "user"; content: string }>;
+      tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>;
+      beforeDispatch?: () => void | Promise<void>; signal?: AbortSignal },
+  ): Promise<{ text: string; toolCalls: Array<{ id: string; name: string; input: unknown }>; done: boolean }>;
 }
 
 export interface CognitiveRunContextPolicyPort extends RunContextProjectionPort {
@@ -128,6 +134,7 @@ export class StructuredRunPlannerModel implements RunPlannerModel {
         "Avoid duplicate Work. Cancel or reprioritize only queued Work when the supplied state justifies it.",
         "Prioritize pending Work inquiries. Use action answer with the exact workId and inquiryId to provide actionable guidance; this continues that Work without granting permissions or verifying findings. Do not replace a waiting inquiry with duplicate Work.",
         "Plan for the active Scenario phase and its objective. Concrete attack or analysis techniques come only from the Scenario Profile, never from product-wide assumptions.",
+        "Phase-required output kinds are Work completion outputs, not Knowledge Graph node kinds. Ask Workers to publish them using complete.outputs with supported references. Graph mutations are optional supporting records and never substitute for the required Run outputs.",
         "Return only the requested JSON and never expose private chain-of-thought.",
       ].join("\n"),
       user: JSON.stringify({

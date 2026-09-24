@@ -1,5 +1,5 @@
 import type { CapabilityReceipt, JsonObject, ToolResult } from "./contracts.mjs";
-import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, requiredText, sha, shaBytes, succeeded } from "./validation.mjs";
+import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, requiredText, sha, shaBytes, stableJson, succeeded } from "./validation.mjs";
 import { budgets, BudgetExhausted } from "./budgets.mjs";
 import {observationHighlights} from "./observations.mjs";
 import {experimentFields,changedDimensions} from "./request-fields.mjs";
@@ -10,14 +10,22 @@ interface Observation { step: number; side: "baseline" | "candidate"; status: nu
   bodySha256: string; truncated: boolean; receiptRef: string; refs: string[] }
 interface ComparisonState { version: 1; fingerprint: string; pending: number | null; observations: Observation[]; stopped?: boolean }
 
+// One call must finish inside the declared 125 s tool timeout: the loop stops
+// dispatching after LOOP_BUDGET_MS and the last request may extend at most
+// MAX_REQUEST_MS past it, leaving room for evidence and checkpoint writes.
+const LOOP_BUDGET_MS = 90_000;
+const MAX_REQUEST_MS = 15_000;
+const MIN_REQUEST_MS = 1_000;
+
 // This is Web experiment policy. Core only supplies authorization, CAS state and evidence ports.
 export async function compareHttp(input: JsonObject, capability: Capability,
-  request: (spec: RequestSpec, step: number) => Promise<ToolResult>): Promise<ToolResult> {
+  request: (spec: RequestSpec, step: number, timeoutMs: number) => Promise<ToolResult>): Promise<ToolResult> {
   exact(input, ["experimentId", "hypothesisId", "baseline", "candidate", "candidates", "rounds", "maxRequests", "expectedSignals", "stopOn"]);
   const limits=await budgets(capability);
   const experimentId = requiredText(input.experimentId, "Experiment id");
   const hypothesisId = requiredText(input.hypothesisId, "Hypothesis id");
   if(input.candidate!==undefined&&input.candidates!==undefined)throw new Error("Choose candidate or candidates, not both");
+  if(input.candidate===undefined&&input.candidates===undefined)throw new Error("Comparison requires a candidate or candidates");
   const variants=input.candidates??[input.candidate];
   if(!Array.isArray(variants)||variants.length<1||variants.length>limits.variants)throw new Error(`Variant budget exceeded (1–${limits.variants})`);
   const baseline = parseRequest(input.baseline), candidates=variants.map(parseRequest), candidate=candidates[0]!;
@@ -29,7 +37,8 @@ export async function compareHttp(input: JsonObject, capability: Capability,
   const maxRequests = boundedInteger(input.maxRequests ?? Math.min(rounds*2*candidates.length,limits.requestsPerCall), 1, limits.requestsPerCall, "Comparison request budget");
   const expectedSignals=input.expectedSignals??["statusChanged","bodyChanged","bytesChanged"],stopOn=input.stopOn??"never";
   if(!Array.isArray(expectedSignals)||!expectedSignals.length||expectedSignals.length>3||expectedSignals.some(v=>!["statusChanged","bodyChanged","bytesChanged"].includes(v))||!["never","repeatable_difference"].includes(stopOn))throw new Error("Invalid experiment signals or stop condition");
-  const fingerprint = sha(JSON.stringify(input.candidates===undefined&&input.expectedSignals===undefined&&input.stopOn===undefined?{ hypothesisId, baseline, candidate, rounds }:{hypothesisId,baseline,candidates,rounds,expectedSignals,stopOn}));
+  // Experiment identity binds the normalized request matrix, not input key order.
+  const fingerprint = sha(stableJson({ hypothesisId, baseline, candidates, rounds, expectedSignals, stopOn }));
   const planned=rounds*2*candidates.length;
   const stateKey = `web.comparison.v1:${sha(experimentId)}`;
   const loaded = await capability("traceforge.scenario.state@1", "read", { operation: "read", key: stateKey }, "comparison-read");
@@ -48,10 +57,12 @@ export async function compareHttp(input: JsonObject, capability: Capability,
     revision = saved.output.revision;
     state = restore(saved.output.value, fingerprint, planned);
   };
-  const deadline=Date.now()+90000;
+  const deadline=Date.now()+LOOP_BUDGET_MS;
   for (let used = 0; used < maxRequests && state.observations.length < planned && Date.now()<deadline; used++) {
     const step = state.observations.length;
     const spec = step % 2 === 0 ? baseline : candidates[Math.floor(step/(rounds*2))]!;
+    const requestTimeoutMs = Math.min(MAX_REQUEST_MS, deadline + MAX_REQUEST_MS - Date.now());
+    if (requestTimeoutMs < MIN_REQUEST_MS) break;
     // Recheck the exact target before persisting intent; dispatch rechecks it again through the request tool.
     await capability("traceforge.scenario.authorization@1", "authorize_resource", {
       action: "web.request.replay", resourceKind: "network.url", value: spec.url,
@@ -59,7 +70,7 @@ export async function compareHttp(input: JsonObject, capability: Capability,
     state.pending = step;
     await save(); // A crash or unknown response after this point must never automatically repeat the request.
     let response:ToolResult;
-    try{response=await request(spec,step);}catch(error){if(error instanceof BudgetExhausted){state.pending=null;await save();}throw error;}
+    try{response=await request(spec,step,requestTimeoutMs);}catch(error){if(error instanceof BudgetExhausted){state.pending=null;await save();}throw error;}
     const body = plainObject(JSON.parse(response.raw), "Comparison response");
     const encoded = requiredBase64(body.bodyBase64);
     const bytes = Buffer.from(encoded, "base64");

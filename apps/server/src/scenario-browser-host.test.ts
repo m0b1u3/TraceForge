@@ -91,7 +91,7 @@ describe("Scenario Browser host assembly", () => {
       await expect(sessions.close(id)).rejects.toThrow("controller close uncertain");
       expect(f.finish).not.toHaveBeenCalled(); expect(release).toHaveBeenLastCalledWith(expect.anything(), false);
       expect(sessions.list("case", "run")[0].status).toBe("cleanup_unknown");
-      await sessions.close(id); expect(f.finish).toHaveBeenCalledExactlyOnceWith(true);
+      await sessions.close(id); expect(f.finish).toHaveBeenCalledExactlyOnceWith(true, false);
       expect(release).toHaveBeenLastCalledWith(expect.anything(), true); expect(sessions.list("case", "run")).toEqual([]);
     } finally { await sessions.shutdown(); sqlite.close(); }
   });
@@ -107,7 +107,7 @@ describe("Scenario Browser host assembly", () => {
     const result = await f.handler.execute(input, owner, new AbortController().signal);
     expect(f.startProcess).not.toHaveBeenCalled(); expect(f.terminateProcess).not.toHaveBeenCalled();
     expect(f.capacity.acquire).toHaveBeenCalledOnce(); expect(f.requestHttp).toHaveBeenCalledOnce();
-    expect(terminate).toHaveBeenCalledOnce(); expect(f.finish).toHaveBeenCalledWith(true);
+    expect(terminate).toHaveBeenCalledOnce(); expect(f.finish).toHaveBeenCalledWith(true, true);
     expect((result.output as any).network[0].receiptRef).toBeTruthy();
   });
   it.skipIf(!process.env.TRACEFORGE_REAL_CHROMIUM_PATH)("retains actual Chromium page state across host calls and human takeover (simulated execution proof)", async () => {
@@ -152,11 +152,11 @@ describe("Scenario Browser host assembly", () => {
         action: { id: "apply", kind: "click", element: button.element } });
       await sessions.command("case", "run", { operation: "resume", sessionId, commandId: "resume", takeoverId: takeover.takeoverId });
       const next = await handler.execute({ operation: "observe", sessionId, authorizationAction: input.authorizationAction }, { ...owner, idempotencyKey: "next" }, new AbortController().signal);
-      const artifact = context.artifacts.list({ packageId: "fixture", packageVersion: "1", caseId: "case", runId: "run", limit: 100 }).find(a => a.contentRef === (next.output as any).artifactRef)!;
+      const artifact = context.artifacts.list({ packageId: "fixture", packageVersion: "1", caseId: "case", runId: "run", limit: 100 }).find(a => a.id === (next.output as any).artifactRef)!;
       const body = store.readBound(artifact.contentRef, owner, artifact.id)!;
       expect(body.toString()).toContain("State retained"); expect(f.startProcess).toHaveBeenCalledTimes(1);
       await handler.execute({ operation: "close", sessionId, authorizationAction: input.authorizationAction }, owner, new AbortController().signal);
-      expect(f.finish).toHaveBeenCalledWith(true);
+      expect(f.finish).toHaveBeenCalledWith(true, false);
     } finally { await sessions.shutdown(); await adapter?.close(); sqlite.close(); await rm(directory, { recursive: true, force: true }); }
   }, 60000);
   it("retains one browser across calls, desktop takeover and return, then closes on ownership loss", async () => {
@@ -172,8 +172,10 @@ describe("Scenario Browser host assembly", () => {
       expect(f.terminateProcess).not.toHaveBeenCalled();
       expect(sessions.list("case", "run")).toHaveLength(1);
       const takeover = { operation: "takeover" as const, sessionId, commandId: "takeover" };
-      await sessions.command("case", "run", takeover);
-      await sessions.command("case", "run", takeover);
+      const handoff={operation:"request_takeover",sessionId,authorizationAction:input.authorizationAction};
+      await expect(handler.execute(handoff,{...owner,workId:"foreign"},new AbortController().signal)).rejects.toThrow("ownership mismatch");
+      expect((await handler.execute(handoff,owner,new AbortController().signal)).output).toMatchObject({status:"manual_control"});
+      await handler.execute(handoff,owner,new AbortController().signal);
       expect(sessions.list("case", "run")[0].status).toBe("manual_control");
       expect(sessions.manualControlPending("run", "work")).toBe(true);
       const manual = await sessions.command("case", "run", { operation: "observe", sessionId, commandId: "read", takeoverId: "manual" }) as any;
@@ -184,13 +186,13 @@ describe("Scenario Browser host assembly", () => {
       await expect(sessions.command("case", "run", { operation: "resume", sessionId, commandId: "stale", takeoverId: "wrong" })).rejects.toThrow();
       await sessions.command("case", "run", { operation: "resume", sessionId, commandId: "resume", takeoverId: "manual" });
       expect(sessions.manualControlPending("run", "work")).toBe(false);
-      const next = await handler.execute({ operation: "observe", sessionId, authorizationAction: input.authorizationAction }, { ...owner, idempotencyKey: "third" }, new AbortController().signal);
+      const next = await handler.execute({ operation: "observe", sessionId, screenshot: false, authorizationAction: input.authorizationAction }, { ...owner, idempotencyKey: "third" }, new AbortController().signal);
       expect((next.output as any).view.generation).toBe(3);
       expect(f.startProcess).toHaveBeenCalledTimes(1);
       expect(sqlite.prepare("SELECT state FROM desktop_browser_commands WHERE command_id='resume'").get()).toEqual({ state: "completed" });
       sqlite.prepare("DELETE FROM scenario_work_leases WHERE run_id='run'").run();
       await expect(handler.execute({ operation: "observe", sessionId, authorizationAction: input.authorizationAction }, owner, new AbortController().signal)).rejects.toThrow("revoked");
-      await sessions.shutdown(); expect(f.terminateProcess).toHaveBeenCalledTimes(1); expect(f.finish).toHaveBeenCalledWith(true);
+      await sessions.shutdown(); expect(f.terminateProcess).toHaveBeenCalledTimes(1); expect(f.finish).toHaveBeenCalledWith(true, false);
     } finally { await sessions.shutdown(); sqlite.close(); }
   });
   it("keeps host authorization unchanged while narrowing the child scratch writes", async () => {
@@ -223,6 +225,10 @@ describe("Scenario Browser host assembly", () => {
       const result = await handler.execute(input, owner, new AbortController().signal);
       const artifact = (result.output as any).artifacts[0];
       expect(artifact.contentRef).toMatch(/^browser-content:/);
+      const domRef=(result.output as any).dom.artifactRef;
+      expect(domRef).toMatch(/^scenario-artifact:/);
+      const observed=await handler.execute({operation:"read",authorizationAction:"request.observe",artifactId:domRef},owner,new AbortController().signal);
+      expect(Buffer.from((observed.output as any).bodyBase64,"base64").toString()).toContain('"format":1');
       const read = { operation: "read", authorizationAction: "request.observe", artifactId: artifact.id, length: 4 };
       const chunk = await handler.execute(read, owner, new AbortController().signal);
       expect(Buffer.from((chunk.output as any).bodyBase64, "base64").length).toBe(4);
@@ -263,7 +269,7 @@ describe("Scenario Browser host assembly", () => {
       expect(f.startProcess.mock.calls[0][0].permissions.network).toBe("deny");
       expect(f.requestHttp.mock.calls[0][0].permissions.network).toBe("brokered");
       expect(f.artifacts.recordObservation).toHaveBeenCalledTimes(3); expect(f.context.artifacts.record).toHaveBeenCalledTimes(3);
-      expect(f.terminateProcess).toHaveBeenCalled(); expect(f.finish).toHaveBeenCalledWith(true);
+      expect(f.terminateProcess).toHaveBeenCalled(); expect(f.finish).toHaveBeenCalledWith(true, false);
     } finally { await runtime.close(); }
   });
   it("rejects cross-scope input and executable injection before launch", async () => {
@@ -275,7 +281,7 @@ describe("Scenario Browser host assembly", () => {
   it("cleans up on revoked ownership and does not send further HTTP", async () => {
     const f = fixture(); f.artifacts.recordObservation.mockImplementationOnce(async value => { f.revoke(); return { ref: `artifact:${value.sha256}` }; });
     await expect(f.handler.execute(input, owner, new AbortController().signal)).rejects.toThrow("Ownership revoked");
-    expect(f.requestHttp).not.toHaveBeenCalled(); expect(f.terminateProcess).toHaveBeenCalled(); expect(f.finish).toHaveBeenCalledWith(true);
+    expect(f.requestHttp).not.toHaveBeenCalled(); expect(f.terminateProcess).toHaveBeenCalled(); expect(f.finish).toHaveBeenCalledWith(true, false);
   });
   it("does not start after cancellation or accept stronger launch permissions", async () => {
     const f = fixture(), abort = new AbortController(); abort.abort();
@@ -288,9 +294,9 @@ describe("Scenario Browser host assembly", () => {
   it("retains unknown occupancy and rejects success when cleanup is not confirmed", async () => {
     const f = fixture(); f.terminateProcess.mockRejectedValue(new Error("termination unconfirmed"));
     await expect(f.handler.execute(input, owner, new AbortController().signal)).rejects.toThrow("termination unconfirmed");
-    expect(f.finish).toHaveBeenCalledWith(false);
+    expect(f.finish).toHaveBeenCalledWith(false, false);
     const second = fixture(); second.terminateProcess.mockImplementation(async () => ({ state: "failed" }) as never);
     await expect(second.handler.execute(input, owner, new AbortController().signal)).rejects.toThrow("unconfirmed");
-    expect(second.finish).toHaveBeenCalledWith(false);
+    expect(second.finish).toHaveBeenCalledWith(false, false);
   });
 });

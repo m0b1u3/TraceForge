@@ -1132,7 +1132,13 @@ export class LocalExecutionNode implements ExecutionNode {
   private persistObservation(record: ProcessRecord, status: "exit_observed" | "failure_observed"): void {
     if (!this.processJournal) return;
     try {
-      this.processJournal.settle({ ...record.observation, status, process: cloneDescriptor(record.descriptor),
+      const enforcement = record.descriptor.enforcement;
+      const cleanup = status === "exit_observed" && record.descriptor.state === "exited"
+        && enforcement.atomicProcessTreeAssignment === true && enforcement.processTreeEmptyBarrier === true
+        && enforcement.sandboxed && enforcement.filesystemPolicyApplied
+        && ["traceforge-macos-native", "traceforge-linux-native"].includes(enforcement.sandboxBackend)
+        && /^[a-f0-9]{64}$/.test(enforcement.backendMeasurement ?? "") ? "process_tree_confirmed" as const : "unverified" as const;
+      this.processJournal.settle({ ...record.observation, status, cleanup, process: cloneDescriptor(record.descriptor),
         events: structuredClone(record.events), lostEvents: record.events[0]?.sequence !== 1, updatedAt: this.now() });
       record.observationPersisted = true;
     } catch {

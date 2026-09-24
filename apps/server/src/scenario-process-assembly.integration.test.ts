@@ -8,6 +8,7 @@ import { GovernedExecutionSources } from "./governed-execution-sources.js";
 import { SqliteScenarioProcessSupervisionStore } from "./scenario-process-supervision.js";
 import { database } from "./test-fixtures/execution-recovery.js";
 import { ProcessExecutionCapacity } from "./process-execution-capacity.js";
+import { SqliteToolProviderDiagnosticStore } from "./tool-provider-diagnostic-adapter.js";
 
 const definition: ScenarioDefinition = {
   kind: "fixture.process", version: 1, title: "Process fixture", authorizationActions: [], requiredCapabilities: [],
@@ -29,7 +30,7 @@ describe("Scenario Process production assembly", () => {
       runtime: { protocol: SCENARIO_PROCESS_PROTOCOL, protocolVersion: 1, id: "fixture.process-package", version: "1.0.0",
         source: "scenario:fixture.process-package", entrypoint: "package://runtime/main.mjs", providedCapabilities: ["fixture.observe"],
         hostCapabilities: [SCENARIO_PROCESS_HOST_CAPABILITIES.state] } }], () => { if (!trusted) throw new Error("Package review revoked"); });
-    let stateOwner: unknown,stateReads=0;
+    let stateOwner: unknown,stateReads=0,failRead=false;
     const sqlite=database(),supervision=new SqliteScenarioProcessSupervisionStore(sqlite);supervision.recoverInterrupted();
     const capacity=new ProcessExecutionCapacity(sqlite,new ToolProviderFairScheduler({global:4,perProvider:4,perTool:4,perRun:4,perWork:4}));
     const platform:EffectivePermissionProfile["platform"]=process.platform==="win32"?"windows":process.platform==="darwin"?"darwin":"linux";
@@ -45,7 +46,7 @@ describe("Scenario Process production assembly", () => {
       authorization: { requireAction() { throw new Error("not used"); }, authorizeResource() { throw new Error("not used"); } },
       evidence: { recordNode() { throw new Error("not used"); } },
       artifacts: { record() { throw new Error("not used"); }, get() { return undefined; }, list() { return []; } },
-      state: { read(input:any) { stateReads++;stateOwner = input; return { ...input, revision: 1, value: { offset: 1 }, updatedAt: "2026-09-02T00:00:00.000Z" }; },
+      state: { read(input:any) { if(failRead)throw new Error("fixture private diagnostic detail");stateReads++;stateOwner = input; return { ...input, revision: 1, value: { offset: 1 }, updatedAt: "2026-09-02T00:00:00.000Z" }; },
         compareAndSet() { throw new Error("not used"); } },
       capabilities: { optional() { return undefined; }, require() { throw new Error("not used"); } },
     };
@@ -68,11 +69,15 @@ describe("Scenario Process production assembly", () => {
     await source.close?.();
     expect(supervision.snapshot(registry.list()[0]!.runtime!)).toMatchObject({lastGeneration:1,state:"exited"});
     const restartedStore=new SqliteScenarioProcessSupervisionStore(sqlite);expect(restartedStore.recoverInterrupted()).toBe(0);
-    const restartedGoverned=new GovernedExecutionSources(node,capacity,restartedStore);
+    const restartedGoverned=new GovernedExecutionSources(node,capacity,restartedStore,new SqliteToolProviderDiagnosticStore(sqlite));
     const [restartedSource]=restartedGoverned.scenarioSources(registry,hostContext,{},launches);
     const [restartedTool]=await restartedSource.discover();
     await expect(restartedTool.execute({},context)).resolves.toMatchObject({status:"succeeded"});
     expect(stateReads).toBe(1);expect(restartedStore.snapshot(registry.list()[0]!.runtime!)).toMatchObject({lastGeneration:2,state:"ready"});
+    failRead=true;
+    await expect(restartedTool.execute({}, {...context,idempotencyKey:"diagnostic-effect"})).rejects.toThrow(/diagnostic/i);
+    expect(sqlite.prepare("SELECT detail FROM tool_provider_diagnostics WHERE category='remote_error'").get())
+      .toMatchObject({detail:expect.stringContaining("fixture private diagnostic detail")});
     trusted = false;
     await expect(restartedTool.execute({}, context)).rejects.toThrow(/review revoked/);
     await restartedSource.close?.();

@@ -1,4 +1,5 @@
 export * from "./model.js";
+export * from "./parallel-tools.js";
 export * from "./decision-executor.js";
 export * from "./runtime.js";
 export * from "./distiller.js";

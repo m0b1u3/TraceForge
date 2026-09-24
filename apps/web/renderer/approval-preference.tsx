@@ -28,7 +28,7 @@ export function ApprovalPreference({ bridge }: { bridge: DesktopConversations })
   return <div className="approval-preference">
     <button type="button" role="switch" aria-checked={saved?.routineApprovalRequired ?? true}
       aria-label="常规修改前询问" disabled={busy || !saved} onClick={() => void request(true)}
-      title="持续生效于本机所有任务的后续操作。只读操作免询问；删除、任意脚本等高风险操作仍需确认。既有审批仍需处理，沙箱和授权范围不变。">
+      title="关闭后，任务隔离工作区内的读写和脚本执行自动进行；涉及宿主资源或其他高风险工具仍需确认。既有审批仍需处理，沙箱不变。">
       常规修改前询问 · {busy ? "同步中…" : saved ? saved.routineApprovalRequired ? "开" : "关" : "未读取"}
     </button>
     {saved && <span role="status">全局 · {saved.routineApprovalRequired ? "修改前确认" : "常规修改自动允许"} · 高风险仍询问</span>}

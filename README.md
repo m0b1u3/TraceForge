@@ -19,7 +19,7 @@ pnpm install
 pnpm dev:desktop
 ```
 
-桌面开发命令构建本地 Server、Renderer 与 Electron，并准备桌面运行时。仅查看界面预览可运行 `pnpm --filter @traceforge/web preview:desktop`，地址为 `http://127.0.0.1:5178/`；无宿主时的预览不代表真实任务执行。
+桌面开发命令构建本地 Server、Renderer 与 Electron，并准备桌面运行时。直接在浏览器打开 Renderer 只会显示宿主未连接提示；真实工作台通过桌面宿主提供本机桥接。
 
 模型连接在桌面设置中配置，协议和供应商接入与 Agent/Scenario 解耦。受控 MCP 与 Tool Provider 使用当前可信装配和沙箱链路，不再提供旧 `config/mcp.json` 直接拉起进程的入口。
 
@@ -37,7 +37,7 @@ pnpm build
 ## 文档
 
 - [开发状态与下一优先级](docs/development-status-and-roadmap.md)
-- [桌面对话契约](docs/desktop-conversation-contract.md)
+- [桌面工作台界面合同](docs/desktop-renderer-surface-brief.md)
 - [模型连接](docs/model-connections.md)
 - [Runtime 依赖边界](docs/architecture/runtime-dependency-map.md)
 - [Scenario Control Plane](docs/scenario-control-plane-api.md)

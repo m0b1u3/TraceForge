@@ -29,7 +29,7 @@ const key = (event: ScenarioAgentEvent) => `${event.turnId}:${"item" in event.pa
 const state = (value: string) => ({ inProgress: "进行中", completed: "已完成", failed: "失败", timedOut: "已超时", cancelled: "已停止", interrupted: "已中断", waitingApproval: "等待确认" } as Record<string,string>)[value] ?? value;
 
 export function ReasoningText({ text, active = false, truncated = false }: { text: string; active?: boolean; truncated?: boolean }) {
-  const [expanded, setExpanded] = useState(active);
+  const [expanded, setExpanded] = useState(false);
   return <details className="reasoning-trace" open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
     <summary><CaretRight className="disclosure-caret" aria-hidden="true" /><Brain aria-hidden="true" />{active ? "正在思考" : "思考内容"}<span>模型提供</span></summary>
     <div className="reasoning-text" dir="auto" tabIndex={0}>{text}</div>
@@ -40,7 +40,7 @@ export function ReasoningText({ text, active = false, truncated = false }: { tex
 type TraceScope={bridge?:DesktopConversations;conversationId?:string};
 function TraceEntry({ event,bridge,conversationId }: { event: ScenarioAgentEvent }&TraceScope) {
   const preview=useArtifactPreview();
-  const [expanded, setExpanded] = useState("item" in event.params && event.params.item.status === "inProgress");
+  const [expanded, setExpanded] = useState(false);
   if (!("item" in event.params)) return null;
   const item = event.params.item;
   if (item.type !== "modelCall" && item.type !== "toolCall") return null;

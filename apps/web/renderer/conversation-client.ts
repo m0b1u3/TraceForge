@@ -44,9 +44,16 @@ export class ConversationClient {
     return conversation(await this.request("/api/desktop/conversations", "POST", { commandId: requireId(commandId), title }));
   }
   async list(): Promise<SavedConversation[]> {
-    const result = await this.request("/api/desktop/conversations", "GET");
-    if (!record(result) || !Array.isArray(result.conversations) || result.conversations.length > 1000) throw new ConversationRequestError("invalid_response");
-    return result.conversations.map(conversation);
+    const conversations: SavedConversation[] = [];
+    for (;;) {
+      const result = await this.request(conversations.length ? `/api/desktop/conversations?offset=${conversations.length}` : "/api/desktop/conversations", "GET");
+      if (!record(result) || !Array.isArray(result.conversations) || result.conversations.length > 1000
+        || result.hasMore !== undefined && typeof result.hasMore !== "boolean"
+        || result.nextOffset !== undefined && result.nextOffset !== conversations.length + result.conversations.length
+        || result.hasMore === true && result.conversations.length === 0) throw new ConversationRequestError("invalid_response");
+      conversations.push(...result.conversations.map(conversation));
+      if (result.hasMore !== true) return conversations;
+    }
   }
   async send(conversationId: string, commandId: string, text: string, attachments?:MessageAttachment[]): Promise<SavedMessage> {
     const result = message(await this.request(`/api/desktop/conversations/${requireId(conversationId)}/messages`, "POST", { commandId: requireId(commandId), text,...(attachments?.length?{attachments}:{}) }), conversationId);
@@ -58,9 +65,9 @@ export class ConversationClient {
     const body = await response.json();
     // These are explicit pre-inference refusals. The message stays saved and the
     // conversation offers a deliberate retry after configuration/capacity changes.
-    if ([409, 503].includes(response.status) && record(body)) {
+    if ([409, 503, 507].includes(response.status) && record(body)) {
       const notices: Record<string, string> = { source_review_retired: "旧复核请求已保留，未重新调用模型。请直接在对话中说明需要查阅的内容。", reply_busy: "消息已保存，但另一条回复仍在生成。待它结束后，可点击“请求助手回复”。",
-        reply_capacity_reached: "消息已保存，但本地回复容量已满，未调用模型。",
+        storage_limit: "消息已保存，但本机存储空间不足，未调用模型。",
         streaming_model_unavailable: "消息已保存，模型尚未就绪或不支持流式回复。请检查模型设置，之后点击“请求助手回复”。" };
       if (notices[String(body.error)]) return notices[String(body.error)];
     }

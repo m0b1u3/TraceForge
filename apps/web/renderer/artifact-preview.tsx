@@ -3,12 +3,9 @@ import {X} from "@phosphor-icons/react";
 import {AttachmentPreviewSchema} from "@traceforge/shared/message-attachments";
 import type {DesktopConversations} from "./desktop-conversation-transport";
 import {EvidenceReference} from "./evidence-reference";
+import {usePanelFocus} from "./panel-focus";
+import {SurfaceBoundary} from "./surface-boundary";
 const PdfPreview=lazy(()=>import("./pdf-preview").then(module=>({default:module.PdfPreview})));
-class PreviewBoundary extends React.Component<{children:React.ReactNode},{failed:boolean}>{
-  state={failed:false};
-  static getDerivedStateFromError(){return {failed:true};}
-  render(){return this.state.failed?<p role="alert">预览组件无法载入。对话仍可使用；请重新打开应用后重试预览。</p>:this.props.children;}
-}
 export type PreviewTarget={conversationId:string;title:string}&({kind:"evidence";runId:string;reference:string}|{kind:"attachment";messageId:string;index:number}|{kind:"text";sourceId:string;text:string});
 const identity=(target:PreviewTarget)=>JSON.stringify(target.kind==="text"?[target.conversationId,"text",target.sourceId]:target.kind==="evidence"?[target.conversationId,target.runId,target.reference]:[target.conversationId,target.messageId,target.index]);
 const Context=createContext<{open(target:PreviewTarget):void;tabs:PreviewTarget[];selected:string;select(id:string):void;close(id:string):void}|null>(null);
@@ -30,17 +27,23 @@ function AttachmentContent({bridge,target}:{bridge:DesktopConversations;target:E
     return()=>{active=false;};
   },[bridge,target,page,offset,retry]);
   return <section aria-label="附件预览内容"><p className="local-receipt">只读本地内容 · 不执行文档脚本</p>{busy&&<p role="status">正在读取…</p>}{!busy&&!error&&value&&<>
-    {value.kind==="text"?<pre className="artifact-text" tabIndex={0}>{value.text}</pre>:value.kind==="image"?<img alt={value.name} src={`data:${value.mediaType};base64,${value.data}`} onError={()=>setError("图片无法解码。")}/>:<PreviewBoundary><Suspense fallback={<p role="status">正在载入 PDF 预览…</p>}><PdfPreview data={value.data!}/></Suspense></PreviewBoundary>}
+    {value.kind==="text"?<pre className="artifact-text" tabIndex={0}>{value.text}</pre>:value.kind==="image"?<img alt={value.name} src={`data:${value.mediaType};base64,${value.data}`} onError={()=>setError("图片无法解码。")}/>:<SurfaceBoundary label="PDF 预览"><Suspense fallback={<p role="status">正在载入 PDF 预览…</p>}><PdfPreview data={value.data!}/></Suspense></SurfaceBoundary>}
     {value.kind==="pdf"&&<div className="preview-pagination"><button disabled={page===1} onClick={()=>setPage(p=>p-1)}>上一页</button><span>第 {page} / {value.pages??"未知"} 页</span><button disabled={!value.pages||page>=value.pages} onClick={()=>setPage(p=>p+1)}>下一页</button></div>}
     {value.kind==="text"&&<div className="preview-pagination"><button disabled={!offset} onClick={()=>setOffset(0)}>返回开头</button><span>位置 {offset}</span><button disabled={value.nextOffset==null} onClick={()=>setOffset(value.nextOffset!)}>下一段</button></div>}
   </>}{error&&<p role="alert">{error}<button onClick={()=>setRetry(n=>n+1)}>重新读取</button></p>}</section>;
 }
 export function ArtifactPreviewPanel({bridge,conversationId}:{bridge:DesktopConversations;conversationId:string}){
-  const context=useArtifactPreview();if(!context)return null;
-  const tabs=context.tabs.filter(t=>t.conversationId===conversationId),target=tabs.find(t=>identity(t)===context.selected)??tabs.at(-1);
+  const context=useArtifactPreview(),panel=useRef<HTMLElement>(null);
+  const tabs=context?.tabs.filter(t=>t.conversationId===conversationId)??[],target=tabs.find(t=>identity(t)===context?.selected)??tabs.at(-1);
+  usePanelFocus(panel,target?conversationId:"",()=>{if(target)context?.close(identity(target));});
+  if(!context)return null;
   if(!target)return null;
-  return <aside className="artifact-preview" aria-label="产物预览"><header><strong>产物预览</strong><button aria-label="关闭当前预览" onClick={()=>context.close(identity(target))}><X aria-hidden="true"/></button></header>
-    <div className="preview-tabs" role="tablist" aria-label="已打开产物">{tabs.map(t=><button role="tab" aria-selected={t===target} key={identity(t)} onClick={()=>context.select(identity(t))}>{t.title}</button>)}</div>
-    <div className="preview-body" key={identity(target)}>{target.kind==="text"?<section><p className="local-receipt">已保存的工具输出快照 · 只读；截断部分请查原始回执</p><pre className="artifact-text" tabIndex={0}>{target.text}</pre></section>:target.kind==="evidence"?<EvidenceReference bridge={bridge} conversationId={conversationId} runId={target.runId} reference={target.reference} embedded/>:<AttachmentContent bridge={bridge} target={target}/>}</div>
+  return <aside ref={panel} tabIndex={-1} className="artifact-preview" aria-label="产物预览"><header><strong>产物预览</strong><button aria-label="关闭当前预览" onClick={()=>context.close(identity(target))}><X aria-hidden="true"/></button></header>
+    <div className="preview-tabs" role="tablist" aria-label="已打开产物">{tabs.map((t,index)=><button id={`artifact-tab-${index}`} role="tab" aria-controls="artifact-panel" tabIndex={t===target?0:-1} aria-selected={t===target} key={identity(t)} title={t.title} onClick={()=>context.select(identity(t))} onKeyDown={event=>{
+      if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;event.preventDefault();
+      const next=event.key==="Home"?0:event.key==="End"?tabs.length-1:(index+(event.key==="ArrowRight"?1:-1)+tabs.length)%tabs.length;
+      context.select(identity(tabs[next]!));document.getElementById(`artifact-tab-${next}`)?.focus();
+    }}>{t.title}</button>)}</div>
+    <div className="preview-body" id="artifact-panel" role="tabpanel" aria-labelledby={`artifact-tab-${tabs.indexOf(target)}`} key={identity(target)}><SurfaceBoundary label="预览">{target.kind==="text"?<section><p className="local-receipt">已保存的工具输出快照 · 只读；截断部分请查原始回执</p><pre className="artifact-text" tabIndex={0}>{target.text}</pre></section>:target.kind==="evidence"?<EvidenceReference bridge={bridge} conversationId={conversationId} runId={target.runId} reference={target.reference} embedded/>:<AttachmentContent bridge={bridge} target={target}/>}</SurfaceBoundary></div>
   </aside>;
 }

@@ -24,6 +24,10 @@ export function validateConversationRequest(value: unknown): ConversationBridgeR
       input.path.length > 256 || !["GET", "POST"].includes(String(input.method))) throw new Error("Invalid conversation request");
   const method = input.method as "GET" | "POST";
   const path = input.path;
+  if (path === "/api/desktop/task-definitions") {
+    if (method !== "GET" || input.body !== undefined) throw new Error("Invalid task definitions read");
+    return { path, method };
+  }
   if (/^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/execution\/[a-zA-Z0-9_-]{1,100}\/browser$/.test(path)) {
     if (method === "GET" && input.body === undefined) return { path, method };
     if (method !== "POST" || typeof input.body !== "string" || Buffer.byteLength(input.body) > 40000) throw new Error("Invalid browser command");
@@ -105,10 +109,11 @@ export function validateConversationRequest(value: unknown): ConversationBridgeR
   }
   const root = "/api/desktop/conversations";
   const collection = path === root;
+  const collectionPage = /^\/api\/desktop\/conversations\?offset=(0|[1-9][0-9]{0,15})$/.test(path);
   const detail = /^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}$/.test(path);
   const messages = /^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/messages$/.test(path);
   const page = /^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/messages\?after=(0|[1-9][0-9]{0,3})&limit=100$/.test(path);
-  if (!(method === "GET" ? collection || detail || messages || page : collection || messages)) throw new Error("Conversation operation not allowed");
+  if (!(method === "GET" ? collection || collectionPage || detail || messages || page : collection || messages)) throw new Error("Conversation operation not allowed");
   if (method === "GET") {
     if (input.body !== undefined) throw new Error("GET body not allowed");
     return { path, method };

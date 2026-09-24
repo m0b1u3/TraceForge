@@ -7,7 +7,7 @@ import type { LlmProvider } from "@traceforge/llm";
 import type { CaseSummary } from "@traceforge/shared";
 import { LlmConfigService, type LlmConfigDto } from "./llm-config-service.js";
 import { registerConversationRoutes } from "./conversation-routes.js";
-import { DesktopReplyService, registerDesktopReplyRoutes } from "./desktop-replies.js";
+import { DesktopReplyService, registerDesktopReplyRoutes, type DesktopReplyDelta } from "./desktop-replies.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
 import type { ModelAccounts } from "./model-accounts.js";
 import type { ConversationTaskPort } from "./conversation-task-port.js";
@@ -29,6 +29,7 @@ export function registerRoutes(
   accounts?: ModelAccounts,
   tasks?: ConversationTaskPort,
   continuationCipher?:ContinuationCipher,
+  publishReplyDelta?: (event: DesktopReplyDelta) => void,
 ): void {
   const cases = new CaseStore(db);
   const sqlite = getSqliteClient(db);
@@ -36,7 +37,7 @@ export function registerRoutes(
   registerDesktopReplyRoutes(app, new DesktopReplyService(sqlite, () => {
     if (!llmService) throw new Error("Model not configured");
     return llmService.getConversationProvider();
-  }, undefined, tasks,continuationCipher));
+  }, undefined, tasks,continuationCipher,publishReplyDelta));
 
   app.get("/api/cases", async () => cases.list());
 

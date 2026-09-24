@@ -42,7 +42,6 @@ export function registerConversationRoutes(app: FastifyInstance, db: Db, workspa
         if (previous.title === normalized && existing) workspaces?.ensure(previous.id,existing.caseId);
         return previous.title === normalized ? { status: existing ? 200 : 410, value: existing ?? { error: "conversation_owner_missing" } } : { status: 409, value: { error: "command_conflict" } };
       }
-      if ((sql.prepare("SELECT count(*) AS count FROM desktop_conversations").get() as { count: number }).count >= 1000) return { status: 409, value: { error: "conversation_capacity_reached" } };
       const conversationId = `conversation_${randomUUID()}`;
       const caseId = `case_${randomUUID()}`;
       const now = new Date().toISOString();
@@ -55,11 +54,13 @@ export function registerConversationRoutes(app: FastifyInstance, db: Db, workspa
     return reply.code(result.status).send(result.value);
   });
 
-  app.get("/api/desktop/conversations", async () => ({
-    conversations: sql.prepare(`SELECT c.id, c.case_id AS caseId, c.title, c.created_at AS createdAt
-      FROM desktop_conversations c JOIN cases k ON k.id=c.case_id ORDER BY c.created_at DESC,c.id DESC LIMIT 1000`).all(),
-    capacity: 1000,
-  }));
+  app.get("/api/desktop/conversations", { schema: { querystring: { type: "object", additionalProperties: false,
+    properties: { offset: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, default: 0 } } } } }, async request => {
+    const { offset } = request.query as { offset: number };
+    const rows = sql.prepare(`SELECT c.id, c.case_id AS caseId, c.title, c.created_at AS createdAt
+      FROM desktop_conversations c JOIN cases k ON k.id=c.case_id ORDER BY c.created_at DESC,c.id DESC LIMIT 1001 OFFSET ?`).all(offset);
+    return { conversations: rows.slice(0, 1000), hasMore: rows.length > 1000, nextOffset: offset + Math.min(rows.length, 1000) };
+  });
 
   app.get("/api/desktop/conversations/:conversationId", { schema: { params } }, async (request, reply) => {
     const { conversationId } = request.params as { conversationId: string };

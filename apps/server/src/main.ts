@@ -2,6 +2,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import Fastify from "fastify";
 import { createConversationTaskPort } from "./conversation-task-port.js";
+import {createDesktopTaskStart} from "./desktop-task-start.js";
 import { ConversationWorkspaces } from "./conversation-workspaces.js";
 import websocket from "@fastify/websocket";
 import cors from "@fastify/cors";
@@ -65,14 +66,14 @@ export async function buildServer(
   projectRoot = PROJECT_ROOT,
   webRoot?: string,
   hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"|"deployment"|"browserDeployment"|"browserInstallation"|"embeddedBrowser">
-    & { closeActiveConnections?:boolean; continuationCipher?:import("./conversation-continuations.js").ContinuationCipher; llmSecretStore?: LlmSecretStore; browserInstallationPath?: string; modelAccounts?: ModelAccounts; desktopMcp?: SecurityAgentFoundationOptions["desktopMcp"]; desktopResources?: SecurityAgentFoundationOptions["desktopResources"] } = {},
+    & { desktopTaskPreferences?:()=>string|null; bundledScenarioConfiguration?:import("./scenario-host-configuration.js").ScenarioHostConfiguration; closeActiveConnections?:boolean; diagnosticStream?: { write(line: string): void }; continuationCipher?:import("./conversation-continuations.js").ContinuationCipher; llmSecretStore?: LlmSecretStore; browserInstallationPath?: string; modelAccounts?: ModelAccounts; desktopMcp?: SecurityAgentFoundationOptions["desktopMcp"]; desktopResources?: SecurityAgentFoundationOptions["desktopResources"]; publishReplyDelta?: (event: import("./desktop-replies.js").DesktopReplyDelta) => void } = {},
 ) {
-  const { closeActiveConnections=false,continuationCipher,llmSecretStore: suppliedLlmSecretStore, browserInstallationPath, modelAccounts, ...foundationHostOptions } = hostOptions;
+  const { desktopTaskPreferences,bundledScenarioConfiguration,diagnosticStream,closeActiveConnections=false,continuationCipher,llmSecretStore: suppliedLlmSecretStore, browserInstallationPath, modelAccounts, publishReplyDelta, ...foundationHostOptions } = hostOptions;
   if (browserInstallationPath !== undefined) {
     if (foundationHostOptions.browserInstallation || foundationHostOptions.browserDeployment || foundationHostOptions.embeddedBrowser) throw new Error("Choose one Browser installation source");
     foundationHostOptions.browserInstallation = await loadBrowserInstallation(browserInstallationPath);
   }
-  const app = Fastify({ logger: true,...(closeActiveConnections?{forceCloseConnections:true}:{}) });
+  const app = Fastify({ logger: diagnosticStream ? { stream: diagnosticStream } : true,...(closeActiveConnections?{forceCloseConnections:true}:{}) });
   app.addHook("onClose", async () => { modelAccounts?.close(); });
   await app.register(cors, {
     origin: (origin, callback) => callback(null, trustedUiOrigin(origin)),
@@ -133,8 +134,13 @@ export async function buildServer(
     app.log.warn({ err }, "LLM provider not initialized from config; save settings before running Agent");
   }
   const provider = llmService.getProvider();
-  const scenarioHost = loadScenarioHostConfiguration(projectRoot === PROJECT_ROOT
+  const configuredScenarios = loadScenarioHostConfiguration(projectRoot === PROJECT_ROOT
     ? DEFAULT_SCENARIO_CONFIG_PATH : resolve(projectRoot, "config/scenarios.json"));
+  const bundledIds=new Set(bundledScenarioConfiguration?.trust.installations?.map(i=>i.manifest.package.id));
+  const scenarioHost = bundledScenarioConfiguration ? {trust:{
+    installations:[...(configuredScenarios.trust.installations??[]).filter(i=>!bundledIds.has(i.manifest.package.id)),...(bundledScenarioConfiguration.trust.installations??[])],
+    authority:(key:string)=>bundledScenarioConfiguration.trust.authority?.(key)??configuredScenarios.trust.authority?.(key),
+  },launches:{...configuredScenarios.launches,...bundledScenarioConfiguration.launches}} : configuredScenarios;
   let scenarioAuthorization: ScenarioAuthorizationPort | undefined;
   const authorizationProxy: ScenarioAuthorizationPort = {
     requireAction(scopeRef, caseId, action) {
@@ -165,11 +171,12 @@ export async function buildServer(
   });
   // Register application APIs after the host transport fence. No unguarded legacy API back door.
   const desktopChannel = foundationHostControl(app).management();
-  const tasks = createConversationTaskPort(sqlite, async (url, body) => {
+  const desktopRequest = async (url:string, body?:Record<string,unknown>) => {
     const response = await app.inject({ url, method: body === undefined ? "GET" : "POST", headers: desktopChannel.headers(), ...(body === undefined ? {} : { payload: body }) });
     return { status: response.statusCode, body: response.json() };
-  });
-  registerRoutes(app, db, bus, provider, llmService, projectRoot, modelAccounts, tasks,continuationCipher);
+  };
+  const tasks = createConversationTaskPort(sqlite, desktopRequest,desktopTaskPreferences?createDesktopTaskStart(desktopRequest,desktopTaskPreferences):undefined,desktopTaskPreferences);
+  registerRoutes(app, db, bus, provider, llmService, projectRoot, modelAccounts, tasks,continuationCipher,publishReplyDelta);
   registerDesktopEvidenceRoutes(app, sqlite, new SqliteDesktopEvidenceReader(sqlite));
   registerDesktopExecutionRoutes(app, sqlite, {
     ready: () => llmService.hasProvider(),
@@ -207,6 +214,7 @@ export async function buildServer(
 }
 
 export { foundationHostControl };
+export {loadBundledScenarios} from "./bundled-scenarios.js";
 export type { LlmSecretBundle, LlmSecretStore };
 
 // 直接运行时启动（用 pathToFileURL 规范化，跨平台可靠：Windows 下 argv[1] 是反斜杠路径，

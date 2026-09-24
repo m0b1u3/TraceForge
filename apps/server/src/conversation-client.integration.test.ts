@@ -12,6 +12,29 @@ import { HostConversationController } from "../../web/renderer/host-conversation
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => { for (const fn of cleanups.splice(0).reverse()) await fn(); });
 
+it("reads conversations beyond the old collection limit through the desktop bridge", async () => {
+  const db = createDb(":memory:"), sql = getSqliteClient(db), app = Fastify();
+  const channel = new FoundationHostControl(app, sql).management();
+  registerRoutes(app, db, new EventBus());
+  cleanups.push(() => sql.close(), () => app.close());
+  const insertCase = sql.prepare("INSERT INTO cases VALUES (?,'history','active','[]','2026-01-01')");
+  const insertConversation = sql.prepare("INSERT INTO desktop_conversations VALUES (?,?,?,'history','2026-01-01')");
+  sql.transaction(() => {
+    for (let i = 0; i < 1001; i++) {
+      insertCase.run(`case-${i}`);
+      insertConversation.run(`conversation-${i}`, `command-${i}`, `case-${i}`);
+    }
+  })();
+  const bridge = createConversationBridge({ webContentsId: 1, origin: "http://127.0.0.1:43210", host: { request: async input => {
+    const response = await app.inject({ url: input.path, method: input.method, headers: channel.headers() });
+    return { status: response.statusCode, body: response.json() };
+  } } });
+  const client = new ConversationClient(desktopConversationTransport({ protocolVersion: 1, request: input =>
+    bridge.request({ webContentsId: 1, mainFrame: true, url: "http://127.0.0.1:43210/" }, input) }));
+  expect(await client.list()).toHaveLength(1001);
+  bridge.close();
+});
+
 it("runs real protected host persistence through the renderer contract, reconciles lost replies and restores every page", async () => {
   const db = createDb(":memory:"); const app = Fastify();
   const control = new FoundationHostControl(app, getSqliteClient(db)); const channel = control.management();

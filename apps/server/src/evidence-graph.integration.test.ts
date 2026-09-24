@@ -28,9 +28,20 @@ afterEach(() => {
 });
 
 describe("durable Evidence Graph", () => {
+  it("returns a known pre-write rejection for source material on non-evidence nodes and permits a corrected decision",async()=>{
+    const {sqlite,store}=setup();
+    const context={caseId:"case_1",runId:"run_1",workId:"work",idempotencyKey:"invalid-source"} as Parameters<EvidenceGraphMutateTool["execute"]>[1];
+    const tool=new EvidenceGraphMutateTool(sqlite,store,()=>at);
+    const node={id:"neutral",kind:"fact",title:"Observed context",summary:"Unverified context",status:"active",confidence:0.2,properties:{},source:{type:"tool_result",ref:"not-looked-up"}};
+    const before=store.ensure("case_1",at).revision;
+    expect(await tool.execute({type:"add_node",node},context)).toMatchObject({status:"failed",retryable:false,refs:[]});
+    expect(store.load("case_1")?.revision).toBe(before);
+    expect(await tool.execute({type:"add_node",node:{...node,source:null}},{...context,idempotencyKey:"corrected-source"})).toMatchObject({status:"succeeded"});
+  });
   it("rejects Worker-created inquiries and enforces the advertised history limit",async()=>{
     const {sqlite,store}=setup();const context={caseId:"case_1",runId:"run_1",workId:"work",idempotencyKey:"audit"} as Parameters<EvidenceGraphMutateTool["execute"]>[1];
     const tool=new EvidenceGraphMutateTool(sqlite,store,()=>at);
+    expect(tool.inputSchema.type).toBe("object");
     expect(JSON.stringify(tool.inputSchema)).not.toContain('"inquiry"');
     await expect(tool.execute({type:"add_node",node:{id:"fake",kind:"inquiry",title:"Question",summary:"Question",status:"active",confidence:0,properties:{},source:null}},context)).rejects.toThrow();
     expect(store.ensure("case_1",at).nodes).toHaveLength(0);

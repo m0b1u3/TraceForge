@@ -8,7 +8,6 @@ import {
   type ScenarioPackageCapabilityHandler,
   type ScenarioProcessManifest,
 } from "./scenario-process-runtime.js";
-import { ToolProviderFairScheduler } from "./tool-provider-scheduler.js";
 
 const runtimes: ScenarioProcessRuntime[] = [];
 afterEach(async () => { await Promise.all(runtimes.splice(0).map((runtime) => runtime.close())); });
@@ -87,16 +86,17 @@ describe("Scenario Process Runtime", () => {
     expect(value.status()).toMatchObject({ state: "stopped", revokedReason: "Package trust withdrawn" });
   });
 
-  it("allows a bounded controlled restart after a real child crash", async () => {
-    const value = runtime({ maximumRestarts: 1 }); const [tool] = await value.discover();
+  it("keeps a reviewed Scenario available across repeated controlled restarts", async () => {
+    const value = runtime(); const [tool] = await value.discover();
     await expect(tool.execute({ crash: true }, context)).rejects.toThrow(/process exited|code 9/i);
     await expect(value.discover()).resolves.toHaveLength(1);
     expect(value.status().generation).toBe(2);
-    await expect(value.restart()).rejects.toThrow(/restart budget exhausted/);
+    await expect(value.restart()).resolves.toBeUndefined();
+    expect(value.status().generation).toBe(3);
   });
 
   it.skipIf(process.platform === "win32")("recovers through a new generation after an external SIGKILL", async () => {
-    const value = runtime({ maximumRestarts: 1 }); await value.discover();
+    const value = runtime(); await value.discover();
     const pid = value.status().pid!; process.kill(pid, "SIGKILL");
     await new Promise((resolve) => setTimeout(resolve, 20));
     await expect(value.discover()).resolves.toHaveLength(1);
@@ -122,19 +122,9 @@ describe("Scenario Process Runtime", () => {
     let started!: () => void; const entered = new Promise<void>((resolve) => { started = resolve; });
     const value = runtime({ capabilityHandlers: [handler(async () => { started(); return new Promise<never>(() => {}); })] });
     const [tool] = await value.discover(); const call = tool.execute({ broker: true }, context);
+    const rejected=expect(call).rejects.toThrow(/revoked|process exited|unavailable/i);
     await entered; await value.revoke("review withdrawn");
-    await expect(call).rejects.toThrow(/revoked|process exited|unavailable/i);
-  });
-
-  it("uses the shared Foundation scheduler for Scenario process tool calls", async () => {
-    const scheduler = new ToolProviderFairScheduler({ global: 1, perProvider: 1, perTool: 1, perRun: 1, perWork: 1,
-      maximumQueued: 1, maximumWaitMs: 10 });
-    const value = runtime({ scheduler }); const [tool] = await value.discover();
-    const first = tool.execute({ delayMs: 30 }, context);
-    await new Promise((resolve) => setTimeout(resolve, 2));
-    await expect(tool.execute({}, context)).rejects.toThrow(/wait timed out/);
-    await expect(first).resolves.toMatchObject({ status: "succeeded" });
-    expect(scheduler.snapshot()).toMatchObject({ active: 0, queued: 0 });
+    await rejected;
   });
 
   it("rejects stale generations and exact-key input conflicts", async () => {

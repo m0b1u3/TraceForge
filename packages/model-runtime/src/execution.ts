@@ -25,6 +25,28 @@ export interface ModelJsonRequest {
 
 export interface ModelJsonProviderPort {
   extractJson(request: ModelJsonRequest): Promise<unknown>;
+  runTools?(request: Pick<ModelToolRequest, "system" | "messages" | "tools">,
+    handlers: { signal?: AbortSignal; onUsage?: (usage: ModelUsageSnapshot) => void;
+      onReasoningDelta?: (delta: string) => void }): Promise<ModelToolTurn>;
+  streamTools?(request: Pick<ModelToolRequest, "system" | "messages" | "tools">,
+    handlers: { signal?: AbortSignal; onUsage?: (usage: ModelUsageSnapshot) => void;
+      onReasoningDelta?: (delta: string) => void }): Promise<ModelToolTurn>;
+}
+
+export interface ModelToolRequest {
+  system: string;
+  messages: Array<{ role: "user" | "assistant" | "tool"; content: string }>;
+  tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>;
+  signal?: AbortSignal;
+  onUsage?: (usage: ModelUsageSnapshot) => void;
+  onReasoningDelta?: (delta: string) => void;
+  beforeDispatch?: () => void | Promise<void>;
+}
+
+export interface ModelToolTurn {
+  text: string;
+  toolCalls: Array<{ id: string; name: string; input: unknown }>;
+  done: boolean;
 }
 
 export interface ModelRolePolicy {
@@ -127,8 +149,9 @@ export interface ModelExecutionEventPort {
   }): unknown;
 }
 
-function estimateTokens(request: ModelJsonRequest): number {
-  return Math.max(1, Math.ceil((request.system.length + request.user.length + JSON.stringify(request.schema).length) / 4));
+function estimateTokens(request: ModelJsonRequest | ModelToolRequest): number {
+  if ("schema" in request) return Math.max(1, Math.ceil((request.system.length + request.user.length + JSON.stringify(request.schema).length) / 4));
+  return Math.max(1, Math.ceil((request.system.length + JSON.stringify({ messages: request.messages, tools: request.tools }).length) / 4));
 }
 
 function emptyUsage(): ModelUsageSnapshot {
@@ -170,6 +193,22 @@ export class ModelExecutionRuntime {
   }
 
   async extractJson(context: ModelCallContext, request: ModelJsonRequest): Promise<unknown> {
+    return this.execute(context, request, (provider, callbacks) => provider.extractJson({
+      system: request.system, user: request.user, schema: request.schema, ...callbacks,
+    }));
+  }
+
+  async runTools(context: ModelCallContext, request: ModelToolRequest): Promise<ModelToolTurn> {
+    return this.execute(context, request, (provider, callbacks) => {
+      const call = provider.streamTools ?? provider.runTools;
+      if (!call) throw new Error("Selected model route does not support native tool calling");
+      return call.call(provider, { system: request.system, messages: request.messages, tools: request.tools }, callbacks);
+    });
+  }
+
+  private async execute<T>(context: ModelCallContext, request: ModelJsonRequest | ModelToolRequest,
+    dispatch: (provider: ModelJsonProviderPort, callbacks: { signal: AbortSignal; onUsage: (usage: ModelUsageSnapshot) => void;
+      onReasoningDelta?: (delta: string) => void }) => Promise<T>): Promise<T> {
     const policy = this.policies[context.role];
     const estimate = estimateTokens(request);
     if (policy.maximumEstimatedCallTokens !== undefined && estimate > policy.maximumEstimatedCallTokens) {
@@ -237,10 +276,8 @@ export class ModelExecutionRuntime {
             controller.signal.throwIfAborted();
             await request.beforeDispatch?.();
             controller.signal.throwIfAborted();
-            const { beforeDispatch: _hostCheck, ...providerRequest } = request;
             dispatched = true;
-            return provider.extractJson({
-              ...providerRequest,
+            return dispatch(provider, {
               signal: controller.signal,
               onReasoningDelta: this.events || request.onReasoningDelta ? (delta) => {
                 if (settled || controller.signal.aborted) return;

@@ -12,6 +12,8 @@ import { ConversationHistoryReader } from "./conversation-history-reader.js";
 import { DesktopReplySchema } from "@traceforge/shared/desktop-replies";
 import { DesktopConversationMemory } from "./desktop-conversation-memory.js";
 import { prepareConversationContext } from "./desktop-conversation-context.js";
+import { ConversationKnowledge } from "./conversation-knowledge.js";
+import { ConversationAttachmentReader } from "./conversation-attachment-reader.js";
 
 const clean: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const run of clean.splice(0)) await run(); });
@@ -54,6 +56,91 @@ it("exposes the same source digest in summaries and original-read tools", async 
   expect(memory.read(f.conversation.id, "later").entries[0].user).toContain("exact fingerprint");
 });
 
+it("keeps a stopped user's message in the next context, summary and original recall", async () => {
+  let handlers: Parameters<NonNullable<LlmProvider["streamTools"]>>[1] | undefined;
+  const model: LlmProvider = { extractJson: summaries, runTools: vi.fn(), streamTools: vi.fn(async (_args, callbacks) => {
+    handlers = callbacks;
+    return new Promise(() => {});
+  }) };
+  const f = await host(model);
+  await f.add("stopped", "Only inspect the API scope");
+  expect(f.start("stopped").status).toBe(202);
+  await vi.waitFor(() => expect(handlers).toBeDefined());
+  handlers?.onTextDelta?.("Incomplete answer");
+  await f.add("queued", "Do not deliver this queued instruction");
+  expect(f.start("queued").body).toMatchObject({ state: "queued" });
+  f.service().cancel(f.conversation.id, "stopped");
+  expect(f.row("stopped").state).toBe("stopped");
+  expect(f.row("queued").state).toBe("withdrawn");
+  await f.add("next", "Continue");
+  const context = prepareConversationContext(f.sql(), f.conversation.id, 3, model, "system");
+  expect(context.messages).toContainEqual({ role: "user", content: "Only inspect the API scope" });
+  expect(JSON.stringify(context.messages)).not.toContain("Do not deliver this queued instruction");
+  expect(context.messages.some(message => message.role === "assistant" && message.content === "Incomplete answer")).toBe(false);
+  expect(context.messages.some(message => message.content.includes('"trust":"untrusted_incomplete_assistant_fragment"'))).toBe(true);
+  const memory = await new DesktopConversationMemory(f.sql()).prepare(f.conversation.id, 3, model, new AbortController().signal);
+  expect(JSON.parse(memory!).originalMessageIds).toContain("stopped");
+  expect(JSON.parse(memory!).originalMessageIds).not.toContain("queued");
+  const reader = new ConversationHistoryReader(f.sql(), f.conversation.id, 3);
+  expect((reader.execute({ id: "search", name: "conversation_search", input: { query: "API scope" } }) as any).matches[0].id).toBe("stopped");
+  expect((reader.execute({ id: "read", name: "conversation_read", input: { id: "stopped" } }) as any).text).toContain("Only inspect the API scope");
+});
+
+it("keeps a withdrawn queued message out of every model history path", async () => {
+  const model: LlmProvider = { extractJson: summaries, runTools: vi.fn(), streamTools: vi.fn(async () => new Promise(() => {})) };
+  const f = await host(model);
+  await f.add("active", "Keep the first reply active");
+  expect(f.start("active").status).toBe(202);
+  await f.add("withdrawn", "withdrawn-marker");
+  f.sql().prepare("INSERT INTO desktop_message_attachments VALUES(?,?,?)").run(f.conversation.id, "withdrawn",
+    JSON.stringify([{ kind: "text", name: "withdrawn.txt", text: "withdrawn-file-marker" }]));
+  const attachmentReader = new ConversationAttachmentReader(f.sql(), f.conversation.id, 3);
+  const attachment = (attachmentReader.execute({ id: "index", name: "conversation_attachments", input: {} }).result as any).matches[0];
+  expect(attachment.messageId).toBe("withdrawn");
+  expect(f.start("withdrawn").body).toMatchObject({ state: "queued" });
+  const queue = f.service().readQueue(f.conversation.id).body;
+  expect(f.service().changeQueue(f.conversation.id, { commandId: "remove", expectedRevision: queue.revision,
+    operation: { kind: "remove", messageId: "withdrawn" } }).status).toBe(200);
+  expect(f.row("withdrawn").state).toBe("withdrawn");
+  await f.add("next", "Continue");
+  const context = prepareConversationContext(f.sql(), f.conversation.id, 3, model, "system");
+  expect(JSON.stringify(context.messages)).not.toContain("withdrawn-marker");
+  const memory = await new DesktopConversationMemory(f.sql()).prepare(f.conversation.id, 3, model, new AbortController().signal);
+  expect(JSON.parse(memory!).originalMessageIds).not.toContain("withdrawn");
+  const reader = new ConversationHistoryReader(f.sql(), f.conversation.id, 3);
+  expect((reader.execute({ id: "search", name: "conversation_search", input: { query: "withdrawn-marker" } }) as any).matches).toEqual([]);
+  expect(reader.execute({ id: "read", name: "conversation_read", input: { id: "withdrawn" } })).toMatchObject({ error: "original_not_available" });
+  expect((attachmentReader.execute({ id: "index", name: "conversation_attachments", input: {} }).result as any).matches).toEqual([]);
+  expect(attachmentReader.execute({ id: "file", name: "conversation_attachment_read", input: {
+    messageId: "withdrawn", index: 0, digest: attachment.digest } }).result).toMatchObject({ error: "attachment_not_available" });
+  const recalled = await new ConversationKnowledge(f.sql(), f.conversation.id, 3).execute(
+    { id: "recall", name: "memory_recall", input: { query: "withdrawn-marker" } }, "recall", model, new AbortController().signal) as any;
+  expect(recalled.matches).toEqual([]);
+});
+
+it("restores proven legacy stops and keeps ambiguous cancelled rows out of model history", async () => {
+  const model: LlmProvider = { extractJson: summaries, runTools: vi.fn(), streamTools: vi.fn(async () => new Promise(() => {})) };
+  const f = await host(model);
+  await f.add("known", "legacy-proven-marker");
+  expect(f.start("known").status).toBe(202);
+  f.service().cancel(f.conversation.id, "known");
+  await f.add("unknown", "legacy-ambiguous-marker");
+  expect(f.start("unknown").status).toBe(202);
+  f.service().cancel(f.conversation.id, "unknown");
+  f.sql().prepare("UPDATE desktop_replies SET state='cancelled' WHERE conversation_id=?").run(f.conversation.id);
+  f.sql().prepare("DELETE FROM desktop_reply_reasoning WHERE conversation_id=? AND message_id='unknown'").run(f.conversation.id);
+  await f.restart();
+  expect(f.row("known").state).toBe("stopped");
+  expect(f.row("unknown").state).toBe("cancelled");
+  await f.add("next", "Continue");
+  const context = JSON.stringify(prepareConversationContext(f.sql(), f.conversation.id, 3, model, "system").messages);
+  expect(context).toContain("legacy-proven-marker");
+  expect(context).not.toContain("legacy-ambiguous-marker");
+  const reader = new ConversationHistoryReader(f.sql(), f.conversation.id, 3);
+  expect((reader.execute({ id: "known", name: "conversation_search", input: { query: "legacy-proven-marker" } }) as any).matches[0].id).toBe("known");
+  expect((reader.execute({ id: "search", name: "conversation_search", input: { query: "legacy-ambiguous-marker" } }) as any).matches).toEqual([]);
+});
+
 it("exposes compacting and cancellation without letting a non-cooperating summary block the next message", async () => {
   let finish!: (value: unknown) => void, signal: AbortSignal | undefined;
   const model: LlmProvider = { contextLimits: { contextWindowTokens: 16000, maxOutputTokens: 1024 }, runTools: vi.fn(),
@@ -62,7 +149,7 @@ it("exposes compacting and cancellation without letting a non-cooperating summar
   for (let i = 0; i < 12; i++) await f.add(`m${i}`, "Record ".repeat(500));
   f.start("m11"); await vi.waitFor(() => expect(f.row("m11").phase).toBe("compacting"));
   f.service().cancel(f.conversation.id, "m11"); expect(signal?.aborted).toBe(true);
-  expect(f.row("m11").state).toBe("cancelled");
+  expect(f.row("m11").state).toBe("stopped");
   const cachedBefore = f.sql().prepare("SELECT count(*) n FROM desktop_conversation_memory").get();
   finish({ entries: [{ id: "history", text: "late" }] }); await Promise.resolve(); await Promise.resolve();
   expect(f.sql().prepare("SELECT count(*) n FROM desktop_conversation_memory").get()).toEqual(cachedBefore);

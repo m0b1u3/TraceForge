@@ -83,8 +83,9 @@ export class EvidenceGraphMutateTool implements ExecutionToolAdapter {
   readonly source = "traceforge.builtin";
   readonly version = "1.0.0";
   readonly priority = 100;
-  readonly description = "Apply one typed, auditable Evidence Graph mutation. Evidence sources must reference persisted tool receipts, traffic, or artifacts.";
+  readonly description = "Apply one typed, auditable Evidence Graph mutation. Only evidence nodes carry a source, referencing persisted tool receipts, traffic, or artifacts. For every other node kind set source=null; link supporting evidence with graph edges. Scenario output types are not graph node kinds: publish required Work outputs with the complete decision.";
   readonly inputSchema = {
+    type: "object",
     oneOf: [
       {
         type: "object", required: ["type", "node"], additionalProperties: false,
@@ -134,6 +135,11 @@ export class EvidenceGraphMutateTool implements ExecutionToolAdapter {
 
   async execute(input: unknown, context: ToolContext): Promise<ToolExecutionResult> {
     const parsed = mutation.parse(input);
+    // Contract rejection before any lookup or write is a known failure, not an
+    // uncertain side effect. Preserve unknown-outcome handling for store errors.
+    if(parsed.type === "add_node" && parsed.node.kind !== "evidence" && parsed.node.source !== null) {
+      return {status:"failed",summary:"Only evidence nodes may carry source material. Set source=null for other kinds and link evidence using edges. No mutation was performed.",raw:JSON.stringify({error:"invalid_node_source",executed:false}),refs:[],retryable:false};
+    }
     const at = this.now();
     let command: EvidenceGraphCommand;
     if (parsed.type === "add_node") {

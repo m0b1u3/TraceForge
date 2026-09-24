@@ -9,6 +9,9 @@ it("atomically restores bounded desktop state independently of the renderer orig
     const key = "traceforge.desktop.last-conversation.v1", first = new DesktopJournalStore(file);
     first.request({ operation: "set", key, value: "conversation_1" });
     const restarted = new DesktopJournalStore(file);
+    const preferences="traceforge.desktop.task-preferences.v1";
+    restarted.request({operation:"set",key:preferences,value:'[{"kind":"neutral","preset":{"revision":1}}]'});
+    expect(new DesktopJournalStore(file).request({operation:"get",key:preferences})).toContain('"revision":1');
     restarted.request({operation:"set",key:"traceforge.reply-queue.conversation_1",value:'{"commandId":"pending"}'});
     expect(new DesktopJournalStore(file).request({operation:"get",key:"traceforge.reply-queue.conversation_1"})).toBe('{"commandId":"pending"}');
     expect(restarted.request({ operation: "get", key })).toBe("conversation_1");

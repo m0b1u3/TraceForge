@@ -6,6 +6,9 @@ import { buildModelSettingsHost, ModelAccountManifestSchema, defaultModelAccount
 import { createModelTokenStore } from "./model-token-store.js";
 import { createModelSettingsBridge } from "./model-settings-bridge.js";
 import { ensureDesktopData, resolveDesktopPaths } from "./desktop-paths.js";
+import { configureDesktopStorage } from "./storage-bootstrap.js";
+
+configureDesktopStorage();
 
 // Explicit settings-only development entry: no Core, Scenario, conversation
 // dispatch, model probe on boot, updater, or production release fence override.

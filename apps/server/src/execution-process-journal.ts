@@ -16,7 +16,7 @@ export const DEFAULT_PROCESS_JOURNAL_LIMITS: Readonly<ProcessJournalLimits> = {
   maximumObservationBytes: 8 * 1024 * 1024, completedHistoryRetentionMs: 24 * 60 * 60 * 1000,
 };
 
-/** Durable observations, not cleanup attestations. Unknown records remain fenced after host restart. */
+/** Durable host observations; only accepted native empty-tree exits confirm cleanup. */
 export class SqliteProcessExecutionJournal implements ProcessExecutionJournal {
   readonly limits: Readonly<ProcessJournalLimits>;
   constructor(
@@ -146,11 +146,20 @@ function validate(observation: ProcessExecutionObservation): void {
   if (observation.historyRetention && (observation.status === "claimed" || observation.events.length !== 0 || !observation.lostEvents
     || !Number.isFinite(Date.parse(observation.historyRetention.purgedAt))
     || !/^[a-f0-9]{64}$/.test(observation.historyRetention.originalDigest))) throw new Error("Invalid execution history retention");
-  if (![1, 2].includes(observation.schemaVersion) || observation.cleanup !== "unverified"
+  if (![1, 2].includes(observation.schemaVersion) || !["unverified", "process_tree_confirmed"].includes(observation.cleanup)
     || !["claimed", "exit_observed", "failure_observed"].includes(observation.status)
     || !observation.nodeId || !/^[a-f0-9]{64}$/.test(observation.requestFingerprint)
     || !Number.isFinite(Date.parse(observation.updatedAt)) || !Array.isArray(observation.events)
     || typeof observation.lostEvents !== "boolean") throw new Error("Invalid execution observation");
+  if (observation.cleanup === "process_tree_confirmed") {
+    const process = observation.process, enforcement = process?.enforcement;
+    if (observation.schemaVersion !== 2 || observation.status !== "exit_observed" || process?.state !== "exited"
+      || !process.exitedAt || !Number.isFinite(Date.parse(process.exitedAt))
+      || enforcement?.atomicProcessTreeAssignment !== true || enforcement.processTreeEmptyBarrier !== true
+      || !enforcement.sandboxed || !enforcement.filesystemPolicyApplied
+      || !["traceforge-macos-native", "traceforge-linux-native"].includes(enforcement.sandboxBackend)
+      || !/^[a-f0-9]{64}$/.test(enforcement.backendMeasurement ?? "")) throw new Error("Unproven process-tree cleanup");
+  }
   if (observation.schemaVersion === 2 && (!observation.launch || observation.launch.nodeId !== observation.nodeId
     || observation.launch.requestId !== observation.identity.requestId
     || observation.launch.requestFingerprint !== observation.requestFingerprint

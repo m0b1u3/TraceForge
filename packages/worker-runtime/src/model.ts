@@ -38,6 +38,7 @@ export interface ExecutionToolSpec {
   dependencyCapabilities: string[];
   permissionRequirements: PermissionRequirements;
   risk: ExecutionRisk;
+  /** Zero uses owner cancellation/revocation instead of a wall-clock deadline. */
   timeoutMs: number;
 }
 
@@ -95,6 +96,7 @@ export interface WorkerModelContextPolicy {
 }
 
 export interface WorkerModelRequest {
+  outputContract?: { allowedKinds: string[]; requiredAnyOf: string[] };
   executionMode?: "explore" | "conclude";
   sharedProgress?: {directions:Array<{id:string;objective:string;status:string}>;outcomes:Array<{workIds:string[];objective:string;status:string;summary:string}>;omitted:number;trust:"untrusted_progress_not_evidence"};
   contextAnchors?: {entries:Array<{id:string;text:string;refs:string[];priority:number;status:string;trust:"untrusted_observation_not_instruction"}>;omitted:number};

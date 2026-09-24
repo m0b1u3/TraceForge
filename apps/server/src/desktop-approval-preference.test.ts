@@ -14,7 +14,7 @@ it("persists changes and the same running policy reads each new setting, never b
     const store = new DesktopApprovalPreference(sqlite), workspace = new RunWorkspace("/tmp/live-policy", {} as ExecutionToolAdapter, () => {});
     const policy = new RunToolPolicy({ authorizationActions: [] } as unknown as ScenarioDefinition, undefined, workspace, "darwin", () => store.read().routineApprovalRequired);
     const current = assignment().assignment, write = workspace.tools().find(t => t.name === "workspace_write")!;
-    expect(policy.requiresApproval(current, write)).toBe(true);
+    expect(policy.requiresApproval(current, write)).toBe(false);
     store.save({ expectedRevision: 0, routineApprovalRequired: false });
     expect(policy.requiresApproval(current, write)).toBe(false);
     expect(new DesktopApprovalPreference(sqlite).read()).toEqual({ revision: 1, routineApprovalRequired: false });

@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { ToolInvocationRecoveryRequiredError, validateToolProviderResult, toolInvocationInputFingerprint,
+import { ToolInvocationRecoveryRequiredError, validateToolProviderResult, toolInvocationInputFingerprint,parallelToolName,parallelInvocations,
   workerCheckpointJournal } from "@traceforge/worker-runtime";
 import { z } from "zod";
 import { reserveToolReceipt } from "./db/execution-storage.js";
@@ -38,9 +38,31 @@ export class SqliteToolReceiptStore implements ToolReceiptStore {
 
 export class SqliteToolInvocationBindingStore implements ToolInvocationBindingStore {
   private readonly ownerId = randomUUID();
-  constructor(private readonly sqlite: Database.Database, private readonly now: () => string = () => new Date().toISOString()) {}
+  constructor(private readonly sqlite: Database.Database, private readonly now: () => string = () => new Date().toISOString()) {
+    sqlite.exec("CREATE TABLE IF NOT EXISTS tool_invocation_parallel_members(parent_key TEXT NOT NULL, child_key TEXT NOT NULL UNIQUE, PRIMARY KEY(parent_key,child_key))");
+  }
+
+  async prepareParallel(parentKey:string,children:ToolInvocationBindingInput[]):Promise<void> {
+    this.sqlite.transaction(()=>{
+      const parent=this.get(parentKey);
+      if(!parent||parent.tool.name!==parallelToolName||parent.status!=="prepared")throw new Error("Invalid parallel parent");
+      const existing=this.sqlite.prepare("SELECT child_key FROM tool_invocation_parallel_members WHERE parent_key=? ORDER BY child_key").all(parentKey) as Array<{child_key:string}>;
+      if(existing.length&&JSON.stringify(existing.map(r=>r.child_key))!==JSON.stringify(children.map(c=>c.idempotencyKey).sort()))throw new Error("Parallel plan changed");
+      for(const child of children){
+        if(JSON.stringify(child.attribution)!==JSON.stringify(parent.attribution)||child.tool.name===parallelToolName)throw new Error("Invalid parallel ownership");
+        const old=this.get(child.idempotencyKey);
+        if(old){if(!sameBinding(old,child))throw new Error("Parallel child changed");}else this.prepareNow(child);
+        this.sqlite.prepare("INSERT OR IGNORE INTO tool_invocation_parallel_members VALUES (?,?)").run(parentKey,child.idempotencyKey);
+        const membership=this.sqlite.prepare("SELECT parent_key FROM tool_invocation_parallel_members WHERE child_key=?").get(child.idempotencyKey) as {parent_key:string};
+        if(membership.parent_key!==parentKey)throw new Error("Parallel child already owned");
+      }
+    })();
+  }
 
   async prepare(input: ToolInvocationBindingInput): Promise<ToolInvocationBinding> {
+    return this.prepareNow(input);
+  }
+  private prepareNow(input:ToolInvocationBindingInput):ToolInvocationBinding {
     return this.sqlite.transaction(() => {
       const existing = this.get(input.idempotencyKey);
       if (existing) {
@@ -137,6 +159,20 @@ export class SqliteToolInvocationBindingStore implements ToolInvocationBindingSt
         || binding.idempotencyKey !== `${assignment.work.idempotencyKey}:${binding.invocationId}`) {
         throw new ToolInvocationRecoveryRequiredError("Checkpoint invocation ownership mismatch");
       }
+      const member=this.sqlite.prepare("SELECT parent_key FROM tool_invocation_parallel_members WHERE child_key=?").get(binding.idempotencyKey) as {parent_key:string}|undefined;
+      if(member){
+        const parent=this.get(member.parent_key);
+        if(!parent||parent.tool.name!==parallelToolName)throw new ToolInvocationRecoveryRequiredError("Parallel parent missing");
+        if(completed.has(parent.invocationId)||history?.has(checkpoint,parent.invocationId)){
+          if(!this.hasReceipt(binding.idempotencyKey)||!this.hasReceipt(parent.idempotencyKey))throw new ToolInvocationRecoveryRequiredError("Parallel completion lacks receipts");
+        }else{
+          const pending=checkpoint.pendingInvocation;
+          if(pending?.invocation.id!==parent.invocationId||pending.invocation.tool!==parallelToolName)throw new ToolInvocationRecoveryRequiredError("Parallel plan absent from checkpoint");
+          const child=parallelInvocations(pending.invocation.input,parent.invocationId).find(c=>c.id===binding.invocationId);
+          if(!child||toolInvocationInputFingerprint(child.tool,child.input)!==binding.inputFingerprint||child.tool!==binding.tool.name)throw new ToolInvocationRecoveryRequiredError("Parallel checkpoint changed");
+        }
+        continue;
+      }
       if (completed.has(binding.invocationId) || history?.has(checkpoint, binding.invocationId)) {
         if (!this.hasReceipt(binding.idempotencyKey) && !this.noEffectAudit(binding.idempotencyKey)) {
           throw new ToolInvocationRecoveryRequiredError("Checkpoint claims a completed invocation without a confirmed outcome");
@@ -168,14 +204,19 @@ export class SqliteToolInvocationBindingStore implements ToolInvocationBindingSt
     return row ? `invocation-reconciliation:${row.command_id}` : undefined;
   }
 
-  async beginExecution(idempotencyKey: string, leaseId: string, workerId: string): Promise<void> {
+  async beginExecution(idempotencyKey: string, leaseId: string, workerId: string,parallelParent?:string): Promise<void> {
     this.sqlite.transaction(() => {
       const binding = this.get(idempotencyKey);
       if (!binding || binding.status !== "prepared") throw new ToolInvocationRecoveryRequiredError("Invocation is not prepared for execution");
       if (this.admission(binding.tool.source, binding.tool.version)?.status === "closed") {
         throw new ToolInvocationRecoveryRequiredError("Invocation admission closed before execution ownership could be acquired");
       }
-      this.assertWorkReadyNow(binding.attribution);
+      if(parallelParent){
+        const parent=this.execution(parallelParent);
+        const member=this.sqlite.prepare("SELECT 1 FROM tool_invocation_parallel_members WHERE parent_key=? AND child_key=?").get(parallelParent,idempotencyKey);
+        if(!member||parent?.status!=="executing"||parent.owner_id!==this.ownerId||parent.lease_id!==leaseId)throw new ToolInvocationRecoveryRequiredError("Parallel parent is not executing in this host");
+      }
+      this.assertWorkReadyNow(binding.attribution,parallelParent);
       const lease = this.sqlite.prepare(`SELECT 1 FROM scenario_work_leases l
         JOIN scenario_event_streams r ON r.run_id = l.run_id
         WHERE l.run_id = ? AND l.work_id = ? AND l.lease_id = ? AND l.worker_id = ?
@@ -189,17 +230,18 @@ export class SqliteToolInvocationBindingStore implements ToolInvocationBindingSt
     })();
   }
 
-  async assertWorkReady(attribution: ToolInvocationBindingInput["attribution"]): Promise<void> {
-    this.assertWorkReadyNow(attribution);
+  async assertWorkReady(attribution: ToolInvocationBindingInput["attribution"],parallelParent?:string): Promise<void> {
+    this.assertWorkReadyNow(attribution,parallelParent);
   }
 
-  private assertWorkReadyNow(attribution: ToolInvocationBindingInput["attribution"]): void {
-    const unresolved = this.sqlite.prepare(`SELECT b.idempotency_key FROM tool_invocation_bindings b
+  private assertWorkReadyNow(attribution: ToolInvocationBindingInput["attribution"],parallelParent?:string): void {
+    const cohort=parallelParent?new Set([parallelParent,...(this.sqlite.prepare("SELECT child_key FROM tool_invocation_parallel_members WHERE parent_key=?").all(parallelParent) as Array<{child_key:string}>).map(r=>r.child_key)]):new Set<string>();
+    const unresolved = this.sqlite.prepare(`SELECT b.idempotency_key,e.status,e.owner_id FROM tool_invocation_bindings b
       LEFT JOIN tool_invocation_executions e ON e.idempotency_key = b.idempotency_key
       WHERE b.case_id = ? AND b.run_id = ? AND b.work_id = ?
       AND (e.status IN ('executing', 'uncertain') OR (e.idempotency_key IS NULL AND b.status != 'completed'))`)
-      .all(attribution.caseId, attribution.runId, attribution.workId) as Array<{ idempotency_key: string }>;
-    if (unresolved.some((entry) => !this.hasReceipt(entry.idempotency_key))) {
+      .all(attribution.caseId, attribution.runId, attribution.workId) as Array<{ idempotency_key: string;status:string;owner_id:string }>;
+    if (unresolved.some((entry) => !this.hasReceipt(entry.idempotency_key)&&!(entry.status==="executing"&&entry.owner_id===this.ownerId&&cohort.has(entry.idempotency_key)))) {
       throw new ToolInvocationRecoveryRequiredError("Work has an executing or uncertain invocation; reconcile it before executing another action");
     }
   }

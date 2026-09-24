@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { ExecutionNode, BrokeredHttpRequest } from "@traceforge/execution-node";
 import type { ScenarioPackageRegistry, ScenarioToolHostContext } from "@traceforge/scenario-sdk";
 import { waitForCancellation, type ExecutionSourcePolicy, type ExecutionToolDiscoverySource,
-  ScenarioProcessRuntime, type ScenarioProcessLaunch, type GovernedExecutionPort, type GovernedExecutionSourceRegistration, type ToolExecutionContext } from "@traceforge/worker-runtime";
+  ScenarioProcessRuntime, type ScenarioProcessLaunch, type GovernedExecutionPort, type GovernedExecutionSourceRegistration, type ToolExecutionContext, type ToolProviderDiagnosticWriter } from "@traceforge/worker-runtime";
 import { ExecutionNodeProcessTool } from "./worker-execution-adapters.js";
 import type { ProcessCapacityInput, ProcessExecutionCapacity } from "./process-execution-capacity.js";
 import type { ToolProviderInstallation } from "./tool-provider-control-plane.js";
@@ -34,7 +34,8 @@ export class GovernedExecutionSources {
   private browserSessions?: DesktopBrowserSessions;
 
   constructor(private readonly node: ExecutionNode | undefined, private readonly capacity: ProcessExecutionCapacity,
-    private readonly scenarioSupervision?: SqliteScenarioProcessSupervisionStore) {}
+    private readonly scenarioSupervision?: SqliteScenarioProcessSupervisionStore,
+    private readonly diagnosticWriter?: ToolProviderDiagnosticWriter) {}
 
   diagnostics() { return [...this.coverage.values()].map(item => ({ ...item })); }
 
@@ -89,10 +90,18 @@ export class GovernedExecutionSources {
           capabilityHandlers: createScenarioProcessCapabilityHandlers(installation, context, undefined, this.node,processServices.sessions,processServices.traffic,
             {capacity:this.capacity,deployment:processServices.browser,sessions:processServices.browserSessions})
             .filter((handler) => installation.runtime!.hostCapabilities.includes(handler.capability)),
-          transport: { allowUnsandboxedDevelopment: false }, assertAvailable: () => registry.assertAvailable(installation),
-          scheduler: this.capacity.scheduler, executionNode: this.node, supervision: this.scenarioSupervision,
-          processCapacity:{acquire:(generation,attribution)=>this.capacity.acquire({source:installation.runtime!.source,
-            version:installation.version,operation:`scenario-process:generation:${generation}`,kind:"service",attribution})} });
+          // Starting the isolated Scenario service includes execution-node
+          // admission, sandbox setup, process attestation and the RPC
+          // handshake. A 15s generic Provider deadline made the whole
+          // Scenario disappear from the Worker catalog on ordinary desktop
+          // startup. This bounds only the Host handshake/list operation;
+          // individual tools retain their own declared deadlines.
+          transport: { allowUnsandboxedDevelopment: false, diagnosticWriter:this.diagnosticWriter, requestTimeoutMs:120_000 }, assertAvailable: () => registry.assertAvailable(installation),
+          // Worker gateway schedules calls; capacity below schedules processes.
+          // A call must not reserve the child-process permit it later requests.
+          executionNode: this.node, supervision: this.scenarioSupervision,
+          processCapacity:{acquire:(generation,attribution,signal)=>this.capacity.acquire({source:installation.runtime!.source,
+            version:installation.version,operation:`scenario-process:generation:${generation}`,kind:"service",attribution},signal)} });
         this.scenarioProcesses.set(`${installation.id}\u0000${installation.version}`, runtime);
         this.coverage.set(runtime.source, { source: runtime.source, version: installation.version,
           process: "governed", origin: "scenario_process" });

@@ -203,8 +203,8 @@ export interface ProcessExecutionObservation {
   nodeId: string;
   requestFingerprint: string;
   status: "claimed" | "exit_observed" | "failure_observed";
-  /** A main-process exit is not a process-tree cleanup attestation. */
-  cleanup: "unverified";
+  /** Only an accepted native launcher's empty-tree exit barrier can confirm cleanup. */
+  cleanup: "unverified" | "process_tree_confirmed";
   process: ProcessDescriptor | null;
   events: ProcessEvent[];
   lostEvents: boolean;

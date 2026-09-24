@@ -21,6 +21,7 @@ import type {
 import type { ExecutionToolDiscoveryRuntime } from "./tool-discovery.js";
 import { executionToolContractFingerprint, toolInvocationInputFingerprint } from "./tool-provider-contract.js";
 import { snapshotToolSpec } from "./tool-discovery-state.js";
+import {parallelTool,parallelToolName,parallelInvocations,parallelResult} from "./parallel-tools.js";
 
 export interface ExecutionToolAdapter extends ExecutionToolSpec {
   execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult>;
@@ -58,6 +59,7 @@ export interface ToolInvocationBinding extends ToolInvocationBindingInput {
 }
 
 export interface ToolInvocationBindingStore {
+  prepareParallel?(parentKey:string,children:ToolInvocationBindingInput[]):Promise<void>;
   recoverInvocation?(input: ToolInvocationReceiptIdentity): Promise<ToolInvocationRecovery>;
   validateCheckpoint?(assignment: WorkerAssignment, checkpoint: WorkerCheckpointDocument): void;
   prepare(binding: ToolInvocationBindingInput): Promise<ToolInvocationBinding>;
@@ -67,9 +69,9 @@ export interface ToolInvocationBindingStore {
   closeAdmission(source: string, version: string, reason: string): Promise<void>;
   openAdmission(source: string, version: string): Promise<void>;
   assertReceiptIdentity(input: ToolInvocationReceiptIdentity): Promise<void>;
-  beginExecution(idempotencyKey: string, leaseId: string, workerId: string): Promise<void>;
+  beginExecution(idempotencyKey: string, leaseId: string, workerId: string, parallelParent?:string): Promise<void>;
   markUncertain(idempotencyKey: string, reason: string): Promise<void>;
-  assertWorkReady(attribution: ToolInvocationBindingInput["attribution"]): Promise<void>;
+  assertWorkReady(attribution: ToolInvocationBindingInput["attribution"],parallelParent?:string): Promise<void>;
 }
 
 export interface ToolInvocationReceiptIdentity {
@@ -134,14 +136,30 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
       await this.bindings.complete(request.idempotencyKey);
       return { status: "recorded", result };
     }
+    if(request.invocation.tool===parallelToolName){
+      const calls=parallelInvocations(request.invocation.input,request.invocation.id);
+      const results:ToolExecutionResult[]=[];
+      for(const call of calls){
+        const key=`${request.assignment.work.idempotencyKey}:${call.id}`,saved=await this.receipts.get(key);
+        if(!saved)break;
+        await this.bindings.assertReceiptIdentity({idempotencyKey:key,invocationId:call.id,toolName:call.tool,inputFingerprint:toolInvocationInputFingerprint(call.tool,call.input),attribution:identity.attribution});
+        results.push(saved);
+      }
+      if(results.length===calls.length){
+        await this.bindings.assertReceiptIdentity(identity);
+        const combined=parallelResult(calls,results);
+        await this.receipts.put(request.idempotencyKey,combined);await this.bindings.complete(request.idempotencyKey);
+        return {status:"recorded",result:combined};
+      }
+    }
     const recovered = await this.bindings.recoverInvocation(identity);
     if (recovered.status === "recorded") await this.bindings.complete(request.idempotencyKey);
     return recovered;
   }
 
-  async catalog(worker: WorkerDescriptor, assignment: WorkerAssignment, signal?: AbortSignal): Promise<ExecutionToolCatalog> {
+  async catalog(worker: WorkerDescriptor, assignment: WorkerAssignment, signal?: AbortSignal,parallelParent?:string): Promise<ExecutionToolCatalog> {
     signal?.throwIfAborted();
-    await this.bindings?.assertWorkReady({ caseId: assignment.runContext.caseId, runId: assignment.runId, workId: assignment.work.id });
+    await this.bindings?.assertWorkReady({ caseId: assignment.runContext.caseId, runId: assignment.runId, workId: assignment.work.id },parallelParent);
     await waitForCancellation(async () => this.discovery?.refreshDue(), signal);
     signal?.throwIfAborted();
     const names = this.policy.allowedTools ? new Set(this.policy.allowedTools) : undefined;
@@ -154,10 +172,14 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
     const tools = resolution.providers
       .map(snapshotToolSpec)
       .sort((left, right) => left.name.localeCompare(right.name));
+    if(this.bindings?.prepareParallel&&tools.some(t=>t.risk==="read_only"))tools.push(parallelTool);
     return { tools, requestedCapabilities: resolution.requestedCapabilities, unresolvedCapabilities: resolution.unresolvedCapabilities, registryRevision: resolution.registryRevision };
   }
 
   async execute(request: Parameters<ExecutionToolGateway["execute"]>[0]): Promise<ToolExecutionResult> {
+    return this.executeInternal(request);
+  }
+  private async executeInternal(request:Parameters<ExecutionToolGateway["execute"]>[0],parallelParent?:string):Promise<ToolExecutionResult> {
     request.signal?.throwIfAborted();
     const recorded = await this.receipts.get(request.idempotencyKey);
     if (recorded) {
@@ -169,8 +191,19 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
       await this.bindings?.complete(request.idempotencyKey);
       return recorded;
     }
-    const catalog = await this.catalog(request.worker, request.assignment, request.signal);
-    const tool = this.registry.get(request.invocation.tool)?.provider;
+    const catalog = await this.catalog(request.worker, request.assignment, request.signal,parallelParent);
+    const batch=request.invocation.tool===parallelToolName;
+    const children=batch?parallelInvocations(request.invocation.input,request.invocation.id):[];
+    if(batch&&children.some(c=>!catalog.tools.some(t=>t.name===c.tool&&t.risk==="read_only")))throw new Error("Parallel calls must be authorized read-only tools");
+    if(batch&&children.some(c=>this.policy.requiresApproval?.({assignment:request.assignment,tool:catalog.tools.find(t=>t.name===c.tool)!})))throw new Error("Tools requiring individual approval must be invoked separately");
+    const tool:ExecutionToolAdapter|undefined = batch?{...parallelTool,execute:async(_input,context)=>{
+      const settled=await Promise.allSettled(children.map(invocation=>this.executeInternal({...request,invocation,
+        idempotencyKey:`${request.assignment.work.idempotencyKey}:${invocation.id}`,expectedContractFingerprint:executionToolContractFingerprint(catalog.tools.find(t=>t.name===invocation.tool)!),signal:context.signal,
+        onProgress:progress=>request.onProgress?.({...progress,text:`${invocation.tool}: ${progress.text??progress.phase}`})},request.idempotencyKey)));
+      const failed=settled.find(r=>r.status==="rejected");if(failed?.status==="rejected")throw failed.reason;
+      if(settled.some(r=>r.status==="fulfilled"&&r.value.status==="approval_required"))throw new ToolInvocationRecoveryRequiredError("Parallel approval policy changed; reconcile pending reads individually");
+      return parallelResult(children,settled.map(r=>(r as PromiseFulfilledResult<ToolExecutionResult>).value));
+    }}:this.registry.get(request.invocation.tool)?.provider;
     const eligible = tool && catalog.tools.some((candidate) => candidate.name === tool.name
       && executionToolContractFingerprint(candidate) === executionToolContractFingerprint(tool));
     if (!tool || !eligible) throw new Error(`Tool ${request.invocation.tool} is unknown or outside worker policy`);
@@ -227,12 +260,19 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
 
     request.signal?.throwIfAborted();
     this.assertAuthorized({worker:request.worker,assignment:request.assignment,tool});
-    await this.bindings?.beginExecution(request.idempotencyKey, request.assignment.leaseId, request.worker.id);
+    if(batch)await this.bindings!.prepareParallel!(request.idempotencyKey,children.map(invocation=>{
+      const spec=catalog.tools.find(t=>t.name===invocation.tool)!;
+      return {idempotencyKey:`${request.assignment.work.idempotencyKey}:${invocation.id}`,invocationId:invocation.id,
+        tool:{name:spec.name,source:spec.source,version:spec.version,contractFingerprint:executionToolContractFingerprint(spec)},
+        inputFingerprint:toolInvocationInputFingerprint(spec.name,invocation.input),attribution:{caseId:request.assignment.runContext.caseId,runId:request.assignment.runId,workId:request.assignment.work.id}};
+    }));
+    await this.bindings?.beginExecution(request.idempotencyKey, request.assignment.leaseId, request.worker.id,parallelParent);
     let result: ToolExecutionResult;
     try {
       result = await withTimeout(
         (signal) => {
           this.assertAuthorized({worker:request.worker,assignment:request.assignment,tool});
+          signal.throwIfAborted();
           const context: ToolExecutionContext = {
           workerId: request.worker.id,
           runId: request.assignment.runId,
@@ -256,7 +296,8 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
         request.signal,
       );
     } catch (error) {
-      if (this.bindings) {
+      const confirmedNotStarted = executionOutcome(error) === "not_started";
+      if (this.bindings && !confirmedNotStarted) {
         const reason = error instanceof ToolExecutionTimeoutError
           ? `Tool ${tool.name} timed out; execution outcome requires reconciliation`
           : `Tool ${tool.name} threw before confirming a terminal result; execution outcome requires reconciliation: ${error instanceof Error ? error.message : "unknown failure"}`;
@@ -273,8 +314,6 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
         metadata: { errorType: error instanceof Error ? error.name : "UnknownError" },
       };
     }
-    if (result.status === "succeeded") this.registry.recordSuccess(tool.name);
-    else if (result.retryable) this.registry.recordFailure(tool.name, result.summary);
     result = {
       ...result,
       metadata: { ...result.metadata, effectivePermissions, ...(approvalPolicyRef ? { approvalPolicyRef } : {}), ...(approvalReason ? { approvalReason } : {}) },
@@ -301,13 +340,17 @@ export class PolicyExecutionToolGateway implements ExecutionToolGateway {
   }
 }
 
+function executionOutcome(error: unknown): "not_started" | undefined {
+  return error && typeof error === "object" && "executionOutcome" in error && error.executionOutcome === "not_started"
+    ? "not_started" : undefined;
+}
+
 export function createExecutionToolRegistry(
   adapters: ExecutionToolAdapter[],
-  unavailableAfterFailures = 3,
 ): CapabilityProviderRegistry<ExecutionToolAdapter> {
-  const registry = new CapabilityProviderRegistry<ExecutionToolAdapter>(unavailableAfterFailures);
+  const registry = new CapabilityProviderRegistry<ExecutionToolAdapter>();
   for (const adapter of adapters) {
-    if (adapter.timeoutMs < 1) throw new Error(`Execution tool ${adapter.name} requires a positive timeout`);
+    if (!Number.isSafeInteger(adapter.timeoutMs)||adapter.timeoutMs < 0) throw new Error(`Execution tool ${adapter.name} requires a nonnegative timeout`);
   }
   const sources = [...new Set(adapters.map((adapter) => adapter.source))];
   for (const source of sources) registry.synchronize(source, adapters.filter((adapter) => adapter.source === source)
@@ -322,7 +365,7 @@ async function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, ti
   parent?.addEventListener("abort", abort, { once: true });
   if (parent?.aborted) abort();
   try {
-    timer = setTimeout(() => cancellation.abort(new ToolExecutionTimeoutError(`Tool timed out after ${timeoutMs}ms`)), timeoutMs);
+    if(timeoutMs>0)timer = setTimeout(() => cancellation.abort(new ToolExecutionTimeoutError(`Tool timed out after ${timeoutMs}ms`)), timeoutMs);
     return await waitForCancellation(() => operation(cancellation.signal), cancellation.signal);
   } finally {
     if (timer) clearTimeout(timer);

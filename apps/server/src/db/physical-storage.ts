@@ -63,6 +63,7 @@ export function initializePhysicalStorage(sqlite: Database.Database): void {
     WHEN NEW.state='reserved' AND NOT EXISTS(SELECT 1 FROM execution_storage_entries WHERE kind=NEW.kind AND entry_key=NEW.entry_key)
     BEGIN ${admission("execution", "NEW.bytes")} END;`);
   for (const [table, key, mode, bytes] of [
+    ["desktop_conversations", "id", "execution", "length(CAST(NEW.title AS BLOB))+2048"],
     ["worker_checkpoints", "ref", "execution", "length(CAST(NEW.document_json AS BLOB))"],
     ["execution_process_journal", "idempotency_key", "execution", "NEW.budget_bytes"],
     ["tool_recovery_commands", "command_id", "recovery", "length(CAST(NEW.request_json AS BLOB))"],
@@ -76,6 +77,13 @@ export function initializePhysicalStorage(sqlite: Database.Database): void {
     sqlite.exec(`CREATE TRIGGER IF NOT EXISTS execution_physical_${table} BEFORE INSERT ON ${table}
       WHEN NOT EXISTS(SELECT 1 FROM ${table} WHERE ${key}=NEW.${key} ${duplicate}) BEGIN ${admission(mode!, bytes!)} END;`);
   }
+  sqlite.exec(`CREATE TRIGGER IF NOT EXISTS execution_physical_desktop_message_insert BEFORE INSERT ON desktop_conversation_messages BEGIN
+    SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
+      length(CAST(NEW.text AS BLOB))+2048,'execution') FROM execution_physical_policy WHERE id=1; END;
+    CREATE TRIGGER IF NOT EXISTS execution_physical_desktop_message_update BEFORE UPDATE OF text ON desktop_conversation_messages
+    WHEN length(CAST(NEW.text AS BLOB))>length(CAST(OLD.text AS BLOB)) BEGIN
+      SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
+        length(CAST(NEW.text AS BLOB))-length(CAST(OLD.text AS BLOB))+2048,'execution') FROM execution_physical_policy WHERE id=1; END;`);
   // A reserved result must remain writable under admission pressure. This is best effort, not preallocated disk space.
   sqlite.exec(`CREATE TRIGGER IF NOT EXISTS execution_physical_unreserved_receipt BEFORE INSERT ON worker_tool_receipts
     WHEN NOT EXISTS(SELECT 1 FROM execution_storage_entries WHERE kind='receipt' AND entry_key=NEW.idempotency_key)

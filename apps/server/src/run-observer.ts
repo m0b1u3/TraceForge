@@ -18,8 +18,9 @@ export class SqliteRunObserverStore implements RunObserverStorePort {
       observed_graph_revision INTEGER NOT NULL, context_fingerprint TEXT NOT NULL, decision_json TEXT NOT NULL,
       applied INTEGER NOT NULL DEFAULT 0, resulting_run_revision INTEGER, created_at TEXT NOT NULL, applied_at TEXT,
       UNIQUE(run_id,observed_run_revision,observed_graph_revision,context_fingerprint));
-      CREATE TRIGGER IF NOT EXISTS observer_context_bounded BEFORE INSERT ON scenario_observer_context_evaluations BEGIN
-        SELECT CASE WHEN (SELECT count(*) FROM scenario_observer_context_evaluations)>=4096 OR length(CAST(NEW.decision_json AS BLOB))>65536
+      DROP TRIGGER IF EXISTS observer_context_bounded;
+      CREATE TRIGGER observer_context_bounded BEFORE INSERT ON scenario_observer_context_evaluations BEGIN
+        SELECT CASE WHEN length(CAST(NEW.decision_json AS BLOB))>65536
           THEN RAISE(ABORT,'Observer context evaluation budget exceeded') END;
         SELECT execution_physical_admit(execution_floor, maximum_database_bytes, maximum_wal_bytes,
           length(CAST(NEW.decision_json AS BLOB))+2048,'execution') FROM execution_physical_policy WHERE id=1;

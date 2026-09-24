@@ -90,7 +90,7 @@ function parseSpec(value: unknown, source: string): ExecutionToolSpec {
     || !stringArray(value.providedCapabilities) || !stringArray(value.dependencyCapabilities)
     || !isRecord(value.permissionRequirements)
     || !["read_only", "bounded_write", "privileged", "destructive"].includes(String(value.risk))
-    || !Number.isInteger(value.timeoutMs) || Number(value.timeoutMs) < 1) {
+    || !Number.isSafeInteger(value.timeoutMs) || Number(value.timeoutMs) < 0) {
     throw new Error("Stored tool discovery catalog contains an invalid tool specification");
   }
   return snapshotToolSpec(value as unknown as ExecutionToolSpec);

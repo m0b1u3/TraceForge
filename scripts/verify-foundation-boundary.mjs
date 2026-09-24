@@ -363,9 +363,10 @@ if (!/traceforge\.scenario-package\.v1/.test(scenarioDescriptorSource)
 }
 if (!/class SqliteScenarioProcessSupervisionStore\b/.test(scenarioSupervisionSource)
   || !/recoverInterrupted/.test(scenarioSupervisionSource)
-  || !/restart budget exhausted/.test(scenarioSupervisionSource)
-  || !/status='pending'/.test(scenarioSupervisionSource)) {
-  violations.push("production foundation must retain durable Scenario Process generations, retry budgets and unresolved capability fencing");
+  || !/generation is not monotonic/.test(scenarioSupervisionSource)
+  || !/status='pending'/.test(scenarioSupervisionSource)
+  || !/receipt\.status !== "succeeded" && receipt\.status !== "failed"/.test(scenarioSupervisionSource)) {
+  violations.push("production foundation must retain durable Scenario Process generations, unresolved capability fencing and terminal confirmed-not-started receipts");
 }
 if (!/packageId: installation\.id/.test(scenarioCapabilitySource)
   || !/caseId: attribution\.caseId/.test(scenarioCapabilitySource)

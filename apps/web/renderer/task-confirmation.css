@@ -1,0 +1,41 @@
+.task-confirm-overlay { position:fixed; inset:0; z-index:100; background:rgb(20 22 26 / 24%); }
+.task-confirm-dialog { position:fixed; z-index:101; top:50%; left:50%; transform:translate(-50%,-50%); width:min(460px,calc(100vw - 32px)); max-height:calc(100dvh - 48px); overflow:auto; box-sizing:border-box; padding:28px; border:1px solid #e1e2e5; border-radius:16px; background:#fff; color:#252629; box-shadow:0 20px 60px rgb(0 0 0 / 16%); font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+.task-confirm-dialog h2 { margin:0 0 8px; font-size:20px; font-weight:600; }
+.task-confirm-dialog p { color:#63666d; margin:8px 0 20px; overflow-wrap:anywhere; }
+.task-confirm-dialog fieldset { border:0; margin:0; padding:0; min-width:0; }
+.task-confirm-dialog button { min-height:36px; border:1px solid #dedfe2; border-radius:8px; padding:7px 14px; font:inherit; background:#fff; color:#252629; cursor:pointer; }
+.task-confirm-dialog button.primary { background:#292929; color:#fff; border-color:#292929; }
+.task-confirm-dialog button:hover { background:#f1f2f4; }
+.task-confirm-dialog button.primary:hover { background:#414348; }
+.task-confirm-dialog button:disabled { opacity:.5; cursor:default; }
+.task-confirm-dialog :focus-visible { outline:2px solid #707783; outline-offset:3px; }
+.task-setting-field { display:grid; gap:8px; margin:20px 0; }
+.task-setting-field small { color:#63666d; line-height:1.6; }
+.task-setting-field input[type="checkbox"] { justify-self:start; }
+.task-confirm-dialog textarea { box-sizing:border-box; width:100%; resize:vertical; border:1px solid #d9dce2; border-radius:8px; padding:10px 12px; font:inherit; }
+.task-confirm-details { color:#63666d; font-size:12px; margin:16px 0; }
+.task-confirm-details summary { cursor:pointer; }
+.task-confirm-dialog .task-confirm-details { border:0; }
+.task-confirm-dialog .task-confirm-details > summary { padding:4px 0; font-size:12px; }
+.task-confirm-details ul { padding-left:20px; }
+.task-confirm-footer,.task-settings-footer { display:flex; justify-content:flex-end; gap:8px; margin-top:24px; }
+.task-settings-actions { display:grid; gap:12px; }
+.task-settings-actions label { display:flex; align-items:start; gap:10px; }
+.task-settings-actions input { margin-top:5px; }
+.host-workbench .task-start-entry { margin:12px 0 24px; }
+.host-workbench .reply-memory-details { color:#63666d; font-size:12px; margin-top:16px; }
+.host-workbench .reply-tool-activity,.host-workbench .reasoning-trace { border:0; margin:8px 0; }
+.host-workbench .reasoning-trace { padding:0; }
+.host-workbench :is(.reasoning-trace,.reply-tool-activity,.reply-memory-details) > summary { padding:6px 0; border:0; font-size:12px; }
+.host-workbench .topbar .brand { width:188px; }
+.host-workbench .host-composer { border-radius:18px; padding:14px 16px 10px; }
+.host-workbench .host-composer:not(:has(.composer-permissions)):not(:has(.composer-attachments)) { grid-template-rows:minmax(36px,auto) auto; }
+.host-workbench .composer-tools .approval-preference { margin:0; font-size:11px; }
+.host-workbench .composer-tools .approval-preference > span[role="status"] { display:none; }
+.host-workbench .composer-tools .approval-preference button { padding:4px 8px; font-size:11px; }
+.host-workbench .composer-permissions { font-size:11px; margin-top:0; }
+.host-workbench .composer-permissions [role="switch"]::after { content:none; }
+.host-workbench .message-assistant .sender { margin-bottom:8px; }
+.host-workbench .reply-actions { margin:8px 0 16px; }
+@media(max-width:850px) { .host-workbench .topbar .brand { width:auto; } }
+@media(max-width:650px) { .task-confirm-dialog { padding:20px; } .task-confirm-dialog textarea { font-size:16px; } }

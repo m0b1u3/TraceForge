@@ -2,6 +2,7 @@ import {expect,it} from "vitest";
 import {compareHttp} from "../runtime-src/comparison.mjs";
 import {reserveRequest,BudgetExhausted} from "../runtime-src/budgets.mjs";
 import {observationHighlights} from "../runtime-src/observations.mjs";
+import {stableJson} from "../runtime-src/validation.mjs";
 import {BoundedOutputDistiller} from "@traceforge/worker-runtime";
 import {experimentFields,changedDimensions} from "../runtime-src/request-fields.mjs";
 import {createHash} from "node:crypto";
@@ -25,11 +26,18 @@ it("bounds shared experiment fields and distinguishes body/header changes",()=>{
   expect(()=>experimentFields({method:"POST",bodyBase64:Buffer.alloc(65537).toString("base64")})).toThrow();
   expect(()=>experimentFields({headers:{"X-Value":"one\r\ntwo"}})).toThrow();
 });
-it("preserves the legacy single-candidate comparison fingerprint",async()=>{
-  const f=fixture();await compareHttp({experimentId:"legacy",hypothesisId:"hypothesis",baseline:input.baseline,candidate:input.candidates[0],maxRequests:1},f.capability,f.request);
+it("binds comparison identity to canonical plan content, not input key order",async()=>{
+  const f=fixture();await compareHttp({experimentId:"canonical",hypothesisId:"hypothesis",baseline:input.baseline,candidate:input.candidates[0],maxRequests:1},f.capability,f.request);
   const state=[...f.states.entries()].find(([key])=>key.startsWith("web.comparison.v1:"))![1].value;
-  const expected={hypothesisId:"hypothesis",baseline:{url:input.baseline.url,method:"GET",sessionId:null},candidate:{url:input.candidates[0].url,method:"GET",sessionId:null},rounds:2};
-  expect(state.fingerprint).toBe(createHash("sha256").update(JSON.stringify(expected)).digest("hex"));
+  const expected={hypothesisId:"hypothesis",baseline:{url:input.baseline.url,method:"GET",sessionId:null},
+    candidates:[{url:input.candidates[0]!.url,method:"GET",sessionId:null}],rounds:2,expectedSignals:["statusChanged","bodyChanged","bytesChanged"],stopOn:"never"};
+  expect(state.fingerprint).toBe(createHash("sha256").update(stableJson(expected)).digest("hex"));
+  // The same plan with reordered keys continues the experiment instead of conflicting.
+  const reordered=JSON.parse(`{"stopOn":"never","maxRequests":1,"expectedSignals":["statusChanged","bodyChanged","bytesChanged"],"candidate":{"url":"${input.candidates[0]!.url}"},"baseline":{"url":"${input.baseline.url}"},"hypothesisId":"hypothesis","experimentId":"canonical"}`);
+  const continued=JSON.parse((await compareHttp(reordered,f.capability,f.request)).raw);
+  expect(continued.completedRequests).toBe(2);expect(f.count()).toBe(2);
+  // A genuinely different plan still conflicts.
+  await expect(compareHttp({...reordered,rounds:3},f.capability,f.request)).rejects.toThrow("different comparison");
 });
 it("normalizes HTTP and surface fields and uses configurable terms without inventing a singleton outlier",()=>{
   const one=observationHighlights([{status:201,responseBytes:10,bodyBase64:Buffer.from("neutral marker").toString("base64"),bodyTruncated:false,receipt:{id:"one"}}],["marker"]);
@@ -57,6 +65,22 @@ it("accounts cumulative admission durably and never refunds unknown requests",as
   const f=fixture();await reserveRequest(f.capability,"first");await reserveRequest(f.capability,"first");await reserveRequest(f.capability,"second");
   await expect(reserveRequest(f.capability,"third")).rejects.toBeInstanceOf(BudgetExhausted);
 });
+it("keeps the durable request ledger within the Host state byte limit at the authorized maximum",async()=>{
+  const states=new Map<string,any>();
+  const capability=async(name:string,action:string,input:any)=>{
+    if(name.includes("authorization"))return {output:{scopePayload:{budgets:{totalRequests:4096}}},refs:[]};
+    if(action==="read")return {output:states.get(input.key)??null,refs:[]};
+    if(action==="compare_and_set"){const previous=states.get(input.key);if((previous?.revision??0)!==input.expectedRevision)throw new Error("CAS conflict");const output={revision:input.expectedRevision+1,value:structuredClone(input.value)};states.set(input.key,output);return {output,refs:[]};}
+    throw new Error(`Unexpected ${name} ${action}`);
+  };
+  for(let index=0;index<4096;index++)await reserveRequest(capability,`request-${index}`);
+  const ledger=states.get("web.request-budget.v1").value;
+  expect(ledger.ids).toHaveLength(4096);
+  expect(ledger.ids.every((id:string)=>/^[a-f0-9]{16}$/.test(id))).toBe(true);
+  // The Host persists one state value with a 256 KiB bound; the full ledger must fit inside it.
+  expect(Buffer.byteLength(JSON.stringify(ledger))).toBeLessThan(256*1024);
+  await expect(reserveRequest(capability,"one-more")).rejects.toBeInstanceOf(BudgetExhausted);
+},20000);
 it("keeps a rare observation's fields before 100 homogeneous responses within a bounded context",async()=>{
   const rows=Array.from({length:100},(_,step)=>({step,status:200,bytes:120,digest:"same",refs:[`receipt:${step}`]}));
   rows.push({step:100,status:202,bytes:345,digest:"rare",refs:["receipt:rare"]});

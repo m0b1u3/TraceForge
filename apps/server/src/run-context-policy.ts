@@ -29,8 +29,9 @@ export class RunContextPolicy {
       case_id TEXT NOT NULL, run_id TEXT NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL,
       snapshot_id TEXT NOT NULL, sources_json TEXT NOT NULL, PRIMARY KEY(run_id,target_kind,target_id,snapshot_id));
       CREATE INDEX IF NOT EXISTS context_derivations_run ON context_derivations(run_id);
-      CREATE TRIGGER IF NOT EXISTS context_derivations_bounded BEFORE INSERT ON context_derivations BEGIN
-        SELECT CASE WHEN (SELECT count(*) FROM context_derivations)>=8192 OR length(CAST(NEW.sources_json AS BLOB))>32768
+      DROP TRIGGER IF EXISTS context_derivations_bounded;
+      CREATE TRIGGER context_derivations_bounded BEFORE INSERT ON context_derivations BEGIN
+        SELECT CASE WHEN length(CAST(NEW.sources_json AS BLOB))>32768
           THEN RAISE(ABORT,'Context derivation budget exceeded') END;
         SELECT execution_physical_admit(execution_floor, maximum_database_bytes, maximum_wal_bytes,
           length(CAST(NEW.sources_json AS BLOB))+2048,'execution') FROM execution_physical_policy WHERE id=1;

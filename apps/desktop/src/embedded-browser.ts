@@ -6,7 +6,7 @@ import { ChromiumCdpAdapter, type ChromiumCdpPort, type ChromiumCdpEvent,
 
 type Owned = Awaited<ReturnType<NonNullable<BrokeredBrowserRuntimeOptions["chromiumProcess"]>>>;
 type Bounds = { x: number; y: number; width: number; height: number };
-interface Entry { view: WebContentsView; manual: boolean; closed: boolean; takeoverId?: string; window?: BrowserWindow; displayTimer?: ReturnType<typeof setTimeout>; destroy?: () => Promise<void>; }
+interface Entry { view: WebContentsView; manual: boolean; closed: boolean; viewport: {width:number;height:number}; takeoverId?: string; window?: BrowserWindow; displayTimer?: ReturnType<typeof setTimeout>; destroy?: () => Promise<void>; }
 
 /** Native views belong to the same session as the agent, never a second browser.
  * No preload, Node, application session, external opener or renderer CDP bridge. */
@@ -26,7 +26,7 @@ export class EmbeddedBrowser {
           controllerIdentity: { protocol: "traceforge.browser-controller.v1", controllerVersion: `electron/${process.versions.electron}`,
             controllerSha256: hash, browserVersion: `Chrome/${process.versions.chrome}`, browserSha256: hash },
           executable: process.execPath, arguments: [], workingDirectory: process.cwd(),
-          permissions: structuredClone(context.effectivePermissions), timeoutMs: 900000, outputLimitBytes: 1048576,
+          permissions: structuredClone(context.effectivePermissions), timeoutMs: 0, outputLimitBytes: 1048576,
           resources: { cpuTimeMs: 900000, memoryBytes: 2147483648, maximumProcesses: 64, writeBytes: 268435456 } };
         this.prepared.add(configuration); return configuration;
       },
@@ -53,7 +53,7 @@ export class EmbeddedBrowser {
       webSecurity: true, allowRunningInsecureContent: false, webviewTag: false, devTools: false,
       navigateOnDragDrop: false, safeDialogs: true, disableDialogs: true } });
     view.setBounds({ x: 0, y: 0, width: 1024, height: 720 }); view.setVisible(false);
-    const entry: Entry = { view, manual: false, closed: false }; this.entries.set(id, entry);
+    const entry: Entry = { view, manual: false, closed: false, viewport:{width:1024,height:720} }; this.entries.set(id, entry);
     const wc = view.webContents, listeners = new Set<(event: ChromiumCdpEvent) => void>(), failures = new Set<(error: Error) => void>();
     const root = `embedded:${wc.id}`;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -87,6 +87,9 @@ export class EmbeddedBrowser {
     });
     try {
       await wc.loadURL("about:blank"); wc.debugger.attach("1.3");
+      // An unattached WebContentsView has a zero-sized renderer viewport even
+      // after setBounds. Keep a real layout viewport for background observation.
+      await wc.debugger.sendCommand("Emulation.setDeviceMetricsOverride", {...entry.viewport,deviceScaleFactor:1,mobile:false});
       const cdp: ChromiumCdpPort = {
         send: (method, params = {}, sessionId) => {
           if (entry.closed) return Promise.reject(new Error("Embedded page closed"));
@@ -104,7 +107,7 @@ export class EmbeddedBrowser {
         embeddedTarget: { sessionId: root, targetId: root } });
       await adapter.initialize();
       const current = adapter;
-      timer = setTimeout(() => { this.hide(id); fail(new Error("Embedded browser deadline reached")); void destroy().catch(() => undefined); }, configuration.timeoutMs);
+      if(configuration.timeoutMs>0)timer = setTimeout(() => { this.hide(id); fail(new Error("Embedded browser deadline reached")); void destroy().catch(() => undefined); }, configuration.timeoutMs);
       const connection: BrowserControllerConnection = { proof: current.proof,
         start: (intercept, failure) => current.activate(intercept, failure),
         observe: request => current.observe(request), act: action => current.act(action),
@@ -118,9 +121,9 @@ export class EmbeddedBrowser {
     } catch (error) { await destroy(); throw error; }
   }
 
-  show(window: BrowserWindow, id: string, takeoverId: string, bounds: Bounds, focus = false) {
+  show(window: BrowserWindow, id: string, takeoverId: string | null, bounds: Bounds, focus = false) {
     const entry = this.entries.get(id);
-    if (!entry || entry.closed || !entry.manual || entry.takeoverId !== takeoverId || window.isDestroyed()) throw new Error("Browser takeover unavailable");
+    if (!entry || entry.closed || window.isDestroyed() || (takeoverId===null ? entry.manual : !entry.manual || entry.takeoverId!==takeoverId)) throw new Error("Browser takeover unavailable");
     const [width, height] = window.getContentSize();
     if (![bounds.x, bounds.y, bounds.width, bounds.height].every(value => typeof value === "number" && Number.isFinite(value))
       || bounds.x < 0 || bounds.y < 54 || bounds.width < 100 || bounds.height < 100
@@ -129,9 +132,12 @@ export class EmbeddedBrowser {
     if (entry.window !== window) { entry.window?.contentView.removeChildView(entry.view); window.contentView.addChildView(entry.view); entry.window = window; }
     entry.view.setBounds({ x: Math.round(bounds.x), y: Math.round(bounds.y), width: Math.floor(bounds.width), height: Math.floor(bounds.height) });
     entry.view.setVisible(true); this.visible = id;
-    if (focus) entry.view.webContents.focus();
+    if (focus && entry.manual) entry.view.webContents.focus();
     clearTimeout(entry.displayTimer); entry.displayTimer = setTimeout(() => this.hide(id), 2000);
-    return { url: safeAddress(entry.view.webContents.getURL()), title: entry.view.webContents.getTitle() };
+    const viewport={width:Math.floor(bounds.width),height:Math.floor(bounds.height)};
+    const resized=viewport.width!==entry.viewport.width||viewport.height!==entry.viewport.height;
+    const ready=resized?entry.view.webContents.debugger.sendCommand("Emulation.setDeviceMetricsOverride",{...viewport,deviceScaleFactor:1,mobile:false}):Promise.resolve();
+    return ready.then(()=>{entry.viewport=viewport;return { url: safeAddress(entry.view.webContents.getURL()), title: entry.view.webContents.getTitle() };});
   }
   hide(id?: string) {
     const key = id ?? this.visible; if (!key) return;

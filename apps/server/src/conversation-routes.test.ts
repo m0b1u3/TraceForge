@@ -24,6 +24,24 @@ async function fixture(path = ":memory:") {
 }
 
 describe("desktop conversation host persistence", () => {
+  it("creates conversations beyond the old lifetime count and pages the full list", async () => {
+    const f = await fixture(), sql = getSqliteClient(f.db);
+    const insertCase = sql.prepare("INSERT INTO cases VALUES (?,'historical','active','[]','2026-01-01')");
+    const insertConversation = sql.prepare("INSERT INTO desktop_conversations VALUES (?,?,?,'historical','2026-01-01')");
+    sql.transaction(() => {
+      for (let i = 0; i < 1000; i++) {
+        insertCase.run(`case-${i}`);
+        insertConversation.run(`conversation-${i}`, `old-${i}`, `case-${i}`);
+      }
+    })();
+    expect((await f.create()).statusCode).toBe(201);
+    const first = (await f.app.inject("/api/desktop/conversations")).json();
+    const second = (await f.app.inject("/api/desktop/conversations?offset=1000")).json();
+    expect(first).toMatchObject({ hasMore: true, nextOffset: 1000 });
+    expect(first.conversations).toHaveLength(1000);
+    expect(second).toMatchObject({ hasMore: false, nextOffset: 1001 });
+    expect(second.conversations).toHaveLength(1);
+  });
   it("saves attachment bytes atomically, replays idempotently and feeds context and original readback",async()=>{
     const f=await fixture();const id=(await f.create()).json().id;
     const payload={commandId:"attached",text:"Review this file",attachments:[{kind:"text",name:"notes.txt",text:"original attachment detail"}]};

@@ -347,12 +347,12 @@ describe("PolicyExecutionToolGateway", () => {
     expect((await gateway.catalog(input.worker, input.assignment)).tools).toEqual([]);
   });
 
-  it("removes a provider after repeated retryable results", async () => {
+  it("does not remove a provider because a target returned retryable failures", async () => {
     const registry = createExecutionToolRegistry([{
       name: "unstable", source: "test", version: "1.0.0", priority: 100, description: "Unstable", inputSchema: {},
       providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000,
       async execute() { return { status: "failed" as const, summary: "temporary transport failure", raw: "", refs: [], retryable: true }; },
-    }], 2);
+    }]);
     const gateway = new PolicyExecutionToolGateway(registry, { async authorize() { return { decision: "approved" }; } }, new Receipts(), policy);
     const input = assignment();
     input.assignment.work.requiredCapabilities = ["evidence.read"];
@@ -362,8 +362,8 @@ describe("PolicyExecutionToolGateway", () => {
         invocation: { id, tool: "unstable", input: {}, rationale: "read" }, idempotencyKey: `effect:${id}`,
       });
     }
-    expect(registry.get("unstable")).toMatchObject({ health: "unavailable", consecutiveFailures: 2 });
-    expect((await gateway.catalog(input.worker, input.assignment)).tools).toEqual([]);
+    expect(registry.get("unstable")).toMatchObject({ health: "healthy", consecutiveFailures: 0 });
+    expect((await gateway.catalog(input.worker, input.assignment)).tools.map(tool=>tool.name)).toEqual(["unstable"]);
   });
 
   it("honors an adapter's explicit retryable transport error", async () => {
@@ -371,7 +371,7 @@ describe("PolicyExecutionToolGateway", () => {
       name: "remote", source: "test", version: "1.0.0", priority: 100, description: "Remote", inputSchema: {},
       providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1_000,
       async execute() { throw Object.assign(new Error("provider disconnected"), { retryable: true }); },
-    }], 1);
+    }]);
     const gateway = new PolicyExecutionToolGateway(registry, { async authorize() { return { decision: "approved" }; } }, new Receipts(), policy);
     const input = assignment();
     input.assignment.work.requiredCapabilities = ["evidence.read"];
@@ -380,6 +380,23 @@ describe("PolicyExecutionToolGateway", () => {
       invocation: { id: "remote", tool: "remote", input: {}, rationale: "read" }, idempotencyKey: "effect:remote",
     });
     expect(result).toMatchObject({ status: "failed", retryable: true });
-    expect(registry.get("remote")).toMatchObject({ health: "unavailable" });
+    expect(registry.get("remote")).toMatchObject({ health: "healthy" });
+  });
+
+  it("records a confirmed pre-dispatch rejection instead of requiring reconciliation", async () => {
+    const receipts = new Receipts(), bindings = new Bindings(); let uncertain = false;
+    bindings.markUncertain = async () => { uncertain = true; };
+    const gateway = new PolicyExecutionToolGateway(createExecutionToolRegistry([{
+      name: "queued", source: "test", version: "1", priority: 1, description: "Queued", inputSchema: {},
+      providedCapabilities: ["evidence.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1000,
+      async execute() { throw Object.assign(new Error("admission unavailable"), { retryable: true, executionOutcome: "not_started" as const }); },
+    }]), { async authorize() { return { decision: "approved" }; } }, receipts, policy, undefined, bindings);
+    const input = assignment(); input.assignment.work.requiredCapabilities = ["evidence.read"];
+    const request = { worker: input.worker, assignment: input.assignment,
+      invocation: { id: "queued", tool: "queued", input: {}, rationale: "read" }, idempotencyKey: "effect:queued" };
+    await expect(gateway.execute(request)).resolves.toMatchObject({ status: "failed", retryable: true });
+    expect(uncertain).toBe(false);
+    expect(bindings.values.get(request.idempotencyKey)?.status).toBe("completed");
+    await expect(gateway.execute(request)).resolves.toEqual(receipts.values.get(request.idempotencyKey));
   });
 });

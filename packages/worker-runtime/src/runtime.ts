@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { WorkerDescriptor, ScenarioRunState } from "@traceforge/orchestration-core";
 import { AgentHarness, recordAgentJournalTerminal, resumeAgentExecutionJournal } from "@traceforge/agent-runtime";
 import { waitForCancellation } from "./cancellation.js";
@@ -146,6 +147,9 @@ export class WorkerHost {
   }
 
   private async executeOwned(initialAssignment: WorkerAssignment, signal: AbortSignal): Promise<WorkerRunResult> {
+    // A still-owned lease may be entered again after an optimistic revision conflict.
+    // Uncommitted cognition is a new evaluation; durable tool/control identities remain unchanged.
+    const evaluationEpoch = randomUUID();
     let assignment = initialAssignment;
     let checkpoint: CurrentWorkerCheckpointDocument;
     try {
@@ -215,7 +219,7 @@ export class WorkerHost {
       const session = new AgentHarness().openSession<WorkerRunResult>(checkpoint.journal.sessionId, { maxTurns: configuredTurns });
       const sessionResult = await session.run(checkpoint.journal.turn + 1, signal, async (turn) => {
         // Work names and attempt numbers are only local identities; a new lease is a distinct model evaluation.
-        const turnId = `worker:${encodeURIComponent(this.worker.id)}:run:${encodeURIComponent(assignment.runId)}:work:${encodeURIComponent(assignment.work.id)}:lease:${encodeURIComponent(assignment.leaseId)}:attempt:${assignment.work.attempt}:turn:${turn}`;
+        const turnId = `worker:${encodeURIComponent(this.worker.id)}:run:${encodeURIComponent(assignment.runId)}:work:${encodeURIComponent(assignment.work.id)}:lease:${encodeURIComponent(assignment.leaseId)}:attempt:${assignment.work.attempt}:evaluation:${evaluationEpoch}:turn:${turn}`;
         activeTurnId = undefined;
         assignment = await waitForCancellation(() => this.control.refresh(assignment), signal);
         await waitForHost();

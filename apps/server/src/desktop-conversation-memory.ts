@@ -23,7 +23,7 @@ export class DesktopConversationMemory {
     if (value.version === 2) {
       const originals = this.sql.prepare(`SELECT m.sequence,m.command_id AS id,m.text,r.text AS response FROM desktop_conversation_messages m
         LEFT JOIN desktop_replies r ON r.conversation_id=m.conversation_id AND r.message_command_id=m.command_id AND r.state='completed'
-        WHERE NOT EXISTS (SELECT 1 FROM desktop_replies pending WHERE pending.conversation_id=m.conversation_id AND pending.message_command_id=m.command_id AND pending.state IN ('queued','cancelled')) AND m.conversation_id=? AND m.sequence<=? ORDER BY m.sequence LIMIT 10001`).all(conversationId, value.coveredThroughSequence);
+        WHERE NOT EXISTS (SELECT 1 FROM desktop_replies pending WHERE pending.conversation_id=m.conversation_id AND pending.message_command_id=m.command_id AND pending.state IN ('queued','withdrawn','cancelled')) AND m.conversation_id=? AND m.sequence<=? ORDER BY m.sequence LIMIT 10001`).all(conversationId, value.coveredThroughSequence);
       if (originals.length !== value.coveredMessages || createHash("sha256").update(JSON.stringify(originals)).digest("hex") !== value.sourceDigest)
         throw new Error("Conversation memory historical coverage changed");
     }
@@ -42,7 +42,7 @@ export class DesktopConversationMemory {
     if (before <= 1) return undefined;
     const rows = this.sql.prepare(`SELECT m.sequence,m.command_id AS id,m.text,r.text AS response FROM desktop_conversation_messages m
       LEFT JOIN desktop_replies r ON r.conversation_id=m.conversation_id AND r.message_command_id=m.command_id AND r.state='completed'
-      WHERE NOT EXISTS (SELECT 1 FROM desktop_replies pending WHERE pending.conversation_id=m.conversation_id AND pending.message_command_id=m.command_id AND pending.state IN ('queued','cancelled')) AND m.conversation_id=? AND m.sequence<? ORDER BY m.sequence LIMIT 10001`)
+      WHERE NOT EXISTS (SELECT 1 FROM desktop_replies pending WHERE pending.conversation_id=m.conversation_id AND pending.message_command_id=m.command_id AND pending.state IN ('queued','withdrawn','cancelled')) AND m.conversation_id=? AND m.sequence<? ORDER BY m.sequence LIMIT 10001`)
       .all(conversationId, before) as Array<{ sequence: number; id: string; text: string; response: string | null }>;
     if (!rows.length) return undefined;
     if (rows.length > 10000 || Buffer.byteLength(JSON.stringify(rows)) > 16 * 1048576) throw new Error("Conversation history source capacity exceeded");

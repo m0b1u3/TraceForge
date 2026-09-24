@@ -7,12 +7,13 @@
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
-    "dev:models": "pnpm --filter @traceforge/server build:model-settings && pnpm --filter @traceforge/web build:desktop-preview && pnpm build && electron dist/model-settings-main.js",
-    "build": "tsc -p tsconfig.json",
+    "dev:models": "pnpm --filter @traceforge/server build:model-settings && pnpm --filter @traceforge/web build:renderer && pnpm build && electron dist/model-settings-main.js",
+    "build": "pnpm --filter @traceforge/scenario-web-blackbox build && tsx ../../scripts/bundle-desktop-scenarios.mts && tsc -p tsconfig.json",
     "prepare:runtime": "node ../../scripts/prepare-desktop-runtime.mjs",
     "restore:node-runtime": "node ../../scripts/restore-node-runtime.mjs",
     "verify:launch": "electron ../../scripts/verify-desktop-launch.mjs",
-    "dev": "pnpm --filter @traceforge/server build && pnpm --filter @traceforge/web build:desktop-preview && pnpm build && pnpm prepare:runtime && electron dist/development-main.js",
+    "verify:embedded-browser": "pnpm prepare:runtime && electron ../../scripts/verify-embedded-browser.mjs",
+    "dev": "pnpm --filter @traceforge/server build && pnpm --filter @traceforge/web build:renderer && pnpm build && pnpm prepare:runtime && electron dist/development-main.js",
     "pack": "node ../../scripts/desktop-release-unavailable.mjs",
     "dist": "node ../../scripts/desktop-release-unavailable.mjs",
     "dist:win": "node ../../scripts/desktop-release-unavailable.mjs",
@@ -37,7 +38,9 @@
     "directories": { "output": "release" },
     "files": ["dist/**", "package.json"],
     "extraResources": [
-      { "from": "../web/dist", "to": "web" }
+      { "from": "../web/dist", "to": "web" },
+      { "from": "bundled-scenarios", "to": "scenarios" },
+      { "from": "../../packages/execution-node/native/darwin-arm64", "to": "native/darwin-arm64" }
     ],
     "win": {
       "target": ["nsis"],

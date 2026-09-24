@@ -139,6 +139,16 @@ function startRequest(workspace: string): StartProcessRequest {
 }
 
 describe("LocalExecutionNode process lifecycle", () => {
+  it.each(["confirmed", "unmeasured", "failed"])("persists native cleanup only after the measured empty-tree exit barrier: %s", async mode => {
+    const launcher=new FakeLauncher();let saved:import("./protocol.js").ProcessExecutionObservation|undefined;
+    Object.assign(launcher.enforcement,{sandboxBackend:"traceforge-macos-native",backendMeasurement:"a".repeat(64),atomicProcessTreeAssignment:true,processTreeEmptyBarrier:mode!=="unmeasured"});
+    const {node}=createNode(launcher,{sandboxBackends:["traceforge-macos-native"],sandboxMeasurements:{"traceforge-macos-native":"a".repeat(64)},processJournal:{
+      claim(value){saved=structuredClone(value);},settle(value){saved=structuredClone(value);},get(){return saved;},
+    }});
+    await node.startProcess(startRequest(dirname(process.execPath)));
+    if(mode==="failed")launcher.processes[0]!.error(new Error("cleanup unconfirmed"));else launcher.processes[0]!.exit(0);
+    expect(saved?.cleanup).toBe(mode==="confirmed"?"process_tree_confirmed":"unverified");
+  });
   it("requires explicit measured-backend acceptance for sampled resource budgets", async () => {
     const launcher = new FakeLauncher();
     Object.assign(launcher.enforcement, { resourceLimitsApplied: false, resourcePolicy: "sampled_terminate", backendMeasurement: "a".repeat(64), atomicProcessTreeAssignment: true, processTreeEmptyBarrier: true });

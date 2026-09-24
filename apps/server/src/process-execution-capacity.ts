@@ -14,7 +14,11 @@ export interface ProcessCapacityInput {
   attribution: StartProcessRequest["attribution"];
   parentInvocationKey?: string;
 }
-export interface ProcessCapacityLease { beforeStart(requestId:string):void; finish(terminalObserved:boolean):void }
+export interface ProcessCapacityLease {
+  beforeStart(requestId:string):void;
+  /** cleanupConfirmed is reserved for a trusted Host-owned lifecycle that waited for the whole owned process group/resource to disappear. */
+  finish(terminalObserved:boolean, cleanupConfirmed?:boolean):void;
+}
 export interface ProcessCleanupAuthorizer {
   authorize(input:{commandId:string;actor:string;reason:string;occupancyId:string;identity:unknown}):Promise<
     {decision:"allowed";authorizationRef:string;expiresAt:string}|{decision:"denied"}>;
@@ -64,10 +68,12 @@ export class ProcessExecutionCapacity {
     sqlite.exec("DROP TRIGGER IF EXISTS process_cleanup_immutable; CREATE TRIGGER process_cleanup_immutable BEFORE UPDATE ON process_cleanup_commands WHEN execution_archive_writing('processCleanup',OLD.command_id)=0 BEGIN SELECT RAISE(ABORT,'Process cleanup proof is immutable'); END");
     initializeGovernanceHistory(sqlite,"processCleanup");
     sqlite.prepare("UPDATE process_execution_occupancy SET state='released',proof_ref='host:not_dispatched' WHERE state='reserved'").run();
+    this.reconcileConfirmedTerminals();
     for(const row of sqlite.prepare("SELECT * FROM process_execution_occupancy WHERE state!='released'").iterate() as Iterable<Row>)this.retain(row);
   }
 
   async acquire(value:ProcessCapacityInput,signal?:AbortSignal,authorize?:()=>void):Promise<ProcessCapacityLease> {
+    this.reconcileConfirmedTerminals();
     const input=structuredClone(value),attribution=input.attribution;
     z.enum(['work','service']).parse(input.kind);
     const identity=this.scheduling(input),key=attribution.idempotencyKey,id=hash([input.source,input.version,key]);
@@ -83,11 +89,15 @@ export class ProcessExecutionCapacity {
     return {beforeStart:(requestId)=>{
       check();if(finished)throw new Error("Process admission already settled");
       if(this.sqlite.prepare("UPDATE process_execution_occupancy SET state='dispatched',request_id=? WHERE id=? AND state='reserved'").run(text.parse(requestId),id).changes!==1)throw new Error("Process dispatch fenced");
-    },finish:(terminal)=>{
+    },finish:(terminal,cleanupConfirmed=false)=>{
       if(finished)return;finished=true;let released=false;
       try{
+        if(cleanupConfirmed&&!terminal)throw new Error("Process cleanup cannot be confirmed without a terminal observation");
+        this.reconcileConfirmedTerminals();
         const row=this.required(id);
+        if(row.state==="released"){released=true;return;}
         if(row.state==="reserved"){this.releaseRow(id,"host:not_dispatched");released=true;}
+        else if(cleanupConfirmed){this.releaseRow(id,"host:owned-cleanup-confirmed");released=true;}
         else this.sqlite.prepare("UPDATE process_execution_occupancy SET state=? WHERE id=? AND state!='released'").run(terminal?"terminal_observed":"unknown",id);
       }finally{
         if(!released){this.scheduler.retain(this.schedulerKey(id),identity);this.held.add(id);}
@@ -173,12 +183,29 @@ export class ProcessExecutionCapacity {
     })();this.refresh();return {...audit,replayed:false};
   }
   private scheduling(input:SavedIdentity):ToolProviderSchedulingIdentity{return {providerId:input.source,providerVersion:input.version,toolName:input.operation,
-    caseId:input.attribution.caseId,runId:input.attribution.runId,workId:input.attribution.workId};}
+    caseId:input.attribution.caseId,runId:input.attribution.runId,
+    // A Scenario service generation is infrastructure for the tool catalog, not
+    // a user Work invocation.  Keeping every generation under the package's
+    // stable workId made an interrupted generation consume the per-Work slot
+    // forever and prevented the next sandboxed generation from starting.  The
+    // durable occupancy is still counted by provider, Run and global limits;
+    // only the Work fairness key follows the immutable generation operation.
+    workId:input.kind==="service"?`${input.attribution.workId}:${input.operation}`:input.attribution.workId};}
   private schedulerKey(id:string){return JSON.stringify(["process",id]);}
   private retain(row:Row){this.scheduler.retain(this.schedulerKey(row.id),this.scheduling(JSON.parse(row.identity_json)));this.held.add(row.id);}
   private refresh(){for(const id of this.held)if(this.required(id).state==="released"){this.scheduler.releaseRetained(this.schedulerKey(id));this.held.delete(id);}}
   private required(id:string):Row{const row=this.sqlite.prepare("SELECT * FROM process_execution_occupancy WHERE id=?").get(id) as Row|undefined;if(!row)throw new Error("Unknown process occupancy");return row;}
   private releaseRow(id:string,proof:string){this.sqlite.prepare("UPDATE process_execution_occupancy SET state='released',proof_ref=? WHERE id=?").run(proof,id);}
+  private reconcileConfirmedTerminals():void {
+    const journal=new SqliteProcessExecutionJournal(this.sqlite);
+    for(const row of this.sqlite.prepare("SELECT * FROM process_execution_occupancy WHERE state!='released' AND request_id IS NOT NULL").all() as Row[]) {
+      const observation=journal.get(row.process_key), identity=JSON.parse(row.identity_json) as SavedIdentity;
+      if(observation?.cleanup!=="process_tree_confirmed" || observation.identity.requestId!==row.request_id
+        || ["caseId","runId","workId","leaseId","idempotencyKey"].some(key=>observation.identity[key as keyof typeof observation.identity]!==identity.attribution[key as keyof typeof identity.attribution]))continue;
+      this.releaseRow(row.id,`host:process-tree:${hash({identity:observation.identity,launch:observation.launch,updatedAt:observation.updatedAt})}`);
+    }
+    this.refresh();
+  }
 }
 
 export function registerProcessCapacityRoutes(app:FastifyInstance,capacity:ProcessExecutionCapacity,authorizer:ProcessCleanupAuthorizer|undefined,authority:(keyId:string)=>RecoveryEvidenceAuthority|undefined){

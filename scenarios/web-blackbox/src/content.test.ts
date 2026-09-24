@@ -4,19 +4,21 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { authorizeScenarioResource, parseScenarioPackageDescriptor } from "@traceforge/scenario-sdk";
 import { inspectDocument } from "../runtime-src/surface-document.mjs";
+import { PACKAGE_VERSION } from "../runtime-src/contracts.mjs";
 
 const root = resolve("scenarios/web-blackbox");
 describe("Web Scenario playbooks and passive discovery", () => {
-  it("declares opt-in generic long-task controls without granting additional actions", () => {
+  it("enables basic tools and continuation with the desktop task defaults", () => {
     const manifest = JSON.parse(readFileSync(resolve(root, "scenario.json"), "utf8"));
     const fields = manifest.authorizationPolicy.form.fields;
     expect(fields.find((f: any) => f.path[0] === "continuousExecution")).toMatchObject({ type: "boolean", required: false });
     expect(fields.find((f: any) => f.path[0] === "continuousExecution").defaultValue).not.toBe(true);
+    expect(fields.find((f: any) => f.path[0] === "continuousExecution").defaultEnabled).toBe(true);
     expect(fields.find((f: any) => f.path[0] === "asynchronousWorkspace")).toMatchObject({ type: "boolean", required: false });
-    expect(fields.find((f: any) => f.path[0] === "asynchronousWorkspace").defaultValue).not.toBe(true);
+    expect(fields.find((f: any) => f.path[0] === "asynchronousWorkspace").defaultEnabled).toBe(true);
     for (const key of ["interactiveWorkspace", "workspaceWebSocket"]) {
       expect(fields.find((f: any) => f.path[0] === key)).toMatchObject({ type: "boolean", required: false });
-      expect(fields.find((f: any) => f.path[0] === key).defaultValue).not.toBe(true);
+      expect(fields.find((f: any) => f.path[0] === key).defaultEnabled).toBe(true);
     }
     expect(fields.find((f: any) => f.path[0] === "interactiveWorkspace").description).toContain("不逐次询问");
     expect(manifest.definition.toolPolicies.find((p: any) => p.capability === "workspace.input"))
@@ -31,7 +33,7 @@ describe("Web Scenario playbooks and passive discovery", () => {
     const ids = new Set(resources.map(item => item.id));
     for (const id of ids) expect(authorizeScenarioResource(descriptor.authorizationPolicy, {}, "context.resource", id)).toBe(id);
     expect(() => authorizeScenarioResource(descriptor.authorizationPolicy, {}, "context.resource", "unregistered")).toThrow();
-    expect(descriptor.version).toBe("0.5.15");
+    expect(descriptor.version).toBe("0.5.20");
     for (const resource of resources) {
       const bytes = readFileSync(resolve(root, resource.locator.slice("package://".length)));
       expect(resource.digest, resource.id).toBe(`sha256:${createHash("sha256").update(bytes).digest("hex")}`);
@@ -48,6 +50,14 @@ describe("Web Scenario playbooks and passive discovery", () => {
       if (pool.role === "reporter") expect(pool.capabilities).not.toContain("web.request.replay");
     }
     for (const phase of descriptor.definition.phases) expect(phase.requiredCapabilities).toEqual(expect.arrayContaining(["tool.recall", "context.catalog", "context.read", "context.search"]));
+  });
+
+  it("keeps the package identity version consistent across descriptor, runtime contract and workspace manifest", () => {
+    const manifest = JSON.parse(readFileSync(resolve(root, "scenario.json"), "utf8"));
+    const workspace = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+    expect(manifest.package.version).toBe(PACKAGE_VERSION);
+    expect(manifest.runtime.version).toBe(PACKAGE_VERSION);
+    expect(workspace.version).toBe(PACKAGE_VERSION);
   });
 
   it("extracts link and form metadata without credentials, scripts, comments or automatic form requests", () => {

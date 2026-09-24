@@ -10,7 +10,7 @@ export class DesktopApprovalPreference {
   }
   read() {
     const row = this.sqlite.prepare("SELECT revision,required FROM desktop_approval_preferences ORDER BY revision DESC LIMIT 1").get() as { revision: number; required: number } | undefined;
-    return { revision: row?.revision ?? 0, routineApprovalRequired: row ? row.required === 1 : true };
+    return { revision: row?.revision ?? 0, routineApprovalRequired: row ? row.required === 1 : false };
   }
   save(input: unknown) {
     const value = ApprovalPreferenceUpdateSchema.parse(input);

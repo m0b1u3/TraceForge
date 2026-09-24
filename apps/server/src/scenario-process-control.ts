@@ -65,7 +65,7 @@ export class ScenarioProcessControl {
         SELECT execution_physical_admit(recovery_floor,maximum_database_bytes,maximum_wal_bytes,length(NEW.payload)+8192,'recovery') FROM execution_physical_policy WHERE id=1; END;`);
   }
 
-  inventory(value:unknown){const input=z.object({packageId:text.optional(),version:text.optional(),status:z.enum(["pending","retry_allowed","succeeded","archived"]).optional(),
+  inventory(value:unknown){const input=z.object({packageId:text.optional(),version:text.optional(),status:z.enum(["pending","retry_allowed","succeeded","failed","archived"]).optional(),
     after:text.optional(),limit:z.coerce.number().int().min(1).max(100).default(50)}).strict().parse(value);
     const clauses=["(package_id||char(0)||package_version||char(0)||idempotency_key) > ?"],args:unknown[]=[input.after??""];
     if(input.packageId){clauses.push("package_id = ?");args.push(input.packageId);}if(input.version){clauses.push("package_version = ?");args.push(input.version);}

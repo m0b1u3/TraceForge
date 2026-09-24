@@ -278,7 +278,7 @@ export class BrokeredBrowserRuntime {
       maximumActionRecords: options.limits?.maximumActionRecords ?? 1_000,
       maximumControlTransitions: options.limits?.maximumControlTransitions ?? 256,
     };
-    if (Object.values(this.limits).some((value) => !Number.isSafeInteger(value) || value < 1)) {
+    if (Object.entries(this.limits).some(([key,value]) => !Number.isSafeInteger(value) || value < (key==="maximumSessionMs"?0:1))) {
       throw new Error("Brokered Browser limits must be positive safe integers");
     }
   }
@@ -329,7 +329,7 @@ export class BrokeredBrowserRuntime {
     }
       const openedAt = this.now();
       const expiresAt = Math.min(
-        Date.parse(openedAt) + this.limits.maximumSessionMs,
+        this.limits.maximumSessionMs>0 ? Date.parse(openedAt) + this.limits.maximumSessionMs : Infinity,
         Date.parse(owner.leaseExpiresAt),
       );
       const snapshot: BrowserSessionSnapshot = {
@@ -394,14 +394,14 @@ export class BrokeredBrowserRuntime {
   renewLease(sessionId: string, owner: BrowserSessionOwner): void {
     const session = this.requireSession(sessionId);
     if (!["active", "manual_control"].includes(session.snapshot.status)
-      || Date.parse(this.now()) >= Date.parse(session.snapshot.openedAt) + this.limits.maximumSessionMs) throw new Error("Browser session cannot renew");
+      || this.limits.maximumSessionMs>0 && Date.parse(this.now()) >= Date.parse(session.snapshot.openedAt) + this.limits.maximumSessionMs) throw new Error("Browser session cannot renew");
     this.assertOwner(owner);
     for (const key of Object.keys(session.snapshot.owner) as Array<keyof BrowserSessionOwner>) {
       if (key !== "leaseExpiresAt" && owner[key] !== session.snapshot.owner[key]) throw new Error("Browser lease owner changed");
     }
     if (Date.parse(owner.leaseExpiresAt) < Date.parse(session.snapshot.owner.leaseExpiresAt)) throw new Error("Browser lease renewal regressed");
     session.snapshot.owner.leaseExpiresAt = owner.leaseExpiresAt;
-    session.snapshot.expiresAt = new Date(Math.min(Date.parse(session.snapshot.openedAt) + this.limits.maximumSessionMs, Date.parse(owner.leaseExpiresAt))).toISOString();
+    session.snapshot.expiresAt = new Date(Math.min(this.limits.maximumSessionMs>0?Date.parse(session.snapshot.openedAt) + this.limits.maximumSessionMs:Infinity, Date.parse(owner.leaseExpiresAt))).toISOString();
   }
 
   async act(sessionId: string, input: BrowserControlAction): Promise<BrowserControlResult> {
@@ -720,7 +720,7 @@ export class BrokeredBrowserRuntime {
     if (process.arguments.some((argument) => forbiddenArguments.some((prefix) => argument === prefix || argument.startsWith(`${prefix}=`)))) {
       throw new Error("Browser process arguments cannot disable sandboxing or create an alternate network/control channel");
     }
-    if (!Number.isSafeInteger(process.timeoutMs) || process.timeoutMs < 1 || !Number.isSafeInteger(process.outputLimitBytes) || process.outputLimitBytes < 1) {
+    if (!Number.isSafeInteger(process.timeoutMs) || process.timeoutMs < (process.isolation==="chromium"?0:1) || !Number.isSafeInteger(process.outputLimitBytes) || process.outputLimitBytes < 1) {
       throw new Error("Browser process limits are invalid");
     }
   }

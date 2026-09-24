@@ -13,7 +13,7 @@ import type {
 
 interface SupervisionRow {
   package_id: string; package_version: string; source: string; manifest_digest: string; launch_fingerprint: string;
-  maximum_starts: number; last_generation: number; state: ScenarioProcessSupervisionState; revoked_reason: string | null;
+  last_generation: number; state: ScenarioProcessSupervisionState; revoked_reason: string | null;
 }
 
 /** Durable single-host Scenario Process generation ledger and exact-once capability receipt store. */
@@ -22,7 +22,8 @@ export class SqliteScenarioProcessSupervisionStore implements ScenarioProcessSup
     sqlite.exec(`
       CREATE TABLE IF NOT EXISTS scenario_process_supervision (
         package_id TEXT NOT NULL, package_version TEXT NOT NULL, source TEXT NOT NULL,
-        manifest_digest TEXT NOT NULL, launch_fingerprint TEXT NOT NULL, maximum_starts INTEGER NOT NULL,
+        manifest_digest TEXT NOT NULL, launch_fingerprint TEXT NOT NULL,
+        maximum_starts INTEGER NOT NULL, /* legacy compatibility; lifetime restart quotas are intentionally not enforced */
         last_generation INTEGER NOT NULL, state TEXT NOT NULL, revoked_reason TEXT, updated_at TEXT NOT NULL,
         PRIMARY KEY(package_id, package_version)
       );
@@ -79,12 +80,12 @@ export class SqliteScenarioProcessSupervisionStore implements ScenarioProcessSup
     if (!row) return undefined;
     this.assertIdentity(row, identity);
     return { id: row.package_id, version: row.package_version, source: row.source, lastGeneration: row.last_generation,
-      maximumStarts: row.maximum_starts, state: row.state, revokedReason: row.revoked_reason };
+      state: row.state, revokedReason: row.revoked_reason };
   }
 
-  reserveGeneration(identity: ScenarioProcessManifest, generation: number, maximumStarts: number, launchFingerprint: string): void {
+  reserveGeneration(identity: ScenarioProcessManifest, generation: number, launchFingerprint: string): void {
     validIdentity(identity); digestValue(launchFingerprint, "launch fingerprint");
-    if (!Number.isSafeInteger(generation) || generation < 1 || !Number.isSafeInteger(maximumStarts) || maximumStarts < 1 || maximumStarts > 101) {
+    if (!Number.isSafeInteger(generation) || generation < 1) {
       throw new Error("Invalid Scenario Process generation reservation");
     }
     this.sqlite.transaction(() => {
@@ -95,10 +96,8 @@ export class SqliteScenarioProcessSupervisionStore implements ScenarioProcessSup
         if (row.manifest_digest !== manifestDigest || row.launch_fingerprint !== launchFingerprint) {
           throw new Error("Scenario Process reviewed launch identity changed; a new Package version is required");
         }
-        if (row.maximum_starts !== maximumStarts) throw new Error("Scenario Process restart budget changed for an installed Package version");
         if (generation !== row.last_generation + 1) throw new Error("Scenario Process generation is not monotonic");
       } else if (generation !== 1) throw new Error("First Scenario Process generation must be one");
-      if (generation > maximumStarts) throw new Error("Scenario Process restart budget exhausted");
       const detail = JSON.stringify({ launchFingerprint });
       this.sqlite.prepare(`INSERT INTO scenario_process_generations
         (package_id,package_version,source,generation,state,detail_json,detail_digest,reserved_at,updated_at)
@@ -109,7 +108,7 @@ export class SqliteScenarioProcessSupervisionStore implements ScenarioProcessSup
       else this.sqlite.prepare(`INSERT INTO scenario_process_supervision
         (package_id,package_version,source,manifest_digest,launch_fingerprint,maximum_starts,last_generation,state,revoked_reason,updated_at)
         VALUES(?,?,?,?,?,?,?,'reserved',NULL,?)`).run(identity.id, identity.version, identity.source, manifestDigest,
-          launchFingerprint, maximumStarts, generation, at);
+          launchFingerprint, 0, generation, at);
     })();
   }
 
@@ -155,17 +154,17 @@ export class SqliteScenarioProcessSupervisionStore implements ScenarioProcessSup
     validPackageIdentity(identity); validKey(idempotencyKey);
     const row = this.sqlite.prepare(`SELECT fingerprint,status,receipt_json,receipt_digest FROM scenario_process_capability_receipts
       WHERE package_id=? AND package_version=? AND idempotency_key=?`).get(identity.id, identity.version, idempotencyKey) as
-      { fingerprint: string; status: "pending"|"retry_allowed"|"succeeded"|"archived"; receipt_json: string|null; receipt_digest: string|null } | undefined;
+      { fingerprint: string; status: "pending"|"retry_allowed"|"succeeded"|"failed"|"archived"; receipt_json: string|null; receipt_digest: string|null } | undefined;
     if (!row) return undefined;
     if (row.status === "pending" || row.status === "retry_allowed") {
       if (row.receipt_json !== null || row.receipt_digest !== null) throw new Error("Scenario Process pending capability record is corrupt");
       return { fingerprint:row.fingerprint,status:row.status };
     }
-    if (row.status !== "succeeded" || row.receipt_json === null || row.receipt_digest === null
+    if ((row.status !== "succeeded" && row.status !== "failed") || row.receipt_json === null || row.receipt_digest === null
       || sha256(row.receipt_json) !== row.receipt_digest) throw new Error("Scenario Process capability receipt is corrupt");
     const receipt = JSON.parse(row.receipt_json) as ProviderCapabilityReceipt;
     validateReceipt(identity, idempotencyKey, row.fingerprint, receipt);
-    return { fingerprint: row.fingerprint, status:"succeeded" as const, receipt };
+    return { fingerprint: row.fingerprint, status:row.status, receipt };
   }
 
   countCapabilityReceipts(identity: ScenarioProcessPackageIdentity): number {
@@ -202,19 +201,19 @@ export class SqliteScenarioProcessSupervisionStore implements ScenarioProcessSup
     this.sqlite.transaction(() => {
       const previous = this.getCapabilityReceipt(identity, receipt.idempotencyKey);
       if (!previous || previous.fingerprint !== fingerprint) throw new Error("Scenario Process capability receipt has no matching claim");
-      if (previous.status === "succeeded") {
+      if (previous.status === "succeeded" || previous.status === "failed") {
         if (canonicalJson(previous.receipt) !== canonicalJson(receipt)) throw new Error("Scenario Process capability receipt conflict");
         return;
       }
-      const changed=this.sqlite.prepare(`UPDATE scenario_process_capability_receipts SET status='succeeded',receipt_json=?,receipt_digest=?,completed_at=?
+      const changed=this.sqlite.prepare(`UPDATE scenario_process_capability_receipts SET status=?,receipt_json=?,receipt_digest=?,completed_at=?
         WHERE package_id=? AND package_version=? AND idempotency_key=? AND fingerprint=? AND status='pending'`)
-        .run(json,digest,receipt.completedAt,identity.id,identity.version,receipt.idempotencyKey,fingerprint).changes;
+        .run(receipt.status,json,digest,receipt.completedAt,identity.id,identity.version,receipt.idempotencyKey,fingerprint).changes;
       if(changed!==1)throw new Error("Scenario Process capability receipt settlement conflict");
     })();
   }
 
   private row(identity: ScenarioProcessPackageIdentity): SupervisionRow | undefined {
-    return this.sqlite.prepare(`SELECT package_id,package_version,source,manifest_digest,launch_fingerprint,maximum_starts,
+    return this.sqlite.prepare(`SELECT package_id,package_version,source,manifest_digest,launch_fingerprint,
       last_generation,state,revoked_reason FROM scenario_process_supervision WHERE package_id=? AND package_version=?`)
       .get(identity.id, identity.version) as SupervisionRow | undefined;
   }
@@ -241,5 +240,10 @@ function validateClaim(identity:ScenarioProcessPackageIdentity,value:ScenarioCap
 function validateReceipt(identity: ScenarioProcessPackageIdentity, key: string, fingerprint: string, receipt: ProviderCapabilityReceipt): void {
   digestValue(fingerprint, "receipt fingerprint");
   if (receipt.provider.id !== identity.id || receipt.provider.version !== identity.version || receipt.idempotencyKey !== key
-    || receipt.inputFingerprint !== fingerprint || receipt.status !== "succeeded") throw new Error("Invalid Scenario Process capability receipt");
+    || receipt.inputFingerprint !== fingerprint || (receipt.status !== "succeeded" && receipt.status !== "failed")) {
+    throw new Error("Invalid Scenario Process capability receipt");
+  }
+  if (receipt.status === "failed" && (!receipt.reason || receipt.output !== undefined)) {
+    throw new Error("Invalid Scenario Process failed capability receipt");
+  }
 }

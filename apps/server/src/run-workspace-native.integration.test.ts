@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LocalExecutionNode, MacosProcessLauncher } from "@traceforge/execution-node";
-import { RunWorkspace, type ToolExecutionContext } from "@traceforge/worker-runtime";
+import { RunWorkspace, ToolProviderFairScheduler, type ToolExecutionContext } from "@traceforge/worker-runtime";
+import { SqliteProcessExecutionJournal } from "./execution-process-journal.js";
+import { ProcessExecutionCapacity } from "./process-execution-capacity.js";
 import { ExecutionNodeProcessTool } from "./worker-execution-adapters.js";
 import Database from "better-sqlite3";
 import { WorkspaceJobs } from "./workspace-jobs.js";
@@ -23,11 +25,25 @@ describe.skipIf(process.env.TRACEFORGE_TEST_MACOS_SEATBELT !== "1")("Run Workspa
     const sha256 = createHash("sha256").update(readFileSync(path)).digest("hex");
     operations = getSqliteClient(createDb(join(root, "operations.sqlite")));
     node = new LocalExecutionNode(new MacosProcessLauncher({ path, sha256 }), { platform: "darwin", architecture: "arm64",
-      sandboxBackends: ["traceforge-macos-native"], sandboxMeasurements: { "traceforge-macos-native": sha256 }, acceptedSampledResourceBackends: ["traceforge-macos-native"], operationJournal: new SqliteProcessOperationJournal(operations),
+      sandboxBackends: ["traceforge-macos-native"], sandboxMeasurements: { "traceforge-macos-native": sha256 }, acceptedSampledResourceBackends: ["traceforge-macos-native"], operationJournal: new SqliteProcessOperationJournal(operations), processJournal:new SqliteProcessExecutionJournal(operations),
       capabilities: { process: { spawn: true, stdio: true, tty: true, adoption: true, resourceLimits: false, resourcePolicy: "sampled_terminate", signals: ["interrupt", "terminate", "kill"] } } });
     workspace = new RunWorkspace(join(root, "runs"), new ExecutionNodeProcessTool(node), () => {}, undefined, undefined, () => 180);
   });
   afterAll(async () => { if (node) await node.shutdown(); operations?.close(); if (root) rmSync(root, { recursive: true, force: true }); });
+  it("releases a native service slot after confirmed tree cleanup and preserves that proof on reload",async()=>{
+    const scheduler=new ToolProviderFairScheduler({global:1,maximumWaitMs:1000}),capacity=new ProcessExecutionCapacity(operations,scheduler);
+    const attribution={caseId:"native-capacity",runId:"services",workId:"fixture",workerId:"host",scopeRef:"host-scope",leaseId:"service-lease",leaseExpiresAt:new Date(Date.now()+60000).toISOString(),actionId:"fixture",idempotencyKey:randomUUID()};
+    const requestId=randomUUID(),permit=await capacity.acquire({source:"native.fixture",version:"1",operation:"service",kind:"service",attribution});permit.beforeStart(requestId);
+    const started=await node.startProcess({requestId,attribution,executable:"/bin/sh",arguments:["-c","read value"],workingDirectory:root,environment:{},stdin:"pipe",timeoutMs:5000,outputLimitBytes:4096,
+      resources:{cpuTimeMs:10000,memoryBytes:268435456,maximumProcesses:2,writeBytes:1048576},
+      permissions:{version:1,platform:"darwin",filesystem:{read:[{path:root,scope:"tree"},{path:"/bin/sh",scope:"exact"}],write:[],deny:[]},network:"deny",process:{access:"sandboxed",interactive:false,background:false},secrets:"deny",sources:["native-test"]}});
+    const stopped=await node.terminateProcess({processId:started.process.id,adoptionToken:started.adoptionToken,operationId:randomUUID(),force:true});
+    expect(stopped.state).toBe("exited");
+    expect(new SqliteProcessExecutionJournal(operations).get(attribution.idempotencyKey)?.cleanup).toBe("process_tree_confirmed");
+    permit.finish(true);expect(scheduler.snapshot().occupied).toBe(0);
+    const again=new ProcessExecutionCapacity(operations,new ToolProviderFairScheduler({global:1,maximumWaitMs:1000}));
+    expect(again.list(attribution.caseId,attribution.runId).items[0]?.state).toBe("released");
+  },15000);
   it("reuses an automatically created conversation directory across native Run execution and reload",async()=>{
     const db=createDb(":memory:"),sql=getSqliteClient(db),app=Fastify();
     const storage=new ConversationWorkspaces(sql,root);

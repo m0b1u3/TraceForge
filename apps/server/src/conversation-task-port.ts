@@ -3,6 +3,8 @@ import type { LlmToolDefinition, ToolCall } from "@traceforge/llm";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { DesktopExecutionReceiptSchema } from "@traceforge/shared/desktop-execution";
+import type {DesktopTaskStart} from "./desktop-task-start.js";
+import {selectedTaskKind} from "@traceforge/shared/authorization-form";
 
 export interface ConversationTaskPort {
   tools: LlmToolDefinition[];
@@ -22,10 +24,12 @@ export const conversationTaskTools: LlmToolDefinition[] = [
 /** Application adapter, not another executor. No model-accessible authorization endpoint.
  * Requests are immutable proposals; only the desktop's existing reviewed dispatch starts a Run.
  */
-export function createConversationTaskPort(sql: Database.Database, request: (path: string, body?: Record<string, unknown>) => Promise<{ status: number; body: any }>): ConversationTaskPort {
+export function createConversationTaskPort(sql: Database.Database, request: (path: string, body?: Record<string, unknown>) => Promise<{ status: number; body: any }>,automaticStart?:DesktopTaskStart,preferences:()=>string|null=()=>null): ConversationTaskPort {
   sql.exec(`CREATE TABLE IF NOT EXISTS desktop_task_requests(conversation_id TEXT NOT NULL,message_id TEXT NOT NULL,scenario_kind TEXT NOT NULL,definition_version INTEGER NOT NULL,PRIMARY KEY(conversation_id,message_id));`);
   sql.exec(`CREATE TABLE IF NOT EXISTS desktop_task_inputs(conversation_id TEXT NOT NULL,message_id TEXT NOT NULL,target TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(conversation_id,message_id));`);
-  return { tools: conversationTaskTools, async execute(conversationId, messageId, call, signal) {
+  sql.exec(`CREATE TABLE IF NOT EXISTS desktop_task_starts(conversation_id TEXT NOT NULL,message_id TEXT NOT NULL,result_json TEXT NOT NULL,PRIMARY KEY(conversation_id,message_id));`);
+  const tools=conversationTaskTools.map(t=>automaticStart&&t.name==="task_request"?{...t,input_schema:{type:"object",properties:{},additionalProperties:false},description:"Start the current saved user task with the default Scenario selected in desktop settings. No Scenario name, version, permissions or goal arguments are needed or accepted from the model. Do not ask the user to name or select a Scenario in chat. The host resolves configuration and owns the grant. Use for requested work, not questions. Host-sensitive operations still require approval. Report execution only when state is started."}:t);
+  return { tools, async execute(conversationId, messageId, call, signal) {
     signal.throwIfAborted();
     const message = sql.prepare("SELECT text FROM desktop_conversation_messages WHERE conversation_id=? AND command_id=?").get(conversationId, messageId) as { text: string } | undefined;
     if (!message) return { error: "message_not_found" };
@@ -51,7 +55,8 @@ export function createConversationTaskPort(sql: Database.Database, request: (pat
     }
     if (call.name === "task_context") {
       z.object({}).strict().parse(call.input);
-      return { definitions: definitions.slice(0, 50).map(({ kind, version, title, description, requiredCapabilities, agentTopology, phases, toolPolicies, authorizationActions, authorizationReview }: any) => ({
+      const defaultKind=automaticStart?selectedTaskKind(preferences(),definitions):undefined;
+      return {defaultScenarioKind:defaultKind??null,configurationSource:"desktop_settings",instruction:"Use the configured default automatically for requested tasks. Do not require the user to type a Scenario name. Keep internal capability and policy inventories out of the conversation unless requested.", definitions: definitions.slice(0, 50).map(({ kind, version, title, description, requiredCapabilities, agentTopology, phases, toolPolicies, authorizationActions, authorizationReview }: any) => ({
         kind, version, title, description,
         capabilityStatus: "declared_not_authorized_or_runtime_verified",
         requiredCapabilities: requiredCapabilities ?? [],
@@ -59,16 +64,41 @@ export function createConversationTaskPort(sql: Database.Database, request: (pat
         phases: (phases ?? []).map(({ id, title, objective, requiredCapabilities }: any) => ({ id, title, objective, requiredCapabilities })),
         authorizationActions: authorizationActions ?? [],
         capabilityAuthorization: (toolPolicies ?? []).map(({capability,authorizationAction}:any)=>({capability,authorizationAction})),
-        ...(authorizationReview?.actionSelection === true ? { actionSelection: "user_selects_actions_in_review; unchecked_actions_denied" } : {}),
+        ...(authorizationReview?.actionSelection === true ? { actionSelection: automaticStart?"saved_desktop_settings; disabled_actions_denied":"user_selects_actions_in_review; unchecked_actions_denied" } : {}),
       })),
         runs: runs.map(({ runId, goal, status, workItems }: any) => ({ runId, goal, status, workItems: workItems.map(({ id, title, status }: any) => ({ id, title, status })) })), truncated };
     }
     if (call.name === "task_request") {
-      const value = start.parse(call.input);
+      if(automaticStart&&sql.prepare("SELECT 1 FROM desktop_task_requests WHERE conversation_id=? AND message_id=?").get(conversationId,messageId)){
+        const recorded=sql.prepare("SELECT result_json FROM desktop_task_starts WHERE conversation_id=? AND message_id=?").get(conversationId,messageId) as {result_json:string}|undefined;
+        return recorded?JSON.parse(recorded.result_json):{state:"legacy_request_not_started",executed:false};
+      }
+      let value:z.infer<typeof start>;
+      if(automaticStart){
+        // Older callers may still supply routing fields; they cannot override the setting.
+        z.object({scenarioKind:z.string().optional(),definitionVersion:z.number().optional()}).strict().parse(call.input);
+        const kind=selectedTaskKind(preferences(),definitions),definition=definitions.find((d:any)=>d.kind===kind);
+        if(!definition)return {state:"start_failed",executed:false,error:"default_scenario_unavailable",instruction:"Choose an installed default Scenario in Settings, not in the conversation."};
+        value={scenarioKind:definition.kind,definitionVersion:definition.version};
+      }else value=start.parse(call.input);
       if (sql.prepare("SELECT 1 FROM desktop_task_inputs WHERE conversation_id=? AND message_id=?").get(conversationId,messageId)) return {error:"message_already_routed"};
       if (!definitions.some((d: any) => d.kind === value.scenarioKind && d.version === value.definitionVersion)) return { error: "definition_unavailable" };
-      sql.prepare("INSERT OR IGNORE INTO desktop_task_requests VALUES(?,?,?,?)").run(conversationId, messageId, value.scenarioKind, value.definitionVersion);
+      const previous=sql.prepare("SELECT 1 FROM desktop_task_requests WHERE conversation_id=? AND message_id=?").get(conversationId,messageId);
+      signal.throwIfAborted();
+      sql.transaction(()=>{
+        sql.prepare("INSERT OR IGNORE INTO desktop_task_requests VALUES(?,?,?,?)").run(conversationId, messageId, value.scenarioKind, value.definitionVersion);
+        if(automaticStart&&!previous)sql.prepare("INSERT INTO desktop_task_starts VALUES(?,?,?)").run(conversationId,messageId,JSON.stringify({state:"start_unconfirmed",executed:false,error:"start_result_unknown"}));
+      })();
       const saved = sql.prepare("SELECT scenario_kind AS scenarioKind,definition_version AS definitionVersion FROM desktop_task_requests WHERE conversation_id=? AND message_id=?").get(conversationId, messageId) as z.infer<typeof start>;
+      if(automaticStart){
+        if(saved.scenarioKind!==value.scenarioKind||saved.definitionVersion!==value.definitionVersion)return {error:"message_already_routed"};
+        if(previous){const row=sql.prepare("SELECT result_json FROM desktop_task_starts WHERE conversation_id=? AND message_id=?").get(conversationId,messageId) as {result_json:string}|undefined;return row?JSON.parse(row.result_json):{state:"legacy_request_not_started",executed:false};}
+        let result:Record<string,unknown>;
+        try{result=await automaticStart({conversationId,messageId,definition:definitions.find((d:any)=>d.kind===saved.scenarioKind&&d.version===saved.definitionVersion),signal});}
+        catch {result={state:signal.aborted?"stopped":"start_unconfirmed",executed:false,error:signal.aborted?"start_cancelled":"start_result_unknown"};}
+        sql.prepare("UPDATE desktop_task_starts SET result_json=? WHERE conversation_id=? AND message_id=?").run(JSON.stringify(result),conversationId,messageId);
+        return result;
+      }
       return { state: "awaiting_user_review", ...saved, messageId, executed: false };
     }
     if (call.name !== "task_input") return { error: "unsupported_task_tool" };

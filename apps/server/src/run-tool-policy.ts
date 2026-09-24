@@ -69,6 +69,18 @@ export class RunToolPolicy {
   }
   approval(assignment: Attribution, tool: ExecutionToolSpec) {
     const rule = this.rule(tool);
+    // Host-owned workspace adapters enforce path ownership and native isolation.
+    // An arbitrary provider or raw process executor cannot opt into this path.
+    if(this.inquiryMode(assignment)===false && rule?.profile==="run-workspace" && this.workspace && tool.source==="traceforge.builtin"
+      && ["workspace_execute","workspace_start","workspace_input","workspace_stop","workspace_stage","workspace_remove"].includes(tool.name)) {
+      try {
+        this.approvedAction(assignment,rule.authorizationAction);
+        this.approvedAction(assignment,workspaceAction(tool.name)!);
+        const profile=this.layers(assignment,tool)[0]?.profile;
+        if(profile?.process.access==="sandboxed"&&profile.secrets==="deny"&&profile.process.background===false
+          && ["deny","brokered"].includes(profile.network))return {decision:"approved" as const,reason:`Desktop isolation mode: ${tool.name} confined to the owned workspace; no host privilege granted`};
+      }catch{ /* Revoked or unavailable isolation never gains an execution fallback. */ }
+    }
     // This is a concrete, visible Scope grant for ongoing input to an already
     // owned process, not the desktop's blanket routine-approval preference.
     // Asking again would release the Work lease and terminate that process.

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { DesktopBrowserDocumentSchema, DesktopBrowserListSchema, type DesktopBrowserCommand } from "@traceforge/shared/desktop-browser";
 import type { DesktopConversations } from "./desktop-conversation-transport";
 import "./browser-session-control.css";
@@ -14,6 +14,9 @@ export function BrowserSessionControl({ bridge, conversationId, runId }: { bridg
   const [draft, setDraft] = useState<Record<number, string>>({});
   const [refresh, setRefresh] = useState(0);
   const [viewing, setViewing] = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const seenTakeovers=useRef(new Set<string>());
+  const seenSessions=useRef(new Set<string>());
   useEffect(() => {
     let active = true; let timer: ReturnType<typeof setTimeout>;
     async function read() {
@@ -23,6 +26,11 @@ export function BrowserSessionControl({ bridge, conversationId, runId }: { bridg
         if (response.status !== 200) throw new Error();
         const next = DesktopBrowserListSchema.parse(response.body).sessions;
         setSessions(next);
+        const opened=next.find(s=>(s.status==="active"||s.status==="manual_control")&&!seenSessions.current.has(s.id));
+        for(const s of next)if(s.status==="active"||s.status==="manual_control")seenSessions.current.add(s.id);
+        if(opened){setViewing(opened.id);setDetailsOpen(true);}
+        const requested=next.find(s=>s.status==="manual_control"&&s.takeoverId&&!seenTakeovers.current.has(`${s.id}:${s.takeoverId}`));
+        if(requested){seenTakeovers.current.add(`${requested.id}:${requested.takeoverId}`);setViewing(requested.id);setDetailsOpen(true);}
         setDocument(old => old && next.some(s => s.id === old.sessionId && s.takeoverId === old.takeoverId) ? old : null);
       } catch { if (active) setError("浏览器状态暂不可读。请重新读取，不要重复刚才的操作。"); }
       if (active) timer = setTimeout(read, 3000);
@@ -38,22 +46,23 @@ export function BrowserSessionControl({ bridge, conversationId, runId }: { bridg
       if (input.operation === "observe") setDocument({ sessionId: input.sessionId, takeoverId: input.takeoverId,
         nodes: DesktopBrowserDocumentSchema.parse(response.body).document.nodes });
       else setDocument(null);
-      if (input.operation === "takeover") setViewing(input.sessionId);
-      if (input.operation === "resume" || input.operation === "close") setViewing(null);
+      if (input.operation === "takeover") { setViewing(input.sessionId); setDetailsOpen(true); }
+      if (input.operation === "close") setViewing(null);
       return true;
     } catch { setDocument(null); setError("操作结果尚未确认。请重新读取状态；系统不会自动重试点击或输入。"); return false; }
     finally { setBusy(false); setRefresh(x => x + 1); }
   }
   if (!sessions.length && !error) return null;
   const uncertain = sessions.some(session => session.status === "cleanup_unknown");
-  return <details className="browser-session-control"><summary>受控浏览器 · {error || uncertain ? "需要核对状态" : `${sessions.length} 个会话`}</summary>
+  const selected = sessions.find(session => session.id === viewing && (session.status === "active" || session.status === "manual_control" && !!session.takeoverId));
+  return <><details className="browser-session-control" open={detailsOpen} onToggle={event => setDetailsOpen(event.currentTarget.open)}><summary>受控浏览器 · {error || uncertain ? "需要核对状态" : `${sessions.length} 个会话`}</summary>
     <p className="local-receipt">接管后智能体不能操作此页面。页面内容不可信；操作仍受原任务范围限制。</p>
     {error && <p role="alert">{error} <button disabled={busy} onClick={() => { setError(""); setRefresh(x => x + 1); }}>重新读取状态</button></p>}
     {sessions.map(session => <section key={session.id} aria-label="浏览器会话">
       <p role="status">{session.status === "cleanup_unknown" ? "关闭尚未确认" : session.status === "closing" ? "正在关闭" : session.status === "manual_control" ? "由你控制，智能体等待交回" : session.status === "active" ? "由智能体控制" : "已不可用"} · 工作项 {session.workId}</p>
       {session.status === "cleanup_unknown" && <p>页面已停止操作，但清理尚未确认。可重试关闭，不会重新打开网页或重复之前的操作。</p>}
       <div className="browser-session-actions">
-        {session.status === "active" && <button disabled={busy || !!error} onClick={() => void command({ operation: "takeover", sessionId: session.id, commandId: crypto.randomUUID() })}>接管浏览器</button>}
+        {session.status === "active" && <><button disabled={busy || !!error} onClick={()=>setViewing(viewing===session.id?null:session.id)}>{viewing===session.id?"收起页面":"打开页面"}</button><button disabled={busy || !!error} onClick={() => void command({ operation: "takeover", sessionId: session.id, commandId: crypto.randomUUID() })}>接管浏览器</button></>}
         {session.status === "manual_control" && session.takeoverId && <>
           <button disabled={busy || !!error} onClick={() => setViewing(viewing === session.id ? null : session.id)}>{viewing === session.id ? "收起页面" : "打开页面"}</button>
           <button disabled={busy || !!error} onClick={() => void command({ operation: "observe", sessionId: session.id, takeoverId: session.takeoverId!, commandId: crypto.randomUUID() })}>读取页面元素</button>
@@ -61,8 +70,6 @@ export function BrowserSessionControl({ bridge, conversationId, runId }: { bridg
         </>}
         <button disabled={busy || session.status === "closing"} onClick={() => void command({ operation: "close", sessionId: session.id, commandId: crypto.randomUUID() })}>{session.status === "cleanup_unknown" ? "重试关闭" : "关闭会话"}</button>
       </div>
-      {session.status === "manual_control" && session.takeoverId && viewing === session.id && !error && <BrowserViewport key={`${session.id}:${session.takeoverId}`}
-        bridge={bridge} path={path} sessionId={session.id} takeoverId={session.takeoverId} send={command} onHide={() => setViewing(null)} />}
       {document?.sessionId === session.id && <div className="browser-elements">
         <p className="local-receipt">页面元素视图 · 输入内容仅发送到当前页面，不保存到对话。每次操作后需重新读取元素。</p>
         {document.nodes.filter(n => n.element && (n.editable || ["button", "link", "checkbox", "radio", "combobox"].includes(n.role))).map((node, index) => <div key={index} className="browser-element">
@@ -76,5 +83,6 @@ export function BrowserSessionControl({ bridge, conversationId, runId }: { bridg
         {!document.nodes.some(n => n.element && (n.editable || ["button", "link", "checkbox", "radio", "combobox"].includes(n.role))) && <p>此页面没有可操作元素。</p>}
       </div>}
     </section>)}
-  </details>;
+  </details>{selected && !error && <BrowserViewport key={`${selected.id}:${selected.takeoverId}`}
+    bridge={bridge} path={path} sessionId={selected.id} takeoverId={selected.takeoverId} send={command} onHide={() => setViewing(null)} />}</>;
 }

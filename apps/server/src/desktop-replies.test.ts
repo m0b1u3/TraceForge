@@ -3,12 +3,39 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { LlmProvider, StreamToolsHandlers, RunToolsArgs, RunTurn } from "@traceforge/llm";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { registerConversationRoutes } from "./conversation-routes.js";
-import { DesktopReplyService, registerDesktopReplyRoutes } from "./desktop-replies.js";
+import { DesktopReplyService, registerDesktopReplyRoutes, type DesktopReplyDelta } from "./desktop-replies.js";
 import { DesktopReplySchema } from "@traceforge/shared/desktop-replies";
 import { validateConversationRequest } from "../../desktop/src/conversation-bridge.js";
 import { createConversationTaskPort } from "./conversation-task-port.js";
+import { registerPhysicalStorageFunctions } from "./db/physical-storage.js";
 
 const cleanup: Array<()=>Promise<void>>=[];
+it("starts a reply beyond the old global reply count and text pool", async () => {
+  const f = await fixture();
+  const insert = f.sql.prepare(`INSERT INTO desktop_replies
+    (conversation_id,message_command_id,revision,state,text,created_at,updated_at,context_messages,context_truncated,error)
+    VALUES ('historical',?,0,'completed','x','2026-01-01','2026-01-01',0,0,NULL)`);
+  f.sql.transaction(() => { for (let i = 0; i < 10000; i++) insert.run(`old-${i}`); })();
+  f.sql.prepare(`UPDATE desktop_replies SET text=? WHERE conversation_id='historical' AND message_command_id='old-0'`)
+    .run("x".repeat(33 * 1024 * 1024));
+  expect(f.service.start(f.conversation.id, "message").status).toBe(202);
+  expect(f.service.cancel(f.conversation.id, "message").body).toMatchObject({ state: "stopped" });
+});
+it("reports physical storage pressure before inference and during streaming", async () => {
+  const f = await fixture();
+  const blocked = { databaseBytes: 1024, walBytes: 0, shmBytes: 0, availableBytes: 0 };
+  registerPhysicalStorageFunctions(f.sql, () => blocked);
+  expect(f.service.start(f.conversation.id, "message")).toEqual({ status: 507, body: { error: "storage_limit" } });
+  expect(f.provider.streamTools).not.toHaveBeenCalled();
+  registerPhysicalStorageFunctions(f.sql, () => ({ ...blocked, availableBytes: 1024 * 1024 * 1024 }));
+  expect(f.service.start(f.conversation.id, "message").status).toBe(202);
+  await vi.waitFor(() => expect(f.provider.streamTools).toHaveBeenCalledTimes(1));
+  registerPhysicalStorageFunctions(f.sql, () => blocked);
+  f.handlers().onTextDelta?.("new text");
+  await vi.waitFor(() => expect(f.service.read(f.conversation.id, 0).body).toMatchObject({
+    replies: [{ state: "failed", error: "storage_limit", text: "" }],
+  }));
+});
 it("edits and reorders only pending replies, pauses durably and reconciles lost acknowledgements",async()=>{
   const f=await fixture();await f.call(`${f.base}/replies/message`,{});
   for(const id of ["second","third"]){await f.call(`${f.base}/messages`,{commandId:id,text:id});await f.call(`${f.base}/replies/${id}`,{});}
@@ -81,7 +108,7 @@ it("has no implicit four-minute deadline and remains cancellable",async()=>{
     await vi.advanceTimersByTimeAsync(300000);
     expect(service.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"streaming"}]});
     service.cancel(f.conversation.id,"message");
-    expect(service.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"cancelled"}]});
+    expect(service.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"stopped"}]});
   } finally { service.close();vi.useRealTimers(); }
 });
 it("continues beyond eight turns and six lookups without an implicit call budget",async()=>{
@@ -132,7 +159,7 @@ it("stopping the current reply cancels its queued follow-ups without inference",
   await f.call(`${f.base}/messages`,{commandId:"second",text:"Queued instruction"});
   await f.call(`${f.base}/replies/second`,{});
   await f.call(`${f.base}/replies/message/cancel`,{});
-  expect(f.service.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"cancelled"},{state:"cancelled"}]});
+  expect(f.service.read(f.conversation.id,0).body).toMatchObject({replies:[{state:"stopped"},{state:"withdrawn"}]});
   await new Promise(resolve=>setTimeout(resolve,10));
   expect(f.provider.streamTools).toHaveBeenCalledTimes(1);
 });
@@ -142,13 +169,13 @@ it("a withdrawn queued message is not executed and restart does not replay the q
     await f.call(`${f.base}/messages`,{commandId,text:"Queued instruction"});
     await f.call(`${f.base}/replies/${commandId}`,{});
   }
-  expect((await f.call(`${f.base}/replies/withdraw/cancel`,{})).json().state).toBe("cancelled");
+  expect((await f.call(`${f.base}/replies/withdraw/cancel`,{})).json().state).toBe("withdrawn");
   f.service.close();
   const restored=new DesktopReplyService(f.sql,()=>f.provider);
-  expect(restored.start(f.conversation.id,"pending").body).toMatchObject({state:"interrupted",error:"host_stopped"});
+  expect(restored.start(f.conversation.id,"pending").body).toMatchObject({state:"withdrawn",error:"host_stopped"});
   expect(f.provider.streamTools).toHaveBeenCalledTimes(1); restored.close();
 });
-async function fixture(timeout=120000){
+async function fixture(timeout=120000,publishDelta?: (event: DesktopReplyDelta) => void){
   const db=createDb(":memory:"),sql=getSqliteClient(db),app=Fastify();
   let handlers!:StreamToolsHandlers,args!:RunToolsArgs,finish!:(turn:RunTurn)=>void,fail!:(error:Error)=>void;
   const provider:LlmProvider={extractJson:vi.fn(),runTools:vi.fn(),streamTools:vi.fn((input,callbacks)=>{
@@ -156,7 +183,7 @@ async function fixture(timeout=120000){
     return new Promise<RunTurn>((resolve,reject)=>{finish=resolve;fail=reject;callbacks.signal?.addEventListener("abort",()=>reject(new Error("aborted")),{once:true});});
   })};
   let available=true;
-  const service=new DesktopReplyService(sql,()=>{if(!available)throw new Error("secret should not escape");return provider;},timeout);
+  const service=new DesktopReplyService(sql,()=>{if(!available)throw new Error("secret should not escape");return provider;},timeout,undefined,undefined,publishDelta);
   registerConversationRoutes(app,db);registerDesktopReplyRoutes(app,service);await app.ready();
   cleanup.push(async()=>{await app.close();sql.close();});
   const call=(url:string,body?:object)=>app.inject({url,method:body?"POST":"GET",...(body?{payload:body}:{})});
@@ -182,12 +209,31 @@ it("persists real deltas before completion; reads and repeated commands never in
   await f.call(`${f.base}/replies/message`,{});expect(f.provider.streamTools).toHaveBeenCalledTimes(1);
   expect((await f.call(`${f.base}/execution`)).statusCode).toBe(404);
 });
+it("pushes ordered text deltas before the durable flush and stops pushing after cancellation",async()=>{
+  const events:DesktopReplyDelta[]=[];
+  const f=await fixture(120000,event=>events.push(event));
+  await f.call(`${f.base}/replies/message`,{});
+  const initial=(await f.call(`${f.base}/replies?after=0`)).json().replies[0];
+  f.handlers().onReasoningDelta?.("considering");
+  f.handlers().onTextDelta?.("first ");
+  f.handlers().onTextDelta?.("part");
+  expect(events).toEqual([
+    {conversationId:f.conversation.id,messageId:"message",kind:"reasoning",offset:0,delta:"considering"},
+    {conversationId:f.conversation.id,messageId:"message",kind:"text",offset:0,delta:"first "},
+    {conversationId:f.conversation.id,messageId:"message",kind:"text",offset:6,delta:"part"},
+  ]);
+  expect((await f.call(`${f.base}/replies?after=${initial.revision}`)).json().replies).toEqual([]);
+  await f.call(`${f.base}/replies/message/cancel`,{});
+  f.handlers().onTextDelta?.("late");
+  expect(events).toHaveLength(3);
+  expect((await f.call(`${f.base}/replies?after=0`)).json().replies[0]).toMatchObject({state:"stopped",text:"first part",reasoning:"considering"});
+});
 it("persists streaming public reasoning and preserves it on cancellation without late writes", async () => {
   const f = await fixture(); await f.call(`${f.base}/replies/message`, {});
   f.handlers().onReasoningDelta?.("Public progress");
   await vi.waitFor(async () => expect((await f.call(`${f.base}/replies?after=0`)).json().replies[0]).toMatchObject({ state: "streaming", text: "", reasoning: "Public progress" }));
   const stopped = (await f.call(`${f.base}/replies/message/cancel`, {})).json();
-  expect(stopped).toMatchObject({ state: "cancelled", reasoning: "Public progress" });
+  expect(stopped).toMatchObject({ state: "stopped", reasoning: "Public progress" });
   f.handlers().onReasoningDelta?.("late"); f.finish("late answer");
   expect((await f.call(`${f.base}/replies?after=0`)).json().replies[0].reasoning).toBe("Public progress");
   expect(f.provider.streamTools).toHaveBeenCalledOnce();
@@ -195,7 +241,7 @@ it("persists streaming public reasoning and preserves it on cancellation without
 it("cancel flushes partial text and ignores late deltas/completion",async()=>{
   const f=await fixture();await f.call(`${f.base}/replies/message`,{});f.handlers().onTextDelta?.("partial");
   const stop=(await f.call(`${f.base}/replies/message/cancel`,{})).json();
-  expect(stop).toMatchObject({state:"cancelled",text:"partial"});expect(f.handlers().signal?.aborted).toBe(true);
+  expect(stop).toMatchObject({state:"stopped",text:"partial"});expect(f.handlers().signal?.aborted).toBe(true);
   f.handlers().onTextDelta?.("late");f.finish("partiallate");
   expect((await f.call(`${f.base}/replies/message`,{})).json()).toEqual(stop);
   expect(f.provider.streamTools).toHaveBeenCalledTimes(1);

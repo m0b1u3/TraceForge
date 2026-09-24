@@ -25,10 +25,11 @@ export interface ScenarioBrowserDeployment {
 export type BrowserArtifactInput = Parameters<BrowserArtifactPort["recordObservation"]>[0] | Parameters<BrowserArtifactPort["recordDownload"]>[0];
 const inputSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("open"), authorizationAction: z.string().min(1).max(128), url: z.string().url().max(8192),
-    durationMs: z.number().int().min(1000).max(900000).default(300000), screenshot: z.boolean().default(false) }).strict(),
-  z.object({ operation: z.literal("observe"), authorizationAction: z.string().min(1).max(128), sessionId: z.string().min(1).max(256), pageId: z.string().max(256).optional() }).strict(),
+    durationMs: z.number().int().min(0).max(2147483647).default(0), screenshot: z.boolean().default(false) }).strict(),
+  z.object({ operation: z.literal("observe"), authorizationAction: z.string().min(1).max(128), sessionId: z.string().min(1).max(256), pageId: z.string().max(256).optional(), screenshot: z.boolean().default(false) }).strict(),
   z.object({ operation: z.literal("act"), authorizationAction: z.string().min(1).max(128), sessionId: z.string().min(1).max(256), action: BrowserActionSchema }).strict(),
   z.object({ operation: z.literal("close"), authorizationAction: z.string().min(1).max(128), sessionId: z.string().min(1).max(256) }).strict(),
+  z.object({ operation: z.literal("request_takeover"), authorizationAction: z.string().min(1).max(128), sessionId: z.string().min(1).max(256) }).strict(),
   z.object({ operation: z.literal("inspect"), authorizationAction: z.string().min(1).max(128),
     url: z.string().url().max(8192), screenshot: z.boolean().default(false) }).strict(),
   z.object({ operation: z.literal("read"), authorizationAction: z.string().min(1).max(128), artifactId: z.string().min(1).max(256),
@@ -47,7 +48,7 @@ export function createScenarioBrowserHandler(
   controllerFactory: (node: ExecutionNode) => BrowserControllerPort = node => new ExecutionNodeBrowserController({ executionNode: node }),
   sessions?: DesktopBrowserSessions,
 ): ScenarioPackageCapabilityHandler {
-  return { capability: "traceforge.scenario.browser@1", actions: ["inspect", "read", "open", "observe", "act", "close"], async execute(raw, attribution, signal) {
+  return { capability: "traceforge.scenario.browser@1", timeoutMs:0, actions: ["inspect", "read", "open", "observe", "act", "close", "request_takeover"], async execute(raw, attribution, signal) {
     const input = inputSchema.parse(raw);
     if (!capacity || !deployment) throw new Error("Browser unavailable: reviewed local deployment and explicit isolation are required");
     const capacityInput: ProcessCapacityInput = { source: installation.id, version: installation.version, operation: `browser.${input.operation}`,
@@ -69,13 +70,18 @@ export function createScenarioBrowserHandler(
       context.authorization.requireAction(attribution.scopeRef, attribution.caseId, input.authorizationAction);
     };
     check();
-    if (input.operation === "observe" || input.operation === "act" || input.operation === "close") {
+    if (input.operation === "observe" || input.operation === "act" || input.operation === "close" || input.operation === "request_takeover") {
       if (!sessions) throw new Error("Browser sessions unavailable");
       const active = sessions.agent(input.sessionId, attribution, installation.id, installation.version);
       if (input.operation === "close") { await sessions.close(input.sessionId); return { output: { status: "closed" }, refs: [] }; }
       if (active.snapshot(input.sessionId)?.status === "manual_control") return { output: { status: "manual_control", instruction: "User controls this session; do not act or open a replacement." }, refs: [] };
+      if(input.operation === "request_takeover") {
+        await sessions.command(attribution.caseId,attribution.runId,{operation:"takeover",sessionId:input.sessionId,
+          commandId:`agent-handoff:${createHash("sha256").update(attribution.idempotencyKey).digest("hex")}`});
+        return {output:{status:"manual_control",sessionId:input.sessionId,instruction:"Control handed to the desktop user. Wait for handback; do not close, complete this Work, or open a replacement."},refs:[]};
+      }
       const output = input.operation === "act" ? await active.act(input.sessionId, input.action)
-        : await active.observe(input.sessionId, { kind: "dom", pageId: input.pageId });
+        : await active.observe(input.sessionId, { kind: input.screenshot ? "screenshot" : "dom", pageId: input.pageId });
       return { output, refs: "artifactRef" in output ? [output.artifactRef] : [] };
     }
     if (input.operation === "read") {
@@ -102,8 +108,9 @@ export function createScenarioBrowserHandler(
       if (permissionProfileFingerprint(process.permissions) !== permissionProfileFingerprint(attribution.effectivePermissions)) throw new Error("Browser launch permissions must match the current invocation");
       if (process.isolation !== "chromium" && (!process.expectedSandboxBackend || !process.expectedBackendMeasurement)) throw new Error("Browser native backend identity is required");
       if (process.isolation === "chromium" && !deployment.chromiumProcess) throw new Error("Chromium-only browser deployment is unavailable");
-      process.timeoutMs = Math.min(process.timeoutMs, input.operation === "open" ? input.durationMs : 30000);
-      deadline = Date.now() + process.timeoutMs;
+      const requested=input.operation === "open" ? input.durationMs : 0;
+      process.timeoutMs = process.timeoutMs>0 ? (requested>0?Math.min(process.timeoutMs,requested):process.timeoutMs) : requested;
+      deadline = process.timeoutMs>0 ? Date.now() + process.timeoutMs : Infinity;
     } catch (error) { await deployment.release?.(attribution, true); throw error; }
     let permit: ProcessCapacityLease | undefined; let terminal = false; let dispatched = false;
     const controlledNode = new Proxy(node, { get(target, property) {
@@ -124,19 +131,25 @@ export function createScenarioBrowserHandler(
     const recordedArtifacts: Array<ReturnType<ScenarioToolHostContext["artifacts"]["record"]>> = [];
     const record = async (kind: "download" | "observation", value: Parameters<BrowserArtifactPort["recordObservation"]>[0] | Parameters<BrowserArtifactPort["recordDownload"]>[0]) => {
       check();
+      let indexed: ReturnType<ScenarioToolHostContext["artifacts"]["record"]> | undefined;
       const index = (saved: { ref: string }) => {
         check();
         const artifact = context.artifacts.record({ packageId: installation.id, packageVersion: installation.version, caseId: attribution.caseId, runId: attribution.runId,
         commandId: `browser:${createHash("sha256").update(JSON.stringify([value.sessionId, saved.ref, value.sha256])).digest("hex")}`,
         kind: `browser.${kind}`, summary: `Browser ${kind}`, contentRef: saved.ref, digest: `sha256:${value.sha256}`, byteSize: value.byteSize,
         metadata: { sessionId: value.sessionId, workId: attribution.workId, leaseId: attribution.leaseId } });
-        recordedArtifacts.push(artifact); return artifact;
+        indexed=artifact;recordedArtifacts.push(artifact); return artifact;
       };
-      if (deployment.persistArtifact) return deployment.persistArtifact(kind, value, index);
-      const saved = kind === "download" ? await deployment.artifacts.recordDownload(value as Parameters<BrowserArtifactPort["recordDownload"]>[0])
-        : await deployment.artifacts.recordObservation(value as Parameters<BrowserArtifactPort["recordObservation"]>[0]);
-      index(saved);
-      return saved;
+      if (deployment.persistArtifact) await deployment.persistArtifact(kind, value, index);
+      else {
+        const saved = kind === "download" ? await deployment.artifacts.recordDownload(value as Parameters<BrowserArtifactPort["recordDownload"]>[0])
+          : await deployment.artifacts.recordObservation(value as Parameters<BrowserArtifactPort["recordObservation"]>[0]);
+        index(saved);
+      }
+      if(!indexed)throw new Error("Browser artifact index was not recorded");
+      // Public observations expose the same package/Case/Run-bound identifier
+      // accepted by read. Content storage references remain an implementation detail.
+      return {ref:indexed.id};
     };
     try {
     runtime = new BrokeredBrowserRuntime({ executionNode: controlledNode, controller: controllerFactory(controlledNode),
@@ -175,11 +188,11 @@ export function createScenarioBrowserHandler(
       if (input.operation === "open") {
         const id = sessionId;
         sessions!.add(id, { runtime, owner: structuredClone(attribution), packageId: installation.id, packageVersion: installation.version,
-          check, read: ref => { const artifact = recordedArtifacts.find(a => a.contentRef === ref); return artifact && deployment.readContent?.(ref, attribution, artifact.id); },
+          check, read: ref => { const artifact = recordedArtifacts.find(a => a.id === ref); return artifact && deployment.readContent?.(artifact.contentRef, attribution, artifact.id); },
           close: async () => {
             try { await runtime.close(id); }
             catch (error) { await deployment.release?.(attribution, false); throw error; }
-            try { permit?.finish(!dispatched || terminal); } finally { await deployment.release?.(attribution, !dispatched || terminal); }
+            try { permit?.finish(!dispatched || terminal, terminal && process.isolation === "chromium"); } finally { await deployment.release?.(attribution, !dispatched || terminal); }
           } });
         retained = true;
       }
@@ -188,7 +201,7 @@ export function createScenarioBrowserHandler(
       signal.removeEventListener("abort", cancel);
       try { if (sessionId && !retained) await runtime.close(sessionId); }
       finally {
-        if (!retained) { try { permit?.finish(!dispatched || terminal); }
+        if (!retained) { try { permit?.finish(!dispatched || terminal, terminal && process.isolation === "chromium"); }
         finally { await deployment.release?.(attribution, !dispatched || terminal); } }
       }
     }

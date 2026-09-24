@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type Database from "better-sqlite3";
 import {
   createExecutionToolRegistry, PolicyExecutionToolGateway, ToolInvocationRecoveryRequiredError,
-  type ToolExecutionResult, type WorkerAssignment,
+  type ToolExecutionResult, type WorkerAssignment, type WorkerCheckpointDocument,
 } from "@traceforge/worker-runtime";
 import type { WorkerDescriptor } from "@traceforge/orchestration-core";
 import { createDb, getSqliteClient } from "./db/client.js";
@@ -53,6 +53,43 @@ function fixture(execute: () => Promise<ToolExecutionResult> = async () => resul
 }
 
 describe("Tool Invocation execution ownership and recovery", () => {
+  it("runs independent reads concurrently with separate receipts and no replay", async () => {
+    let started=0,release!:()=>void;
+    const both=new Promise<void>(resolve=>release=resolve);
+    const f=fixture(async()=>{if(++started===2)release();await both;return result;});
+    const request={...f.request,invocation:{id:"batch",tool:"tools.parallel_read",rationale:"Independent reads",input:{calls:["one","two"].map(id=>({id,tool:"neutral.observe",input:{id},rationale:"Read"}))}},idempotencyKey:"effect:batch"};
+    expect((await f.gateway.execute(request)).status).toBe("succeeded");
+    expect(started).toBe(2);
+    for(const key of ["effect:batch","effect:batch/read/one","effect:batch/read/two"]){expect(await f.receipts.get(key)).toBeDefined();expect(f.bindings.execution(key)?.status).toBe("completed");}
+    await f.gateway.execute(request);expect(started).toBe(2);
+    const checkpoint:WorkerCheckpointDocument={version:2,workerId:"worker_1",caseId:"case_1",runId:"run_1",workId:"work_1",workKey:"effect",leaseId:"lease_1",savedAt:at,turn:1,transcript:[],steering:[],completedInvocationIds:["batch"],consecutiveFailures:0,pendingInvocation:null};
+    expect(()=>f.bindings.validateCheckpoint(request.assignment,checkpoint)).not.toThrow();
+    checkpoint.completedInvocationIds=[];
+    expect(()=>f.bindings.validateCheckpoint(request.assignment,checkpoint)).toThrow();
+  });
+  it("recovers a lost aggregate receipt from durable children without repeating reads",async()=>{
+    let calls=0;const f=fixture(async()=>{calls++;return result;});
+    const request={...f.request,invocation:{id:"batch",tool:"tools.parallel_read",rationale:"Read",input:{calls:["one","two"].map(id=>({id,tool:"neutral.observe",input:{},rationale:"Read"}))}},idempotencyKey:"effect:batch"};
+    const put=f.receipts.put.bind(f.receipts);f.receipts.put=async(key,value)=>{if(key==="effect:batch")throw new Error("aggregate unavailable");return put(key,value);};
+    await expect(f.gateway.execute(request)).rejects.toThrow();f.receipts.put=put;
+    f.bindings.recoverInterrupted();
+    expect(await f.gateway.recover(request)).toMatchObject({status:"recorded",result:{status:"succeeded"}});expect(calls).toBe(2);
+  });
+  it("does not replay an unknown child or admit unrelated work after a partial batch",async()=>{
+    let calls=0;const f=fixture(async()=>{if(++calls===2)throw new Error("lost result");return result;});
+    const request={...f.request,invocation:{id:"batch",tool:"tools.parallel_read",rationale:"Read",input:{calls:["one","two"].map(id=>({id,tool:"neutral.observe",input:{},rationale:"Read"}))}},idempotencyKey:"effect:batch"};
+    await expect(f.gateway.execute(request)).rejects.toThrow();
+    await expect(f.gateway.execute(f.request)).rejects.toThrow();
+    await expect(f.gateway.execute(request)).rejects.toThrow();expect(calls).toBe(2);
+  });
+  it.each(["write","nested","duplicate"])("rejects invalid %s batches before any execution",async mode=>{
+    let calls=0;const f=fixture(async()=>{calls++;return result;});
+    const children=["one","two"].map(id=>({id,tool:"neutral.observe",input:{},rationale:"Read"}));
+    if(mode==="write")children[1].tool="workspace.write";
+    if(mode==="nested")children[1].tool="tools.parallel_read";
+    if(mode==="duplicate")children[1].id="one";
+    await expect(f.gateway.execute({...f.request,invocation:{id:"batch",tool:"tools.parallel_read",input:{calls:children},rationale:"Read"},idempotencyKey:"effect:batch"})).rejects.toThrow();expect(calls).toBe(0);
+  });
   it("rolls back the binding if its initial execution journal cannot be persisted", async () => {
     let calls = 0;
     const context = fixture(async () => { calls++; return result; });

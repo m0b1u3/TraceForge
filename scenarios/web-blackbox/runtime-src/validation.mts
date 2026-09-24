@@ -10,7 +10,8 @@ export function plainObject(value: unknown, label: string): JsonObject {
 
 export function exact(value: JsonObject, allowed: readonly string[]): void {
   const keys = new Set(allowed);
-  if (Object.keys(value).some((key) => !keys.has(key))) throw new Error("Unknown input field");
+  const unknown = Object.keys(value).filter((key) => !keys.has(key));
+  if (unknown.length) throw new Error(`Unknown input field: ${unknown.join(", ")}; allowed fields are: ${allowed.join(", ")}`);
 }
 
 export function requiredText(value: unknown, label: string): string {
@@ -19,7 +20,9 @@ export function requiredText(value: unknown, label: string): string {
 }
 
 export function boundedInteger(value: unknown, minimum: number, maximum: number, label: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) throw new Error(`${label} is invalid`);
+  if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+    throw new Error(`${label} must be an integer between ${minimum} and ${maximum}`);
+  }
   return value as number;
 }
 
@@ -51,6 +54,22 @@ export function canonicalHttpUrl(value: unknown, label: string): string {
 export function shaBytes(value: Uint8Array): string { return createHash("sha256").update(value).digest("hex"); }
 export function sha(value: string): string { return shaBytes(Buffer.from(value, "utf8")); }
 export function unique<T>(values: T[]): T[] { return [...new Set(values)]; }
+
+/** Deterministic JSON with sorted object keys: plan identity never depends on key order. */
+export function stableJson(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("Non-finite numbers cannot be canonically serialized");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    const entries = Object.keys(value as JsonObject).sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson((value as JsonObject)[key])}`);
+    return `{${entries.join(",")}}`;
+  }
+  throw new Error("Value cannot be canonically serialized");
+}
 export function succeeded(summary: string, output: unknown, refs: string[]): ToolResult {
   return { status: "succeeded", summary, raw: JSON.stringify(output), refs: unique(refs), retryable: false };
 }

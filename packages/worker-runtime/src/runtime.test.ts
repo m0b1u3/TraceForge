@@ -400,7 +400,8 @@ describe("WorkerHost", () => {
     expect(control.completed?.outputs[0].refs).toEqual(["evidence_1"]);
     expect(checkpoints.document?.journal?.completedIntentIds).toEqual(["call_1"]);
     expect(checkpoints.document?.journal?.entries.some((entry) => entry.summary.includes("raw-sha256="))).toBe(true);
-    const turnId = "worker:worker_1:run:run_1:work:work_1:lease:lease_1:attempt:1:turn:1";
+    const turnId = lifecycle.find(event => event.type === "tool_started")!.turnId;
+    expect(turnId).toMatch(/^worker:worker_1:run:run_1:work:work_1:lease:lease_1:attempt:1:evaluation:[a-f0-9-]+:turn:1$/);
     expect(lifecycle.filter((event) => event.type === "tool_started" || event.type === "tool_completed")
       .map((event) => [event.type, event.turnId])).toEqual([["tool_started", turnId], ["tool_completed", turnId]]);
     expect(lifecycle.filter((event) => event.type === "turn_progress").map((event) => event.phase)).toEqual([
@@ -463,6 +464,23 @@ describe("WorkerHost", () => {
     const result = await runtime.execute(assignment());
     expect(result.outcome).toBe("lease_lost");
     expect(control.failed).toBeUndefined();
+  });
+
+  it("uses a fresh cognitive identity after same-lease checkpoint conflict without dispatching the uncommitted tool", async () => {
+    const control = new FakeControl(), checkpoints = new MemoryCheckpoints(), ids:string[]=[];
+    const save = control.checkpoint.bind(control); let conflict=true, executions=0;
+    control.checkpoint=async(value,input)=>{if(conflict){conflict=false;throw new LeaseLostError("revision conflict");}return save(value,input);};
+    const runtime=new WorkerHost(worker,control,{async decide(request){ids.push(request.turnId);return ids.length<=2
+      ?{type:"invoke_tool",invocation:{id:"stable-effect",tool:"read",input:{},rationale:"Observe"}}
+      :{type:"complete",summary:"Observed",outputs:[]};}}, {
+      async catalog(){return resolvedCatalog([{name:"read",source:"test",version:"1.0.0",priority:1,description:"Read",inputSchema:{},providedCapabilities:["evidence.read"],dependencyCapabilities:[],permissionRequirements:{},risk:"read_only",timeoutMs:1000}]);},
+      async execute(input){executions++;expect(input.idempotencyKey).toBe("effect_1:stable-effect");return {status:"succeeded",summary:"Read",raw:"Read",refs:[],retryable:false};},
+    },continueObserver,checkpoints,new BoundedOutputDistiller(),{},()=>"2026-08-24T08:00:10.000Z");
+    expect((await runtime.execute(assignment())).outcome).toBe("lease_lost");
+    expect(executions).toBe(0);
+    expect((await runtime.execute(control.current)).outcome).toBe("completed");
+    expect(ids[0]).not.toBe(ids[1]);expect(ids[0]).toMatch(/:turn:1$/);expect(ids[1]).toMatch(/:turn:1$/);
+    expect(executions).toBe(1);expect(control.failed).toBeUndefined();
   });
 
   it("terminates the active Turn when tool execution fails unexpectedly", async () => {

@@ -31,7 +31,7 @@ it("admits the shipped browser through the real gateway only with Host readiness
   expect(policy.layers(current.assignment, { ...tool, source: "untrusted" })[0].profile.process.access).toBe("deny");
 });
 
-it("uses the pinned desktop inquiry mode without granting high-risk legacy autonomy", () => {
+it("automates only isolated workspace execution in the desktop mode", () => {
   let payload: Record<string, unknown> = { routineApprovalRequired: false, autonomous: true };
   const authorization = { requireScope: () => ({ scope: { payload } }), requireAction: () => ({ scopePayload: payload }) } as unknown as SqliteScenarioAuthorizationService;
   const workspace = new RunWorkspace("/tmp/inquiry-policy", {} as ExecutionToolAdapter, () => {});
@@ -40,7 +40,9 @@ it("uses the pinned desktop inquiry mode without granting high-risk legacy auton
   const execute = workspace.tools().find(tool => tool.name === "workspace_execute")!;
   const write = workspace.tools().find(tool => tool.name === "workspace_write")!;
   expect(policy.requiresApproval(current, write)).toBe(false);
-  expect(policy.approval(current, execute)).toBeUndefined();
+  expect(policy.approval(current, execute)?.decision).toBe(process.platform==="darwin"&&process.arch==="arm64"?"approved":undefined);
+  expect(policy.approval(current,{...execute,name:"process_execute"})).toBeUndefined();
+  expect(policy.approval(current,{...execute,source:"external"})).toBeUndefined();
   payload.routineApprovalRequired = true;
   expect(policy.requiresApproval(current, write)).toBe(true);
   expect(policy.approval(current, execute)).toBeUndefined();

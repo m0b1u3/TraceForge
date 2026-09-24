@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { CognitiveSnapshotRecord } from "@traceforge/cognitive-runtime";
-import { BoundedOutputDistiller, type ToolExecutionContext, type WorkerModelContextPolicy, type WorkerModelRequest,
+import { BoundedOutputDistiller, parallelToolName,type ToolExecutionContext, type WorkerModelContextPolicy, type WorkerModelRequest,
   type WorkerTranscriptEntry } from "@traceforge/worker-runtime";
 import { PackageContextDiscoverySource } from "./package-context-resources.js";
 import { SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
@@ -32,6 +32,22 @@ export class PackageContextPolicy implements WorkerModelContextPolicy {
       request.transcript = [...archived, ...request.transcript];
       if (Buffer.byteLength(JSON.stringify(request.transcript)) > 16 * 1048576) throw new Error("Context history source capacity exceeded");
     }
+    // A batch is an execution envelope, not a new knowledge source. Re-project
+    // each original through its own context/receipt authorization below.
+    const expanded:WorkerTranscriptEntry[]=[];
+    for(const entry of request.transcript){
+      const parent=entry.kind==="tool"&&entry.receiptKey?this.bindings.get(entry.receiptKey):undefined;
+      if(parent?.tool.name!==parallelToolName){expanded.push(entry);continue;}
+      if(parent.status!=="completed"||parent.attribution.caseId!==input.assignment.runContext.caseId||parent.attribution.runId!==input.assignment.runId||parent.attribution.workId!==input.assignment.work.id||!await this.receipts.get(parent.idempotencyKey))throw new Error("Parallel context parent unavailable");
+      const members=this.sqlite.prepare("SELECT child_key FROM tool_invocation_parallel_members WHERE parent_key=? ORDER BY child_key").all(parent.idempotencyKey) as Array<{child_key:string}>;
+      if(members.length<2)throw new Error("Parallel context membership unavailable");
+      for(const {child_key:key} of members){
+        const child=this.bindings.get(key),receipt=await this.receipts.get(key);
+        if(!child||child.status!=="completed"||child.tool.name===parallelToolName||child.attribution.caseId!==parent.attribution.caseId||child.attribution.runId!==parent.attribution.runId||child.attribution.workId!==parent.attribution.workId||!receipt)throw new Error("Parallel context child unavailable");
+        expanded.push({turn:entry.turn,kind:"tool",...await this.distiller.distill(receipt,8000),receiptKey:key});
+      }
+    }
+    request.transcript=expanded;
     if (this.extensionToolAllowed) request.tools = request.tools.filter(tool => this.extensionToolAllowed!(input.assignment.runId,tool.source));
     if (this.configuration) {
       request.tools = request.tools.filter(tool => this.configuration!.toolAllowed(input.assignment.runId, tool.source, tool.name));

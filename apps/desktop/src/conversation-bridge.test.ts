@@ -105,3 +105,8 @@ describe("narrow desktop conversation bridge", () => {
     expect(validateConversationRequest({ ...input, method: "POST", body: JSON.stringify({ commandId: "c", title: "text" }) }).method).toBe("POST");
   });
 });
+it("only permits read-only task definition access",()=>{
+  const path="/api/desktop/task-definitions";
+  expect(validateConversationRequest({path,method:"GET"})).toEqual({path,method:"GET"});
+  expect(()=>validateConversationRequest({path,method:"POST",body:"{}"})).toThrow();
+});

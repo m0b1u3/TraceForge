@@ -25,14 +25,14 @@ describe("CapabilityProviderRegistry", () => {
     expect(registry.resolve(["web.request"]).providers.map((item) => item.name)).toEqual(["request", "session"]);
   });
 
-  it("removes draining and repeatedly failing providers from new resolutions", () => {
-    const registry = new CapabilityProviderRegistry<Provider>(2);
+  it("removes draining and explicitly unavailable providers from new resolutions", () => {
+    const registry = new CapabilityProviderRegistry<Provider>();
     registry.register(provider("primary", ["cap.a"], 100));
     registry.register(provider("fallback", ["cap.a"], 10));
-    registry.recordFailure("primary", "temporary failure");
+    registry.setHealth("primary", "degraded", "health probe failed");
     expect(registry.resolve(["cap.a"]).providers[0].name).toBe("fallback");
     registry.setLifecycle("fallback", "draining");
-    registry.recordFailure("primary", "temporary failure");
+    registry.setHealth("primary", "unavailable", "health probe failed");
     expect(registry.resolve(["cap.a"]).unresolvedCapabilities).toEqual(["cap.a"]);
   });
 

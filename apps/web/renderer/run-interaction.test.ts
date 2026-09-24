@@ -16,7 +16,7 @@ async function mount(request = vi.fn(async (input: { path: string; method: "GET"
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   const node = document.createElement("div"); document.body.append(node); const root = createRoot(node); dispose = () => root.unmount();
   const render = async (value: ConversationRun) => { await act(async () => root.render(React.createElement(RunInteraction, { bridge: { protocolVersion: 1, request }, conversationId: "first", run: value }))); };
-  await render(run); return { node, request, render };
+  await render(run); request.mockClear(); return { node:document.body, request, render };
 }
 async function fill(node: HTMLTextAreaElement, value: string) { await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(node, value); node.dispatchEvent(new Event("input", { bubbles: true })); }); }
 const button = (node: Element, text: string) => Array.from(node.querySelectorAll("button")).find(item => item.textContent === text)!;
@@ -31,41 +31,36 @@ it("requires current-checkpoint confirmation to continue and preserves the same 
   expect(JSON.parse(request.mock.calls[0][0].body!)).toMatchObject({confirmed:true,workId:"work",expectedRevision:4,checkpointRef:stopped.workItems[0].continuation!.checkpointRef});
   await act(async()=>button(node,"核对待处理请求").click());expect(request.mock.calls[1]).toEqual(request.mock.calls[0]);
 });
-it("requires explicit approval and resets consent when revision or decision text changes", async () => {
+it("loads exact input automatically and asks only for a single explicit decision", async () => {
   const { node, request, render } = await mount();
   expect(request).not.toHaveBeenCalled(); expect(node.querySelector("b")).toBeNull();
-  const approve = () => button(node, "批准本次操作");
-  expect(approve().disabled).toBe(true);
-  await fill(node.querySelector("textarea")!, "Checked exact action");
-  expect(approve().disabled).toBe(true);
-  await act(async () => button(node, "查看具体参数").click());
-  await act(async () => node.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
-  expect(approve().disabled).toBe(false);
-  await render({ ...run, revision: 4 }); expect(approve().disabled).toBe(true);
-  await act(async () => node.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
-  await fill(node.querySelector("textarea")!, "Updated reason"); expect(approve().disabled).toBe(true);
+  const dialog=node.querySelector('[role="dialog"]')!;
+  expect(dialog.querySelectorAll("textarea,input")).toHaveLength(0);
+  expect(dialog.textContent).toContain('"resource":"neutral"');
+  expect(button(node,"允许").disabled).toBe(false);
+  await render({...run,revision:4});
+  await act(async()=>button(node,"允许").click());
+  expect(JSON.parse(request.mock.calls[0][0].body!)).toMatchObject({approved:true,reviewedInputRef:"ref",expectedRevision:4});
 });
 it("permits explicit rejection without approval consent and keeps unknown result for reconciliation", async () => {
-  const { node, request } = await mount(); await fill(node.querySelector("textarea")!, "Do not execute");
-  await act(async () => button(node, "拒绝操作").click());
+  const { node, request } = await mount();
+  await act(async () => button(node, "拒绝").click());
   expect(JSON.parse(request.mock.calls[0]![0].body!)).toMatchObject({ approved: false, runId: "run", workId: "work", approvalId: "approval" });
-  expect(node.textContent).toContain("核对待处理请求"); expect(button(node, "批准本次操作").disabled).toBe(true);
+  expect(node.textContent).toContain("核对待处理请求"); expect(document.querySelector('[role="dialog"]')).toBeNull();
   await act(async () => button(node, "核对待处理请求").click()); expect(request.mock.calls[1]).toEqual(request.mock.calls[0]);
 });
 it("sends selected-work context without approval fields and preserves text on failure", async () => {
   const { node, request } = await mount();
   await act(async () => { const select = node.querySelector("select")!; select.value = "work"; select.dispatchEvent(new Event("change", { bubbles: true })); });
-  const input = node.querySelectorAll("textarea")[1]!; await fill(input, "Additional unverified observation");
+  const input = node.querySelector("textarea")!; await fill(input, "Additional unverified observation");
   await act(async () => button(node, "提交补充信息").click());
   expect(JSON.parse(request.mock.calls[0]![0].body!)).toMatchObject({ workId: "work", instruction: input.value });
   expect(request.mock.calls[0]![0].path).toMatch(/\/input$/); expect(input.value).toContain("unverified");
 });
 it("keeps approval disabled when exact input cannot be verified", async () => {
-  const { node, request } = await mount(); request.mockImplementationOnce(async () => { throw new Error("missing"); });
-  await fill(node.querySelector("textarea")!, "Reviewed");
-  await act(async () => button(node, "查看具体参数").click());
-  expect(node.textContent).toContain("暂不能批准"); expect(button(node, "批准本次操作").disabled).toBe(true);
-  expect(button(node, "拒绝操作").disabled).toBe(false);
+  const { node } = await mount(vi.fn(async()=>{throw new Error("missing");}));
+  expect(node.textContent).toContain("暂不能批准"); expect(button(node, "允许").disabled).toBe(true);
+  expect(button(node, "拒绝").disabled).toBe(false);
 });
 it.each([false, true])("clears the matching whitespace-padded draft after success (recovery=%s)", async (lose) => {
   const { node, request } = await mount(); let first = true;
@@ -75,7 +70,7 @@ it.each([false, true])("clears the matching whitespace-padded draft after succes
     return { status: 200, body: { desktopReceipt: { version: 1, conversationId: "first", commandId: body.commandId, operation: "input", resourceId: body.commandId } } } as any;
   });
   await act(async () => { const select = node.querySelector("select")!; select.value = "work"; select.dispatchEvent(new Event("change", { bubbles: true })); });
-  const input = node.querySelectorAll("textarea")[1]!; await fill(input, "  Additional observation  ");
+  const input = node.querySelector("textarea")!; await fill(input, "  Additional observation  ");
   await act(async () => button(node, "提交补充信息").click());
   if (lose) { expect(input.value).toContain("observation"); await act(async () => button(node, "核对待处理请求").click()); }
   expect(input.value).toBe(""); expect(node.textContent).toContain("补充信息已保存");

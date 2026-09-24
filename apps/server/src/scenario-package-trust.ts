@@ -148,7 +148,7 @@ export class ScenarioPackageTrustControl {
     return result;
   }
 }
-function verifyMaterialFiles(root:string,manifest:ScenarioMaterialManifest):void {
+export function verifyMaterialFiles(root:string,manifest:ScenarioMaterialManifest):void {
   try {
     if(realpathSync(root)!==root || !lstatSync(root).isDirectory())throw new Error("Material root must be a real directory");
     const declared=new Map(manifest.files.map(f=>[f.path,f]));

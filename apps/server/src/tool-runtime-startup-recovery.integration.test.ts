@@ -115,7 +115,7 @@ async function boot(
   const sqlite = getSqliteClient(createDb(databasePath));
   const recoveryState = new SqliteToolProviderRecoveryStateStore(sqlite);
   const runtime = new ExecutionToolDiscoveryRuntime(
-    [], 30_000, 3, () => new Date("2026-08-29T06:01:00.000Z"),
+    [], 30_000, () => new Date("2026-08-29T06:01:00.000Z"),
     new SqliteExecutionToolDiscoveryStateStore(sqlite),
   );
   const managedFactory = createManagedToolProviderSourceFactory({} as ExecutionNode, workRoot, undefined, {

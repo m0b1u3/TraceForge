@@ -1,4 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import "./task-confirmation.css";
 import { desktopJournalStorage } from "./desktop-journal-storage";
 import { CaretRight, Shield } from "@phosphor-icons/react";
 import type { ConversationRun } from "./conversation-execution";
@@ -9,13 +11,12 @@ import type { DesktopPendingApproval } from "@traceforge/shared/desktop-executio
 function ApprovalChoice({ approval, workTitle, revision, disabled, submit, bridge, conversationId, runId }: { approval: DesktopPendingApproval; workTitle: string; revision: number; disabled: boolean;
   bridge: DesktopConversations; conversationId: string; runId: string;
   submit(approved: boolean, reason: string): Promise<void> }) {
-  const [reason, setReason] = useState(""), [confirmed, setConfirmed] = useState<string | null>(null);
+  const [open,setOpen]=useState(true);
   const [preview, setPreview] = useState<{ inputRef: string; input: string } | null>(null), [loading, setLoading] = useState(false), [previewError, setPreviewError] = useState("");
   const inspected = preview?.inputRef === approval.inputRef;
-  const identity = JSON.stringify([approval, revision, reason]);
   const risk = ({ read_only: "只读", bounded_write: "有限写入", privileged: "高权限", destructive: "破坏性" })[approval.risk];
   async function inspect() {
-    setLoading(true); setPreviewError(""); setConfirmed(null); setPreview(null);
+    setLoading(true); setPreviewError(""); setPreview(null);
     try {
       const result = await bridge.request({ path: `/api/desktop/conversations/${conversationId}/execution/approval-input`, method: "POST", body: JSON.stringify({ runId, workId: approval.workId, approvalId: approval.id }) });
       const value = result.body as { runId?: unknown; workId?: unknown; approvalId?: unknown; inputRef?: unknown; input?: unknown };
@@ -24,17 +25,17 @@ function ApprovalChoice({ approval, workTitle, revision, disabled, submit, bridg
     } catch { setPreviewError("无法读取或核对具体参数，暂不能批准。你仍可拒绝这次操作。"); }
     finally { setLoading(false); }
   }
-  return <section className="interaction-approval" aria-label="操作审批">
-    <h3><Shield aria-hidden="true" />需要你确认</h3><p>{workTitle}</p><p>{approval.toolName} · {risk}</p>
-    <p>{approval.rationale}</p><details><summary><CaretRight className="disclosure-caret" aria-hidden="true" />核对操作标识</summary><p>操作：{approval.actionKey}</p><p>输入引用：{approval.inputRef}</p></details>
-    <button disabled={disabled || loading} onClick={() => void inspect()}>{loading ? "正在核对参数…" : "查看具体参数"}</button>
+  useEffect(()=>{void inspect();},[approval.id,approval.inputRef]);
+  async function decide(approved:boolean){await submit(approved,approved?"用户允许本次操作":"用户拒绝本次操作");setOpen(false);}
+  return <><button onClick={()=>setOpen(true)}>查看待授权操作</button><Dialog.Root open={open} onOpenChange={setOpen}><Dialog.Portal><Dialog.Overlay className="task-confirm-overlay"/><Dialog.Content className="task-confirm-dialog">
+    <Dialog.Title>允许这次操作？</Dialog.Title><Dialog.Description>{workTitle} · {approval.toolName} · {risk}</Dialog.Description>
+    <p>{approval.rationale}</p>
+    {loading&&<p role="status">正在读取操作内容…</p>}
     {inspected && <pre className="interaction-parameters" tabIndex={0} aria-label="待执行参数">{preview!.input}</pre>}
-    {previewError && <p role="alert">{previewError}</p>}
-    <label>处理说明<textarea rows={2} maxLength={4000} disabled={disabled} value={reason} onChange={event => { setReason(event.target.value); setConfirmed(null); }} placeholder="说明允许或拒绝这次操作的原因" /></label>
-    <label className="execution-confirm"><input type="checkbox" disabled={disabled || !inspected} checked={confirmed === identity && inspected} onChange={event => setConfirmed(event.target.checked ? identity : null)} />我已核对具体参数；批准不会扩大原授权范围</label>
-    <div className="interaction-actions"><button disabled={disabled || !reason.trim()} onClick={() => void submit(false, reason)}>拒绝操作</button>
-      <button className="primary" disabled={disabled || !inspected || !reason.trim() || confirmed !== identity} onClick={() => void submit(true, reason)}>批准本次操作</button></div>
-  </section>;
+    {previewError && <p role="alert">{previewError}<button disabled={disabled||loading} onClick={()=>void inspect()}>重新读取</button></p>}
+    <div className="task-confirm-footer"><button disabled={disabled} onClick={() => void decide(false)}>拒绝</button>
+      <button className="primary" disabled={disabled || loading || !inspected} onClick={() => void decide(true)}>允许</button></div>
+  </Dialog.Content></Dialog.Portal></Dialog.Root></>;
 }
 /** User intent is a durable command, never a side effect of receiving an event. */
 export function RunInteraction({ bridge, conversationId, run, hideInput=false }: { bridge: DesktopConversations; conversationId: string; run: ConversationRun; hideInput?:boolean }) {
@@ -78,7 +79,7 @@ export function RunInteraction({ bridge, conversationId, run, hideInput=false }:
     {!!run.directives?.some(item => item.issuedBy === "operator") && <details open={hideInput}><summary><CaretRight className="disclosure-caret" aria-hidden="true" />已保存的补充信息</summary>
       {run.directives.filter(item => item.issuedBy === "operator").map(item => <p key={item.id}>{item.instruction}<small className="local-receipt"> · {run.workItems.find(work => work.id === item.targetWorkId)?.title ?? item.targetWorkId}</small></p>)}
     </details>}
-    {active && run.workItems.map(work => work.pendingApproval && !submitted.includes(work.pendingApproval.id) ? <ApprovalChoice key={work.pendingApproval.id}
+    {active && run.workItems.filter(work=>work.pendingApproval&&!submitted.includes(work.pendingApproval.id)).slice(0,1).map(work => work.pendingApproval ? <ApprovalChoice key={work.pendingApproval.id}
       approval={work.pendingApproval} workTitle={work.title} bridge={bridge} conversationId={conversationId} runId={run.runId} revision={run.revision} disabled={disabled || run.status !== "running"}
       submit={(approved, reason) => send("approval", { workId: work.id, approvalId: work.pendingApproval!.id, approved, reason, ...(approved ? { reviewedInputRef: work.pendingApproval!.inputRef } : {}) })} /> : null)}
     {!hideInput&&active && available.length > 0 && <details className="interaction-input"><summary><CaretRight className="disclosure-caret" aria-hidden="true" />补充信息</summary>

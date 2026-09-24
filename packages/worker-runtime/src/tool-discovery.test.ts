@@ -35,7 +35,7 @@ describe("ExecutionToolDiscoveryRuntime", () => {
   it("times out uncooperative discovery, fences its generation and discards a late catalog", async () => {
     let release!: (tools: ExecutionToolAdapter[]) => void; let signal: AbortSignal | undefined;
     const state = new MemoryDiscoveryState();
-    const runtime = new ExecutionToolDiscoveryRuntime([{ source: "external", discover(value) { signal = value; return new Promise((resolve) => { release = resolve; }); } }], 0, 3, () => new Date(), state, 20);
+    const runtime = new ExecutionToolDiscoveryRuntime([{ source: "external", discover(value) { signal = value; return new Promise((resolve) => { release = resolve; }); } }], 0, () => new Date(), state, 20);
     await runtime.refresh();
     expect(signal?.aborted).toBe(true);
     expect(runtime.snapshot().sources[0]).toMatchObject({ status: "degraded", acceptingInvocations: false, inFlightInvocations: 1 });
@@ -46,7 +46,7 @@ describe("ExecutionToolDiscoveryRuntime", () => {
     await runtime.close();
   });
   it("does not drain the previous active catalog when a candidate activation times out", async () => {
-    const runtime = new ExecutionToolDiscoveryRuntime([{ source: "external", async discover() { return [tool("first", "external")]; } }], 0, 3, () => new Date(), undefined, 20);
+    const runtime = new ExecutionToolDiscoveryRuntime([{ source: "external", async discover() { return [tool("first", "external")]; } }], 0, () => new Date(), undefined, 20);
     await runtime.refresh(); let release!: (value: ExecutionToolAdapter[]) => void;
     await expect(runtime.activateSource({ source: "external", discover() { return new Promise((resolve) => { release = resolve; }); } })).rejects.toThrow("deadline");
     expect(runtime.registry.get("first")?.lifecycle).toBe("active");
@@ -54,7 +54,7 @@ describe("ExecutionToolDiscoveryRuntime", () => {
   });
   it("aborts a cooperative source when draining during discovery", async () => {
     let started!: () => void; const ready = new Promise<void>((r) => { started = r; });
-    const runtime = new ExecutionToolDiscoveryRuntime([{ source: "external", discover(signal) { started(); return new Promise((_, reject) => signal!.addEventListener("abort", () => reject(signal!.reason), { once: true })); } }], 0, 3, () => new Date(), undefined, 100);
+    const runtime = new ExecutionToolDiscoveryRuntime([{ source: "external", discover(signal) { started(); return new Promise((_, reject) => signal!.addEventListener("abort", () => reject(signal!.reason), { once: true })); } }], 0, () => new Date(), undefined, 100);
     const refresh = runtime.refresh(); await ready; await runtime.close(); await refresh;
     expect(runtime.snapshot().sources[0]).toMatchObject({ acceptingInvocations: false, inFlightInvocations: 0 });
   });
@@ -68,7 +68,7 @@ describe("ExecutionToolDiscoveryRuntime", () => {
     state.snapshots.set("external", historicalSnapshot());
     const runtime = new ExecutionToolDiscoveryRuntime(
       [{ source: "external", async discover() { return [tool("fresh", "external")]; } }],
-      30_000, 3, () => new Date("2026-08-29T03:00:00.000Z"), state,
+      30_000, () => new Date("2026-08-29T03:00:00.000Z"), state,
     );
     await runtime.restore();
     expect(runtime.registry.list()).toEqual([]);
@@ -89,7 +89,7 @@ describe("ExecutionToolDiscoveryRuntime", () => {
     const state = new MemoryDiscoveryState();
     const historical = historicalSnapshot();
     state.snapshots.set("managed", { ...historical, source: "managed", lastSuccessfulCatalog: [], catalogFingerprint: null });
-    const runtime = new ExecutionToolDiscoveryRuntime([], 30_000, 3, () => new Date("2026-08-29T03:00:00.000Z"), state);
+    const runtime = new ExecutionToolDiscoveryRuntime([], 30_000, () => new Date("2026-08-29T03:00:00.000Z"), state);
     await runtime.restore();
     await runtime.activateSource({ source: "managed", async discover() { return [tool("fresh", "managed")]; } });
     expect(state.snapshots.get("managed")).toMatchObject({ revision: 5, outcome: "ready" });
@@ -101,7 +101,7 @@ describe("ExecutionToolDiscoveryRuntime", () => {
     state.snapshots.set("external", historicalSnapshot());
     const runtime = new ExecutionToolDiscoveryRuntime([{
       source: "external", async discover() { throw new Error("source unavailable after restart"); },
-    }], 0, 3, () => new Date("2026-08-29T03:00:00.000Z"), state);
+    }], 0, () => new Date("2026-08-29T03:00:00.000Z"), state);
     await runtime.restore();
     await runtime.refresh();
     expect(runtime.registry.list()).toEqual([]);
@@ -114,7 +114,7 @@ describe("ExecutionToolDiscoveryRuntime", () => {
   it.each([false, true])("reloads the latest durable revision after deactivation before restoring an older generation (history=%s)", async (withHistory) => {
     const state = new MemoryDiscoveryState();
     if (withHistory) state.snapshots.set("external", historicalSnapshot());
-    const runtime = new ExecutionToolDiscoveryRuntime([], 30_000, 3, () => new Date(), state);
+    const runtime = new ExecutionToolDiscoveryRuntime([], 30_000, () => new Date(), state);
     const source = (version: string) => ({ source: "external", async discover() { return [tool("candidate", "external", version)]; } });
     await runtime.activateSource(source("1.0.0"));
     await runtime.activateSource(source("2.0.0"));
@@ -135,7 +135,7 @@ describe("ExecutionToolDiscoveryRuntime", () => {
     const runtime = new ExecutionToolDiscoveryRuntime([{
       source: "external",
       async discover() { if (fail) throw new Error("x".repeat(2_000)); return [tool("first", "external")]; },
-    }], 0, 3, () => new Date("2026-08-29T03:00:00.000Z"), state);
+    }], 0, () => new Date("2026-08-29T03:00:00.000Z"), state);
     await runtime.refresh();
     fail = true;
     await runtime.refresh();
@@ -154,7 +154,7 @@ describe("ExecutionToolDiscoveryRuntime", () => {
     let providers = [tool("first", "external")];
     const runtime = new ExecutionToolDiscoveryRuntime([{
       source: "external", async discover() { return providers; },
-    }], 0, 3, () => new Date("2026-08-29T03:00:00.000Z"), state);
+    }], 0, () => new Date("2026-08-29T03:00:00.000Z"), state);
     await runtime.refresh();
     providers = [tool("second", "external")];
     await runtime.refresh();
@@ -170,7 +170,7 @@ describe("ExecutionToolDiscoveryRuntime", () => {
     const runtime = new ExecutionToolDiscoveryRuntime([{
       source: "external",
       async discover() { calls += 1; await blocked; return [tool("first", "external")]; },
-    }], 30_000, 3, () => new Date("2026-08-27T08:00:00.000Z"));
+    }], 30_000, () => new Date("2026-08-27T08:00:00.000Z"));
     const first = runtime.refreshDue();
     const second = runtime.refreshDue();
     release();

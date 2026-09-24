@@ -219,6 +219,10 @@ class EmbeddedScenarioWorkerPool {
         projection.request={...projection.request,plannerAvailable:definition.agentTopology.planner.enabled&&this.plannerReady()};
         const run = new SqliteScenarioEventStore(this.sqlite).loadState(request.assignment.runId);
         const current = run && this.authorization?.requireRun(run);
+        if(current){
+          const workKind=current.package.definition.workKinds.find(kind=>kind.id===request.assignment.work.kind);
+          projection.request={...projection.request,outputContract:{allowedKinds:current.package.outputSchemas.map(schema=>schema.kind),requiredAnyOf:[...(workKind?.completion?.anyOfOutputKinds??[])]}};
+        }
         if (current && current.scope.payload && typeof current.scope.payload === "object" && !Array.isArray(current.scope.payload)
           && "form" in current.package.authorizationPolicy && current.package.authorizationPolicy.form) {
           projection.request = { ...projection.request, permissionContext: {
@@ -459,13 +463,21 @@ export function registerEmbeddedWorkers(
     { source: "traceforge.builtin", async discover() { return builtinTools; } },
     ...scenarioToolSources,
     ...externalToolSources,
-  ], 30_000, 3, () => new Date(), new SqliteExecutionToolDiscoveryStateStore(sqlite));
+  // A governed Scenario process may need to launch its isolated runtime before
+  // it can return the immutable tool catalog. The generic 15 second discovery
+  // deadline was short enough to quarantine the entire Scenario during a real
+  // desktop start, leaving a capable Work with only foundation read tools.
+  // This is a Host handshake deadline, not a model/tool execution budget.
+  ], 30_000, () => new Date(), new SqliteExecutionToolDiscoveryStateStore(sqlite), 120_000);
   onToolRuntime?.(toolRuntime);
   let startupState: "not_started" | "starting" | "ready" | "failed" | "stopping" | "stopped" = "not_started";
   registerExecutionToolRuntimeRoutes(app, toolRuntime, () => startupState);
   const providerRecoveryState = new SqliteToolProviderRecoveryStateStore(sqlite);
   const providerDiagnostics = new SqliteToolProviderDiagnosticStore(sqlite);
-  const providerScheduler = processCapacity?.scheduler ?? new ToolProviderFairScheduler({}, new SqliteToolProviderSchedulingAuditStore(sqlite));
+  // Invocation concurrency and owned child-process capacity are distinct units.
+  // Sharing a perWork=1 semaphore deadlocks a tool that starts its own child.
+  // Tool invocations and retained processes are different capacity units.
+  const providerScheduler = new ToolProviderFairScheduler({perWork:4}, new SqliteToolProviderSchedulingAuditStore(sqlite));
   const invocationBindings = new SqliteToolInvocationBindingStore(sqlite);
   const invocationRecovery = invocationBindings.recoverInterrupted();
   const executionCapacity = new ManagedExecutionCapacity(sqlite,providerScheduler,invocationBindings);

@@ -1,6 +1,6 @@
 export const PROTOCOL_VERSION = 1;
 export const PACKAGE_ID = "traceforge.web-blackbox";
-export const PACKAGE_VERSION = "0.5.15";
+export const PACKAGE_VERSION = "0.5.20";
 export const SOURCE = "scenario:web_blackbox@1";
 const comparisonRequest = { type: "object", additionalProperties: false, required: ["url"], properties: {
         url: { type: "string" }, method: { enum: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }, sessionId: { type: "string" },
@@ -31,14 +31,14 @@ export const tools = Object.freeze([
     },
     {
         name: "web.browser.inspect", source: SOURCE, version: PACKAGE_VERSION, priority: 85,
-        description: "Use the reviewed local Browser Runtime and HTTP Broker. inspect observes then closes; open keeps the same Work-owned session for observe/act/close and desktop human takeover. Use returned sessionId and fresh DOM element/view identities. When manual_control is returned, wait for the user; do not open a replacement. No direct-network fallback; observations are not verified findings.",
+        description: "Use the reviewed local Browser Runtime and HTTP Broker. inspect observes then closes; open keeps the same Work-owned session for observe/act/close. For human interaction, call request_takeover with that sessionId: the desktop displays the page and suspends agent operations until the user hands it back. request_takeover may repeat the current URL as context; it never navigates or expands scope. Do not complete or block the Work while waiting. Use returned artifactRef with web.browser.read and fresh DOM element/view identities. Do not open a replacement session. No direct-network fallback; observations are not verified findings.",
         inputSchema: { type: "object", additionalProperties: false, properties: {
-                operation: { enum: ["inspect", "open", "observe", "act", "close"] }, url: { type: "string" }, screenshot: { type: "boolean" },
-                sessionId: { type: "string" }, pageId: { type: "string" }, durationMs: { type: "integer", minimum: 1000, maximum: 900000 },
+                operation: { enum: ["inspect", "open", "observe", "act", "close", "request_takeover"] }, url: { type: "string" }, screenshot: { type: "boolean" },
+                sessionId: { type: "string" }, pageId: { type: "string" }, durationMs: { type: "integer", minimum: 0, maximum: 2147483647, description: "Optional session lifetime; 0 (default) follows task ownership and user stop instead of a wall-clock limit." },
                 action: { type: "object", description: "A typed navigate(view,url), click(element), fill(element,text), or press(element,key) action with a unique id and the current observed view/element." },
             } },
         providedCapabilities: ["web.browser.inspect"], dependencyCapabilities: [],
-        permissionRequirements: { network: "brokered", process: "sandboxed" }, risk: "bounded_write", timeoutMs: 45000,
+        permissionRequirements: { network: "brokered", process: "sandboxed" }, risk: "bounded_write", timeoutMs: 0,
     },
     {
         name: "web.hypothesis.register", source: SOURCE, version: PACKAGE_VERSION, priority: 98,

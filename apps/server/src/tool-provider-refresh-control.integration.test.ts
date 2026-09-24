@@ -46,7 +46,7 @@ async function fixture(authorizer?: ToolProviderRefreshAuthorizer) {
     value: sign(null, Buffer.from(canonicalJson(manifest)), privateKey).toString("base64"),
   };
   const sqlite = getSqliteClient(createDb(":memory:"));
-  const runtime = new ExecutionToolDiscoveryRuntime([], 0, 3, () => new Date("2026-08-29T04:00:00.000Z"), new SqliteExecutionToolDiscoveryStateStore(sqlite));
+  const runtime = new ExecutionToolDiscoveryRuntime([], 0, () => new Date("2026-08-29T04:00:00.000Z"), new SqliteExecutionToolDiscoveryStateStore(sqlite));
   let discoveryCalls = 0;
   let discoveryError: Error | null = null;
   let catalog = adapters(manifest);

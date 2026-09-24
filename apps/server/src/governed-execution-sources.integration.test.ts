@@ -216,6 +216,23 @@ describe("Governed custom execution sources",()=>{
 });
 
 describe("Production custom-source assembly",()=>{
+  it("allows a scheduled tool to start its child with a single process permit per Work",async()=>{
+    const f=fixtureMcpNode();let completed=false;
+    const node={...f.node,async waitProcessEvents(...args:Parameters<ExecutionNode["waitProcessEvents"]>){
+      await f.node.terminateProcess({...args[0],operationId:"fixture-finish"});return f.node.waitProcessEvents(...args);
+    }};
+    const host=await foundationHost({foundation:{executionNode:node,
+      executionSchedulingLimits:{perWork:1,maximumWaitMs:100},
+      allowUnmanagedDevelopmentSources:false,toolDiscoverySources:[],governedToolSources:[{
+        source:"fixture.host",version:"1",process:"governed",create:port=>({source:"fixture.host",async discover(){
+          return [adapter(async()=>{await port.executeProcess(input);completed=true;return success;},
+            {name:"fixture.read",source:"fixture.host",providedCapabilities:["fixture.read"]})];
+        }})}]}});
+    try{await host.start();await eventually(async()=>completed);
+      expect(f.starts).toHaveLength(1);
+      expect(f.starts[0]!.attribution.workId).toBeTruthy();
+    }finally{await host.close();}
+  });
   it.each(["source","factory"])("rejects unmanaged %s by default before initialization",async kind=>{
     const sqlite=database();databases.push(sqlite);const app=Fastify();
     try{expect(()=>registerSecurityAgentFoundation(app,sqlite,{} as any,"/unused",()=>false,kind==="source"?

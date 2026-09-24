@@ -21,7 +21,7 @@ it("presents an owned native page without screenshot polling, and hands back onc
   expect(presentBrowser).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "session", takeoverId: "manual" }));
   await act(async () => [...document.querySelectorAll("button")].find(b => b.textContent === "交回智能体")!.click());
   expect(send).toHaveBeenCalledOnce(); expect(send.mock.calls[0]).toEqual([expect.objectContaining({ operation: "resume" })]);
-  expect(onHide).toHaveBeenCalledOnce();
+  expect(onHide).not.toHaveBeenCalled();
   act(() => root.unmount()); dispose = undefined;
   expect(document.activeElement).toBe(opener);
 });

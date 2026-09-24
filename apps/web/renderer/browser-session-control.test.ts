@@ -19,7 +19,42 @@ it("shows uncertain cleanup and retries only on an explicit click", async () => 
   expect(request.mock.calls.filter(([v]) => v.method === "POST")).toHaveLength(1);
   expect(node.textContent).toBe("");
 });
-afterEach(() => { act(() => dispose?.()); document.body.replaceChildren(); });
+afterEach(() => { act(() => dispose?.()); document.body.replaceChildren(); vi.useRealTimers(); });
+it("opens an active browser without taking control and keeps it visible after handback",async()=>{
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
+  let manual=false;
+  const request=vi.fn(async(input:{method:string;body?:string})=>{
+    if(input.method==="POST") manual=JSON.parse(input.body!).operation==="takeover";
+    return {status:200,body:{sessions:[{id:"session",status:manual?"manual_control":"active",takeoverId:manual?"manual":null,expiresAt:"2099-01-01",workId:"work"}]}};
+  });
+  const presentBrowser=vi.fn(async()=>({url:"https://example.invalid/"}));
+  const node=document.createElement("div");document.body.append(node);const root=createRoot(node);dispose=()=>root.unmount();
+  await act(async()=>root.render(React.createElement(BrowserSessionControl,{bridge:{protocolVersion:1,request,presentBrowser},conversationId:"conversation",runId:"run"})));
+  expect(node.querySelector<HTMLDetailsElement>("details.browser-session-control")?.open).toBe(true);
+  expect(document.querySelector('[aria-label="任务浏览器"]')?.textContent).toContain("智能体正在操作");
+  await act(async()=>{node.querySelector("details.browser-session-control > summary")!.dispatchEvent(new MouseEvent("click",{bubbles:true}));});
+  expect(node.querySelector<HTMLDetailsElement>("details.browser-session-control")?.open).toBe(false);
+  expect(document.querySelector('[aria-label="任务浏览器"]')).not.toBeNull();
+  expect(request.mock.calls.every(([input])=>input.method==="GET")).toBe(true);
+  expect(presentBrowser).toHaveBeenCalledWith(expect.objectContaining({takeoverId:null}));
+  await act(async()=>{[...document.querySelectorAll("button")].find(b=>b.textContent==="接管")!.click();});
+  expect(document.querySelector('[aria-label="任务浏览器"]')?.textContent).toContain("由你控制");
+  await act(async()=>{[...document.querySelectorAll("button")].find(b=>b.textContent==="交回智能体")!.click();});
+  expect(document.querySelector('[aria-label="任务浏览器"]')?.textContent).toContain("智能体正在操作");
+  expect(request.mock.calls.filter(([input])=>input.method==="POST").map(([input])=>JSON.parse(input.body!).operation)).toEqual(["takeover","resume"]);
+});
+it("shows a newly handed-off native page once without replaying a command or reopening a hidden panel",async()=>{
+  vi.useFakeTimers();(globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
+  const request=vi.fn(async()=>({status:200,body:{sessions:[{id:"session",status:"manual_control",takeoverId:"manual",expiresAt:"2099-01-01",workId:"work"}]}}));
+  const presentBrowser=vi.fn(async()=>({url:"https://example.invalid/"}));
+  const node=document.createElement("div");document.body.append(node);const root=createRoot(node);dispose=()=>root.unmount();
+  await act(async()=>root.render(React.createElement(BrowserSessionControl,{bridge:{protocolVersion:1,request,presentBrowser},conversationId:"conversation",runId:"run"})));
+  expect(document.querySelector('[aria-label="任务浏览器"]')).not.toBeNull();
+  await act(async()=>{[...document.querySelectorAll("button")].find(b=>b.textContent==="收起")!.click();});
+  await act(async()=>vi.advanceTimersByTimeAsync(3100));
+  expect(document.querySelector('[aria-label="任务浏览器"]')).toBeNull();
+  expect(request.mock.calls.every(args=>(args as any)[0].method==="GET")).toBe(true);
+});
 it("keeps actions explicit, shows ownership, clears entered text and never retries failed writes", async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   let state = "active", fail = false;

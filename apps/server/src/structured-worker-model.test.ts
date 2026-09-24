@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LlmProvider } from "@traceforge/llm";
 import type { WorkerModelRequest } from "@traceforge/worker-runtime";
+import { parallelTool } from "@traceforge/worker-runtime";
 import { StructuredWorkerModel } from "@traceforge/cognitive-runtime";
 import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
@@ -47,6 +48,85 @@ function provider(result: unknown): LlmProvider {
 }
 
 describe("StructuredWorkerModel", () => {
+  it("sends explicit object roots for native tools and rejects incompatible roots before model dispatch", async () => {
+    const input = request();
+    input.tools = [{ name: "fixture.mutate", source: "fixture", version: "1", priority: 1,
+      description: "Mutate a neutral record", inputSchema: { oneOf: [{ type: "object", properties: { id: { type: "string" } } }] },
+      providedCapabilities: ["fixture.write"], dependencyCapabilities: [], permissionRequirements: {}, risk: "bounded_write", timeoutMs: 1000 }];
+    let calls = 0;
+    const model = new StructuredWorkerModel({ async extractJson() { throw new Error("JSON path"); },
+      async streamTools(value) {
+        calls++;
+        const schema = value.tools.find(item => item.description.startsWith("fixture.mutate:"))?.input_schema;
+        expect(schema).toEqual({ type: "object", oneOf: [{ type: "object", properties: { id: { type: "string" } } }] });
+        return { text: "", done: false, toolCalls: [{ id: "stop", name: "tf_block", input: { reason: "Done" } }] };
+      } });
+    expect(await model.decide(input)).toEqual({ type: "block", reason: "Done" });
+    expect(calls).toBe(1);
+    input.tools[0] = { ...input.tools[0]!, inputSchema: { type: "array", items: { type: "string" } } };
+    await expect(model.decide(input)).rejects.toThrow("requires an object input Schema");
+    expect(calls).toBe(1);
+  });
+  it("uses native function calling for Worker tools and maps the call back to the governed catalog", async () => {
+    const input = request();
+    input.tools = [{ name: "fixture.read", source: "fixture", version: "1", priority: 1,
+      description: "Read a neutral record", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+      providedCapabilities: ["fixture.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1000 }];
+    let nativeCalls = 0;
+    const model = new StructuredWorkerModel({
+      async extractJson() { throw new Error("JSON decision path must not run"); },
+      async streamTools(value) {
+        nativeCalls++;
+        const tool = value.tools.find(item => item.description.startsWith("fixture.read:"));
+        expect(tool?.name).toMatch(/^tf_fixture_read_[a-f0-9]{12}$/);
+        expect(value.tools.some(item => item.name === "tf_complete")).toBe(true);
+        return { text: "Read the record", done: false,
+          toolCalls: [{ id: "provider-call", name: tool!.name, input: { id: "first" } }] };
+      },
+    });
+    const first = await model.decide(input);
+    const again = await model.decide(input);
+    expect(first).toMatchObject({ type: "invoke_tool", invocation: { tool: "fixture.read", input: { id: "first" }, rationale: "Read the record" } });
+    expect(first).toEqual(again);
+    expect(nativeCalls).toBe(2);
+  });
+  it("rejects native calls outside the current catalog or with multiple actions", async () => {
+    const input = request();
+    const bad = (toolCalls: Array<{ id: string; name: string; input: unknown }>) =>
+      new StructuredWorkerModel({ async extractJson() { throw new Error("JSON path"); },
+        async streamTools() { return { text: "", done: false, toolCalls }; } });
+    await expect(bad([{ id: "first", name: "unlisted", input: {} }]).decide(input)).rejects.toThrow(/outside its current catalog/);
+    await expect(bad([{ id: "first", name: "tf_block", input: { reason: "A" } },
+      { id: "second", name: "tf_complete", input: { summary: "B", outputs: [] } }]).decide(input)).rejects.toThrow(/incompatible simultaneous/);
+    expect(await bad([{ id: "first", name: "tf_block", input: {
+      type: "invoke_tool", invocation: { id: "forged", tool: "unlisted", input: {} }, reason: "Stop",
+    } }]).decide(input)).toEqual({ type: "block", reason: "Stop" });
+  });
+  it("groups simultaneous independent native reads through the existing durable parallel tool", async () => {
+    const input = request();
+    input.tools = [parallelTool, { name: "fixture.read", source: "fixture", version: "1", priority: 1,
+      description: "Read a neutral record", inputSchema: { type: "object" },
+      providedCapabilities: ["fixture.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1000 }];
+    const model = new StructuredWorkerModel({ async extractJson() { throw new Error("JSON path"); },
+      async streamTools(value) {
+        expect(value.tools.some(item => item.description.startsWith("tools.parallel_read:"))).toBe(false);
+        expect(JSON.parse(value.messages[0]!.content).tools.some((tool: {name:string}) => tool.name === "tools.parallel_read")).toBe(false);
+        const name = value.tools.find(item => item.description.startsWith("fixture.read:"))!.name;
+        return { text: "Read both records", done: false, toolCalls: [
+          { id: "one", name, input: { id: "first" } }, { id: "two", name, input: { id: "second" } },
+        ] };
+      } });
+    expect(await model.decide(input)).toMatchObject({ type: "invoke_tool", invocation: { tool: "tools.parallel_read",
+      input: { calls: [{ id: "one", tool: "fixture.read", input: { id: "first" } },
+        { id: "two", tool: "fixture.read", input: { id: "second" } }] } } });
+  });
+  it("preserves the actual completion contract outside compaction and rejects invented kinds",async()=>{
+    const input=request();input.outputContract={allowedKinds:["neutral.observation","neutral.summary"],requiredAnyOf:["neutral.observation"]};
+    const compact={maximumTextCharacters:4800,async prepare(){return {context:{outputContract:{allowedKinds:["invented"]}},manifest:{}};}} as unknown as NonNullable<ConstructorParameters<typeof StructuredWorkerModel>[6]>;
+    const model=new StructuredWorkerModel({async extractJson(value){expect(JSON.parse(value.user).outputContract).toEqual(input.outputContract);expect(value.schema.oneOf[1].properties.outputs.items.properties.kind.enum).toEqual(input.outputContract!.allowedKinds);return {type:"complete",summary:"Observed",outputs:[{id:"result",kind:"neutral.observation",summary:"Observed",refs:[]}]};}},undefined,undefined,undefined,undefined,undefined,compact);
+    expect((await model.decide(input)).type).toBe("complete");
+    for(const kind of ["invented","neutral.summary"]){await expect(new StructuredWorkerModel(provider({type:"complete",summary:"Observed",outputs:[{id:"result",kind,summary:"Observed",refs:[]}]})).decide(input)).rejects.toThrow(/output kind/);}
+  });
   it("keeps exact output references outside compaction and distinguishes recall handles",async()=>{
     const input=request();input.transcript=[{turn:1,kind:"tool",summary:"Observed",refs:["artifact:first"],receiptKey:"lookup:first"}];
     const compact={maximumTextCharacters:4800,async prepare(){return {context:{referenceCatalog:{evidenceRefs:["invented"]}},manifest:{}};}} as unknown as NonNullable<ConstructorParameters<typeof StructuredWorkerModel>[6]>;

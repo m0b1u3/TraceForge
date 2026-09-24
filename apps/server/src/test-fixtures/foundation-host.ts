@@ -27,6 +27,7 @@ export interface FoundationHost {
 
 export async function foundationHost(options: { root?: string; discoveryGate?: Promise<void>; ready?: () => boolean;
   model?: LlmProvider["extractJson"]; modelTimeoutMs?: number; observationToken?: string; objective?: string;
+  workerNative?: NonNullable<LlmProvider["streamTools"]>;
   contextLimits?: LlmProvider["contextLimits"];
   input?: Record<string, unknown>; failResultCheckpoint?: boolean; empty?: boolean;
   initialWork?: boolean; longTaskScope?: Record<string, unknown>; toolTimeoutMs?: number;
@@ -49,6 +50,7 @@ export async function foundationHost(options: { root?: string; discoveryGate?: P
   const provider: LlmProvider = {
     contextLimits: options.contextLimits,
     async runTools() { throw new Error("Unexpected model tool execution bypass"); },
+    ...(options.workerNative ? { streamTools: options.workerNative } : {}),
     async extractJson(args) {
       const context = JSON.parse(args.user); requests.push(context);
       if (options.model) return options.model(args);

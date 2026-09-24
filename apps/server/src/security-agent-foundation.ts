@@ -103,6 +103,7 @@ import { ProcessExecutionCapacity, registerProcessCapacityRoutes, type ProcessCl
 import { ToolProviderFairScheduler, type ToolProviderSchedulingLimits } from "@traceforge/worker-runtime";
 import { SqliteToolProviderSchedulingAuditStore } from "./tool-provider-scheduling-adapter.js";
 import { GovernedExecutionSources } from "./governed-execution-sources.js";
+import { SqliteToolProviderDiagnosticStore } from "./tool-provider-diagnostic-adapter.js";
 import { registerFoundationHostControl } from "./foundation-host-control.js";
 import { FoundationBackupControl, registerFoundationBackupRoutes, registerFoundationInspectionRoutes, type FoundationBackupOptions } from "./foundation-backup.js";
 import { FoundationOfflineMediaControl, registerFoundationOfflineMediaRoutes, type FoundationOfflineMediaOptions } from "./foundation-offline-media.js";
@@ -320,7 +321,7 @@ export function registerSecurityAgentFoundation(
   registerDesktopBrowserRoutes(app, sqlite, browserSessions);
   app.addHook("preClose", async () => { await browserSessions.shutdown(); });
   if(executionSessions)registerExecutionSessionRoutes(app,executionSessions);
-  governedSources=new GovernedExecutionSources(executionNode,processCapacity,scenarioProcessSupervision);
+  governedSources=new GovernedExecutionSources(executionNode,processCapacity,scenarioProcessSupervision,new SqliteToolProviderDiagnosticStore(sqlite));
   const customSources=(options.governedToolSources??[]).map(source=>governedSources.register(source));
   const allowInProcessScenarioDevelopment = options.allowInProcessScenarioDevelopment === true;
   const scenarioSources=governedSources.scenarioSources(scenarioPackages,

@@ -10,7 +10,7 @@ export function prepareConversationContext(sql: Database.Database, conversationI
   const rows = sql.prepare(`SELECT m.command_id,m.sequence,m.text,r.text AS response FROM desktop_conversation_messages m
     LEFT JOIN desktop_replies r ON r.conversation_id=m.conversation_id AND r.message_command_id=m.command_id AND r.state='completed'
     WHERE m.conversation_id=? AND (m.sequence<=? OR r.state='completed')
-    AND NOT EXISTS (SELECT 1 FROM desktop_replies pending WHERE pending.conversation_id=m.conversation_id AND pending.message_command_id=m.command_id AND pending.state IN ('queued','cancelled') AND m.sequence!=?)
+    AND NOT EXISTS (SELECT 1 FROM desktop_replies pending WHERE pending.conversation_id=m.conversation_id AND pending.message_command_id=m.command_id AND pending.state IN ('queued','withdrawn','cancelled') AND m.sequence!=?)
     ORDER BY (m.sequence=?) DESC,m.sequence DESC LIMIT 10001`).all(conversationId, through,through,through) as Array<{ command_id:string; sequence: number; text: string; response: string | null }>;
   if (!rows.length || rows.length > 10000) throw new Error("Conversation history capacity exceeded");
   const budget = resolveContextBudget(model.contextLimits);
@@ -39,8 +39,11 @@ export function prepareConversationContext(sql: Database.Database, conversationI
   }
   const interrupted = sql.prepare(`SELECT r.text,r.state,m.command_id AS id FROM desktop_conversation_messages m JOIN desktop_replies r
     ON r.conversation_id=m.conversation_id AND r.message_command_id=m.command_id
-    WHERE m.conversation_id=? AND m.sequence=(SELECT max(sequence) FROM desktop_conversation_messages WHERE conversation_id=? AND sequence<?)
-    AND r.state IN ('interrupted','cancelled','failed') AND length(r.text)>0`).get(conversationId, conversationId, through) as { text: string; state: string; id: string } | undefined;
+    WHERE m.conversation_id=? AND m.sequence=(SELECT max(prior.sequence) FROM desktop_conversation_messages prior
+      WHERE prior.conversation_id=? AND prior.sequence<? AND NOT EXISTS (SELECT 1 FROM desktop_replies hidden
+        WHERE hidden.conversation_id=prior.conversation_id AND hidden.message_command_id=prior.command_id
+          AND hidden.state IN ('queued','withdrawn','cancelled')))
+    AND r.state IN ('interrupted','stopped','failed') AND length(r.text)>0`).get(conversationId, conversationId, through) as { text: string; state: string; id: string } | undefined;
   if (interrupted) messages.splice(Math.max(0, messages.length - 1), 0, { role: "user", content: JSON.stringify({
     trust: "untrusted_incomplete_assistant_fragment", messageId: interrupted.id, state: interrupted.state,
     excerpt: interrupted.text.slice(0, 2000), truncated: interrupted.text.length > 2000,

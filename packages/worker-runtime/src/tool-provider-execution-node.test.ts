@@ -28,6 +28,7 @@ class FakeProviderNode {
   private waiter: (() => void) | null = null;
   terminated = 0;
   inputWrites = 0;
+  toolTimeoutMs = 1000;
   descriptor: ProcessDescriptor;
   private readonly decoder = new LengthPrefixedJsonDecoder(1024 * 1024);
   private readonly capabilityParents = new Map<string, string>();
@@ -97,14 +98,15 @@ class FakeProviderNode {
     if (request.method === "provider.handshake") result = { providerId: "sandboxed-fixture", providerVersion: "1.0.0", protocolVersion: TOOL_PROVIDER_RPC_VERSION };
     else if (request.method === "tools.list") result = [{
       name: "sandboxed.read", source: "rpc:sandboxed", version: "1.0.0", priority: 100, description: "Sandboxed read", inputSchema: {},
-      providedCapabilities: ["sandboxed.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 1000,
+      providedCapabilities: ["sandboxed.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: this.toolTimeoutMs,
     }];
     else {
-      const params = request.params as { input?: { broker?: boolean; remoteError?: boolean }; context?: { idempotencyKey?: string } };
+      const params = request.params as { input?: { broker?: boolean; remoteError?: boolean; notStarted?: boolean }; context?: { idempotencyKey?: string } };
       if (params.input?.remoteError) {
         this.emit({
           version: TOOL_PROVIDER_RPC_VERSION, id: request.id, ok: false,
-          error: { code: "provider_failure", message: "sensitive-provider-detail-".repeat(1_000), retryable: false },
+          error: { code: "provider_failure", message: "sensitive-provider-detail-".repeat(1_000), retryable: false,
+            ...(params.input.notStarted ? { executionOutcome: "not_started" as const } : {}) },
         });
         return;
       }
@@ -159,6 +161,27 @@ function client(
 }
 
 describe("ExecutionNodeToolProviderClient", () => {
+  it.each([0,1000])("uses the discovered tool deadline %s rather than the shorter discovery timeout",async(timeoutMs)=>{
+    const fixture=new FakeProviderNode(),node=fixture.asNode();
+    fixture.toolTimeoutMs=timeoutMs;
+    const rpc=new ExecutionNodeToolProviderClient({node,executable:"C:\\provider.exe",workingDirectory:"C:\\provider",attribution:fixture.descriptor.attribution,permissions,resources,requestTimeoutMs:30});
+    try{
+      await rpc.listTools();
+      const write=node.writeProcessInput.bind(node);
+      node.writeProcessInput=async(request)=>{await new Promise(resolve=>setTimeout(resolve,80));return write(request);};
+      await expect(rpc.callTool("sandboxed.read",{}, {workerId:"worker",runId:"run_1",workId:"work",caseId:"case_1",scopeRef:"scope_1",leaseId:"lease_1",leaseExpiresAt:activeLeaseExpiresAt,idempotencyKey:"slow-tool",effectivePermissions:permissions})).resolves.toMatchObject({status:"succeeded"});
+    }finally{await rpc.close();}
+  });
+  it("cancels queued process admission and never dispatches after the discovery deadline",async()=>{
+    const fixture=new FakeProviderNode(),node=fixture.asNode();let starts=0,aborted=false;
+    const start=node.startProcess.bind(node);node.startProcess=async value=>{starts++;return start(value);};
+    const rpc=new ExecutionNodeToolProviderClient({node,executable:"C:\\provider.exe",workingDirectory:"C:\\provider",attribution:fixture.descriptor.attribution,
+      permissions,resources,expectedSandboxBackend:"appcontainer",requestTimeoutMs:30,
+      beforeProcessStart:async(_id,_generation,signal)=>new Promise<void>((_resolve,reject)=>{
+        signal!.addEventListener("abort",()=>{aborted=true;reject(signal!.reason);},{once:true});
+      })});
+    await expect(rpc.listTools()).rejects.toThrow("deadline");expect(aborted).toBe(true);expect(starts).toBe(0);await rpc.close();
+  });
   it.each([undefined,2048])("negotiates the default output limit without silently changing an explicit limit: %s",async(outputLimitBytes)=>{
     const fixture=new FakeProviderNode(),node=fixture.asNode();let actual=0;
     node.handshake=async()=>({node:{limits:{maximumOutputBytesPerProcess:1024}}} as never);
@@ -285,6 +308,16 @@ describe("ExecutionNodeToolProviderClient", () => {
     expect(diagnostics[0]!.detail).toContain("sensitive-provider-detail");
     expect(diagnostics[0]!.detailBytes).toBeLessThanOrEqual(16 * 1024);
     expect(rpc.status().lastDiagnosticRef).toBe(diagnostics[1]!.id);
+    await rpc.close();
+  });
+
+  it("preserves a Provider's confirmed not-started outcome", async () => {
+    const node = new FakeProviderNode(), rpc = client(node);
+    const error = await rpc.callTool("sandboxed.read", { remoteError: true, notStarted: true }, {
+      workerId: "worker_1", runId: "run_1", workId: "work_1", caseId: "case_1", scopeRef: "scope_1",
+      leaseId: "lease_1", leaseExpiresAt: activeLeaseExpiresAt, idempotencyKey: "effect_1", effectivePermissions: permissions,
+    }).catch(value => value);
+    expect(error).toMatchObject({ name: "ToolProviderRpcRemoteError", executionOutcome: "not_started" });
     await rpc.close();
   });
 

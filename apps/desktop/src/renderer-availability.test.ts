@@ -24,7 +24,7 @@ describe("legacy renderer retirement", () => {
     const web = JSON.parse(readFileSync(resolve("apps/web/package.json"), "utf8"));
     const desktop = JSON.parse(readFileSync(resolve("apps/desktop/package.json"), "utf8"));
     expect(web.scripts.dev).toBeUndefined();
-    expect(web.scripts.build).toBe("pnpm build:desktop-preview");
+    expect(web.scripts.build).toBe("pnpm build:renderer");
     for (const command of ["pack", "dist", "dist:win", "dist:mac", "dist:linux"].map(key => desktop.scripts[key])) {
       expect(command).toBe("node ../../scripts/desktop-release-unavailable.mjs");
     }

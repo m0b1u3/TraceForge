@@ -36,7 +36,9 @@ export interface ProviderHostCapabilityCallParams {
 
 export type ToolProviderRpcResponse =
   | { version: typeof TOOL_PROVIDER_RPC_VERSION; id: string; ok: true; result: unknown }
-  | { version: typeof TOOL_PROVIDER_RPC_VERSION; id: string; ok: false; error: { code: string; message: string; retryable: boolean } };
+  | { version: typeof TOOL_PROVIDER_RPC_VERSION; id: string; ok: false; error: {
+      code: string; message: string; retryable: boolean; executionOutcome?: "not_started";
+    } };
 
 export interface ToolProviderHandshake {
   providerId: string;
@@ -79,7 +81,8 @@ export interface ToolProviderProcessStatus {
 }
 
 export class ToolProviderRpcRemoteError extends Error {
-  constructor(readonly code: string, message: string, readonly retryable: boolean) {
+  constructor(readonly code: string, message: string, readonly retryable: boolean,
+    readonly executionOutcome?: "not_started") {
     super(message);
     this.name = "ToolProviderRpcRemoteError";
   }
@@ -104,7 +107,7 @@ export interface ToolProviderRpcClient {
 interface PendingRequest {
   resolve(value: unknown): void;
   reject(error: Error): void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | undefined;
   context?: ToolExecutionContext;
 }
 
@@ -123,6 +126,7 @@ export class ToolProviderProcessClient implements ToolProviderRpcClient {
   private omittedStderrBytes = 0;
   private state: ToolProviderProcessStatus["state"] = "stopped";
   private readonly requestTimeoutMs: number;
+  private readonly toolTimeouts=new Map<string,number>();
   private readonly maximumFrameBytes: number;
   private readonly maximumInFlight: number;
   private readonly maximumStderrBytes: number;
@@ -145,7 +149,9 @@ export class ToolProviderProcessClient implements ToolProviderRpcClient {
   async listTools(signal?: AbortSignal): Promise<ExecutionToolSpec[]> {
     const result = await this.request("tools.list", {}, undefined, signal);
     if (!Array.isArray(result)) throw new Error("Tool Provider returned an invalid tool list");
-    return result.map(validateToolProviderSpec);
+    const specs=result.map(validateToolProviderSpec);
+    this.toolTimeouts.clear();for(const spec of specs)this.toolTimeouts.set(spec.name,spec.timeoutMs);
+    return specs;
   }
 
   async callTool(tool: string, input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
@@ -244,11 +250,12 @@ export class ToolProviderProcessClient implements ToolProviderRpcClient {
       return Promise.reject(error);
     }
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timeoutMs=method==="tools.call"?(this.toolTimeouts.get((params as {tool:string}).tool)??this.requestTimeoutMs):this.requestTimeoutMs;
+      const timer = timeoutMs>0 ? setTimeout(() => {
         this.pending.delete(id);
-        reject(new ToolProviderRpcTransportError(`Tool Provider request ${method} timed out after ${this.requestTimeoutMs}ms`));
+        reject(new ToolProviderRpcTransportError(`Tool Provider request ${method} timed out after ${timeoutMs}ms`));
         child.kill();
-      }, this.requestTimeoutMs);
+      }, timeoutMs) : undefined;
       this.pending.set(id, { resolve, reject, timer, context });
       child.stdin.write(frame, (error) => {
         if (!error) return;
@@ -288,11 +295,13 @@ export class ToolProviderProcessClient implements ToolProviderRpcClient {
     clearTimeout(pending.timer);
     this.pending.delete(response.id);
     if (response.ok) pending.resolve(response.result);
-    else if (isRecord(response.error) && typeof response.error.code === "string" && typeof response.error.message === "string" && typeof response.error.retryable === "boolean") {
+    else if (isRecord(response.error) && typeof response.error.code === "string" && typeof response.error.message === "string" && typeof response.error.retryable === "boolean"
+      && (response.error.executionOutcome === undefined || response.error.executionOutcome === "not_started")) {
       pending.reject(new ToolProviderRpcRemoteError(
         response.error.code,
         this.diagnostic("remote_error", "Tool Provider reported an error", `${response.error.code}: ${response.error.message}`, pending.context),
         response.error.retryable,
+        response.error.executionOutcome,
       ));
     } else {
       pending.reject(new Error("Tool Provider returned an invalid RPC error"));
@@ -338,7 +347,7 @@ export class ToolProviderProcessClient implements ToolProviderRpcClient {
     this.reversePending.add(request.id);
     void this.options.capabilityHost.invoke(invocation)
       .then((receipt) => this.writeHostResponse(child, request.id, true, receipt))
-      .catch((error) => this.writeHostResponse(child, request.id, false, rpcError("capability_failed", errorMessage(error), isRetryableError(error))))
+      .catch((error) => this.writeHostResponse(child, request.id, false, rpcError("capability_failed", errorMessage(error), isRetryableError(error), executionOutcome(error))))
       .finally(() => { this.reversePending.delete(request.id); });
   }
 
@@ -346,7 +355,7 @@ export class ToolProviderProcessClient implements ToolProviderRpcClient {
     if (child !== this.child || child.stdin.destroyed) return;
     const response: ToolProviderRpcResponse = ok
       ? { version: TOOL_PROVIDER_RPC_VERSION, id, ok: true, result: value }
-      : { version: TOOL_PROVIDER_RPC_VERSION, id, ok: false, error: value as { code: string; message: string; retryable: boolean } };
+      : { version: TOOL_PROVIDER_RPC_VERSION, id, ok: false, error: value as { code: string; message: string; retryable: boolean; executionOutcome?: "not_started" } };
     let frame: Buffer;
     try {
       frame = encodeLengthPrefixedJson(response, this.maximumFrameBytes);
@@ -492,7 +501,7 @@ export function validateToolProviderSpec(value: unknown): ExecutionToolSpec {
     || typeof value.priority !== "number" || typeof value.description !== "string" || !isRecord(value.inputSchema)
     || !stringArray(value.providedCapabilities) || !stringArray(value.dependencyCapabilities) || !isRecord(value.permissionRequirements)
     || !["read_only", "bounded_write", "privileged", "destructive"].includes(String(value.risk))
-    || !Number.isInteger(value.timeoutMs) || Number(value.timeoutMs) < 1) throw new Error("Tool Provider returned an invalid tool specification");
+    || !Number.isSafeInteger(value.timeoutMs) || Number(value.timeoutMs) < 0) throw new Error("Tool Provider returned an invalid tool specification");
   return value as unknown as ExecutionToolSpec;
 }
 
@@ -539,8 +548,8 @@ function isProviderHostRpcRequest(value: unknown): value is ToolProviderRpcReque
     && typeof value.id === "string" && typeof value.method === "string" && "params" in value;
 }
 
-function rpcError(code: string, message: string, retryable = false): { code: string; message: string; retryable: boolean } {
-  return { code, message, retryable };
+function rpcError(code: string, message: string, retryable = false, outcome?: "not_started") {
+  return { code, message, retryable, ...(outcome ? { executionOutcome: outcome } : {}) };
 }
 
 function errorMessage(error: unknown): string {
@@ -553,4 +562,9 @@ function publicSummary(value: string): string {
 
 function isRetryableError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "retryable" in error && error.retryable === true);
+}
+
+function executionOutcome(error: unknown): "not_started" | undefined {
+  return error && typeof error === "object" && "executionOutcome" in error && error.executionOutcome === "not_started"
+    ? "not_started" : undefined;
 }

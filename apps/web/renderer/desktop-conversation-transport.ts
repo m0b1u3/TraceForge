@@ -3,8 +3,10 @@ import type { ConversationTransport } from "./conversation-client";
 /** The bridge is supplied by an isolated Electron preload, never by URL config. */
 export interface DesktopConversations {
   protocolVersion: 1;
+  subscribeReplyDelta?(listener: (event: { conversationId: string; messageId: string; kind: "text" | "reasoning"; offset: number; delta: string }) => void): () => void;
   selectAttachments?():Promise<unknown>;
-  presentBrowser?(input: { hide: true } | { path: string; sessionId: string; takeoverId: string; focus?: boolean;
+  storage?(operation: "inspect" | "open-data" | "open-logs" | "clear-cache"): Promise<unknown>;
+  presentBrowser?(input: { hide: true } | { path: string; sessionId: string; takeoverId: string | null; focus?: boolean;
     bounds: { x: number; y: number; width: number; height: number } }): Promise<{ url?: string; title?: string; hidden?: boolean }>;
   request(input: { path: string; method: "GET" | "POST"; body?: string }): Promise<{ status: number; body: unknown }>;
 }

@@ -23,7 +23,7 @@ it("updates the same expanded process in place and renders output as inert text"
   const node = document.createElement("div"); document.body.append(node); const root = createRoot(node);
   try {
     await act(async () => root.render(React.createElement(ExecutionTrace, { events: [event(1, { outputPreview: "first" })] })));
-    const details = node.querySelector("details"); expect(details?.open).toBe(true);
+    const details = node.querySelector("details"); expect(details?.open).toBe(false);
     await act(async () => root.render(React.createElement(ExecutionTrace, { events: [event(2, { outputPreview: 'first\n<script>not executable</script>' })] })));
     expect(node.querySelector("details")).toBe(details);
     expect(node.querySelector("script")).toBeNull(); expect(node.textContent).toContain("not executable");

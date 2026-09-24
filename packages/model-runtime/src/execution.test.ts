@@ -95,6 +95,27 @@ function setup(routes: Array<[string, ModelJsonProviderPort]>, workerPolicy: Par
 }
 
 describe("model execution runtime integration harness", () => {
+  it("keeps JSON user text in model admission accounting", async () => {
+    const { runtime, store } = setup([["primary", provider(async () => ({ ok: true }))]]);
+    await runtime.extractJson(context(), { system: "Task", user: "x".repeat(8000), schema: {} });
+    expect(store.calls[0]?.reservedTokens).toBeGreaterThan(1900);
+  });
+  it("routes native function calls through the same admission, authorization and usage accounting", async () => {
+    let checks = 0;
+    const route: ModelJsonProviderPort = { extractJson: async () => { throw new Error("JSON path must not run"); },
+      streamTools: async (input, handlers) => {
+        expect(checks).toBe(1);
+        expect(input.tools[0]?.name).toBe("read_record");
+        handlers.onUsage?.({ promptTokens: 7, completionTokens: 3, totalTokens: 10 });
+        return { text: "", toolCalls: [{ id: "call_1", name: "read_record", input: { id: "first" } }], done: false };
+      } };
+    const { runtime, store } = setup([["primary", route]]);
+    const turn = await runtime.runTools(context(), { system: "Inspect", messages: [{ role: "user", content: "Read first" }],
+      tools: [{ name: "read_record", description: "Read", input_schema: { type: "object" } }],
+      beforeDispatch: () => { checks++; } });
+    expect(turn.toolCalls).toEqual([{ id: "call_1", name: "read_record", input: { id: "first" } }]);
+    expect(store.calls).toMatchObject([{ status: "completed", usage: { totalTokens: 10 } }]);
+  });
   it("does not invent per-call or cumulative spending caps in default role policies",async()=>{
     const {runtime,store}=setup([["primary",provider(async args=>{args.onUsage?.({promptTokens:900000,completionTokens:200000,totalTokens:1100000});return {ok:true};})]]);
     const large={system:"Task",user:"x".repeat(300000),schema:{}};

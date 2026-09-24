@@ -15,5 +15,9 @@ it("preserves reading position during updates and explicitly returns to latest",
     expect(scroll.scrollTop).toBe(100);expect(node.textContent).toContain("回到最新内容");
     await act(async()=>node.querySelector("button")!.click());expect(scroll.scrollTop).toBe(1000);
     expect(node.querySelector("button")).toBeNull();
+    await act(async()=>{scroll.scrollTop=120;scroll.dispatchEvent(new Event("scroll",{bubbles:true}));});
+    await act(async()=>root.render(React.createElement(ConversationViewport,{identity:"settings",follow:false,children:"Settings"})));
+    await act(async()=>root.render(React.createElement(ConversationViewport,{identity:"first",follow:true,children:"Restored"})));
+    expect(scroll.scrollTop).toBe(120);expect(node.textContent).toContain("回到最新内容");
   }finally{act(()=>root.unmount());node.remove();}
 });

@@ -5,7 +5,6 @@ import type { ExecutionToolAdapter } from "./tool-gateway.js";
 import type { ExecutionToolDiscoverySource } from "./tool-discovery.js";
 import type { ToolExecutionContext } from "./model.js";
 import { waitForCancellation } from "./cancellation.js";
-import type { ToolProviderFairScheduler } from "./tool-provider-scheduler.js";
 import type {
   ProviderCapabilityHost,
   ProviderCapabilityInvocation,
@@ -68,7 +67,6 @@ export type ScenarioProcessSupervisionState = "reserved" | "started" | "ready" |
 export interface ScenarioProcessSupervisionSnapshot extends ScenarioProcessPackageIdentity {
   source: string;
   lastGeneration: number;
-  maximumStarts: number;
   state: ScenarioProcessSupervisionState;
   revokedReason: string | null;
 }
@@ -107,12 +105,14 @@ export interface ScenarioCapabilityClaim {
 export interface ScenarioProcessSupervisionStore {
   recoverInterrupted(): number;
   snapshot(identity: ScenarioProcessManifest): ScenarioProcessSupervisionSnapshot | undefined;
-  reserveGeneration(identity: ScenarioProcessManifest, generation: number, maximumStarts: number, launchFingerprint: string): void;
+  reserveGeneration(identity: ScenarioProcessManifest, generation: number, launchFingerprint: string): void;
   recordLifecycle(identity: ScenarioProcessManifest, generation: number, state: Exclude<ScenarioProcessSupervisionState, "reserved" | "interrupted" | "revoked">,
     detail: { proof?: ScenarioProcessLaunchProof; error?: string; exitCode?: number | null; exitSignal?: string | null }): void;
   revoke(identity: ScenarioProcessManifest, reason: string): void;
   getCapabilityReceipt(identity: ScenarioProcessPackageIdentity, idempotencyKey: string):
-    { fingerprint: string; status: "pending" | "retry_allowed" } | { fingerprint: string; status: "succeeded"; receipt: ProviderCapabilityReceipt } | undefined;
+    { fingerprint: string; status: "pending" | "retry_allowed" }
+    | { fingerprint: string; status: "succeeded" | "failed"; receipt: ProviderCapabilityReceipt }
+    | undefined;
   countCapabilityReceipts(identity: ScenarioProcessPackageIdentity): number;
   claimCapabilityReceipt(identity: ScenarioProcessPackageIdentity, claim: ScenarioCapabilityClaim): boolean;
   settleCapabilityReceipt(identity: ScenarioProcessPackageIdentity, fingerprint: string, receipt: ProviderCapabilityReceipt): void;
@@ -126,6 +126,8 @@ export interface ScenarioPackageCapabilityResult {
 export interface ScenarioPackageCapabilityHandler {
   capability: string;
   actions: string[];
+  /** Host-owned operation deadline; never supplied by the Scenario process. */
+  timeoutMs?: number;
   execute(input: unknown, context: ToolExecutionContext, signal: AbortSignal): Promise<ScenarioPackageCapabilityResult>;
 }
 
@@ -182,6 +184,7 @@ export class ScenarioPackageCapabilityBroker implements ProviderCapabilityHost {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error(`Scenario capability ${key} must be a positive integer`);
     }
     for (const handler of handlers) {
+      if(handler.timeoutMs!==undefined&&(!Number.isSafeInteger(handler.timeoutMs)||handler.timeoutMs<0))throw new Error("Invalid host capability deadline");
       const capability = required(handler.capability, "Scenario capability handler");
       if (!this.declared.has(capability)) throw new Error(`Scenario capability handler ${capability} was not declared by the Package`);
       if (this.handlers.has(capability)) throw new Error(`Duplicate Scenario capability handler ${capability}`);
@@ -246,7 +249,7 @@ export class ScenarioPackageCapabilityBroker implements ProviderCapabilityHost {
         throw new Error("Scenario capability idempotency key was reused with different input");
       }
       if (durable.status === "pending") throw new Error("Scenario capability outcome is unresolved; reconciliation is required");
-      if (durable.status === "succeeded") {
+      if (durable.status === "succeeded" || durable.status === "failed") {
         if (durable.receipt.inputFingerprint !== fingerprint) throw new Error("Scenario capability receipt fingerprint mismatch");
         this.receipts.set(receiptKey, { fingerprint, receipt: structuredClone(durable.receipt) });
         return { ...structuredClone(durable.receipt), replayed: true };
@@ -260,6 +263,12 @@ export class ScenarioPackageCapabilityBroker implements ProviderCapabilityHost {
     if (!retryReleased && Math.max(this.receipts.size, this.durableStore?.countCapabilityReceipts(this.packageIdentity) ?? 0) >= this.limits.maximumReceipts) {
       throw new Error("Scenario Package capability receipt capacity exceeded");
     }
+    if (this.active.size >= this.limits.maximumConcurrent) {
+      throw Object.assign(new Error("Scenario Package capability concurrency limit exceeded"), {
+        retryable: true,
+        executionOutcome: "not_started" as const,
+      });
+    }
     const claim: ScenarioCapabilityClaim = { schemaVersion: 1, package: this.packageIdentity,
       generation: input.provider.generation, parentRequestId: input.parentRequestId, capability: input.capability,
       action: input.action, idempotencyKey: receiptKey, inputFingerprint: fingerprint,
@@ -268,7 +277,7 @@ export class ScenarioPackageCapabilityBroker implements ProviderCapabilityHost {
     if (this.durableStore && !this.durableStore.claimCapabilityReceipt(this.packageIdentity, claim)) {
       const raced = this.durableStore.getCapabilityReceipt(this.packageIdentity, receiptKey);
       if (!raced || raced.fingerprint !== fingerprint) throw new Error("Scenario capability idempotency claim conflict");
-      if (raced.status !== "succeeded") throw new Error("Scenario capability outcome is unresolved; reconciliation is required");
+      if (raced.status !== "succeeded" && raced.status !== "failed") throw new Error("Scenario capability outcome is unresolved; reconciliation is required");
       this.receipts.set(receiptKey,{fingerprint,receipt:structuredClone(raced.receipt)});
       return { ...structuredClone(raced.receipt), replayed:true };
     }
@@ -280,12 +289,12 @@ export class ScenarioPackageCapabilityBroker implements ProviderCapabilityHost {
 
   private async execute(input: ProviderCapabilityInvocation, handler: ScenarioPackageCapabilityHandler,
     fingerprint: string, receiptKey: string, requestBytes: number, startedAt: string): Promise<ProviderCapabilityReceipt> {
-    if (this.active.size >= this.limits.maximumConcurrent) throw new Error("Scenario Package capability concurrency limit exceeded");
     const generation = this.generation!;
     const controller = new AbortController();
     const abort = () => controller.abort(generation.controller.signal.reason ?? new Error("Scenario process generation ended"));
     generation.controller.signal.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(() => controller.abort(new Error("Scenario Package capability deadline exceeded")), this.limits.timeoutMs);
+    const timeoutMs=handler.timeoutMs ?? this.limits.timeoutMs;
+    const timer = timeoutMs>0 ? setTimeout(() => controller.abort(new Error("Scenario Package capability deadline exceeded")), timeoutMs) : undefined;
     this.active.add(controller);
     try {
       const result = await waitForCancellation(
@@ -309,6 +318,19 @@ export class ScenarioPackageCapabilityBroker implements ProviderCapabilityHost {
       this.durableStore?.settleCapabilityReceipt(this.packageIdentity, fingerprint, receipt);
       this.receipts.set(receiptKey, { fingerprint, receipt: structuredClone(receipt) });
       return receipt;
+    } catch (error) {
+      if (executionOutcome(error) !== "not_started") throw error;
+      const receipt: ProviderCapabilityReceipt = {
+        id: randomUUID(), provider: { ...input.provider }, parentRequestId: input.parentRequestId,
+        capability: input.capability, action: input.action, idempotencyKey: input.idempotencyKey,
+        inputFingerprint: fingerprint, attribution: withoutPermissions(input.attribution), status: "failed",
+        authorizationRef: `scenario-package:${this.packageIdentity.id}@${this.packageIdentity.version}:generation:${input.provider.generation}`,
+        reason: boundedFailureReason(error), refs: [], requestBytes, responseBytes: 0,
+        retryable: errorRetryable(error), startedAt, completedAt: this.now(),
+      };
+      this.durableStore?.settleCapabilityReceipt(this.packageIdentity, fingerprint, receipt);
+      this.receipts.set(receiptKey, { fingerprint, receipt: structuredClone(receipt) });
+      return receipt;
     } finally {
       clearTimeout(timer);
       this.active.delete(controller);
@@ -317,15 +339,27 @@ export class ScenarioPackageCapabilityBroker implements ProviderCapabilityHost {
   }
 }
 
+function executionOutcome(error: unknown): "not_started" | undefined {
+  return error && typeof error === "object" && "executionOutcome" in error && error.executionOutcome === "not_started"
+    ? "not_started"
+    : undefined;
+}
+
+function errorRetryable(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "retryable" in error && error.retryable === true);
+}
+
+function boundedFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Scenario Package capability was not started";
+  return Buffer.from(message, "utf8").subarray(0, 4096).toString("utf8") || "Scenario Package capability was not started";
+}
+
 export interface ScenarioProcessRuntimeOptions {
   manifest: ScenarioProcessManifest;
   launch: ScenarioProcessLaunch;
   capabilityHandlers: ScenarioPackageCapabilityHandler[];
   capabilityLimits?: Partial<ScenarioPackageCapabilityBrokerLimits>;
   transport?: Omit<ToolProviderProcessOptions, "executable" | "arguments" | "workingDirectory" | "environment" | "attestation" | "capabilityHost">;
-  maximumRestarts?: number;
-  /** Shares the Foundation's global/per-Run/per-Work execution admission. */
-  scheduler?: ToolProviderFairScheduler;
   /** Rechecks current Package trust at discovery, execution and reverse-capability boundaries. */
   assertAvailable?: () => void;
   /** Required for production Scenario Process launches. */
@@ -334,7 +368,7 @@ export interface ScenarioProcessRuntimeOptions {
   supervision?: ScenarioProcessSupervisionStore;
   /** Durable shared process admission; required by the production Foundation. */
   processCapacity?: {
-    acquire(generation: number, attribution: ExecutionAttribution): Promise<{ beforeStart(requestId: string): void; finish(terminalObserved: boolean): void }>;
+    acquire(generation: number, attribution: ExecutionAttribution, signal?: AbortSignal): Promise<{ beforeStart(requestId: string): void; finish(terminalObserved: boolean): void }>;
   };
 }
 
@@ -343,16 +377,11 @@ export class ScenarioProcessRuntime implements ExecutionToolDiscoverySource {
   readonly source: string;
   private readonly client: ToolProviderProcessClient | ExecutionNodeToolProviderClient;
   private readonly broker: ScenarioPackageCapabilityBroker;
-  private readonly maximumRestarts: number;
   private revokedReason: string | null = null;
 
   constructor(private readonly options: ScenarioProcessRuntimeOptions) {
     const manifest = validateScenarioProcessManifest(options.manifest);
     this.source = manifest.source;
-    this.maximumRestarts = options.maximumRestarts ?? 3;
-    if (!Number.isSafeInteger(this.maximumRestarts) || this.maximumRestarts < 0 || this.maximumRestarts > 100) {
-      throw new Error("Invalid Scenario process restart limit");
-    }
     this.broker = new ScenarioPackageCapabilityBroker(manifest, manifest.hostCapabilities, options.capabilityHandlers,
       options.capabilityLimits, undefined, options.assertAvailable, options.supervision);
     if (isExecutionNodeLaunch(options.launch)) {
@@ -376,16 +405,17 @@ export class ScenarioProcessRuntime implements ExecutionToolDiscoverySource {
         outputLimitBytes: options.launch.outputLimitBytes, requestTimeoutMs: options.transport?.requestTimeoutMs,
         maximumFrameBytes: options.transport?.maximumFrameBytes, maximumInFlightRequests: options.transport?.maximumInFlightRequests,
         maximumStderrBytes: options.transport?.maximumStderrBytes, expectedProviderId: manifest.id,
+        diagnosticWriter: options.transport?.diagnosticWriter,
         expectedProviderVersion: manifest.version, capabilityHost: this.broker, initialGeneration: previous?.lastGeneration ?? 0,
         attributionForGeneration: (generation, base) => ({ ...base,
           idempotencyKey: `${base.idempotencyKey}:generation:${generation}`,
           actionId: `${base.actionId}:generation:${generation}` }),
-        beforeProcessStart: async (requestId, generation) => {
+        beforeProcessStart: async (requestId, generation, signal) => {
           const lease=await options.processCapacity?.acquire(generation,{
             ...structuredClone(serviceAttribution),idempotencyKey:`${serviceAttribution.idempotencyKey}:generation:${generation}`,
-            actionId:`${serviceAttribution.actionId}:generation:${generation}`});
+            actionId:`${serviceAttribution.actionId}:generation:${generation}`},signal);
           try {
-            options.supervision!.reserveGeneration(manifest, generation, this.maximumRestarts + 1, launchFingerprint);
+            options.supervision!.reserveGeneration(manifest, generation, launchFingerprint);
             lease?.beforeStart(requestId);if(lease)capacityLeases.set(generation,lease);
           } catch(error) { lease?.finish(false);throw error; }
         },
@@ -417,10 +447,6 @@ export class ScenarioProcessRuntime implements ExecutionToolDiscoverySource {
       await this.client.close();
       throw new Error("Scenario Process handshake profile or Package identity mismatch");
     }
-    if (status.generation > this.maximumRestarts + 1) {
-      await this.client.close();
-      throw new Error("Scenario Process restart budget exhausted");
-    }
     this.broker.activate(status.generation);
     this.options.assertAvailable?.();
     const allowed = new Set(this.options.manifest.providedCapabilities);
@@ -432,11 +458,11 @@ export class ScenarioProcessRuntime implements ExecutionToolDiscoverySource {
       if (undeclared.length) throw new Error(`Scenario Process tool ${spec.name} uses undeclared capabilities: ${[...new Set(undeclared)].join(", ")}`);
       return { ...spec, execute: async (input, context) => {
         this.options.assertAvailable?.();
-        const lease = await this.options.scheduler?.acquire({ providerId: this.options.manifest.id,
-          providerVersion: this.options.manifest.version, toolName: spec.name, caseId: context.caseId,
-          runId: context.runId, workId: context.workId }, context.signal);
-        try { return await this.client.callTool(spec.name, input, context); }
-        finally { lease?.release(); }
+        if(this.revokedReason)throw new Error(`Scenario Process is revoked: ${this.revokedReason}`);
+        const result=await this.client.callTool(spec.name, input, context);
+        if(this.revokedReason)throw new Error(`Scenario Process is revoked: ${this.revokedReason}`);
+        this.options.assertAvailable?.();
+        return result;
       } };
     });
   }
@@ -444,12 +470,7 @@ export class ScenarioProcessRuntime implements ExecutionToolDiscoverySource {
   async restart(): Promise<void> {
     if (this.revokedReason) throw new Error(`Scenario Process is revoked: ${this.revokedReason}`);
     await this.client.restart();
-    const status = this.client.status();
-    if (status.generation > this.maximumRestarts + 1) {
-      await this.client.close();
-      throw new Error("Scenario Process restart budget exhausted");
-    }
-    this.broker.activate(status.generation);
+    this.broker.activate(this.client.status().generation);
   }
 
   async revoke(reason: string): Promise<void> {

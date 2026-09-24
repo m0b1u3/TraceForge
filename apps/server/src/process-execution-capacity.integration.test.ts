@@ -56,12 +56,46 @@ async function retained(kind:"service"|"work"="service"){
 }
 
 describe("Shared builtin/MCP process occupancy",()=>{
+  it("releases an exactly bound native cleanup receipt, including after host restart",async()=>{
+    const f=await retained();
+    const claimed=f.journal.get("process")!;
+    f.journal.settle({...claimed,status:"exit_observed",cleanup:"process_tree_confirmed",process:{
+      id:"process-id",nodeId:"node",pid:123,state:"exited",attribution:input.attribution,
+      executable:"/neutral",arguments:[],workingDirectory:"/",terminal:null,
+      enforcement:{sandboxBackend:"traceforge-macos-native",backendMeasurement:"a".repeat(64),sandboxed:true,filesystemPolicyApplied:true,
+        permissionProfileFingerprint:"b".repeat(64),resourceLimitsApplied:false,resourcePolicy:"sampled_terminate",resourceLimitsFingerprint:"c".repeat(64),network:"deny",atomicProcessTreeAssignment:true,processTreeEmptyBarrier:true},
+      startedAt:at,updatedAt:at,exitedAt:at,exitCode:0,exitSignal:null,resourceLimitExceeded:null,capturedOutputBytes:0,omittedOutputBytes:0,lastEventSequence:0,
+    }});
+    const scheduler=new ToolProviderFairScheduler({global:1,maximumWaitMs:15});
+    const restarted=new ProcessExecutionCapacity(f.sqlite,scheduler,()=>at);
+    expect(restarted.inspect(f.id).state).toBe("released");expect(scheduler.snapshot().occupied).toBe(0);
+    f.lease.finish(true);expect(f.scheduler.snapshot().occupied).toBe(0);
+    const next=await restarted.acquire({...input,attribution:{...input.attribution,idempotencyKey:"next-generation"}});next.finish(false);
+  });
   it.each([false,true])("retains observed or unknown termination without inventing service invocations (%s)",async terminal=>{
     const f=await retained();f.lease.finish(terminal);f.lease.finish(terminal);
     expect(f.scheduler.snapshot()).toMatchObject({active:0,retained:1,occupied:1});
     expect(f.capacity.inspect(f.id).state).toBe(terminal?"terminal_observed":"unknown");
     expect(f.sqlite.prepare("SELECT count(*) AS n FROM tool_invocation_bindings").get()).toEqual({n:0});
     await expect(f.capacity.acquire({...input,source:"second",attribution:{...input.attribution,runId:"other",idempotencyKey:"other"}})).rejects.toMatchObject({reason:"wait_timeout"});
+  });
+  it("releases capacity when a trusted Host-owned lifecycle confirms cleanup",async()=>{
+    const f=setup(),lease=await f.capacity.acquire(input);lease.beforeStart("owned-browser");
+    lease.finish(true,true);
+    expect(f.scheduler.snapshot()).toMatchObject({active:0,retained:0,occupied:0});
+    expect(f.capacity.list("case","run").items[0]).toMatchObject({state:"released",proofRef:"host:owned-cleanup-confirmed"});
+    const next=await f.capacity.acquire({...input,attribution:{...input.attribution,idempotencyKey:"next"}});next.finish(false);
+  });
+  it("does not let an interrupted Scenario service generation hide the browser tool catalog",async()=>{
+    const f=setup({global:4,perProvider:4,perTool:4,perRun:4,perWork:1});
+    const first=await f.capacity.acquire({...input,operation:"scenario-process:generation:1"});
+    first.beforeStart("request-1");first.finish(false);
+    expect(f.scheduler.snapshot()).toMatchObject({active:0,retained:1,occupied:1});
+
+    const second=await f.capacity.acquire({...input,operation:"scenario-process:generation:2",
+      attribution:{...input.attribution,idempotencyKey:"process-generation-2"}});
+    second.beforeStart("request-2");second.finish(false);
+    expect(f.scheduler.snapshot()).toMatchObject({active:0,retained:2,occupied:2});
   });
   it("releases a never-dispatched reservation and rejects subsequent dispatch",async()=>{
     const f=setup(),lease=await f.capacity.acquire(input);lease.finish(false);

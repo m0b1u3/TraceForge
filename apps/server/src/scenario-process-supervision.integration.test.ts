@@ -23,15 +23,17 @@ function claimFor(receipt:ProviderCapabilityReceipt){return {schemaVersion:1 as 
     scopeRef:receipt.attribution.scopeRef,leaseId:receipt.attribution.leaseId},startedAt:receipt.startedAt};}
 
 describe("Scenario Process durable supervision",()=>{
-  it("recovers an unfinished generation conservatively and preserves the restart budget across a new Host",()=>{
-    const first=setup();first.store.reserveGeneration(manifest,1,2,launchFingerprint);
+  it("recovers an unfinished generation conservatively without a lifetime restart quota",()=>{
+    const first=setup();first.store.reserveGeneration(manifest,1,launchFingerprint);
     first.store.recordLifecycle(manifest,1,"started",{proof});first.store.recordLifecycle(manifest,1,"ready",{proof});
-    expect(first.store.snapshot(manifest)).toMatchObject({lastGeneration:1,state:"ready",maximumStarts:2});
+    expect(first.store.snapshot(manifest)).toMatchObject({lastGeneration:1,state:"ready"});
     const restarted=new SqliteScenarioProcessSupervisionStore(first.sqlite,()=>"2026-09-02T00:01:00.000Z");
     expect(restarted.recoverInterrupted()).toBe(1);
     expect(restarted.snapshot(manifest)).toMatchObject({lastGeneration:1,state:"interrupted"});
-    restarted.reserveGeneration(manifest,2,2,launchFingerprint);
-    expect(()=>restarted.reserveGeneration(manifest,3,2,launchFingerprint)).toThrow(/restart budget exhausted/);
+    restarted.reserveGeneration(manifest,2,launchFingerprint);
+    restarted.recordLifecycle(manifest,2,"failed",{error:"fixture"});
+    restarted.reserveGeneration(manifest,3,launchFingerprint);
+    expect(restarted.snapshot(manifest)).toMatchObject({lastGeneration:3,state:"reserved"});
   });
 
   it("persists an exact capability receipt and rejects conflicting replay after restart",()=>{
@@ -66,6 +68,26 @@ describe("Scenario Process durable supervision",()=>{
     await expect(call(broker,2)).rejects.toThrow(/unresolved/);expect(executions).toBe(1);
   });
 
+  it("persists and replays a confirmed not-started capability failure without reconciliation",async()=>{
+    const {sqlite,store}=setup();let executions=0;
+    const invoke=(broker:ScenarioPackageCapabilityBroker,generation:number)=>broker.invoke({provider:{id:manifest.id,version:manifest.version,generation},
+      parentRequestId:`parent:${generation}`,capability:"fixture.lookup",action:"fixture.inspect",idempotencyKey:"not-started",input:{candidate:"first"},depth:1,
+      attribution:{caseId:"case",runId:"run",workId:"work",workerId:"worker",scopeRef:"scope",leaseId:"lease",
+        leaseExpiresAt:"2100-01-01T00:00:00.000Z",idempotencyKey:"effect",effectivePermissions:{version:1,platform:"linux",filesystem:{read:[],write:[],deny:[]},
+          network:"deny",process:{access:"deny",interactive:false,background:false},secrets:"deny",sources:["fixture"]}}});
+    const first=new ScenarioPackageCapabilityBroker(manifest,["fixture.lookup"],[{capability:"fixture.lookup",actions:["fixture.inspect"],
+      async execute(){executions++;throw Object.assign(new Error("Provider scheduling wait timed out"),{retryable:true,executionOutcome:"not_started" as const});}}],{},undefined,undefined,store);
+    first.activate(1);
+    await expect(invoke(first,1)).resolves.toMatchObject({status:"failed",retryable:true,reason:"Provider scheduling wait timed out"});
+    expect(store.getCapabilityReceipt(manifest,"not-started")).toMatchObject({status:"failed",receipt:{status:"failed"}});
+    const restartedStore=new SqliteScenarioProcessSupervisionStore(sqlite);
+    const restarted=new ScenarioPackageCapabilityBroker(manifest,["fixture.lookup"],[{capability:"fixture.lookup",actions:["fixture.inspect"],
+      async execute(){executions++;return {output:{unexpected:true},refs:[]};}}],{},undefined,undefined,restartedStore);
+    restarted.activate(2);
+    await expect(invoke(restarted,2)).resolves.toMatchObject({status:"failed",replayed:true});
+    expect(executions).toBe(1);
+  });
+
   it("replays a completed Host capability through a newly constructed broker without redispatch",async()=>{
     const {store}=setup();let executions=0;
     const make=()=>new ScenarioPackageCapabilityBroker(manifest,["fixture.lookup"],[{capability:"fixture.lookup",actions:["fixture.inspect"],
@@ -80,9 +102,9 @@ describe("Scenario Process durable supervision",()=>{
   });
 
   it("persists revocation and refuses every later generation",()=>{
-    const {store}=setup();store.reserveGeneration(manifest,1,2,launchFingerprint);store.revoke(manifest,"review withdrawn");
+    const {store}=setup();store.reserveGeneration(manifest,1,launchFingerprint);store.revoke(manifest,"review withdrawn");
     expect(store.snapshot(manifest)).toMatchObject({state:"revoked",revokedReason:"review withdrawn"});
-    expect(()=>store.reserveGeneration(manifest,2,2,launchFingerprint)).toThrow(/revoked/);
+    expect(()=>store.reserveGeneration(manifest,2,launchFingerprint)).toThrow(/revoked/);
   });
 
   it.skipIf(process.platform==="win32")("recovers generation, budget and process occupancy in a new Host after real SIGKILL",async()=>{

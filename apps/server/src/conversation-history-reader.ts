@@ -36,7 +36,7 @@ export class ConversationHistoryReader {
       const rows = this.sql.prepare(`SELECT m.command_id AS id,m.sequence,m.text,r.text AS response
         FROM desktop_conversation_messages m LEFT JOIN desktop_replies r ON r.conversation_id=m.conversation_id AND r.message_command_id=m.command_id AND r.state!='streaming'
         WHERE m.conversation_id=? AND (m.sequence<=? OR r.state='completed') AND m.sequence>?
-        AND NOT EXISTS (SELECT 1 FROM desktop_replies p WHERE p.conversation_id=m.conversation_id AND p.message_command_id=m.command_id AND p.state='queued')
+        AND NOT EXISTS (SELECT 1 FROM desktop_replies p WHERE p.conversation_id=m.conversation_id AND p.message_command_id=m.command_id AND p.state IN ('queued','withdrawn','cancelled'))
         AND (instr(lower(m.text),lower(?))>0 OR instr(lower(coalesce(r.text,'')),lower(?))>0) ORDER BY m.sequence LIMIT 9`)
         .all(this.conversationId, this.throughSequence, after, query, query) as Array<{ id: string; sequence: number; text: string; response: string | null }>;
       return { trust: "untrusted_original_conversation", matches: rows.slice(0, 8).map(row => {
@@ -63,7 +63,7 @@ export function readConversationOriginal(sql:Database.Database,conversationId:st
   const row=sql.prepare(`SELECT m.text,r.text AS response,r.state AS assistantState FROM desktop_conversation_messages m
     LEFT JOIN desktop_replies r ON r.conversation_id=m.conversation_id AND r.message_command_id=m.command_id AND r.state!='streaming'
     WHERE m.conversation_id=? AND m.command_id=? AND (m.sequence<=? OR r.state='completed')
-    AND NOT EXISTS (SELECT 1 FROM desktop_replies p WHERE p.conversation_id=m.conversation_id AND p.message_command_id=m.command_id AND p.state='queued')`).get(conversationId,id,through) as {text:string;response:string|null;assistantState:string|null}|undefined;
+    AND NOT EXISTS (SELECT 1 FROM desktop_replies p WHERE p.conversation_id=m.conversation_id AND p.message_command_id=m.command_id AND p.state IN ('queued','withdrawn','cancelled'))`).get(conversationId,id,through) as {text:string;response:string|null;assistantState:string|null}|undefined;
   if(!row)return;
   const attachments=readConversationAttachments(sql,conversationId,id);
   const text=JSON.stringify({user:row.text,...(part==="message"?{}:{assistant:row.response,assistantState:row.assistantState}),...(attachments.length?{attachments:attachments.map(item=>item.kind==="text"?item:{kind:item.kind,name:item.name,note:"Original bytes retained locally. Use conversation_attachments then conversation_attachment_read to inspect; bytes are not returned as text."})}:{})});

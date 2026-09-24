@@ -19,7 +19,11 @@ const context:ToolExecutionContext={workerId:"worker",caseId:"case",runId:"run",
 interface SurfaceStorage {state:{revision:number;value:unknown}|null; records?:Map<string,{revision:number;value:unknown}>; failRequest?:boolean; unstable?:boolean; truncated?:boolean; deny?:boolean}
 function runtime(calls:Array<{capability:string;action:string;input:unknown}>,storage:SurfaceStorage={state:null}){
   storage.records ??= new Map();
-  const handlers:ScenarioPackageCapabilityHandler[]=[{ capability: SCENARIO_PROCESS_HOST_CAPABILITIES.browser, actions: ["inspect"], async execute() { throw new Error("Browser deployment unavailable in HTTP fixture"); } },{
+  const handlers:ScenarioPackageCapabilityHandler[]=[{ capability: SCENARIO_PROCESS_HOST_CAPABILITIES.browser, actions: ["inspect","request_takeover","observe"], async execute(input) {
+    if(!["request_takeover","observe"].includes((input as any).operation))throw new Error("Browser deployment unavailable in HTTP fixture");
+    calls.push({capability:SCENARIO_PROCESS_HOST_CAPABILITIES.browser,action:(input as any).operation,input});
+    return {output:{status:"manual_control",sessionId:(input as any).sessionId},refs:[]};
+  } },{
     capability:SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,actions:["require","authorize_resource"],async execute(input){
       const resource="resourceKind" in (input as object);calls.push({capability:SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,action:resource?"authorize_resource":"require",input});
       if(storage.deny)throw new Error("scope denied");
@@ -63,6 +67,18 @@ function runtime(calls:Array<{capability:string;action:string;input:unknown}>,st
 }
 
 describe("Web black-box Scenario Process",()=>{
+  it("forwards a human handoff request through the declared browser capability",async()=>{
+    const calls:Array<{capability:string;action:string;input:unknown}>=[],source=runtime(calls);
+    try{const tool=(await source.discover()).find(t=>t.name==="web.browser.inspect")!;
+      const result=await tool.execute({operation:"request_takeover",sessionId:"owned-session",url:"https://authorized.example/"},context);
+      expect(JSON.parse(result.raw)).toMatchObject({status:"manual_control",sessionId:"owned-session"});
+      expect(calls).toEqual([{capability:SCENARIO_PROCESS_HOST_CAPABILITIES.browser,action:"request_takeover",input:{operation:"request_takeover",authorizationAction:"web.request.replay",sessionId:"owned-session"}}]);
+      for (const screenshot of [false,true]) {
+        await tool.execute({operation:"observe",sessionId:"owned-session",screenshot},{...context,idempotencyKey:`observe-${screenshot}`});
+        expect(calls.at(-1)?.input).toMatchObject({operation:"observe",sessionId:"owned-session",screenshot});
+      }
+    }finally{await source.close();}
+  });
   const comparison={experimentId:"experiment-one",hypothesisId:"hypothesis-one",baseline:{url:"https://authorized.example/"},candidate:{url:"https://authorized.example/next"}};
   it("resumes a paired experiment in a new process without replaying completed observations",async()=>{
     const calls:Array<{capability:string;action:string;input:unknown}>=[],storage:SurfaceStorage={state:null};let source=runtime(calls,storage);
@@ -124,7 +140,7 @@ describe("Web black-box Scenario Process",()=>{
     }finally{await source.close();}
   });
   it("loads the package as a pure-data descriptor with local Skill and Knowledge",()=>{
-    expect(descriptor).toMatchObject({id:"traceforge.web-blackbox",version:"0.5.15",
+    expect(descriptor).toMatchObject({id:"traceforge.web-blackbox",version:"0.5.20",
       runtime:{hostCapabilities:expect.arrayContaining([SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,SCENARIO_PROCESS_HOST_CAPABILITIES.execution,
         SCENARIO_PROCESS_HOST_CAPABILITIES.artifacts,SCENARIO_PROCESS_HOST_CAPABILITIES.state,SCENARIO_PROCESS_HOST_CAPABILITIES.evidence,
         SCENARIO_PROCESS_HOST_CAPABILITIES.sessions,SCENARIO_PROCESS_HOST_CAPABILITIES.traffic])}});
@@ -135,7 +151,9 @@ describe("Web black-box Scenario Process",()=>{
       .toBe("https://exact.example/health");
     expect(authorizeScenarioResource(descriptor.authorizationPolicy,scope.payload,"network.url","https://authorized.example/next"))
       .toBe("https://authorized.example/next");
-    expect(()=>authorizeScenarioResource(descriptor.authorizationPolicy,scope.payload,"network.url","https://authorized.example.evil/"))
+    expect(authorizeScenarioResource(descriptor.authorizationPolicy,scope.payload,"network.url","https://another.example/"))
+      .toBe("https://another.example/");
+    expect(()=>authorizeScenarioResource(descriptor.authorizationPolicy,scope.payload,"network.url","file:///private/data"))
       .toThrow(/does not authorize/);
   });
   it("runs scope and HTTP tools through reverse host capabilities",async()=>{

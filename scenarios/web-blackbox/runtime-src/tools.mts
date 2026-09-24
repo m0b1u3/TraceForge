@@ -17,9 +17,10 @@ export async function callTool(request: RpcRequest, host: ScenarioRpcHost): Prom
   };
   const operations: Record<string, string> = { "web.investigation.snapshot": "snapshot", "web.hypothesis.register": "register", "web.validation.execute": "advance", "web.validation.review": "review", "web.report.build": "report" };
   if (typeof params.tool === "string" && operations[params.tool]) {
-    return investigation(operations[params.tool]!, plainObject(params.input, "Workflow input"), context, capability, (input, suffix) => {
+    return investigation(operations[params.tool]!, plainObject(params.input, "Workflow input"), context, capability, (input, suffix, timeoutMs) => {
       const scoped: Capability = (name, action, value, child) => capability(name, action, value, `${suffix}:${child}`);
-      const bounded = { ...input, timeoutMs: 15000, responseLimitBytes: 1024 * 1024 };
+      // The workflow loop bounds each request by its remaining time budget; the 15 s cap is unchanged.
+      const bounded = { ...input, timeoutMs: Math.min(15000, Math.max(1, timeoutMs)), responseLimitBytes: 1024 * 1024 };
       return input.sessionId === undefined ? requestHttp(bounded, scoped) : requestSession(bounded, scoped);
     });
   }
@@ -40,12 +41,20 @@ export async function callTool(request: RpcRequest, host: ScenarioRpcHost): Prom
   if (params.tool === "web.browser.inspect") {
     const input = plainObject(params.input, "Browser input"); exact(input, ["operation", "url", "screenshot", "sessionId", "pageId", "action", "durationMs"]);
     const operation = input.operation ?? "inspect";
-    if (!["inspect", "open", "observe", "act", "close"].includes(operation)) throw new Error("Invalid browser operation");
-    if (["observe", "act", "close"].includes(operation)) {
-      exact(input, ["operation", "sessionId", ...(operation === "act" ? ["action"] : operation === "observe" ? ["pageId"] : [])]);
+    if (!["inspect", "open", "observe", "act", "close", "request_takeover"].includes(operation)) throw new Error("Invalid browser operation");
+    if (["observe", "act", "close", "request_takeover"].includes(operation)) {
+      exact(input, ["operation", "sessionId", ...(operation === "act" ? ["action"] : operation === "observe" ? ["pageId", "screenshot"]
+        : operation === "request_takeover" ? ["url"] : [])]);
+      if (input.screenshot !== undefined && typeof input.screenshot !== "boolean") throw new Error("Screenshot option must be boolean");
+      // Models commonly repeat the currently visible URL when handing a live
+      // browser to the user. It is context only: validate it, then keep the
+      // opaque sessionId as the sole authority so handoff cannot navigate or
+      // expand the granted network scope.
+      if (operation === "request_takeover" && input.url !== undefined) canonicalHttpUrl(input.url, "Browser URL");
       const receipt = await capability("traceforge.scenario.browser@1", operation, { operation, authorizationAction: "web.request.replay",
         sessionId: requiredText(input.sessionId, "Browser session"), ...(operation === "act" ? { action: plainObject(input.action, "Browser action") } : {}),
         ...(input.pageId ? { pageId: requiredText(input.pageId, "Browser page") } : {}),
+        ...(operation === "observe" && input.screenshot !== undefined ? { screenshot: input.screenshot } : {}),
       }, `browser-${operation}`);
       return succeeded("Browser session operation returned; inspect status before continuing", receipt.output, receipt.refs);
     }
@@ -54,13 +63,14 @@ export async function callTool(request: RpcRequest, host: ScenarioRpcHost): Prom
     if (input.screenshot !== undefined && typeof input.screenshot !== "boolean") throw new Error("Screenshot option must be boolean");
     const receipt = await capability("traceforge.scenario.browser@1", operation, {
       operation, authorizationAction: "web.request.replay", url, screenshot: input.screenshot ?? false,
-      ...(operation === "open" ? { durationMs: boundedInteger(input.durationMs ?? 300000, 1000, 900000, "Browser session duration") } : {}),
+      ...(operation === "open" ? { durationMs: boundedInteger(input.durationMs ?? 0, 0, 2147483647, "Browser session duration") } : {}),
     }, "browser-inspect");
     return succeeded("Browser observation retained; this is not a verified security finding", receipt.output, receipt.refs);
   }
-  if (params.tool === "web.validation.compare") return compareHttp(plainObject(params.input, "Comparison input"), capability, (spec, step) => {
+  if (params.tool === "web.validation.compare") return compareHttp(plainObject(params.input, "Comparison input"), capability, (spec, step, timeoutMs) => {
     const scoped: Capability = (name, action, input, suffix) => capability(name, action, input, `comparison-request:${step}:${suffix}`);
-    const input = { url: spec.url, method: spec.method, ...((spec.headers===undefined)?{}:{headers:spec.headers}),...((spec.bodyBase64===undefined)?{}:{bodyBase64:spec.bodyBase64}),responseLimitBytes: 1024 * 1024 };
+    const input = { url: spec.url, method: spec.method, ...((spec.headers===undefined)?{}:{headers:spec.headers}),...((spec.bodyBase64===undefined)?{}:{bodyBase64:spec.bodyBase64}),
+      timeoutMs: Math.min(15000, Math.max(1, timeoutMs)), responseLimitBytes: 1024 * 1024 };
     return spec.sessionId === null ? requestHttp(input, scoped) : requestSession({ ...input, sessionId: spec.sessionId }, scoped);
   });
   if (params.tool === "web.session.catalog") {

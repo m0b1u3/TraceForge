@@ -19,6 +19,14 @@ it("renders host-empty state without demo evidence or approval and restores a se
   const node = document.createElement("div"); document.body.append(node); const root = createRoot(node); dispose = () => root.unmount();
   await act(async () => { root.render(React.createElement(HostWorkbench, { bridge })); });
   expect(node.textContent).toContain("这次想调查什么？");
+  expect(node.querySelector('[aria-label="收起侧栏"]')).toBeNull();
+  expect(node.querySelector('.composer-tools')?.textContent).not.toContain("模型设置");
+  expect(node.querySelector(".sidebar-history")?.textContent).toContain("已保存会话");
+  await act(async () => node.querySelector<HTMLButtonElement>('[aria-label="任务与证据"]')!.click());
+  expect(node.querySelector(".conversation-inspector")).not.toBeNull();
+  expect(node.querySelector(".host-empty")).not.toBeNull();
+  await act(async () => node.querySelector<HTMLButtonElement>('[aria-label="关闭任务与证据"]')!.click());
+  expect(node.querySelector(".conversation-inspector")).toBeNull();
   await act(async () => (node.querySelector('button[aria-label="会话记录"]') as HTMLButtonElement).click());
   expect(node.textContent).toContain("已保存会话");
   expect(node.textContent).not.toContain("观察 01");

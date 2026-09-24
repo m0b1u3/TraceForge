@@ -1,12 +1,19 @@
 import type { CapabilityReceipt, JsonObject, ToolResult } from "./contracts.mjs";
-import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, requiredText, sha, shaBytes, succeeded, unique } from "./validation.mjs";
+import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, requiredText, sha, shaBytes, stableJson, succeeded, unique } from "./validation.mjs";
 import { readInventories, surfaceKey } from "./surface-inventory.mjs";
 import { budgets, BudgetExhausted } from "./budgets.mjs";
 import {observationHighlights} from "./observations.mjs";
 import {experimentFields,changedDimensions} from "./request-fields.mjs";
 
 type Capability = (name: string, action: string, input: unknown, suffix: string) => Promise<CapabilityReceipt>;
-type Dispatch = (input: JsonObject, suffix: string) => Promise<ToolResult>;
+type Dispatch = (input: JsonObject, suffix: string, timeoutMs: number) => Promise<ToolResult>;
+
+// One call must finish inside the declared 125 s tool timeout: the loop stops
+// dispatching after LOOP_BUDGET_MS and the last request may extend at most
+// MAX_REQUEST_MS past it, leaving room for evidence and checkpoint writes.
+const LOOP_BUDGET_MS = 90_000;
+const MAX_REQUEST_MS = 15_000;
+const MIN_REQUEST_MS = 1_000;
 interface Observation { stage: string; status: number; bytes: number; digest: string; truncated: boolean; refs: string[] }
 interface Candidate {
   variantAssessments?:Array<{variantIndex:number;assessment:string}>;
@@ -133,7 +140,10 @@ export async function investigation(action: string, input: JsonObject, context: 
   }
   if (action !== "advance") throw new Error("Unknown investigation operation");
   exact(input, ["candidateId", "plan", "maxRequests"]);
-  const plan = parsePlan(input.plan), fingerprint = sha(JSON.stringify(input.plan.candidates===undefined&&input.plan.stopOn===undefined&&input.plan.expectedSignals===undefined?{prepare:plan.prepare,baseline:plan.baseline,candidate:plan.candidates[0],rounds:plan.rounds,changedCondition:plan.changedCondition}:plan));
+  const plan = parsePlan(input.plan);
+  // Plan identity binds the normalized plan content, not the input key order.
+  const fingerprint = sha(stableJson({ prepare: plan.prepare, baseline: plan.baseline, candidates: plan.candidates,
+    rounds: plan.rounds, changedCondition: plan.changedCondition, stopOn: plan.stopOn, expectedSignals: plan.expectedSignals }));
   if(plan.candidates.length>limits.variants)throw new Error("Authorized variant budget exceeded");
   const budget = boundedInteger(input.maxRequests ?? limits.requestsPerCall, 1, limits.requestsPerCall, "Workflow request budget");
   const workId = requiredText(context.workId, "Validation Work id");
@@ -156,15 +166,17 @@ export async function investigation(action: string, input: JsonObject, context: 
   const sequence = [...plan.prepare.map((step, i) => ({ stage: `prepare:${i}`, ...step })),
     ...plan.candidates.flatMap((variant,variantIndex)=>Array.from({ length: plan.rounds * 2 }, (_, i) => ({ stage: `${i % 2 === 0 ? "baseline" : "candidate"}:${Math.floor(i / 2)+variantIndex*plan.rounds}`,
       request: i % 2 === 0 ? plan.baseline : variant, expectedStatuses: [] as number[] })))];
-  const deadline=Date.now()+90000;
+  const deadline=Date.now()+LOOP_BUDGET_MS;
   for (let used = 0; used < budget && candidate.observations.length < sequence.length && Date.now()<deadline; used++) {
     const step = sequence[candidate.observations.length]!;
+    const requestTimeoutMs = Math.min(MAX_REQUEST_MS, deadline + MAX_REQUEST_MS - Date.now());
+    if (requestTimeoutMs < MIN_REQUEST_MS) break;
     await capability("traceforge.scenario.authorization@1", "authorize_resource", {
       action: "web.request.replay", resourceKind: "network.url", value: step.request.url,
     }, `workflow-authorize:${step.stage}`);
     candidate.pending = step.stage; await save(); candidate = state.candidates.find(item => item.id === candidateId)!;
     let response:ToolResult;
-    try{response=await dispatch(step.request,`workflow:${candidate.hypothesisId}:${step.stage}`);}catch(error){if(error instanceof BudgetExhausted){candidate.pending=null;await save();}throw error;}
+    try{response=await dispatch(step.request,`workflow:${candidate.hypothesisId}:${step.stage}`,requestTimeoutMs);}catch(error){if(error instanceof BudgetExhausted){candidate.pending=null;await save();}throw error;}
     const body = plainObject(JSON.parse(response.raw), "Workflow response"), bytes = Buffer.from(requiredBase64(body.bodyBase64), "base64");
     const observation: Observation = { stage: step.stage, status: boundedInteger(body.status, 100, 599, "HTTP status"),
       bytes: boundedInteger(body.responseBytes, 0, 1024 * 1024, "HTTP response bytes"), digest: shaBytes(bytes), truncated: body.bodyTruncated !== false,
@@ -218,6 +230,7 @@ function parsePlan(value: unknown) {
     return { request: parseRequest(step.request, true), purpose: requiredText(step.request.purpose, "Precondition purpose"), expectedStatuses: unique(step.expectedStatuses.map(status => boundedInteger(status, 100, 599, "Expected status"))) };
   });
   if(plan.candidate!==undefined&&plan.candidates!==undefined)throw new Error("Choose candidate or candidates");
+  if(plan.candidate===undefined&&plan.candidates===undefined)throw new Error("Validation plan requires a candidate or candidates");
   const variants=plan.candidates??[plan.candidate];if(!Array.isArray(variants)||!variants.length||variants.length>16)throw new Error("Invalid variant matrix");
   const baseline = parseRequest(plan.baseline, false), candidates = variants.map(value=>parseRequest(value,false));
   const dimension=changedDimensions(baseline,candidates[0]!)[0];

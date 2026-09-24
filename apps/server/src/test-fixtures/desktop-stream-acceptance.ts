@@ -85,7 +85,7 @@ export async function runDesktopStreamAcceptance(provider: LlmProvider, options:
       check(row.state === "streaming", "cancel_window_not_observed");
       if (row.text || row.reasoning) {
         const cancelled = await call(`${base}/replies/cancel/cancel`, {});
-        report.checks.cancelPreservesPartial = cancelled.state === "cancelled" && (cancelled.text.length + (cancelled.reasoning?.length ?? 0)) > 0;
+        report.checks.cancelPreservesPartial = cancelled.state === "stopped" && (cancelled.text.length + (cancelled.reasoning?.length ?? 0)) > 0;
         await new Promise(resolve => setTimeout(resolve, 350));
         const after = (await call(`${base}/replies?after=0`)).replies.find((r: any) => r.messageCommandId === "cancel");
         report.checks.lateWritesIgnored = after.revision === cancelled.revision && after.text === cancelled.text && after.reasoning === cancelled.reasoning;

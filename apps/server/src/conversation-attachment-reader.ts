@@ -17,7 +17,12 @@ export const conversationAttachmentTools:LlmToolDefinition[]=[
 
 /** Scope and temporal cutoff are host-owned, never caller-selectable. */
 export class ConversationAttachmentReader {
-  constructor(private sql:Database.Database,private conversationId:string,private through:number){}
+  private readonly hiddenReplyClause:string;
+  constructor(private sql:Database.Database,private conversationId:string,private through:number){
+    // Standalone readers can run before the reply service creates its table.
+    this.hiddenReplyClause=this.sql.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='desktop_replies'").get()
+      ? "AND NOT EXISTS (SELECT 1 FROM desktop_replies p WHERE p.conversation_id=m.conversation_id AND p.message_command_id=m.command_id AND p.state IN ('queued','withdrawn','cancelled'))" : "";
+  }
   async executeAsync(call:ToolCall):Promise<{result:unknown;attachment?:MessageAttachment;identity?:string}>{
     const found=this.execute(call);
     if(!found.attachment)return found;
@@ -55,7 +60,7 @@ export class ConversationAttachmentReader {
       const {after=0,query=""}=indexInput.parse(call.input);
       if(!this.sql.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='desktop_message_attachments'").get())return {result:{matches:[],nextAfter:null}};
       const rows=this.sql.prepare(`SELECT m.command_id AS id,m.sequence FROM desktop_conversation_messages m JOIN desktop_message_attachments a ON a.conversation_id=m.conversation_id AND a.command_id=m.command_id
-        WHERE m.conversation_id=? AND m.sequence<=? AND m.sequence>? AND EXISTS (SELECT 1 FROM json_each(a.content_json) j WHERE instr(lower(json_extract(j.value,'$.name')),lower(?))>0)
+        WHERE m.conversation_id=? AND m.sequence<=? AND m.sequence>? ${this.hiddenReplyClause} AND EXISTS (SELECT 1 FROM json_each(a.content_json) j WHERE instr(lower(json_extract(j.value,'$.name')),lower(?))>0)
         ORDER BY m.sequence LIMIT 6`).all(this.conversationId,this.through,after,query) as {id:string;sequence:number}[];
       const matches=rows.slice(0,5).flatMap(row=>readConversationAttachments(this.sql,this.conversationId,row.id).map((item,index)=>({messageId:row.id,sequence:row.sequence,index,name:item.name,kind:item.kind,digest:digest(item)}))).filter(item=>item.name.toLowerCase().includes(query.toLowerCase()));
       const files=new ConversationFileStore(this.sql);
@@ -64,7 +69,7 @@ export class ConversationAttachmentReader {
     }
     if(call.name!=="conversation_attachment_read")throw new Error("Unsupported attachment tool");
     const input=readInput.parse(call.input);
-    if(!this.sql.prepare("SELECT 1 FROM desktop_conversation_messages WHERE conversation_id=? AND command_id=? AND sequence<=?").get(this.conversationId,input.messageId,this.through))return {result:{error:"attachment_not_available"}};
+    if(!this.sql.prepare(`SELECT 1 FROM desktop_conversation_messages m WHERE m.conversation_id=? AND m.command_id=? AND m.sequence<=? ${this.hiddenReplyClause}`).get(this.conversationId,input.messageId,this.through))return {result:{error:"attachment_not_available"}};
     const attachment=readConversationAttachments(this.sql,this.conversationId,input.messageId)[input.index];
     if(!attachment)return {result:{error:"attachment_not_available"}};
     if(digest(attachment)!==input.digest)return {result:{error:"attachment_changed"}};

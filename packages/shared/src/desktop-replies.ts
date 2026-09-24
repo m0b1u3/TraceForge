@@ -4,14 +4,16 @@ export const ReplyIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
 export const DesktopMemoryViewSchema = z.object({ conversationId: ReplyIdSchema, messageId: ReplyIdSchema,
   entries: z.array(z.object({ id: ReplyIdSchema, summary: z.string().max(8192), user: z.string().max(16000), assistant: z.string().nullable() }).strict()).max(16),
 }).strict();
-export const ReplyStateSchema = z.enum(["queued", "streaming", "completed", "cancelled", "interrupted", "failed"]);
+// cancelled is decode-only compatibility: old rows did not distinguish a stopped
+// generation from an undelivered queued message.
+export const ReplyStateSchema = z.enum(["queued", "streaming", "completed", "stopped", "withdrawn", "cancelled", "interrupted", "failed"]);
 export const DesktopReplySchema = z.object({
   conversationId: ReplyIdSchema,
   messageCommandId: ReplyIdSchema,
   revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   state: ReplyStateSchema,
   text: z.string(),
-  taskRequest: z.object({ scenarioKind: z.string().min(1).max(100), definitionVersion: z.number().int().positive() }).strict().optional(),
+  taskRequest: z.object({ scenarioKind: z.string().min(1).max(100), definitionVersion: z.number().int().positive(),automatic:z.boolean().optional(),startState:z.string().optional() }).strict().optional(),
   originalReadCount: z.number().int().min(0).optional(),
   reasoning: z.string().max(16000).optional(),
   reasoningTruncated: z.boolean().optional(),

@@ -4,13 +4,15 @@ export function experimentFields(request) {
     const method = requiredText(request.method ?? "GET", "Method").toUpperCase();
     if (!["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(method))
         throw new Error("Unsupported experiment method");
-    const headers = request.headers === undefined ? {} : plainObject(request.headers, "Headers"), normalized = {};
+    const headers = request.headers === undefined ? {} : plainObject(request.headers, "Headers");
+    const normalized = {};
     if (Object.keys(headers).length > 16)
         throw new Error("Too many headers");
     for (const name of Object.keys(headers).sort()) {
         const lower = name.toLowerCase();
-        if (!/^[a-z0-9-]+$/.test(lower) || ["authorization", "proxy-authorization", "cookie", "set-cookie", "host"].includes(lower) || lower in normalized)
+        if (!/^[a-z0-9-]+$/.test(lower) || ["authorization", "proxy-authorization", "cookie", "set-cookie", "host"].includes(lower) || lower in normalized) {
             throw new Error("Use Host Sessions for credentials; header is invalid");
+        }
         const value = requiredText(headers[name], "Header value");
         if (/[\r\n]/.test(value))
             throw new Error("Invalid header value");
@@ -25,5 +27,5 @@ export function experimentFields(request) {
 }
 export const experimentDimensions = ["url", "method", "sessionId", "headers", "bodyBase64"];
 export function changedDimensions(first, second) {
-    return experimentDimensions.filter(key => JSON.stringify(first[key] ?? (key === "headers" ? {} : null)) !== JSON.stringify(second[key] ?? (key === "headers" ? {} : null)));
+    return experimentDimensions.filter((key) => JSON.stringify(first[key] ?? (key === "headers" ? {} : null)) !== JSON.stringify(second[key] ?? (key === "headers" ? {} : null)));
 }

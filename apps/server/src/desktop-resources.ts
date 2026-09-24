@@ -40,7 +40,17 @@ export class DesktopResourceControl {
         INSERT INTO desktop_project_runs SELECT NEW.run_id,id,revision FROM desktop_project_heads WHERE enabled=1; END;`);
     for (const table of ["desktop_research_versions", "desktop_project_versions", "desktop_research_runs", "desktop_project_runs"]) {
       for (const operation of ["UPDATE", "DELETE"]) sqlite.exec(`CREATE TRIGGER IF NOT EXISTS ${table}_${operation} BEFORE ${operation} ON ${table} BEGIN SELECT RAISE(ABORT,'Resource history is immutable'); END;`);
-      sqlite.exec(`CREATE TRIGGER IF NOT EXISTS ${table}_capacity BEFORE INSERT ON ${table} BEGIN SELECT CASE WHEN (SELECT count(*) FROM ${table})>=8192 THEN RAISE(ABORT,'Resource history capacity exceeded') END; END;`);
+      sqlite.exec(`DROP TRIGGER IF EXISTS ${table}_capacity`);
+    }
+    if (sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_physical_policy'").get()) {
+      for (const [table, bytes] of [
+        ["desktop_research_versions", "length(CAST(NEW.value_json AS BLOB))+2048"],
+        ["desktop_project_versions", "length(CAST(NEW.value_json AS BLOB))+2048"],
+        ["desktop_research_runs", "2048"], ["desktop_project_runs", "2048"],
+        ["desktop_project_acquisitions", "4096"],
+      ]) sqlite.exec(`CREATE TRIGGER IF NOT EXISTS ${table}_physical BEFORE INSERT ON ${table} BEGIN
+        SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,${bytes},'execution')
+          FROM execution_physical_policy WHERE id=1; END;`);
     }
   }
   private latest(): number { return (this.sqlite.prepare("SELECT max(revision) AS revision FROM desktop_research_versions").get() as { revision: number }).revision; }
@@ -83,7 +93,6 @@ export class DesktopResourceControl {
         if (existing && existing.fingerprint !== fingerprint) throw new Error("Acquisition command identity conflict");
         if (this.sqlite.prepare("SELECT 1 FROM desktop_project_heads WHERE id=?").get(op.commandId)) return this.snapshot();
         if (this.acquiring.has(op.commandId)) throw new Error("Source acquisition is already running");
-        if (!existing && (this.sqlite.prepare("SELECT count(*) AS n FROM desktop_project_acquisitions").get() as { n: number }).n >= 64) throw new Error("Source library capacity reached");
         this.sqlite.prepare("INSERT OR IGNORE INTO desktop_project_acquisitions VALUES(?,?)").run(op.commandId, fingerprint);
         this.acquiring.add(op.commandId);
         try {

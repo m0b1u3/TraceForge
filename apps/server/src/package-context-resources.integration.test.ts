@@ -50,6 +50,22 @@ async function observedFixture(configure?: (pkg: ScenarioPackageInstallation) =>
 }
 
 describe("Current context projection", () => {
+  it("projects parallel children through their original context policy, not the synthetic parent",async()=>{
+    const f=await observedFixture(),bindings=new SqliteToolInvocationBindingStore(f.sqlite),receipts=new SqliteToolReceiptStore(f.sqlite);
+    const original=bindings.get("effect:first")!,receipt=(await receipts.get("effect:first"))!;
+    const parent={idempotencyKey:"effect:batch",invocationId:"batch",inputFingerprint:"b".repeat(64),tool:{name:"tools.parallel_read",source:"traceforge.builtin",version:"1",contractFingerprint:"c".repeat(64)},attribution:original.attribution};
+    await bindings.prepare(parent);
+    const children=["one","two"].map(id=>({idempotencyKey:`effect:batch/read/${id}`,invocationId:`batch/read/${id}`,inputFingerprint:original.inputFingerprint,tool:original.tool,attribution:original.attribution}));
+    await bindings.prepareParallel(parent.idempotencyKey,children);
+    for(const child of children){await receipts.put(child.idempotencyKey,receipt);await bindings.complete(child.idempotencyKey);}
+    await receipts.put(parent.idempotencyKey,{status:"succeeded",summary:"2 reads",raw:"aggregate not a knowledge source",refs:[],retryable:false});await bindings.complete(parent.idempotencyKey);
+    f.request.transcript=[{turn:1,kind:"tool",summary:"untrusted caller summary",refs:[],receiptKey:parent.idempotencyKey}];
+    const before=await f.policy.prepare(f.request);
+    expect(before.request.transcript.map(entry=>entry.receiptKey)).toEqual(children.map(child=>child.idempotencyKey));
+    expect(JSON.stringify(before.request.transcript)).toContain(contextText);expect(JSON.stringify(before.request.transcript)).not.toContain("untrusted caller summary");
+    f.store.revoke(contextContentDigest(contextText),"withdrawn");
+    const after=await f.policy.prepare(f.request);expect(JSON.stringify(after.request.transcript)).not.toContain(contextText);expect(after.manifest.contextGovernance.suppressed).toHaveLength(2);
+  });
   it("rechecks archived originals before they can enter a rolling summary", async () => {
     const f = await observedFixture();
     const archived = structuredClone(f.request.transcript);

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { register } from "../apps/server/dist/development-loader.js";
 register();
+let stage="configuration";
 async function launch(){
 const [mode,source,fixtureFlag]=process.argv.slice(2);
 if(fixtureFlag&&fixtureFlag!=="--with-fixtures")throw new Error("Unknown acceptance option");
@@ -37,9 +38,11 @@ if(mode==="--deepseek-stdin"){
   writeFileSync(join(root,"config","llm-secrets.bin"),safeStorage.encryptString(JSON.stringify({primary:apiKey,alternativeRoutes:{}})),{mode:0o600});
   writeFileSync(join(root,"config","llm.json"),JSON.stringify(publicConfig),{mode:0o600});
 }
+stage="provider-check";
 const selected=JSON.parse(readFileSync(join(root,"config","llm.json"),"utf8"));
 if(selected.provider!=="openai"||!selected.model?.startsWith("deepseek-")||new URL(selected.baseUrl).href!=="https://api.deepseek.com/"||selected.alternativeRoutes?.length)throw new Error("Acceptance requires official DeepSeek only");
 if(fixtureFlag){
+  stage="fixtures";
   if(process.platform==="darwin"){
     const helperRoot=resolve("packages/execution-node/native/darwin-arm64");
     process.env.TRACEFORGE_MACOS_SANDBOX_HELPER=join(helperRoot,"traceforge-macos-sandbox");
@@ -51,6 +54,7 @@ if(fixtureFlag){
   const close=await fixtures.startAcceptanceMcp(root);app.on("will-quit",close);
 }
 console.log(JSON.stringify({event:"isolated_desktop",root,restored:mode==="--restore"}));
+stage="desktop-start";
 await import("../apps/desktop/dist/main.js");
 }
-void launch().catch(()=>{console.error(JSON.stringify({event:"isolated_desktop_failed",detailsRedacted:true}));app.exit(1);});
+void launch().catch(()=>{console.error(JSON.stringify({event:"isolated_desktop_failed",stage,detailsRedacted:true}));app.exit(1);});

@@ -43,8 +43,8 @@ import {
 
 export interface ExecutionNodeToolProviderOptions {
   /** Host must durably reserve external occupancy before this synchronous dispatch barrier returns. */
-  beforeProcessStart?: (requestId: string, generation: number) => void | Promise<void>;
-  /** Restores a durable generation counter; a host restart must not reset retry budgets. */
+  beforeProcessStart?: (requestId: string, generation: number, signal?: AbortSignal) => void | Promise<void>;
+  /** Restores a durable generation counter so process identities remain monotonic across Host restarts. */
   initialGeneration?: number;
   /** Derives a unique OS execution identity for each durable generation. */
   attributionForGeneration?: (generation: number, base: ExecutionAttribution) => ExecutionAttribution;
@@ -84,7 +84,7 @@ export type ExecutionNodeToolProviderLifecycleEvent =
 interface PendingRequest {
   resolve(value: unknown): void;
   reject(error: Error): void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | undefined;
   context?: ToolExecutionContext;
 }
 
@@ -112,6 +112,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
   private readonly processTimeoutMs: number;
   private readonly outputLimitBytes: number;
   private readonly requestTimeoutMs: number;
+  private readonly toolTimeouts = new Map<string,number>();
   private readonly maximumFrameBytes: number;
   private readonly maximumInFlight: number;
   private readonly maximumStderrBytes: number;
@@ -139,7 +140,10 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
   async listTools(signal?: AbortSignal): Promise<ExecutionToolSpec[]> {
     const result = await this.request("tools.list", {}, undefined, signal);
     if (!Array.isArray(result)) throw new Error("Execution Node Tool Provider returned an invalid tool list");
-    return result.map(validateToolProviderSpec);
+    const specs=result.map(validateToolProviderSpec);
+    this.toolTimeouts.clear();
+    for(const spec of specs)this.toolTimeouts.set(spec.name,spec.timeoutMs);
+    return specs;
   }
 
   async inspectMcpCatalog(signal?: AbortSignal) {
@@ -189,13 +193,14 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason ?? new Error("Tool Provider request cancelled"));
     signal?.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(() => controller.abort(new ToolProviderRpcTransportError("Tool Provider total request deadline exceeded")), this.requestTimeoutMs);
+    const timeoutMs=this.requestDeadline(method,params);
+    const timer = timeoutMs>0 ? setTimeout(() => controller.abort(new ToolProviderRpcTransportError("Tool Provider total request deadline exceeded")), timeoutMs) : undefined;
     try { return await waitForCancellation(async () => {
     if (Date.parse(this.options.attribution.leaseExpiresAt) <= Date.now()) {
       await this.stopProcess();
       throw new Error(`Tool Provider service lease ${this.options.attribution.leaseId} has expired`);
     }
-    await this.ensureReady();
+    await this.ensureReady(controller.signal);
     controller.signal.throwIfAborted();
     return this.send(method, params, context);
     }, controller.signal); }
@@ -205,15 +210,15 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     } finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); }
   }
 
-  private ensureReady(): Promise<void> {
+  private ensureReady(signal?: AbortSignal): Promise<void> {
     if (this.access && this.state === "ready") return Promise.resolve();
     if (this.closing) return Promise.reject(new Error("Execution Node Tool Provider client is closed"));
     if (this.startPromise) return this.startPromise;
-    this.startPromise = this.start().finally(() => { this.startPromise = null; });
+    this.startPromise = this.start(signal).finally(() => { this.startPromise = null; });
     return this.startPromise;
   }
 
-  private async start(): Promise<void> {
+  private async start(signal?: AbortSignal): Promise<void> {
     this.state = "starting";
     this.provider = null;
     this.stderr = Buffer.alloc(0);
@@ -235,7 +240,9 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
       });
       if (this.closing) throw new Error("Tool Provider closed before process dispatch");
       const requestId = `tool-provider:${this.options.attribution.idempotencyKey}:generation:${candidateGeneration}`;
-      await this.options.beforeProcessStart?.(requestId, candidateGeneration);
+      await this.options.beforeProcessStart?.(requestId, candidateGeneration, signal);
+      signal?.throwIfAborted();
+      if(this.closing)throw new Error("Tool Provider closed before process dispatch");
       this.startUnconfirmed = true;
       const started = await this.options.node.startProcess({
         requestId,
@@ -318,6 +325,10 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     this.attestation = { sandboxed: true, backend: enforcement.sandboxBackend, network: enforcement.network };
   }
 
+  private requestDeadline(method:ToolProviderCommandMethod,params:unknown):number {
+    return method === "tools.call" ? this.toolTimeouts.get((params as {tool:string}).tool) ?? this.requestTimeoutMs : this.requestTimeoutMs;
+  }
+
   private send(method: ToolProviderCommandMethod, params: unknown, context?: ToolExecutionContext): Promise<unknown> {
     const access = this.access;
     if (!access) return Promise.reject(new ToolProviderRpcTransportError("Execution Node Tool Provider process is unavailable"));
@@ -325,12 +336,13 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     const id = randomUUID();
     const request: ToolProviderRpcRequest = { version: TOOL_PROVIDER_RPC_VERSION, id, method, params };
     const frame = this.decoder instanceof McpProtocol ? this.decoder.encode(request) : encodeLengthPrefixedJson(request, this.maximumFrameBytes);
+    const timeoutMs=this.requestDeadline(method,params);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = timeoutMs>0 ? setTimeout(() => {
         this.pending.delete(id);
-        reject(new ToolProviderRpcTransportError(`Execution Node Tool Provider request ${method} timed out after ${this.requestTimeoutMs}ms`));
+        reject(new ToolProviderRpcTransportError(`Execution Node Tool Provider request ${method} timed out after ${timeoutMs}ms`));
         void this.stopProcess();
-      }, this.requestTimeoutMs);
+      }, timeoutMs) : undefined;
       this.pending.set(id, { resolve, reject, timer, context });
       void this.options.node.writeProcessInput({ ...access,
         operationId: this.operationId(`request:${id}`), dataBase64: frame.toString("base64") }).catch((error) => {
@@ -417,11 +429,13 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     clearTimeout(pending.timer);
     this.pending.delete(response.id);
     if (response.ok) pending.resolve(response.result);
-    else if (isRecord(response.error) && typeof response.error.code === "string" && typeof response.error.message === "string" && typeof response.error.retryable === "boolean") {
+    else if (isRecord(response.error) && typeof response.error.code === "string" && typeof response.error.message === "string" && typeof response.error.retryable === "boolean"
+      && (response.error.executionOutcome === undefined || response.error.executionOutcome === "not_started")) {
       pending.reject(new ToolProviderRpcRemoteError(
         response.error.code,
         this.diagnostic("remote_error", "Tool Provider reported an error", `${response.error.code}: ${response.error.message}`, pending.context),
         response.error.retryable,
+        response.error.executionOutcome,
       ));
     } else pending.reject(new Error("Execution Node Tool Provider returned an invalid RPC error"));
   }
@@ -473,7 +487,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
     void this.options.capabilityHost.invoke(invocation)
       .then((receipt) => this.writeHostResponse(access, generation, request.id, true, receipt))
       .catch((error) => this.writeHostResponse(access, generation, request.id, false,
-        rpcError("capability_failed", errorMessage(error), isRetryableError(error))))
+        rpcError("capability_failed", errorMessage(error), isRetryableError(error), executionOutcome(error))))
       .finally(() => { this.reversePending.delete(request.id); });
   }
 
@@ -488,7 +502,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
       || this.generation !== generation) return;
     const response: ToolProviderRpcResponse = ok
       ? { version: TOOL_PROVIDER_RPC_VERSION, id, ok: true, result: value }
-      : { version: TOOL_PROVIDER_RPC_VERSION, id, ok: false, error: value as { code: string; message: string; retryable: boolean } };
+      : { version: TOOL_PROVIDER_RPC_VERSION, id, ok: false, error: value as { code: string; message: string; retryable: boolean; executionOutcome?: "not_started" } };
     let frame: Buffer;
     try {
       frame = encodeLengthPrefixedJson(response, this.maximumFrameBytes);
@@ -630,8 +644,8 @@ function isProviderHostRpcRequest(value: unknown): value is ToolProviderRpcReque
     && typeof value.id === "string" && typeof value.method === "string" && "params" in value;
 }
 
-function rpcError(code: string, message: string, retryable = false): { code: string; message: string; retryable: boolean } {
-  return { code, message, retryable };
+function rpcError(code: string, message: string, retryable = false, outcome?: "not_started") {
+  return { code, message, retryable, ...(outcome ? { executionOutcome: outcome } : {}) };
 }
 
 function errorMessage(error: unknown): string {
@@ -640,4 +654,9 @@ function errorMessage(error: unknown): string {
 
 function isRetryableError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "retryable" in error && error.retryable === true);
+}
+
+function executionOutcome(error: unknown): "not_started" | undefined {
+  return error && typeof error === "object" && "executionOutcome" in error && error.executionOutcome === "not_started"
+    ? "not_started" : undefined;
 }

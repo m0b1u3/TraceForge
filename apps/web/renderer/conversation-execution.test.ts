@@ -29,7 +29,8 @@ it("shows a newly streamed task proposal without switching pages or dispatching"
   await act(async()=>root.render(React.createElement(ConversationExecution,{bridge,conversationId:"first",messages})));
   expect(node.querySelector('[aria-label="任务授权"]')).toBeNull();
   proposed=true;await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
-  expect(node.querySelector('[aria-label="任务授权"] textarea')).not.toBeNull();
+  expect(node.querySelector('[aria-label="任务授权"] textarea')).toBeNull();
+  expect(node.querySelector('[aria-label="任务授权"]')?.textContent).toContain("历史任务尚未执行");
   expect(calls.every(call=>call.method==="GET")).toBe(true);
 });
 async function mount(request: (input: { path: string; method: "GET" | "POST" }) => Promise<{ status: number; body: unknown }>) {
@@ -44,6 +45,8 @@ it("projects host-bound output after the user message and never dispatches on re
   const node = await mount(request);
   expect(node.querySelector(".message-user")?.textContent).toContain(messages[0].text);
   expect(node.querySelector(".message-assistant")?.textContent).toContain(run.outputs[0].summary);
+  expect(node.querySelector<HTMLDetailsElement>(".run-saved-materials")?.open).toBe(false);
+  expect(node.querySelector(".run-saved-materials .run-output")?.textContent).toContain(run.outputs[0].summary);
   expect(node.textContent).toContain("执行中");
   expect(node.textContent).toContain("evidence:first");
   expect(request).toHaveBeenCalledTimes(2);
@@ -68,6 +71,7 @@ it("retains stale observations on failure, recovers and replaces rather than dup
     : { runs: [{ ...run, status: "completed" }], truncated: true } }));
   const node = await mount(request);
   fail = true;
+  expect(node.querySelector(".run-result-preview")?.textContent).toBe(run.outputs[0].summary);
   await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
   expect(node.textContent).toContain("上次读取结果");
   expect(node.textContent).toContain(run.outputs[0].summary);

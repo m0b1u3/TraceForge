@@ -45,8 +45,8 @@ export class DesktopMcpControl {
         AND json_extract(v.value_json,'$.connection.package.schemaRevision')=NEW.scenario_schema_revision; END;`);
     for (const table of ["desktop_mcp_versions", "desktop_mcp_activations", "desktop_mcp_runs"]) {
       for (const op of ["UPDATE", "DELETE"]) sqlite.exec(`CREATE TRIGGER IF NOT EXISTS ${table}_${op} BEFORE ${op} ON ${table} BEGIN SELECT RAISE(ABORT,'MCP history is immutable'); END;`);
-      sqlite.exec(`CREATE TRIGGER IF NOT EXISTS ${table}_capacity BEFORE INSERT ON ${table} BEGIN
-        SELECT CASE WHEN (SELECT count(*) FROM ${table})>=8192 THEN RAISE(ABORT,'MCP history capacity exceeded') END;
+      sqlite.exec(`DROP TRIGGER IF EXISTS ${table}_capacity`);
+      sqlite.exec(`CREATE TRIGGER ${table}_capacity BEFORE INSERT ON ${table} BEGIN
         SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,262144,'execution') FROM execution_physical_policy WHERE id=1; END;`);
     }
   }

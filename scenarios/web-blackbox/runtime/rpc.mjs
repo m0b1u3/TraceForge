@@ -12,6 +12,8 @@ export class ScenarioRpcHost {
     fail(id, error) {
         this.send({ version: PROTOCOL_VERSION, id, ok: false, error: {
                 code: "scenario_error", message: error instanceof Error ? error.message : "Scenario operation failed", retryable: false,
+                ...(error && typeof error === "object" && "executionOutcome" in error && error.executionOutcome === "not_started"
+                    ? { executionOutcome: "not_started" } : {}),
             } });
     }
     capability(parentRequestId, context, capability, action, input, suffix) {
@@ -30,10 +32,15 @@ export class ScenarioRpcHost {
         if (!pending)
             return true;
         this.pending.delete(String(message.id));
-        if (message.ok)
+        if (message.ok && message.result?.status !== "failed")
             pending.resolve(message.result);
         else
-            pending.reject(new Error(message.error?.message ?? "Host capability failed"));
+            pending.reject(Object.assign(new Error(message.ok ? message.result?.reason ?? "Host capability failed" : message.error?.message ?? "Host capability failed"), {
+                ...(message.ok ? { retryable: message.result?.retryable === true, executionOutcome: "not_started" } : {
+                    retryable: message.error?.retryable === true,
+                    ...(message.error?.executionOutcome === "not_started" ? { executionOutcome: "not_started" } : {}),
+                }),
+            }));
         return true;
     }
 }

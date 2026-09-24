@@ -42,7 +42,7 @@ if (mode === "crash") {
 const trust = new Map(Object.entries(JSON.parse(fs.readFileSync(trustPath, "utf8"))));
 const discoveryState = new SqliteExecutionToolDiscoveryStateStore(sqlite);
 const recoveryState = new SqliteToolProviderRecoveryStateStore(sqlite);
-const runtime = new ExecutionToolDiscoveryRuntime([], 30_000, 3, () => new Date(), discoveryState);
+const runtime = new ExecutionToolDiscoveryRuntime([], 30_000, () => new Date(), discoveryState);
 // Production managed sources register signed catalogs without launching a process.
 // Invocation execution is intentionally out of scope and fails loudly if attempted.
 const node = new Proxy({}, { get() { throw new Error("Activation recovery must not execute a Provider process"); } });

@@ -59,6 +59,8 @@ export interface ToolProviderSchedulingLease {
 export class ToolProviderSchedulingError extends Error {
   readonly retryable = true;
   readonly countsTowardProviderRecovery = false;
+  /** Queue rejection happens before the caller receives an execution permit. */
+  readonly executionOutcome = "not_started" as const;
 
   constructor(readonly reason: ToolProviderSchedulingRejectionReason) {
     super(reason === "queue_full"

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { EmbeddedBrowser } from "../apps/desktop/src/embedded-browser.js";
 import { BrokeredBrowserRuntime } from "../packages/browser-runtime/src/index.js";
@@ -45,14 +45,23 @@ try {
     } throw new Error(`Missing DOM ${text}`);
   };
   const dom = await waitDom("页面输入");
+  const hiddenScreenshot=await runtime.observe(id,{kind:"screenshot"});
+  assert(artifacts.get(hiddenScreenshot.artifactRef)!.length>8,"unattached native view produces a real PNG");
   const input = dom.nodes.find((node: any) => node.name === "页面输入" && node.element);
   assert(input);
   await runtime.act(id, { id: "fill", kind: "fill", element: input.element, text: "同一页面状态" });
   assert.throws(() => manager.show(window, id!, "not-granted", { x: 672, y: 110, width: 740, height: 720 }), /unavailable/);
+  await manager.show(window,id,null,{x:672,y:110,width:740,height:720});
+  assert.equal(window.contentView.children.length,1,"active agent page is visible without takeover");
+  const activeContents=(window.contentView.children[0] as import("electron").WebContentsView).webContents;
+  let prevented=false;
+  activeContents.emit("before-input-event",{preventDefault(){prevented=true;}},{type:"keyDown",key:"a"});
+  assert(prevented,"live agent view blocks user keyboard input before takeover");
   const takeover = await runtime.beginManualControl(id);
+  assert.throws(()=>manager.show(window,id!,null,{x:672,y:110,width:740,height:720}),/unavailable/);
   assert.throws(() => manager.show(window, id!, "stale", { x: 672, y: 110, width: 740, height: 720 }), /unavailable/);
   assert.throws(() => manager.show(window, id!, takeover.takeoverId, { x: 0, y: 0, width: 1440, height: 920 }), /bounds/);
-  manager.show(window, id, takeover.takeoverId, { x: 672, y: 110, width: 740, height: 720 });
+  await manager.show(window, id, takeover.takeoverId, { x: 672, y: 110, width: 740, height: 720 });
   assert.equal(window.contentView.children.length, 1);
   const guest = window.contentView.children[0] as import("electron").WebContentsView;
   const guestContents = guest.webContents;
@@ -62,6 +71,7 @@ try {
   await new Promise(done => setTimeout(done, 500));
   // capturePage contains the application renderer only, not native child views.
   // Actual composed visual acceptance uses the CUA window screenshot.
+  await mkdir(resolve("output"), { recursive: true });
   await writeFile(resolve("output/native-browser-host-only.png"), (await window.capturePage()).toPNG());
   if (process.env.TRACEFORGE_EMBEDDED_VISUAL === "1") {
     ipcMain.handle("fixture:initialize", () => ({ sessionId: id, takeoverId: takeover.takeoverId }));
@@ -81,13 +91,16 @@ try {
   } else {
     await new Promise(done => setTimeout(done, 2100));
     assert.equal(window.contentView.children.length, 0, "missing renderer heartbeat hides native view");
-    manager.show(window, id, takeover.takeoverId, { x: 672, y: 110, width: 740, height: 720 });
+    await manager.show(window, id, takeover.takeoverId, { x: 672, y: 110, width: 740, height: 720 });
     await runtime.resumeManualControl(id, takeover.takeoverId);
     assert.equal(window.contentView.children.length, 0);
     assert.throws(() => manager.show(window, id!, takeover.takeoverId, { x: 672, y: 110, width: 740, height: 720 }), /unavailable/);
+    await manager.show(window,id,null,{x:672,y:110,width:740,height:720});
+    assert.equal(window.contentView.children.length,1,"same live page remains displayable after handback");
     await waitDom("同一页面状态");
+    await runtime.observe(id,{kind:"screenshot"});
     await runtime.close(id); assert.equal(guestContents.isDestroyed(), true);
-    console.log(JSON.stringify({ passed: true, nativeChildView: true, sandboxEnabled: true, sameSessionHandback: true,
+    console.log(JSON.stringify({ passed: true, nativeChildView: true, sandboxEnabled: true, sameSessionHandback: true, hiddenViewScreenshot:true, handbackScreenshot:true,
       cleanupConfirmed: true, takeoverAndBoundsGuards: true, heartbeatExpiry: true,
       hostOnlyScreenshotSha256: createHash("sha256").update((await window.capturePage()).toPNG()).digest("hex") }));
   }

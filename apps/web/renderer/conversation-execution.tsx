@@ -68,11 +68,12 @@ function RunReply({ run, bridge, conversationId, unified=false }: { run: Convers
       <RunProgress key={`${conversationId}:${run.runId}`} bridge={bridge} conversationId={conversationId} runId={run.runId} run={run} terminal={["completed","cancelled","failed"].includes(run.status)} />
       <RunInteraction bridge={bridge} conversationId={conversationId} run={run} hideInput={unified}/>
       {!['completed', 'cancelled', 'failed'].includes(run.status) && <BrowserSessionControl key={`browser:${conversationId}:${run.runId}`} bridge={bridge} conversationId={conversationId} runId={run.runId} />}
-      {!run.outputs.length && <p className="run-waiting">{["completed", "cancelled", "failed"].includes(run.status)
-        ? "本次运行已结束，尚无已保存的任务输出。" : "任务已交给执行系统，等待已保存的输出。"}</p>}
+      {!run.outputs.length && ["completed", "cancelled", "failed"].includes(run.status) && <p className="run-waiting">本次运行已结束，尚无已保存的任务输出。</p>}
+      {run.status==="completed"&&run.outputs.length>0&&<p className="run-result-preview" aria-label="结果摘录，完整内容在任务材料中">{Array.from(run.outputs.at(-1)!.summary).slice(0,240).join("")}{Array.from(run.outputs.at(-1)!.summary).length>240?"…":""}</p>}
+      {run.outputs.length>0&&<details className="run-saved-materials"><summary><CaretRight className="disclosure-caret" aria-hidden="true" />任务材料 · {run.outputs.length} 项</summary>
       {run.outputs.map(output => <section key={output.id} className="run-output"><p>{output.summary}</p>
         {output.refs.length > 0 && <details><summary><CaretRight className="disclosure-caret" aria-hidden="true" />查看依据 · {output.refs.length} 条引用</summary><p className="local-receipt">引用用于追溯来源，不代表结论已经验证。</p><ul>{output.refs.map((ref, index) => <li key={`${index}:${ref}`}><EvidenceReference bridge={bridge} conversationId={conversationId} runId={run.runId} reference={ref} /></li>)}</ul></details>}
-      </section>)}
+      </section>)}</details>}
       <details className="run-details"><summary><CaretRight className="disclosure-caret" aria-hidden="true" />任务步骤 · {run.workItems.length} 项</summary><p className="local-receipt">{run.goal}</p>
         {!run.workItems.length ? <p>尚无已保存的工作项。</p> : <ul>{run.workItems.map(work => <li key={work.id}>{work.title}<span>{executionStatus(work.status)}</span></li>)}</ul>}
         <small className="local-receipt">运行 {run.runId} · 版本 {run.revision}</small>
@@ -112,14 +113,15 @@ export function ConversationExecution({ bridge, conversationId, messages, onRuns
   const runtime=conversationRuntimeView(assistant.replies.values(),snapshot?.runs??null,assistant.ready&&!!snapshot,assistant.error||error);
   useEffect(()=>{onRuntime?.(runtime);},[runtime.label,runtime.ready,runtime.queued,runtime.activeMessageId,onRuntime]);
   return <>
-    <p className="conversation-runtime-status" role="status">{runtime.label}{runtime.queued>0?` · ${runtime.queued} 条待处理`:""}</p>
+    {runtime.label!=="可以继续对话"&&<p className="conversation-runtime-status" role="status">{runtime.label}{runtime.queued>0?` · ${runtime.queued} 条待处理`:""}</p>}
     {messages.map(message => <React.Fragment key={message.commandId}>
       <article className="message message-user"><div className="avatar user" aria-hidden="true"><User weight="fill" /></div><div className="message-body"><div className="sender">你</div><p className="user-text">{message.text}</p>{message.attachmentNames?.map((name,index)=><button type="button" className="attachment-reference" key={index} onClick={()=>preview?.open({kind:"attachment",conversationId,messageId:message.commandId,index,title:name})}>附件：{name}</button>)}<small className="local-receipt">已保存到本机会话</small></div></article>
       <ConversationReply bridge={bridge} conversationId={conversationId} messageId={message.commandId} reply={assistant.replies.get(message.commandId)} ready={assistant.ready&&!assistant.error}
-        otherActive={[...assistant.replies.values()].some(item=>item.state==="streaming"&&item.messageCommandId!==message.commandId)} refresh={assistant.refresh}/>
+        otherActive={[...assistant.replies.values()].some(item=>item.state==="streaming"&&item.messageCommandId!==message.commandId)} refresh={assistant.refresh} hideStop={!!onRuns}/>
       {assistant.replies.get(message.commandId)?.taskRequest && !runs.some(run=>run.messageCommandId===message.commandId) && <section className="conversation-authorization" aria-label="任务授权">
-        <p>执行前，请核对这条任务的授权范围。</p>
-        <ExecutionPanel bridge={bridge} conversationId={conversationId} messages={[message]} inline intent={assistant.replies.get(message.commandId)!.taskRequest}/>
+        {assistant.replies.get(message.commandId)!.taskRequest?.automatic
+          ? <p role="status">{assistant.replies.get(message.commandId)!.taskRequest?.startState==="started"?"任务已开始，正在同步进展…":assistant.replies.get(message.commandId)!.taskRequest?.startState==="stopped"?"任务启动已停止。":"任务启动结果未确认，请查看任务记录和设置；不会自动重复执行。"}</p>
+          : <p role="status">这条历史任务尚未执行；如需开始，请重新发送任务要求。</p>}
       </section>}
       {runs.filter(run => run.messageCommandId === message.commandId).map(run => <RunReply key={run.runId} run={run} bridge={bridge} conversationId={conversationId} unified={!!onRuns&&runs.filter(r=>["running","paused"].includes(r.status)).length===1}/>)}
     </React.Fragment>)}

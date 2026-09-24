@@ -28,7 +28,7 @@ const control=new ScenarioProcessControl(sqlite,store,{recoveryIssuers:[issuer],
 if(phase.startsWith("reconcile")){
   if(!store.getCapabilityReceipt(claim.package,claim.idempotencyKey))store.claimCapabilityReceipt(manifest,claim);
 }else if(!store.snapshot(manifest)){
-  store.reserveGeneration(manifest,1,1,"a".repeat(64));store.recordLifecycle(manifest,1,"failed",{error:"launch rejected"});
+  store.reserveGeneration(manifest,1,"a".repeat(64));store.recordLifecycle(manifest,1,"failed",{error:"launch rejected"});
   store.claimCapabilityReceipt(manifest,claim);store.settleCapabilityReceipt(manifest,claim.inputFingerprint,receipt);store.revoke(manifest,"review withdrawn");
 }
 if(mode==="crash"&&phase.endsWith("uncommitted")){

@@ -30,12 +30,6 @@ export class CapabilityProviderRegistry<T extends CapabilityProviderDescriptor> 
   private readonly states = new Map<string, CapabilityProviderState<T>>();
   private revision = 0;
 
-  constructor(private readonly unavailableAfterFailures = 3) {
-    if (!Number.isInteger(unavailableAfterFailures) || unavailableAfterFailures < 1) {
-      throw new Error("Provider failure threshold must be a positive integer");
-    }
-  }
-
   register(provider: T): void {
     validateProvider(provider);
     if (this.states.has(provider.name)) throw new Error(`Capability provider already registered: ${provider.name}`);
@@ -140,25 +134,6 @@ export class CapabilityProviderRegistry<T extends CapabilityProviderDescriptor> 
     state.health = health;
     state.lastFailure = health === "healthy" ? null : reason?.trim() || state.lastFailure;
     if (health === "healthy") state.consecutiveFailures = 0;
-    state.revision = this.revision;
-  }
-
-  recordSuccess(name: string): void {
-    const state = this.require(name);
-    if (state.health === "healthy" && state.consecutiveFailures === 0 && state.lastFailure === null) return;
-    this.revision += 1;
-    state.health = "healthy";
-    state.consecutiveFailures = 0;
-    state.lastFailure = null;
-    state.revision = this.revision;
-  }
-
-  recordFailure(name: string, reason: string): void {
-    const state = this.require(name);
-    this.revision += 1;
-    state.consecutiveFailures += 1;
-    state.lastFailure = reason.trim() || "Provider failure";
-    state.health = state.consecutiveFailures >= this.unavailableAfterFailures ? "unavailable" : "degraded";
     state.revision = this.revision;
   }
 

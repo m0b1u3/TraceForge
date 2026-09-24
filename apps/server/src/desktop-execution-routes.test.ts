@@ -15,12 +15,30 @@ import { registerScenarioAgentEventRoutes, SqliteScenarioAgentEventStream } from
 import { WEB_BLACKBOX_CAPABILITIES } from "./test-fixtures/web-blackbox-descriptor.js";
 import { SqliteWorkerCheckpointStore } from "./worker-checkpoint-store.js";
 import { createConversationTaskPort } from "./conversation-task-port.js";
+import {createDesktopTaskStart} from "./desktop-task-start.js";
 import { ConversationWorkspaces } from "./conversation-workspaces.js";
 import { mkdtempSync, realpathSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const cleanups: Array<() => Promise<void>> = [];
+it("starts the saved user request through real scope and Run routes without another approval form",async()=>{
+  const f=await fixture(),conversationId=f.conversation.id;
+  const request=async(path:string,body?:Record<string,unknown>)=>{const r=await f.call(path,body);return {status:r.statusCode,body:r.json()};};
+  const port=createConversationTaskPort(f.sql,request,createDesktopTaskStart(request,()=>null));
+  const call={id:"start",name:"task_request",input:{scenarioKind:f.command.scenarioKind,definitionVersion:f.command.definitionVersion}};
+  const result=await port.execute(conversationId,"message",call,new AbortController().signal);
+  expect(result).toMatchObject({state:"started",executed:true});
+  const catalog=(await f.call(`${f.base}/execution`)).json();expect(catalog.runs).toHaveLength(1);
+  expect(catalog.runs[0]).toMatchObject({messageCommandId:"message"});
+  expect(catalog.scopes[0].scope.payload??catalog.scopes[0].scope).toMatchObject({asynchronousWorkspace:true});
+  await port.execute(conversationId,"message",call,new AbortController().signal);
+  expect((await f.call(`${f.base}/execution`)).json().runs).toHaveLength(1);
+});
+it("exposes installed task forms for settings without dispatching",async()=>{
+  const f=await fixture();const response=await f.call("/api/desktop/task-definitions");
+  expect(response.statusCode).toBe(200);expect(response.json()).toEqual(expect.arrayContaining([expect.objectContaining({kind:f.command.scenarioKind,authorizationForm:expect.any(Object)})]));
+});
 it("creates a private directory with the conversation and binds subsequent Runs before dispatch",async()=>{
   const f=await fixture();
   const directory=f.workspaces.ensure(f.conversation.id,f.conversation.caseId);

@@ -1,0 +1,8 @@
+.storage-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; border-top: 1px solid #d9dce2; padding: 24px 0; }
+.storage-row > div { min-width: 0; }
+.storage-row h3 { margin: 0 0 8px; }
+.storage-row p { margin: 8px 0; }
+.storage-row code { display: block; overflow-wrap: anywhere; font-size: 13px; color: #626875; }
+.storage-row button { flex: none; }
+.storage-environment { color: #626875; font-size: 13px; }
+@media (max-width: 700px) { .storage-row { align-items: flex-start; flex-direction: column; gap: 12px; } }

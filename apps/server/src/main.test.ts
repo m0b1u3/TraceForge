@@ -8,6 +8,15 @@ import { createDb, getSqliteClient } from "./db/client.js";
 import { FoundationBackupControl } from "./foundation-backup.js";
 
 describe("server listen configuration", () => {
+  it("routes local host diagnostics to the desktop-owned stream", async () => {
+    const root = mkdtempSync(join(tmpdir(), "traceforge-diagnostic-stream-"));
+    const lines: string[] = [];
+    const app = await buildServer(":memory:", join(root, "mcp.json"), join(root, "llm.json"), root, undefined, { diagnosticStream: { write(line) { lines.push(line); } } });
+    try {
+      await app.inject({ url: "/api/health" });
+      expect(lines.map(line => JSON.parse(line)).some(record => record.res?.statusCode === 200)).toBe(true);
+    } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }
+  });
   it("assembles the desktop browser with durable artifact storage without launching a guest at startup", async () => {
     const root = mkdtempSync(join(tmpdir(), "traceforge-embedded-composition-"));
     const prepare = vi.fn(async () => { throw new Error("Not requested"); }), recover = vi.fn(async () => {});

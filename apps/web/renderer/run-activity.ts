@@ -29,11 +29,12 @@ export class RunActivity {
     if (run?.status === "failed") return "本次运行失败，请查看保存的进展和原因";
     if (run?.workItems.some(work => work.pendingApproval)) return "等待你确认操作";
     if (run?.workItems.some(work => work.continuation?.state === "budget_exhausted")) return "工作预算或失败次数已用尽，不能直接继续";
-    if (run?.workItems.some(work => ["blocked", "failed"].includes(work.status))) return "有工作需要处理，请查看下方中断原因";
+    if (run?.workItems.some(work => work.status === "blocked")) return "有工作需要处理，请查看下方中断原因";
     const items = [...this.active.values()].flatMap(event => "item" in event.params ? [event.params.item] : []);
     if (items.some(item => item.type === "toolCall" && item.status === "inProgress")) return "工具正在运行，你可以随时停止任务";
     if (items.some(item => item.type === "modelCall" && item.status === "inProgress")) return "模型正在思考，等待本次决策";
     if (items.some(item => item.type === "modelAdmission" && item.status === "queued")) return "等待模型调用名额";
+    if (run?.workItems.some(work => work.status === "failed")) return "存在失败记录，请查看任务步骤及后续恢复进展";
     return this.notice;
   }
 }

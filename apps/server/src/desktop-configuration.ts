@@ -126,8 +126,6 @@ export class DesktopConfigurationStore {
       }
       const value = JSON.stringify({ resources: request.resources, mcp: request.mcp, userResources });
       if (Buffer.byteLength(value) > 512 * 1024) throw new Error("Configuration exceeds 512 KiB");
-      const size = this.sqlite.prepare("SELECT coalesce(sum(length(CAST(value_json AS BLOB))),0) AS bytes,count(*) AS n FROM desktop_configuration_versions").get() as { bytes: number; n: number };
-      if (size.bytes + Buffer.byteLength(value) > 16 * 1024 * 1024 || size.n >= 2048) throw new Error("Configuration history capacity reached");
       this.sqlite.prepare("INSERT INTO desktop_configuration_versions VALUES (?,?,?)").run(key(request.package), current.revision + 1, value);
     })();
     return this.snapshot();

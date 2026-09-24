@@ -42,6 +42,22 @@ it("defaults to unconfigured, saves without requests, hides credentials and pins
   await f.invoke("web_search", { query: "manual" }); expect(f.transport.mock.calls.at(-1)?.[0]).toContain("search.example.org");
   await expect(f.control.operate({ operation: "configure", expectedRevision: 0, configuration: { provider: "disabled", endpoint: "" } })).rejects.toThrow("changed");
 });
+it("pins a new Run and acquires a source after the old lifetime counts", async () => {
+  const f = await setup();
+  const pin = f.db.prepare("INSERT INTO desktop_research_runs VALUES (?,0)");
+  const acquisition = f.db.prepare("INSERT INTO desktop_project_acquisitions VALUES (?,?)");
+  f.db.transaction(() => {
+    for (let i = 0; i < 8192; i++) pin.run(`old-run-${i}`);
+    for (let i = 0; i < 64; i++) acquisition.run(`old-source-${i}`, `fingerprint-${i}`);
+  })();
+  f.db.exec(`CREATE TRIGGER desktop_research_runs_capacity BEFORE INSERT ON desktop_research_runs BEGIN
+    SELECT RAISE(ABORT,'old resource count gate'); END;`);
+  new DesktopResourceControl(f.db, f.root, () => f.run, f.authorization as unknown as SqliteScenarioAuthorizationService);
+  f.pin("new-run");
+  expect(f.db.prepare("SELECT count(*) AS n FROM desktop_research_runs").get()).toEqual({ n: 8193 });
+  await f.control.operate({ operation: "acquire", commandId: "new-source", repository: "example/project", ref: "main", confirmed: true });
+  expect(f.control.snapshot().projects).toHaveLength(1);
+});
 it("acquires without execution, pins reviewed usage, rejects tampering and does not revive revoked Run versions", async () => {
   const f = await setup(), acquire = { operation: "acquire", commandId: "project", repository: "example/project", ref: "main", confirmed: true };
   await f.control.operate(acquire); await f.control.operate(acquire); expect(f.transport).toHaveBeenCalledTimes(2);

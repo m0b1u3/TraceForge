@@ -31,6 +31,15 @@ it("previews compatible prior-version edits without deleting the old revision",(
   expect(store.snapshot().packages[0]!.revision).toBe(0);store.save(preview.draft);
   expect(f.store.snapshot().packages[0]!.resources[0]!.content).toBe("Old edited guidance");
 });
+it("saves configuration after the old global revision count", () => {
+  const f = fixture();
+  const insert = f.sqlite.prepare("INSERT INTO desktop_configuration_versions VALUES (?,?,?)");
+  const binding = JSON.stringify([contextBinding.id, contextBinding.version, contextBinding.schemaRevision]);
+  f.sqlite.transaction(() => {
+    for (let revision = 1; revision <= 2048; revision++) insert.run(binding, revision, '{"resources":[],"mcp":[]}');
+  })();
+  expect(f.save("New guidance", true, 2048).packages[0]!.revision).toBe(2049);
+});
 
 it("pins user-created guidance, preserves it for older clients and enforces inherited scope", async () => {
   const f = fixture();

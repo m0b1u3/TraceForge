@@ -12,6 +12,55 @@ function fixture() {
   const execute=(name:string,input:unknown)=>port.execute("conversation","message",{id:"call",name,input},signal);
   return {sql,port,request,execute};
 }
+it("automatically starts once, persists results across restart, and cannot change a saved request",async()=>{
+  const f=fixture(),start=vi.fn(async()=>({state:"started",executed:true,runId:"new-run"}));
+  try{const port=createConversationTaskPort(f.sql,f.request,start),call={id:"auto",name:"task_request",input:{scenarioKind:"neutral",definitionVersion:1}};
+    expect(await port.execute("conversation","message",call,new AbortController().signal)).toMatchObject({state:"started"});
+    expect(start.mock.calls[0][0]).toMatchObject({conversationId:"conversation",messageId:"message"});
+    expect(await createConversationTaskPort(f.sql,f.request,start).execute("conversation","message",call,new AbortController().signal)).toMatchObject({runId:"new-run"});
+    expect(start).toHaveBeenCalledTimes(1);
+  }finally{f.sql.close();}
+});
+it("starts the sole installed Scenario without asking for its name",async()=>{
+  const f=fixture(),start=vi.fn(async()=>({state:"started",executed:true}));
+  try{const port=createConversationTaskPort(f.sql,f.request,start);
+    expect(await port.execute("conversation","message",{id:"start",name:"task_request",input:{}},new AbortController().signal)).toMatchObject({state:"started"});
+    expect(start.mock.calls[0][0]).toMatchObject({definition:{kind:"neutral"}});
+  }finally{f.sql.close();}
+});
+it("does not let model routing override Settings or a missing explicit default",async()=>{
+  const f=fixture(),start=vi.fn(async()=>({state:"started",executed:true}));
+  try{const port=createConversationTaskPort(f.sql,f.request,start);
+    await port.execute("conversation","message",{id:"start",name:"task_request",input:{scenarioKind:"invented",definitionVersion:99}},new AbortController().signal);
+    expect(start.mock.calls[0][0]).toMatchObject({definition:{kind:"neutral"}});
+    // Changing defaults never reroutes or repeats an already delivered message.
+    const restored=createConversationTaskPort(f.sql,f.request,start,()=>"invalid");
+    expect(await restored.execute("conversation","message",{id:"again",name:"task_request",input:{}},new AbortController().signal)).toMatchObject({state:"started"});
+    expect(start).toHaveBeenCalledTimes(1);
+  }finally{f.sql.close();}
+});
+it("uses the saved default among multiple definitions and rejects a removed default",async()=>{
+  const f=fixture(),start=vi.fn(async()=>({state:"started",executed:true}));
+  const preferences=(kind:string)=>JSON.stringify([{kind,default:true,preset:{identity:"test",revision:1,inputs:[],actions:[]}}]);
+  try{
+    f.request.mockResolvedValue({status:200,body:{definitions:[{kind:"neutral",version:1},{kind:"second",version:2}],runs:[],truncated:false}});
+    const missing=createConversationTaskPort(f.sql,f.request,start,()=>preferences("removed"));
+    expect(await missing.execute("conversation","message",{id:"start",name:"task_request",input:{}},new AbortController().signal)).toMatchObject({error:"default_scenario_unavailable",executed:false});
+    expect(start).not.toHaveBeenCalled();
+    const port=createConversationTaskPort(f.sql,f.request,start,()=>preferences("second"));
+    await port.execute("conversation","message",{id:"start",name:"task_request",input:{}},new AbortController().signal);
+    expect(start.mock.calls[0][0]).toMatchObject({definition:{kind:"second",version:2}});
+  }finally{f.sql.close();}
+});
+it("never auto-replays unknown startup delivery or a legacy prepared task",async()=>{
+  const f=fixture(),start=vi.fn(async()=>{throw new Error("response lost");});
+  try{const port=createConversationTaskPort(f.sql,f.request,start),call={id:"auto",name:"task_request",input:{scenarioKind:"neutral",definitionVersion:1}};
+    expect(await port.execute("conversation","message",call,new AbortController().signal)).toMatchObject({state:"start_unconfirmed"});
+    await createConversationTaskPort(f.sql,f.request,start).execute("conversation","message",call,new AbortController().signal);expect(start).toHaveBeenCalledTimes(1);
+    f.sql.prepare("DELETE FROM desktop_task_starts").run();
+    expect(await port.execute("conversation","message",call,new AbortController().signal)).toMatchObject({state:"legacy_request_not_started"});expect(start).toHaveBeenCalledTimes(1);
+  }finally{f.sql.close();}
+});
 it("projects declared capabilities and workflow without mistaking them for authorization",async()=>{
   const f=fixture();try{
     f.request.mockResolvedValue({status:200,body:{definitions:[{kind:"neutral",version:1,title:"Neutral review",requiredCapabilities:["scope.read"],agentTopology:{workerPools:[{capabilities:["document.read","scope.read"]},{capabilities:["document.read"]}]},phases:[{id:"review",title:"Review",objective:"Read authorized documents",requiredCapabilities:["document.read"],internal:"not exposed"}],toolPolicies:[{capability:"document.inspect",authorizationAction:"document.read",profile:"host-only"}],authorizationActions:["document.read"],privateConfiguration:"not exposed"}],runs:[],truncated:false}});

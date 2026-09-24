@@ -8,6 +8,7 @@ import { physicalStorageStatus, registerPhysicalStorageFunctions, type PhysicalS
 import { reserveToolReceipt } from "./db/execution-storage.js";
 import { SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 import { SqliteWorkerCheckpointStore } from "./worker-checkpoint-store.js";
+import { DesktopReplyService } from "./desktop-replies.js";
 
 const MiB = 1024 * 1024;
 const roots: string[] = [], databases: Database.Database[] = [];
@@ -23,6 +24,23 @@ const document = { version: 2 as const, caseId: "case", workKey: "effect", worke
   turn: 0, transcript: [], steering: [], completedInvocationIds: [], consecutiveFailures: 0, pendingInvocation: null, savedAt: at };
 
 describe("Physical storage admission", () => {
+  it("guards new desktop records and growing replies without a lifetime count gate", () => {
+    const db = open(), replies = new DesktopReplyService(db, () => ({ async runTools() { throw new Error("unused"); } }));
+    db.prepare("INSERT INTO cases VALUES ('case','conversation','active','[]',?)").run(at);
+    registerPhysicalStorageFunctions(db, () => normal);
+    db.prepare("INSERT INTO desktop_conversations VALUES ('conversation','create','case','conversation',?)").run(at);
+    db.prepare("INSERT INTO desktop_conversation_messages VALUES ('conversation','message',1,'saved',?)").run(at);
+    db.prepare("INSERT INTO desktop_replies VALUES ('conversation','message',1,'completed','saved',?,?,1,0,NULL)").run(at, at);
+    registerPhysicalStorageFunctions(db, () => ({ ...normal, availableBytes: 0 }));
+    expect(() => db.prepare("UPDATE desktop_replies SET text='growing reply' WHERE conversation_id='conversation'").run())
+      .toThrow("physical storage pressure");
+    expect(() => db.prepare("INSERT INTO desktop_conversation_messages VALUES ('conversation','next',2,'next',?)").run(at))
+      .toThrow("physical storage pressure");
+    expect(() => db.prepare("INSERT INTO desktop_conversations VALUES ('next','next','case','next',?)").run(at))
+      .toThrow("physical storage pressure");
+    expect(db.prepare("SELECT text FROM desktop_replies WHERE conversation_id='conversation'").get()).toEqual({ text: "saved" });
+    replies.close();
+  });
   it("observes actual database/WAL/free pages without exposing host paths", () => {
     const db = open(true); db.exec("CREATE TABLE physical_fixture (data TEXT); INSERT INTO physical_fixture VALUES ('saved')");
     const status = physicalStorageStatus(db);

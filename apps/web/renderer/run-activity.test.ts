@@ -20,3 +20,11 @@ it("prioritizes current paused, approval and exhausted Work state over old activ
   expect(state.label(run)).toContain("已暂停");
   expect(state.label({...run,status:"running",workItems:[{id:"w",title:"w",status:"blocked",continuation:{state:"budget_exhausted",checkpointRef:null}}]})).toContain("预算");
 });
+it("does not present historical failed work as a manual blocker while recovery is evaluating",()=>{
+  const state=new RunActivity();
+  const run={status:"running",workItems:[{id:"old",title:"Previous attempt",status:"failed"}]} as ConversationRun;
+  expect(state.label(run)).toContain("失败记录");
+  state.apply([item({type:"modelCall",id:"recovery",routeId:"primary",attempt:1,status:"inProgress",reservedTokens:10})]);
+  expect(state.label(run)).toContain("模型正在思考");
+  expect(state.label({...run,workItems:[{id:"pending",title:"Pending prerequisite",status:"blocked"}]})).toContain("需要处理");
+});

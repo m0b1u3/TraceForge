@@ -160,6 +160,24 @@ describe("Web HTTP investigation workflow", () => {
       await expect(f.call(tool,input)).rejects.toThrow();expect(f.requests.length).toBe(count);
     }
   });
+  it.each(["web.validation.compare","web.validation.execute"])("%s continues across reordered plan keys without replaying requests",async(tool)=>{
+    const f=await fixture();if(tool.endsWith("execute"))await f.register();
+    const baseline={url:`${f.base}/echo`,method:"POST",bodyBase64:Buffer.from("first").toString("base64")};
+    const candidate={...baseline,bodyBase64:Buffer.from("second").toString("base64")};
+    const input=tool.endsWith("execute")?{candidateId:"first",plan:{prepare:[],baseline,candidates:[candidate],changedCondition:"body"}}
+      :{experimentId:"key-order",hypothesisId:"neutral",baseline,candidates:[candidate]};
+    const partial=await f.call(tool,{...input,maxRequests:2});
+    expect(partial.observations).toHaveLength(2);
+    const count=f.requests.length;
+    const reversed=(value:any):any=>Array.isArray(value)?value.map(reversed):value&&typeof value==="object"
+      ?Object.fromEntries(Object.entries(value).reverse().map(([key,item])=>[key,reversed(item)])):value;
+    const completed=await f.call(tool,reversed({...input,maxRequests:4}));
+    expect(completed.observations).toHaveLength(4);
+    expect(f.requests.length).toBe(count+2);
+    await f.call(tool,reversed({...input,maxRequests:4}));
+    expect(f.requests.length).toBe(count+2);
+  });
+
   it("prioritizes HTTP, Session and discovery observations with caller-selected literal hints",async()=>{
     const f=await fixture();
     for(const tool of ["web.http.request","web.session.request"]){

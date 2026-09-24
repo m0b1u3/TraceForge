@@ -28,6 +28,10 @@ export function registerDesktopExecutionRoutes(app: FastifyInstance, db: Databas
     CREATE TABLE IF NOT EXISTS desktop_authorization_commands(conversation_id TEXT NOT NULL, command_id TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(conversation_id,command_id));`);
   const owner = (value: string) => db.prepare("SELECT case_id AS caseId FROM desktop_conversations WHERE id=?").get(value) as { caseId: string } | undefined;
   const path = "/api/desktop/conversations/:conversationId/execution";
+  app.get("/api/desktop/task-definitions", async (_request, reply) => {
+    const result = await host.request("/api/scenarios/definitions");
+    return reply.code(result.status).send(result.body);
+  });
   app.post(`${path}/continue`, async (request, reply) => {
     const params = id.safeParse((request.params as any).conversationId), body = DesktopContinueSchema.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_continuation" });

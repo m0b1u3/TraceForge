@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "pnpm build:desktop-preview",
-    "preview:desktop": "vite --config renderer/vite.config.ts",
-    "build:desktop-preview": "tsc -p renderer/tsconfig.json && vite build --config renderer/vite.config.ts"
+    "build": "pnpm build:renderer",
+    "dev:renderer": "vite --config renderer/vite.config.ts",
+    "build:renderer": "tsc -p renderer/tsconfig.json && vite build --config renderer/vite.config.ts"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

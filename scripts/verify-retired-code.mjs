@@ -3,7 +3,9 @@ import { resolve, relative } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const retiredPackages = ["extension", "mcp-poc-server", "tools", "reasoning-core"];
-const retiredPaths = ["apps/web/index.html", "config/mcp.example.json", "scripts/retired-web.mjs",
+const retiredPaths = ["apps/web/index.html", "apps/web/renderer/workbench.tsx",
+  "apps/web/renderer/preview-state.ts", "apps/web/renderer/preview-state.test.ts",
+  "config/mcp.example.json", "scripts/retired-web.mjs",
   "apps/server/src/artifact-tools.ts", "apps/server/src/validation-workflow-snapshot.ts",
   "apps/server/src/observer-policy.ts", "apps/server/src/semantic-index.ts"];
 const violations = [];

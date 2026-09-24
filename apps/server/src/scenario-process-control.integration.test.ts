@@ -66,7 +66,7 @@ describe("Scenario Process operator control",()=>{
     expect(result.audit).toMatchObject({outcome:"resolved_succeeded"});expect(store.getCapabilityReceipt(claim.package,claim.idempotencyKey)).toMatchObject({status:"succeeded"});});
 
   it("retires only a revoked version with no unresolved calls and compresses hot receipts",async()=>{const {sqlite,store,control}=setup();
-    store.reserveGeneration(manifest,1,1,"a".repeat(64));store.recordLifecycle(manifest,1,"failed",{error:"launch rejected"});store.claimCapabilityReceipt(manifest,claim);store.settleCapabilityReceipt(manifest,claim.inputFingerprint,receipt);
+    store.reserveGeneration(manifest,1,"a".repeat(64));store.recordLifecycle(manifest,1,"failed",{error:"launch rejected"});store.claimCapabilityReceipt(manifest,claim);store.settleCapabilityReceipt(manifest,claim.inputFingerprint,receipt);
     store.revoke(manifest,"review withdrawn");const retirement={commandId:"retire-1",package:claim.package,source:manifest.source,actor:"operator",reason:"retention elapsed"};
     sqlite.prepare("INSERT INTO process_execution_occupancy VALUES (?,?,?,'unknown',?,NULL,?)").run("occupancy","process-key",canonicalJson({source:manifest.source,
       version:manifest.version,operation:"scenario-process:generation:1",kind:"service",attribution:{idempotencyKey:"process-key",caseId:"case",runId:"run",workId:"work",leaseId:"lease"}}),"request",now);
@@ -75,13 +75,13 @@ describe("Scenario Process operator control",()=>{
     expect(result.audit).toMatchObject({outcome:"retired",recordCount:1});expect(store.snapshot(manifest)).toMatchObject({state:"retired"});expect(store.countCapabilityReceipts(claim.package)).toBe(0);
     const archive=sqlite.prepare("SELECT original_bytes,length(payload) AS bytes FROM scenario_process_retired_archives").get() as {original_bytes:number;bytes:number};
     expect(archive.bytes).toBeLessThan(archive.original_bytes);expect(control.retiredArchives({}).archives).toMatchObject([{packageId:manifest.id,recordCount:1}]);
-    expect(()=>store.reserveGeneration(manifest,2,2,"a".repeat(64))).toThrow(/revoked/);});
+    expect(()=>store.reserveGeneration(manifest,2,"a".repeat(64))).toThrow(/revoked/);});
 
   it("exports a retired archive through fresh authorization and verifies signature, payload and replay",async()=>{const {sqlite,store}=setup(),keys=generateKeyPairSync("ed25519");let revoked=false;
     const signer=new ScenarioProcessArchiveExportSigner({keyId:"archive-key",privateKeyPem:keys.privateKey.export({type:"pkcs8",format:"pem"}).toString(),
       validFrom:"2026-09-01T00:00:00.000Z",validUntil:"2026-09-03T00:00:00.000Z",revoked:()=>revoked},()=>now);
     const control=new ScenarioProcessControl(sqlite,store,{archiveExportSigner:signer,authorizer:{async authorize(){return {decision:"allowed",authorizationRef:"operator-policy",expiresAt:"2026-09-02T00:05:00.000Z"};}}},()=>now);
-    store.reserveGeneration(manifest,1,1,"a".repeat(64));store.recordLifecycle(manifest,1,"failed",{error:"launch rejected"});store.claimCapabilityReceipt(manifest,claim);store.settleCapabilityReceipt(manifest,claim.inputFingerprint,receipt);store.revoke(manifest,"review withdrawn");
+    store.reserveGeneration(manifest,1,"a".repeat(64));store.recordLifecycle(manifest,1,"failed",{error:"launch rejected"});store.claimCapabilityReceipt(manifest,claim);store.settleCapabilityReceipt(manifest,claim.inputFingerprint,receipt);store.revoke(manifest,"review withdrawn");
     await control.retire({commandId:"retire-export",package:claim.package,source:manifest.source,actor:"operator",reason:"retention elapsed"});const request={commandId:"export-1",package:claim.package,actor:"operator",reason:"move to independent cold storage"};
     const first=await control.exportRetired(request),replay=await control.exportRetired(request);if(!("archive" in first)||!("archive" in replay))throw new Error("Archive export unexpectedly denied");
     expect(replay).toMatchObject({replayed:true,archive:{signature:first.archive.signature}});

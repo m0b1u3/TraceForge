@@ -23,6 +23,14 @@ import {
 
 const openedAt = "2026-09-04T02:00:00.000Z";
 const leaseExpiresAt = "2026-09-04T03:00:00.000Z";
+it("keeps lifecycle-owned Chromium sessions renewable beyond the old lifetime, but never revives a closed session",async()=>{
+  const subject=fixture({chromium:true,maximumSessionMs:0,proof:{...validProof,controlTransport:"electron_debugger",browserDirectNetwork:"application_intercepted"}});
+  const session=await subject.runtime.open(owner(),{...processConfiguration(),isolation:"chromium",controlTransport:"electron_debugger",timeoutMs:0});
+  subject.runtime.renewLease(session.id,owner({leaseExpiresAt:"2026-10-04T03:00:00.000Z"}));
+  expect(subject.runtime.snapshot(session.id)?.expiresAt).toBe("2026-10-04T03:00:00.000Z");
+  await subject.runtime.close(session.id);
+  expect(()=>subject.runtime.renewLease(session.id,owner())).toThrow("cannot renew");
+});
 it("does not revive a closed session when takeover completes late", async () => {
   const subject = fixture(), session = await subject.runtime.open(owner(), processConfiguration());
   let finish!: () => void;
@@ -187,6 +195,7 @@ const validProof: BrowserControllerProof = {
 };
 
 function fixture(options: {
+  maximumSessionMs?:number;
   chromium?: boolean;
   proof?: BrowserControllerProof;
   processEnforcement?: Partial<ProcessDescriptor["enforcement"]>;
@@ -292,6 +301,7 @@ function fixture(options: {
   const recordObservation = vi.fn(async () => ({ ref: "artifact_observation_1" }));
   const terminateOwned = vi.fn(async () => undefined);
   const runtime = new BrokeredBrowserRuntime({
+    limits:{maximumSessionMs:options.maximumSessionMs},
     executionNode,
     controller: { attach },
     ...(options.chromium ? { chromiumProcess: async () => ({ processId: "owned:fixture", connection: await attach(), terminate: terminateOwned }) } : {}),

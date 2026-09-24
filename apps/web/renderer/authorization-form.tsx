@@ -19,7 +19,7 @@ export function AuthorizationForm({ contract, policy, disabled, register, initia
   const rules = AuthorizationReviewSchema.safeParse(policy);
   const [inputs, setInputs] = useState<string[]>(() => parsed.success ? parsed.data.fields.map(field => {
     let value:unknown=initialScope; for(const part of field.path)value=value&&typeof value==="object"?(value as Record<string,unknown>)[part]:undefined;
-    return field.type==="integer"?String(value??field.defaultValue??""):field.type==="boolean" ? String(value===true) : Array.isArray(value)&&value.every(item=>typeof item==="string")?value.join("\n"):"";
+    return field.type==="integer"?String(value??field.defaultValue??""):field.type==="boolean" ? String(value===true || !initialScope && field.defaultEnabled===true) : Array.isArray(value)&&value.every(item=>typeof item==="string")?value.join("\n"):"";
   }) : []), [error, setError] = useState("");
   const [review, setReview] = useState<{ scope: Record<string, unknown>; expiresAt: string } | null>(null);
   const [accepted, setAccepted] = useState(false);

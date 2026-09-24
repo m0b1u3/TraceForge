@@ -13,6 +13,7 @@ function handle(request) {
   if (typeof request.ok === "boolean") {
     const parent = parents.get(request.id); if (!parent) return;
     parents.delete(request.id);
+    if (!request.ok) return send({ version: protocolVersion, id: parent, ok: false, error: request.error });
     return send({ version: protocolVersion, id: parent, ok: true, result: {
       status: "succeeded", summary: "Scenario capability completed", raw: JSON.stringify(request.result ?? request.error),
       refs: request.result?.refs ?? [], retryable: false,

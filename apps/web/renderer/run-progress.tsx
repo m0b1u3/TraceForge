@@ -71,7 +71,7 @@ export function RunProgress({ bridge, conversationId, runId, terminal = false, r
   return <section className="run-progress" aria-label="执行进展">
     <p className="local-receipt" role="status">{error ? "状态连接中断，当前显示上次保存的记录" : syncing ? "正在同步任务进度…" : activity.label(run)}</p>
     {error && <p role="alert">进展读取中断，已显示记录保留；不会重跑操作。<button onClick={() => setRetry(value => value + 1)}>重新读取进展</button></p>}
-    <ExecutionTrace events={trace} bridge={bridge} conversationId={conversationId}/>
+    <details className="run-execution-details"><summary><CaretRight className="disclosure-caret" aria-hidden="true" />思考与工具过程</summary><ExecutionTrace events={trace} bridge={bridge} conversationId={conversationId}/></details>
     {events.length > 0 && <details><summary><CaretRight className="disclosure-caret" aria-hidden="true" />执行记录 · {older ? "最近 " : ""}{events.length} 条</summary>
       <ol>{events.map(event => {
         const refs = event.method === "turn/progress" ? event.params.refs : "item" in event.params && "refs" in event.params.item ? event.params.item.refs : [];

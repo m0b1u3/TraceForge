@@ -89,14 +89,13 @@ export class ExecutionToolDiscoveryRuntime {
   constructor(
     sources: readonly ExecutionToolDiscoverySource[],
     private readonly refreshIntervalMs = 30_000,
-    unavailableAfterFailures = 3,
     private readonly now: () => Date = () => new Date(),
     private readonly statePort?: ExecutionToolDiscoveryStatePort,
     private readonly deadlineMs = 15000,
   ) {
     if (!Number.isFinite(refreshIntervalMs) || refreshIntervalMs < 0) throw new Error("Tool discovery refresh interval must be non-negative");
     if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 300000) throw new Error("Invalid tool discovery deadline");
-    this.registry = new CapabilityProviderRegistry<ExecutionToolAdapter>(unavailableAfterFailures);
+    this.registry = new CapabilityProviderRegistry<ExecutionToolAdapter>();
     for (const source of sources) this.registerSource(source);
   }
 
@@ -414,7 +413,7 @@ export class ExecutionToolDiscoveryRuntime {
     } finally { clearTimeout(timer); if (generation.discoveryController === controller) generation.discoveryController = undefined; }
     return providers.map((provider) => {
       if (provider.source !== source.source) throw new Error(`Discovered tool ${provider.name} does not belong to source ${source.source}`);
-      if (provider.timeoutMs < 1) throw new Error(`Execution tool ${provider.name} requires a positive timeout`);
+      if (!Number.isSafeInteger(provider.timeoutMs)||provider.timeoutMs < 0) throw new Error(`Execution tool ${provider.name} requires a nonnegative timeout`);
       return {
         ...provider,
         execute: async (input, context) => {
