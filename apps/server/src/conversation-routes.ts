@@ -83,12 +83,7 @@ export function registerConversationRoutes(app: FastifyInstance, db: Db, workspa
       const previous = sql.prepare("SELECT sequence,text,created_at AS createdAt FROM desktop_conversation_messages WHERE conversation_id=? AND command_id=?").get(conversationId, commandId) as { sequence: number; text: string; createdAt: string } | undefined;
       if (previous) return previous.text === text && JSON.stringify(readConversationAttachments(sql,conversationId,commandId))===encoded ? { status: 200, value: receipt(conversationId, commandId, previous) } : { status: 409, value: { error: "command_conflict" } };
       if(!files.canClaim(attachments)||new Set(attachments.filter(item=>item.kind==="reference").map(item=>item.id)).size!==attachments.filter(item=>item.kind==="reference").length)return {status:409,value:{error:"attachment_not_available"}};
-      const storedBytes=(sql.prepare("SELECT coalesce(sum(length(cast(content_json AS BLOB))),0) AS bytes FROM desktop_message_attachments").get() as {bytes:number}).bytes;
-      if(storedBytes+Buffer.byteLength(encoded)>32*1024*1024)return {status:409,value:{error:"attachment_storage_capacity_reached"}};
       const count = (sql.prepare("SELECT count(*) AS count FROM desktop_conversation_messages WHERE conversation_id=?").get(conversationId) as { count: number }).count;
-      if (count >= 2000) return { status: 409, value: { error: "message_capacity_reached" } };
-      const bytes = (sql.prepare("SELECT coalesce(sum(length(cast(text AS BLOB))),0) AS bytes FROM desktop_conversation_messages").get() as { bytes: number }).bytes;
-      if (bytes + Buffer.byteLength(text, "utf8") > 32 * 1024 * 1024) return { status: 409, value: { error: "conversation_storage_capacity_reached" } };
       const message = { sequence: count + 1, text, createdAt: new Date().toISOString() };
       sql.prepare("INSERT INTO desktop_conversation_messages (conversation_id,command_id,sequence,text,created_at) VALUES (?,?,?,?,?)").run(conversationId, commandId, message.sequence, text, message.createdAt);
       if(attachments.length)sql.prepare("INSERT INTO desktop_message_attachments VALUES (?,?,?)").run(conversationId,commandId,encoded);
@@ -100,7 +95,7 @@ export function registerConversationRoutes(app: FastifyInstance, db: Db, workspa
 
   app.get("/api/desktop/conversations/:conversationId/messages", {
     schema: { params, querystring: { type: "object", additionalProperties: false, properties: {
-      after: { type: "integer", minimum: 0, maximum: 2000, default: 0 }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 },
+      after: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, default: 0 }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 },
     } } },
   }, async (request, reply) => {
     const { conversationId } = request.params as { conversationId: string };

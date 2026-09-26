@@ -417,13 +417,13 @@ const processInput = z.object({
   environment: z.record(z.string()).default({}),
   stdin: z.string().optional(),
   terminal: z.object({ columns: z.number().int().min(1).max(500), rows: z.number().int().min(1).max(500) }).strict().optional(),
-  timeoutMs: z.number().int().min(1).max(3_600_000).default(60_000),
-  outputLimitBytes: z.number().int().min(1).max(4 * 1024 * 1024).default(64 * 1024),
+  timeoutMs: z.number().int().min(1).max(2147483647).default(60_000),
+  outputLimitBytes: z.number().int().min(1).max(16 * 1024 * 1024).default(64 * 1024),
   resources: z.object({
-    cpuTimeMs: z.number().int().min(1).max(3_600_000).default(60_000),
+    cpuTimeMs: z.number().int().min(1).max(2147483647).default(60_000),
     memoryBytes: z.number().int().min(16 * 1024 * 1024).max(2 * 1024 * 1024 * 1024).default(512 * 1024 * 1024),
     maximumProcesses: z.number().int().min(1).max(64).default(8),
-    writeBytes: z.number().int().min(1).max(1024 * 1024 * 1024).default(256 * 1024 * 1024),
+    writeBytes: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).default(256 * 1024 * 1024),
   }).default({}),
 });
 
@@ -442,16 +442,16 @@ export class ExecutionNodeProcessTool implements ExecutionToolAdapter {
       environment: { type: "object", additionalProperties: { type: "string" } },
       stdin: { type: "string" },
       terminal: { type: "object", additionalProperties: false, required: ["columns", "rows"], properties: { columns: { type: "integer", minimum: 1, maximum: 500 }, rows: { type: "integer", minimum: 1, maximum: 500 } } },
-      timeoutMs: { type: "integer", minimum: 1, maximum: 3_600_000 },
-      outputLimitBytes: { type: "integer", minimum: 1, maximum: 4 * 1024 * 1024 },
+      timeoutMs: { type: "integer", minimum: 1, maximum: 2147483647 },
+      outputLimitBytes: { type: "integer", minimum: 1, maximum: 16 * 1024 * 1024 },
       resources: {
         type: "object",
         description: "Mandatory process-tree CPU, memory, process-count, and write-volume limits.",
         properties: {
-          cpuTimeMs: { type: "integer", minimum: 1, maximum: 3_600_000, default: 60_000 },
+          cpuTimeMs: { type: "integer", minimum: 1, maximum: 2147483647, default: 60_000 },
           memoryBytes: { type: "integer", minimum: 16 * 1024 * 1024, maximum: 2 * 1024 * 1024 * 1024, default: 512 * 1024 * 1024 },
           maximumProcesses: { type: "integer", minimum: 1, maximum: 64, default: 8 },
-          writeBytes: { type: "integer", minimum: 1, maximum: 1024 * 1024 * 1024, default: 256 * 1024 * 1024 },
+          writeBytes: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER, default: 256 * 1024 * 1024 },
         },
         additionalProperties: false,
       },

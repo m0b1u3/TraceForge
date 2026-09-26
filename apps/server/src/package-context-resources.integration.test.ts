@@ -317,15 +317,15 @@ describe("Context resource administrative lifecycle", () => {
     expect(f.store.read(contextBinding, f.pkg.resourceManifest!.resources[0]!)).toBe(contextText);
     expect(f.sqlite.prepare("SELECT count(*) AS n FROM package_context_retired").get()).toEqual({ n: 0 });
   });
-  it("bounds lifecycle audit growth and never evicts old entries to reclaim content", async () => {
+  it("continues lifecycle work past the former cumulative audit limit without evicting old entries", async () => {
     const f = fixture(); const control = new PackageContextLifecycle(f.sqlite, f.packages, f.store, grant);
     f.sqlite.prepare("UPDATE scenario_event_streams SET status='completed'").run();
     f.sqlite.exec(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<2048)
       INSERT INTO package_context_lifecycle SELECT 'seed-'||x,'seed','{}','test','{}','2026-01-01' FROM n`);
-    await expect(control.execute({ ...command, action: "retire" })).rejects.toThrow("budget");
-    expect(f.store.read(contextBinding, f.pkg.resourceManifest!.resources[0]!)).toBe(contextText);
+    await expect(control.execute({ ...command, action: "retire" })).resolves.toMatchObject({ action: "retire" });
+    expect(() => f.store.read(contextBinding, f.pkg.resourceManifest!.resources[0]!)).toThrow("retired");
     expect(() => f.sqlite.prepare("DELETE FROM package_context_lifecycle WHERE command_id='seed-1'").run()).toThrow("immutable");
-    expect(f.sqlite.prepare("SELECT count(*) AS n FROM package_context_lifecycle").get()).toEqual({ n: 2048 });
+    expect(f.sqlite.prepare("SELECT count(*) AS n FROM package_context_lifecycle").get()).toEqual({ n: 2049 });
   });
   it("rejects expired grants and mismatched digests without exporting content", async () => {
     const f = fixture(); const expired = { async authorize() { return { decision: "allowed" as const, authorizationRef: "test", expiresAt: "2020-01-01" }; } };

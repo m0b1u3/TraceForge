@@ -6,6 +6,8 @@ import type { StartProcessRequest } from "./protocol.js";
 export interface MacosExecutionBinding {
   brokerPort?: number;
   environment?: Readonly<Record<string, string>>;
+  /** A host-validated, one-process credential delivered over a private pipe. */
+  secretEnvironment?: Readonly<Record<string, string>>;
   signal: AbortSignal;
   assertCurrent(): void;
   /** Close all connections and release the endpoint, including on launch failure. */

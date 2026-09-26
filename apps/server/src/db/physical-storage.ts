@@ -52,9 +52,13 @@ export function initializePhysicalStorage(sqlite: Database.Database): void {
     id INTEGER PRIMARY KEY CHECK(id=1), execution_floor INTEGER NOT NULL CHECK(execution_floor>=0),
     recovery_floor INTEGER NOT NULL CHECK(recovery_floor>=0 AND recovery_floor<=execution_floor),
     maximum_database_bytes INTEGER NOT NULL CHECK(maximum_database_bytes>0), maximum_wal_bytes INTEGER NOT NULL CHECK(maximum_wal_bytes>0));
-    INSERT OR IGNORE INTO execution_physical_policy VALUES (1, 268435456, 33554432, 8589934592, 268435456);
+    INSERT OR IGNORE INTO execution_physical_policy VALUES (1, 268435456, 33554432, 9007199254740991, 9007199254740991);
     CREATE INDEX IF NOT EXISTS execution_storage_reserved ON execution_storage_entries(state, kind);
   `);
+  // Existing installations retain their floor but no longer stop at the old
+  // fixed database/WAL size when the filesystem still has room.
+  sqlite.exec(`UPDATE execution_physical_policy SET maximum_database_bytes=9007199254740991,
+    maximum_wal_bytes=9007199254740991 WHERE id=1 AND maximum_database_bytes=8589934592 AND maximum_wal_bytes=268435456`);
   const admission = (mode: string, bytes: string) => `SELECT execution_physical_admit(
     ${mode === "execution" ? "execution_floor" : "recovery_floor"}, maximum_database_bytes, maximum_wal_bytes,
     ${mode === "execution" ? `(SELECT coalesce(sum(bytes),0) FROM execution_storage_entries WHERE state='reserved') + ${bytes}` : bytes},

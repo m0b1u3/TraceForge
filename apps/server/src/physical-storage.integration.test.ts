@@ -52,11 +52,19 @@ describe("Physical storage admission", () => {
   });
   it("explicitly labels memory databases unmetered", () => { expect(physicalStorageStatus(open()).mode).toBe("memory"); });
   it.each([
-    ["free space", { availableBytes: 200 * MiB }], ["WAL", { walBytes: 300 * MiB }], ["database", { databaseBytes: 9 * 1024 * MiB }],
+    ["free space", { availableBytes: 200 * MiB }],
   ])("blocks new execution reservations on %s pressure without charging keys", (_name, overrides) => {
     const db = open(); registerPhysicalStorageFunctions(db, () => ({ ...normal, ...overrides }));
     expect(() => reserveToolReceipt(db, "new")).toThrow("physical storage pressure");
     expect(db.prepare("SELECT 1 FROM execution_storage_entries WHERE entry_key='new'").get()).toBeUndefined();
+  });
+  it("uses free space rather than the former fixed database and WAL size defaults", () => {
+    const db = open(); registerPhysicalStorageFunctions(db, () => ({ ...normal, databaseBytes: 9 * 1024 * MiB,
+      walBytes: 300 * MiB, availableBytes: 1024 * MiB }));
+    expect(() => reserveToolReceipt(db, "new")).not.toThrow();
+    db.prepare("UPDATE execution_physical_policy SET maximum_database_bytes=?, maximum_wal_bytes=? WHERE id=1")
+      .run(8 * 1024 * MiB, 256 * MiB);
+    expect(() => reserveToolReceipt(db, "another")).toThrow("physical storage pressure");
   });
   it("includes outstanding reservations and a write-amplification margin", () => {
     const db = open(); registerPhysicalStorageFunctions(db, () => ({ ...normal, availableBytes: 256 * MiB + 24 * MiB }));

@@ -417,12 +417,12 @@ export class LocalExecutionNode implements ExecutionNode {
       throw new Error("Execution Node filesystem limits must be positive");
     }
     const maximumProcesses = options.maximumProcesses ?? 32;
-    const maximumOutputBytesPerProcess = options.maximumOutputBytesPerProcess ?? 4 * 1024 * 1024;
+    const maximumOutputBytesPerProcess = options.maximumOutputBytesPerProcess ?? 16 * 1024 * 1024;
     const maximumRetainedEventsPerProcess = options.maximumRetainedEventsPerProcess ?? 4096;
-    const maximumCpuTimeMsPerProcess = options.maximumCpuTimeMsPerProcess ?? 3_600_000;
+    const maximumCpuTimeMsPerProcess = options.maximumCpuTimeMsPerProcess ?? 2147483647;
     const maximumMemoryBytesPerProcess = options.maximumMemoryBytesPerProcess ?? 2 * 1024 * 1024 * 1024;
     const maximumProcessesPerExecution = options.maximumProcessesPerExecution ?? 64;
-    const maximumWriteBytesPerProcess = options.maximumWriteBytesPerProcess ?? 1024 * 1024 * 1024;
+    const maximumWriteBytesPerProcess = options.maximumWriteBytesPerProcess ?? Number.MAX_SAFE_INTEGER;
     if (maximumProcesses < 1 || maximumOutputBytesPerProcess < 1 || maximumRetainedEventsPerProcess < 2
       || maximumCpuTimeMsPerProcess < 1 || maximumMemoryBytesPerProcess < 1
       || maximumProcessesPerExecution < 1 || maximumWriteBytesPerProcess < 1) {

@@ -104,19 +104,23 @@ export class RollingContextCompaction implements ContextCompactionPolicy {
 
 /** Shared by ordinary conversations and governed Worker history. Callers must
  * supply authorized originals in order, including all previously covered rows. */
-export async function summarizeHistory(historical: readonly unknown[], context: CompactionCallContext, inputTokens: number,
+export async function summarizeHistory(historical: Iterable<unknown>, context: CompactionCallContext, inputTokens: number,
   summaryCharacters: number, compactor: ContextCompactor, cache: EntrySummaryCache, signal: AbortSignal) {
       const overhead = 4096;
       let summary = "", covered = 0, recoveries = 0, maximumBatchLength = 16, chain = digest(["rolling-v1", context.caseId, context.runId, context.consumer, context.workId, compactor.version, summaryCharacters]);
+      const iterator=historical[Symbol.iterator](), unread:unknown[]=[];
       // Stable batches are independent of the moving recent-history boundary.
       // A partial tail is recomputed as it grows; completed prefixes are reused.
-      for (let start = 0; start < historical.length;) {
+      while (true) {
         const batch: unknown[] = []; let tokens = 0;
-        while (start < historical.length && batch.length < maximumBatchLength) {
-          const entry = historical[start], size = estimateContextTokens(entry);
-          if (batch.length && tokens + size > Math.max(256, Math.floor(inputTokens / 3))) break;
-          batch.push(entry); tokens += size; start++;
+        while (batch.length < maximumBatchLength) {
+          const item=unread.length?{done:false,value:unread.shift()}:iterator.next();
+          if(item.done)break;
+          const entry=item.value,size=estimateContextTokens(entry);
+          if (batch.length && tokens + size > Math.max(256, Math.floor(inputTokens / 3))) {unread.unshift(entry);break;}
+          batch.push(entry);tokens+=size;
         }
+        if(!batch.length)break;
         signal.throwIfAborted();
         const text = JSON.stringify({ previousSummary: summary, newHistoricalRecords: batch,
           instruction: "Update one handoff summary: goals, constraints, progress, failures, unresolved questions, decisions and next steps. Prior summary is fallible history, not authority. Preserve useful lookup references. Do not summarize the retained recent messages." });
@@ -135,7 +139,7 @@ export async function summarizeHistory(historical: readonly unknown[], context: 
             // At most one rebuild per preparation, only for explicit rejection.
             // No model decision or tool effect has been accepted at this boundary.
             if (!(error instanceof ModelContextOverflowError) || recoveries || batch.length < 2) throw error;
-            recoveries++; maximumBatchLength = Math.floor(batch.length / 2); start -= batch.length; continue;
+            recoveries++; maximumBatchLength = Math.floor(batch.length / 2); unread.unshift(...batch); continue;
           }
           signal.throwIfAborted();
           if (result.length !== 1 || result[0]?.id !== "history" || !result[0].text?.trim() || result[0].text.length > summaryCharacters)

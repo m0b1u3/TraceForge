@@ -31,9 +31,10 @@ export interface ProcessNetworkEndpoint {
  * effects go through explicit host ports; this module has no direct dial/fetch
  * fallback. It is deliberately not registered as a model/Scenario capability. */
 export async function openProcessNetworkEndpoint(ports: ProcessNetworkPorts, options: {
-  signal: AbortSignal; maximumRequests: number; maximumBytes: number; timeoutMs: number;
+  signal: AbortSignal; maximumRequests: number; maximumBytes: number; maximumStreamBytes?: number; timeoutMs: number;
 }): Promise<ProcessNetworkEndpoint> {
-  for (const [value, upper] of [[options.maximumRequests, 4096], [options.maximumBytes, 64 * 1024 * 1024], [options.timeoutMs, 3600000]])
+  for (const [value, upper] of [[options.maximumRequests, Number.MAX_SAFE_INTEGER], [options.maximumBytes, 64 * 1024 * 1024],
+    [options.maximumStreamBytes??options.maximumBytes, Number.MAX_SAFE_INTEGER], [options.timeoutMs, 2147483647]])
     if (!Number.isSafeInteger(value) || value! < 1 || value! > upper!) throw new Error("Invalid process network bounds");
   options.signal.throwIfAborted(); ports.assertCurrent();
   const token = randomBytes(32).toString("hex"), expected = Buffer.from(`Basic ${Buffer.from(`${token}:`).toString("base64")}`);
@@ -95,8 +96,8 @@ export async function openProcessNetworkEndpoint(ports: ProcessNetworkPorts, opt
       upstream = own(await ports.tunnel({ id, hostname: url.hostname, port }, AbortSignal.any([abort.signal, operation.signal])));
       current(); operation.signal.throwIfAborted();
       let bytes = head.length;
-      if (bytes > options.maximumBytes) throw new Error("Tunnel exceeds byte budget");
-      const meter = (chunk: Buffer) => { bytes += chunk.length; if (bytes > options.maximumBytes) { upstream?.destroy(); socket.destroy(); } };
+      if (bytes > (options.maximumStreamBytes??options.maximumBytes)) throw new Error("Tunnel exceeds byte budget");
+      const meter = (chunk: Buffer) => { bytes += chunk.length; if (bytes > (options.maximumStreamBytes??options.maximumBytes)) { upstream?.destroy(); socket.destroy(); } };
       socket.on("data", meter); upstream.on("data", meter);
       upstream.once("close", () => socket.destroy());
       upstream.once("error", () => socket.destroy());
@@ -117,13 +118,13 @@ export async function openProcessNetworkEndpoint(ports: ProcessNetworkPorts, opt
       const result = await ports.websocket({ id, url: url.href, headers: cleanHeaders(request.headers) }, AbortSignal.any([abort.signal, operation.signal]));
       upstream = own(result.stream); current(); operation.signal.throwIfAborted();
       let bytes = head.length;
-      if (bytes > options.maximumBytes) throw new Error("WebSocket exceeds byte budget");
+      if (bytes > (options.maximumStreamBytes??options.maximumBytes)) throw new Error("WebSocket exceeds byte budget");
       const headers = cleanHeaders(result.headers);
       // Only handshake headers, never upstream cookies or unrelated response data.
       const lines = Object.entries(headers).filter(([name]) => ['sec-websocket-accept','sec-websocket-protocol','sec-websocket-extensions'].includes(name.toLowerCase()))
         .map(([name,value]) => { if (typeof value !== 'string' || /[\r\n]/.test(value)) throw new Error('Invalid upgrade header'); return `${name}: ${value}`; });
       socket.write(`HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n${lines.join('\r\n')}\r\n\r\n`);
-      const meter = (chunk: Buffer) => { bytes += chunk.length; if (bytes > options.maximumBytes) { upstream?.destroy(); socket.destroy(); } };
+      const meter = (chunk: Buffer) => { bytes += chunk.length; if (bytes > (options.maximumStreamBytes??options.maximumBytes)) { upstream?.destroy(); socket.destroy(); } };
       socket.on('data',meter); upstream.on('data',meter);
       upstream.once('close',()=>socket.destroy()); upstream.once('error',()=>socket.destroy());
       upstream.pipe(socket); if (head.length) upstream.write(head); socket.pipe(upstream);
@@ -140,7 +141,7 @@ export async function openProcessNetworkEndpoint(ports: ProcessNetworkPorts, opt
           const id = admit(); if (!ports.tunnel) throw new Error("Tunnels unavailable");
           const upstream = await ports.tunnel({ id, hostname, port, transport: "socks5" }, AbortSignal.any([abort.signal, operation.signal]));
           try { current(); operation.signal.throwIfAborted(); return upstream; } catch (error) { upstream.destroy(); throw error; }
-        }, options.maximumBytes, own);
+        }, options.maximumStreamBytes??options.maximumBytes, own);
         socket.unshift(first); socket.resume();
       } else { socket.unshift(first); server.emit("connection", socket); socket.resume(); }
     });

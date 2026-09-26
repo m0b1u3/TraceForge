@@ -112,8 +112,8 @@ export class ChromiumPipeTransport implements ChromiumCdpPort {
   static async launch(options: ChromiumPipeTransportOptions): Promise<ChromiumPipeTransport> {
     assertOptions(options);
     const limits = {
-      maximumMessageBytes: options.maximumMessageBytes ?? 4 * 1024 * 1024,
-      maximumBufferedBytes: options.maximumBufferedBytes ?? 8 * 1024 * 1024,
+      maximumMessageBytes: options.maximumMessageBytes ?? 96 * 1024 * 1024,
+      maximumBufferedBytes: options.maximumBufferedBytes ?? 128 * 1024 * 1024,
       maximumPendingCommands: options.maximumPendingCommands ?? 64,
       maximumStderrBytes: options.maximumStderrBytes ?? 64 * 1024,
       commandTimeoutMs: options.commandTimeoutMs ?? 30_000,

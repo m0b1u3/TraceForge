@@ -68,18 +68,25 @@ export function McpSettings({bridge,onDirty}:{bridge:DesktopConversations;onDirt
         <label>绑定的目标 IP（可选，用逗号分隔）<input maxLength={1500} aria-invalid={!!addressError} aria-describedby="mcp-address-help mcp-address-error" value={draft.destinationAddresses===undefined?"":addressText} onChange={e=>{setAddressText(e.target.value);patch({destinationAddresses:e.target.value.split(",").map(v=>v.trim()).filter(Boolean)});}}/></label>
         <p id="mcp-address-error" role={addressError?"alert":undefined}>{addressError}</p>
         <p id="mcp-address-help" className="configuration-meta">内网域名需明确填写其 IP；填写后只允许这些解析地址，仍使用服务域名验证 TLS。留空不允许域名转向内网。保存不会连接服务，新配置需测试并启用，已有任务保持原修订。</p>
-        <p className="configuration-meta">Streamable HTTP，支持 JSON 与有界 SSE 响应。不跟随重定向。</p></>:<>
+        <p className="configuration-meta">Streamable HTTP，支持 JSON 与有界 SSE 响应。不跟随重定向。</p>
+        <label>单次请求最长时间（秒）<input type="number" min={1} max={2147483} value={Math.floor((draft.requestTimeoutMs??60000)/1000)} onChange={e=>patch({requestTimeoutMs:Number(e.target.value)*1000})}/></label>
+        </>:<>
         <label>可执行文件绝对路径<input value={draft.executable??""} onChange={e=>patch({executable:e.target.value})}/></label>
         <label>工作目录绝对路径<input value={draft.workingDirectory??""} onChange={e=>patch({workingDirectory:e.target.value})}/></label>
         <label>启动参数（每行一项，不经 shell 解释）<textarea rows={3} value={(draft.arguments??[]).join("\n")} onChange={e=>patch({arguments:e.target.value.split("\n")})}/></label>
         <label>允许读取的目录（每行一项）<textarea rows={3} value={(draft.readPaths??[]).join("\n")} onChange={e=>patch({readPaths:e.target.value.split("\n").filter(Boolean)})}/></label>
         <label>允许写入的目录（每行一项，可留空）<textarea rows={3} value={(draft.writePaths??[]).join("\n")} onChange={e=>patch({writePaths:e.target.value.split("\n").filter(Boolean)})}/></label>
-        <p>本地程序断网运行，不接收明文凭证或继承宿主环境。需要网络和凭证的服务请使用 HTTP 接入。测试会执行程序，并授予这里列出的文件访问范围；不能证明沙箱有效时拒绝启动。</p>
+        <label>允许联网的站点来源（每行一项，例如 https://example.com/；留空为断网）<textarea rows={3} value={(draft.networkOrigins??[]).join("\n")} onChange={e=>patch({networkOrigins:e.target.value.split("\n").map(v=>v.trim()).filter(Boolean)})}/></label>
+        <label>绑定的目标 IP（可选，用逗号分隔）<input maxLength={1500} aria-invalid={!!addressError} value={draft.destinationAddresses===undefined?"":addressText} onChange={e=>{setAddressText(e.target.value);patch({destinationAddresses:e.target.value.split(",").map(v=>v.trim()).filter(Boolean)});}}/></label>
+        <label>凭证环境变量名（可选）<input value={draft.secretEnvironmentVariable??""} onChange={e=>patch({secretEnvironmentVariable:e.target.value||undefined})}/></label>
+        <label>单次请求最长时间（秒）<input type="number" min={1} max={2147483} value={Math.floor((draft.requestTimeoutMs??60000)/1000)} onChange={e=>patch({requestTimeoutMs:Number(e.target.value)*1000})}/></label>
+        <label>程序最长运行时间（秒）<input type="number" min={1} max={2147483} value={Math.floor((draft.processTimeoutMs??600000)/1000)} onChange={e=>patch({processTimeoutMs:Number(e.target.value)*1000})}/></label>
+        <p>本地程序只可通过宿主代理访问列出的站点来源，不继承宿主环境。配置凭证变量并单独保存凭证后，该值只在测试和调用时传给此程序。测试会执行程序并授予列出的文件及网络范围；无法确认沙箱有效时拒绝启动。</p>
         </>}
         <label>适用场景<select value={JSON.stringify(draft.package)} onChange={e=>{const p=snapshot!.packages.find(p=>JSON.stringify(p.package)===e.target.value)!;patch({package:p.package,authorizationAction:p.actions[0]??"",capability:p.capabilities[0]??""});}}>{snapshot?.packages.map(p=><option key={JSON.stringify(p.package)} value={JSON.stringify(p.package)}>{p.title} · {p.package.version}</option>)}</select></label>
         <label>需要的授权动作<select value={draft.authorizationAction} onChange={e=>patch({authorizationAction:e.target.value})}>{pkg?.actions.map(a=><option key={a}>{a}</option>)}</select></label>
         <label>提供给工作任务的能力<select value={draft.capability} onChange={e=>patch({capability:e.target.value})}>{pkg?.capabilities.map(c=><option key={c}>{c}</option>)}</select></label>
-        {draft.transport==="streamable-http"&&<label>Bearer 凭证（可选，仅写入安全存储）<input type="password" autoComplete="new-password" disabled={!snapshot?.secureStorage} value={credential} placeholder={current?.credentialConfigured?"已保存；留空保留":"未设置"} onChange={e=>{setCredential(e.target.value);setDirty(true);}}/></label>}
+        {(draft.transport==="streamable-http"||draft.secretEnvironmentVariable)&&<label>{draft.transport==="stdio"?"本地程序凭证":"Bearer 凭证"}（可选，仅写入安全存储）<input type="password" autoComplete="new-password" disabled={!snapshot?.secureStorage} value={credential} placeholder={current?.credentialConfigured?"已保存；留空保留":"未设置"} onChange={e=>{setCredential(e.target.value);setDirty(true);}}/></label>}
         {!snapshot?.secureStorage&&<p>当前宿主未提供操作系统安全存储，不能保存凭证。</p>}
         {current?.credentialConfigured&&<label className="configuration-check"><input type="checkbox" checked={clearCredential} onChange={e=>{setClearCredential(e.target.checked);setDirty(true);}}/>清除新修订的凭证（旧任务保留原绑定）</label>}
         <div className="configuration-actions"><button disabled={!dirty&&!reviewDirty} onClick={()=>void perform({operation:"save",expectedRevision:current?.revision??0,connection:draft,...(credential?{credential}:{}),clearCredential})}>保存连接</button>

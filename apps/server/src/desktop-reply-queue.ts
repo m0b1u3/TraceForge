@@ -6,7 +6,11 @@ export class DesktopReplyQueue {
   constructor(private sql:Database.Database){
     sql.exec(`CREATE TABLE IF NOT EXISTS desktop_reply_queue_settings(c TEXT PRIMARY KEY,revision INTEGER NOT NULL,paused INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS desktop_reply_queue_order(c TEXT NOT NULL,m TEXT NOT NULL,position INTEGER NOT NULL,PRIMARY KEY(c,m));
-      CREATE TABLE IF NOT EXISTS desktop_reply_queue_commands(c TEXT NOT NULL,id TEXT NOT NULL,request TEXT NOT NULL,prior_text TEXT,result TEXT NOT NULL,PRIMARY KEY(c,id));`);
+      CREATE TABLE IF NOT EXISTS desktop_reply_queue_commands(c TEXT NOT NULL,id TEXT NOT NULL,request TEXT NOT NULL,prior_text TEXT,result TEXT NOT NULL,PRIMARY KEY(c,id));
+      CREATE TRIGGER IF NOT EXISTS desktop_reply_queue_physical BEFORE INSERT ON desktop_reply_queue_commands BEGIN
+        SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
+          length(CAST(NEW.request AS BLOB))+length(CAST(NEW.result AS BLOB))+coalesce(length(CAST(NEW.prior_text AS BLOB)),0)+2048,'execution')
+          FROM execution_physical_policy WHERE id=1; END;`);
   }
   touch(c:string){this.sql.prepare("INSERT INTO desktop_reply_queue_settings VALUES(?,1,0) ON CONFLICT(c) DO UPDATE SET revision=revision+1").run(c);}
   paused(c:string){return !!(this.sql.prepare("SELECT paused FROM desktop_reply_queue_settings WHERE c=?").get(c) as {paused:number}|undefined)?.paused;}
@@ -29,9 +33,6 @@ export class DesktopReplyQueue {
       if(prior)return prior.request===encoded?{status:200,body:JSON.parse(prior.result)}:{status:409,body:{error:"command_conflict"}};
       const state=this.view(c),op=input.operation;
       if(state.revision!==input.expectedRevision)return {status:409,body:{error:"queue_changed"}};
-      const journal=this.sql.prepare("SELECT count(*) AS n,coalesce(sum(length(cast(request AS BLOB))+length(cast(result AS BLOB))+coalesce(length(cast(prior_text AS BLOB)),0)),0) AS bytes FROM desktop_reply_queue_commands").get() as {n:number;bytes:number};
-      // Keep reconciliation history bounded, including UTF-8 and snapshot amplification.
-      if(journal.n>=20000||journal.bytes+Buffer.byteLength(encoded)+Buffer.byteLength(JSON.stringify(state))+128000>16*1024*1024)return {status:409,body:{error:"queue_capacity"}};
       let oldText:string|null=null;
       if(op.kind==="pause"){
         this.touch(c);this.sql.prepare("UPDATE desktop_reply_queue_settings SET paused=? WHERE c=?").run(Number(op.paused),c);

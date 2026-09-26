@@ -84,8 +84,8 @@ export class ExecutionNodeBrowserController implements BrowserControllerPort {
   constructor(private readonly options: ExecutionNodeBrowserControllerOptions) {
     this.createId = options.createId ?? randomUUID;
     this.limits = {
-      maximumFrameBytes: options.maximumFrameBytes ?? 4 * 1024 * 1024,
-      maximumBufferedBytes: options.maximumBufferedBytes ?? 8 * 1024 * 1024,
+      maximumFrameBytes: options.maximumFrameBytes ?? 96 * 1024 * 1024,
+      maximumBufferedBytes: options.maximumBufferedBytes ?? 128 * 1024 * 1024,
       maximumStderrBytes: options.maximumStderrBytes ?? 64 * 1024,
       maximumPendingRequests: options.maximumPendingRequests ?? 32,
       handshakeTimeoutMs: options.handshakeTimeoutMs ?? 10_000,

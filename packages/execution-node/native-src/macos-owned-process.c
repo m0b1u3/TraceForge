@@ -26,6 +26,16 @@ static uint64_t clock_ms(void) {
   struct timespec t; if (clock_gettime(CLOCK_MONOTONIC, &t)) _exit(90);
   return (uint64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
+static int read_exact(int fd, unsigned char *buffer, size_t length) {
+  size_t done = 0;
+  while (done < length) {
+    ssize_t count = read(fd, buffer + done, length - done);
+    if (count > 0) done += (size_t)count;
+    else if (count < 0 && errno == EINTR) continue;
+    else return -1;
+  }
+  return 0;
+}
 int main(int argc, char **argv) {
   if (argc < 3 || strlen(argv[1]) > 65536 || (argv[2][0] != '/' && strcmp(argv[2], "--pty"))) return 2;
   if (!strstr(argv[1], "(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid))")) return 3;
@@ -47,6 +57,21 @@ int main(int argc, char **argv) {
     close(gate[0]); close(3); close(4);
     signal(SIGTERM, SIG_DFL); signal(SIGINT, SIG_DFL); signal(SIGPIPE, SIG_DFL);
     if (setsid() < 0) _exit(101);
+    unsigned char size_bytes[4];
+    if (read_exact(5, size_bytes, sizeof(size_bytes))) _exit(106);
+    uint32_t environment_size = (uint32_t)size_bytes[0] | (uint32_t)size_bytes[1] << 8 |
+      (uint32_t)size_bytes[2] << 16 | (uint32_t)size_bytes[3] << 24;
+    if (environment_size > 65536) _exit(107);
+    if (environment_size) {
+      char *entry = malloc(environment_size); if (!entry) _exit(108);
+      if (read_exact(5, (unsigned char *)entry, environment_size) || entry[environment_size - 1] != 0) _exit(109);
+      char *equals = strchr(entry, '=');
+      if (!equals || equals == entry || memchr(equals + 1, 0, environment_size - (size_t)(equals + 1 - entry)) != entry + environment_size - 1) _exit(110);
+      *equals = 0;
+      if (setenv(entry, equals + 1, 1)) _exit(111);
+      memset(entry, 0, environment_size); free(entry);
+    }
+    close(5);
     if (master >= 0) {
       close(master);
       if (ioctl(slave, TIOCSCTTY, 0) < 0 || dup2(slave, 0) < 0 || dup2(slave, 1) < 0 || dup2(slave, 2) < 0) _exit(105);
@@ -60,6 +85,7 @@ int main(int argc, char **argv) {
     execv(args[0], args); _exit(104);
   }
   close(gate[1]);
+  close(5);
   if (slave >= 0) close(slave);
   if (master >= 0) {
     fcntl(master, F_SETFL, O_NONBLOCK); fcntl(0, F_SETFL, O_NONBLOCK); fcntl(1, F_SETFL, O_NONBLOCK);

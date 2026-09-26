@@ -107,13 +107,13 @@ export class DesktopMcpControl {
       if (op.operation === "save") {
         if(op.credential && op.clearCredential)throw new Error("Cannot replace and clear a credential together");
         this.pkg(op.connection);
-        if (!head && (this.sqlite.prepare("SELECT count(*) AS n FROM desktop_mcp_heads").get() as {n:number}).n >= 128) throw new Error("MCP connection capacity reached");
         const revision = op.expectedRevision + 1;
         let credentialRef = head ? this.version(id, head.revision).credentialRef : undefined;
         if (op.clearCredential) credentialRef = undefined;
-        if (op.credential) { if (!this.options.secrets) throw new Error("OS secure storage unavailable"); if (op.connection.transport!=="streamable-http" || new URL(op.connection.endpoint).protocol !== "https:") throw new Error("Credentials require HTTPS");
+        if (op.credential) { if (!this.options.secrets) throw new Error("OS secure storage unavailable"); if (op.connection.transport==="streamable-http" ? new URL(op.connection.endpoint).protocol !== "https:" : !op.connection.secretEnvironmentVariable) throw new Error("Credential transport is not configured");
           credentialRef = `mcp:${id}:${revision}:${randomUUID()}`; await this.options.secrets.write(credentialRef, op.credential); }
-        if (credentialRef && (op.connection.transport!=="streamable-http" || new URL(op.connection.endpoint).protocol !== "https:")) throw new Error("Credentials require HTTPS");
+        if (credentialRef && (op.connection.transport==="streamable-http" ? new URL(op.connection.endpoint).protocol !== "https:" : !op.connection.secretEnvironmentVariable)) throw new Error("Credential transport is not configured");
+        if (credentialRef && head && this.version(id,head.revision).connection.secretEnvironmentVariable !== op.connection.secretEnvironmentVariable && !op.credential && !op.clearCredential) throw new Error("Confirm a new credential or clear it when changing its environment variable");
         if (head && this.version(id,head.revision).connection.endpoint !== op.connection.endpoint && credentialRef && !op.credential && !op.clearCredential) throw new Error("Confirm a new credential or clear it when changing endpoint");
         this.sqlite.transaction(() => { this.sqlite.prepare("INSERT INTO desktop_mcp_versions VALUES (?,?,?)").run(id,revision,JSON.stringify({ connection:op.connection, credentialRef }));
           this.sqlite.prepare("INSERT INTO desktop_mcp_heads(id,revision,active) VALUES (?,?,NULL) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision").run(id,revision); })();
@@ -124,7 +124,7 @@ export class DesktopMcpControl {
         if (op.operation === "test") {
           retesting = true;
           this.sqlite.prepare("DELETE FROM desktop_mcp_tests WHERE id=? AND revision=?").run(id,head.revision);
-          const session = await this.session(v, this.serviceAttribution(id), () => { if (this.head(id)?.revision !== head.revision) throw new Error("MCP configuration changed"); });
+          const session = await this.session(v, this.serviceAttribution(id,v.connection,head.revision), () => { if (this.head(id)?.revision !== head.revision) throw new Error("MCP configuration changed"); });
           try{const catalog = await session.discover();
           this.sqlite.prepare("INSERT INTO desktop_mcp_tests VALUES (?,?,?) ON CONFLICT(id,revision) DO UPDATE SET catalog_json=excluded.catalog_json").run(id,head.revision,JSON.stringify(catalog));}finally{await session.close();}
         } else if (op.operation === "activate") {
@@ -164,11 +164,13 @@ export class DesktopMcpControl {
       throw error;
     } finally { this.locked = false; }
   }
-  private serviceAttribution(id: string): ExecutionAttribution { return { caseId:"desktop-mcp",runId:"desktop-mcp",workId:"discovery",workerId:"operator",scopeRef:id,leaseId:randomUUID(),leaseExpiresAt:new Date(Date.now()+60000).toISOString(),actionId:"mcp.discovery",idempotencyKey:randomUUID() }; }
+  private serviceAttribution(id: string,connection:McpConnection,revision:number): ExecutionAttribution { return { caseId:"desktop-mcp",runId:"desktop-mcp",workId:"discovery",workerId:"operator",scopeRef:id,leaseId:randomUUID(),leaseExpiresAt:new Date(Date.now()+(connection.processTimeoutMs??600_000)+30_000).toISOString(),actionId:`desktop.mcp:${id}:${revision}`,idempotencyKey:randomUUID() }; }
   private async session(v: Version, attribution: ExecutionAttribution, check: () => void, signal?: AbortSignal) {
     if(v.connection.transport==="stdio") {
-      if(!this.node||!this.capacity||v.credentialRef)throw new Error("Controlled stdio execution unavailable");
-      return new DesktopMcpStdioSession(v.connection,this.node,this.capacity,attribution,check,signal);
+      if(!this.node||!this.capacity)throw new Error("Controlled stdio execution unavailable");
+      const credential=v.credentialRef?await this.options.secrets?.read(v.credentialRef):undefined;
+      if(v.credentialRef&&!credential)throw new McpDiagnosticError("credential","MCP credential unavailable");
+      return new DesktopMcpStdioSession(v.connection,this.node,this.capacity,attribution,check,signal,credential,this.sqlite);
     }
     const credential = v.credentialRef ? await this.options.secrets?.read(v.credentialRef) : undefined;
     if (v.credentialRef && !credential) throw new McpDiagnosticError("credential","MCP credential unavailable");
@@ -193,7 +195,7 @@ export class DesktopMcpControl {
       const inputPolicy = this.inputPolicy(remote.inputSchema,review.resources);
       return { name:`${source}.${activation.catalog.tools.indexOf(remote)}`,source,version:activation.catalog.digest,priority:0,
         description:`Reviewed MCP tool: ${remote.name}`,inputSchema:remote.inputSchema,providedCapabilities:[v.connection.capability],dependencyCapabilities:[],
-        permissionRequirements:v.connection.transport==="stdio"?{}:{network:"brokered" as const},risk:"privileged" as const,timeoutMs:60000,
+        permissionRequirements:v.connection.transport==="stdio"?{}:{network:"brokered" as const},risk:"privileged" as const,timeoutMs:Math.min(2147483647,(v.connection.requestTimeoutMs??60_000)+30_000),
         execute: async (input: unknown,context: ToolExecutionContext) => {
           const check = () => {
             this.assertAssembly(source,mcpDigest({version:v,activation}));
@@ -209,7 +211,7 @@ export class DesktopMcpControl {
           if([...this.calls.values()].reduce((n,set)=>n+set.size,0)>=16)throw new Error("MCP concurrent call capacity reached");
           const controller=new AbortController(),set=this.calls.get(id)??new Set<AbortController>();set.add(controller);this.calls.set(id,set);
           try {
-          const session = await this.session(v,{...context,actionId:v.connection.authorizationAction},check,AbortSignal.any([controller.signal,...(context.signal?[context.signal]:[])]));
+          const session = await this.session(v,{...context,actionId:`desktop.mcp:${id}:${revision}`},check,AbortSignal.any([controller.signal,...(context.signal?[context.signal]:[])]));
           try {
           const catalog = await session.discover(); if (catalog.digest!==activation.catalog.digest) throw new Error("MCP catalog changed; test and review a new revision");
           check(); const result = await session.rpc("tools/call",{name:remote.name,arguments:input}); check();

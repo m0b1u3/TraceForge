@@ -36,7 +36,7 @@ export class DesktopMcpSession {
   constructor(private readonly connection: McpConnection, private readonly credential: string | undefined,
     private readonly attribution: ExecutionAttribution, private readonly authorize: () => void,
     transport?: BrokeredHttpTransport, private readonly signal?: AbortSignal) {
-    this.broker = new BrokeredHttpGateway({ transport:transport??httpTransport(signal,connection.destinationAddresses), limits: { maximumRequestBytes: 65536, maximumResponseBytes: 262144, maximumTimeoutMs: 15000, maximumConcurrentRequests: 1 },
+    this.broker = new BrokeredHttpGateway({ transport:transport??httpTransport(signal,connection.destinationAddresses), limits: { maximumRequestBytes: 65536, maximumResponseBytes: 16*1024*1024, maximumTimeoutMs: connection.requestTimeoutMs??60_000, maximumConcurrentRequests: 1 },
       authorizer: { authorize: ({ url }) => { this.check();
         const endpoint = new URL(connection.endpoint);
         const allowed = url === endpoint.href || (connection.destinationAddresses??[]).some(address => {
@@ -55,7 +55,7 @@ export class DesktopMcpSession {
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26",
         ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}), ...(this.credential ? { authorization: `Bearer ${this.credential}` } : {}) },
       bodyBase64: Buffer.from(JSON.stringify({ jsonrpc: "2.0", ...(notification ? {} : { id }), method, params })).toString("base64"),
-      timeoutMs: 15000, responseLimitBytes: 262144 }).catch(()=>{throw new McpDiagnosticError("transport","MCP transport unavailable");});
+      timeoutMs: this.connection.requestTimeoutMs??60_000, responseLimitBytes: 16*1024*1024 }).catch(()=>{throw new McpDiagnosticError("transport","MCP transport unavailable");});
     this.check(); this.receipts.push(response.receipt);
     if(response.status===401||response.status===403)throw new McpDiagnosticError("authentication","MCP authentication rejected");
     if (response.status < 200 || response.status >= 300 || response.bodyTruncated) throw new McpDiagnosticError("http","MCP HTTP request failed or exceeded its response limit");

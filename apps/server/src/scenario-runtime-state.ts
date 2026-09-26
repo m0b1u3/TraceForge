@@ -6,7 +6,7 @@ import type { ScenarioArtifactPort, ScenarioArtifactRecord, ScenarioStatePort, S
 const MAX_METADATA_BYTES = 16 * 1024;
 const MAX_STATE_BYTES = 256 * 1024;
 const MAX_SUMMARY_BYTES = 4096;
-const DEFAULT_MAX_RECORDS_PER_PACKAGE = 100_000;
+const DEFAULT_MAX_RECORDS_PER_PACKAGE = Number.MAX_SAFE_INTEGER;
 
 export interface ScenarioRuntimeStateLimits {
   maxArtifactsPerPackage: number;
@@ -21,6 +21,11 @@ export class SqliteScenarioArtifactStore implements ScenarioArtifactPort {
     limits: Partial<ScenarioRuntimeStateLimits> = {},
   ) {
     this.maxArtifactsPerPackage = positiveLimit(limits.maxArtifactsPerPackage ?? DEFAULT_MAX_RECORDS_PER_PACKAGE, "Artifact");
+    sqlite.exec(`CREATE TRIGGER IF NOT EXISTS scenario_artifacts_physical BEFORE INSERT ON scenario_artifacts BEGIN
+      SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
+        length(CAST(NEW.metadata_json AS BLOB))+length(CAST(NEW.summary AS BLOB))+4096,'execution') FROM execution_physical_policy WHERE id=1; END;
+      CREATE TRIGGER IF NOT EXISTS scenario_artifact_commands_physical BEFORE INSERT ON scenario_artifact_commands BEGIN
+      SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,2048,'execution') FROM execution_physical_policy WHERE id=1; END;`);
   }
 
   record(input: Parameters<ScenarioArtifactPort["record"]>[0]): ScenarioArtifactRecord {
@@ -38,9 +43,11 @@ export class SqliteScenarioArtifactStore implements ScenarioArtifactPort {
         if (command.fingerprint !== fingerprint) throw new Error("Scenario Artifact command conflict");
         return this.require(input.packageId, input.packageVersion, input.caseId, command.artifact_id);
       }
-      const count = this.sqlite.prepare(`SELECT COUNT(*) AS total FROM scenario_artifacts WHERE package_id=? AND package_version=?`)
-        .get(input.packageId, input.packageVersion) as { total: number };
-      if (count.total >= this.maxArtifactsPerPackage) throw new Error("Scenario Artifact package capacity exhausted");
+      if (this.maxArtifactsPerPackage !== DEFAULT_MAX_RECORDS_PER_PACKAGE) {
+        const count = this.sqlite.prepare(`SELECT COUNT(*) AS total FROM scenario_artifacts WHERE package_id=? AND package_version=?`)
+          .get(input.packageId, input.packageVersion) as { total: number };
+        if (count.total >= this.maxArtifactsPerPackage) throw new Error("Scenario Artifact package capacity exhausted");
+      }
       const { commandId: _commandId, ...artifactInput } = input;
       const record: ScenarioArtifactRecord = { ...artifactInput, id: `scenario-artifact:${randomUUID()}`, createdAt: this.now() };
       this.sqlite.prepare(`INSERT INTO scenario_artifacts
@@ -86,6 +93,14 @@ export class SqliteScenarioStateStore implements ScenarioStatePort {
     limits: Partial<ScenarioRuntimeStateLimits> = {},
   ) {
     this.maxStateEntriesPerPackage = positiveLimit(limits.maxStateEntriesPerPackage ?? DEFAULT_MAX_RECORDS_PER_PACKAGE, "State");
+    sqlite.exec(`CREATE TRIGGER IF NOT EXISTS scenario_states_insert_physical BEFORE INSERT ON scenario_states BEGIN
+      SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,length(CAST(NEW.value_json AS BLOB))+2048,'execution') FROM execution_physical_policy WHERE id=1; END;
+      CREATE TRIGGER IF NOT EXISTS scenario_states_update_physical BEFORE UPDATE ON scenario_states BEGIN
+      SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
+        max(0,length(CAST(NEW.value_json AS BLOB))-length(CAST(OLD.value_json AS BLOB)))+2048,'execution') FROM execution_physical_policy WHERE id=1; END;
+      CREATE TRIGGER IF NOT EXISTS scenario_state_commands_physical BEFORE INSERT ON scenario_state_commands BEGIN
+      SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
+        length(CAST(NEW.result_json AS BLOB))+2048,'execution') FROM execution_physical_policy WHERE id=1; END;`);
   }
   read(input: Parameters<ScenarioStatePort["read"]>[0]): ScenarioStateRecord | undefined {
     validateStateIdentity(input);
@@ -104,7 +119,7 @@ export class SqliteScenarioStateStore implements ScenarioStatePort {
       if(command){if(command.fingerprint!==fingerprint)throw new Error("Scenario State command conflict");return JSON.parse(command.result_json) as ScenarioStateRecord;}
       const current=this.read(input);const revision=current?.revision??0;
       if(revision!==input.expectedRevision)throw new Error(`Scenario State revision conflict: expected ${input.expectedRevision}, current ${revision}`);
-      if (!current) {
+      if (!current && this.maxStateEntriesPerPackage !== DEFAULT_MAX_RECORDS_PER_PACKAGE) {
         const count = this.sqlite.prepare(`SELECT COUNT(*) AS total FROM scenario_states WHERE package_id=? AND package_version=?`)
           .get(input.packageId, input.packageVersion) as { total: number };
         if (count.total >= this.maxStateEntriesPerPackage) throw new Error("Scenario State package capacity exhausted");

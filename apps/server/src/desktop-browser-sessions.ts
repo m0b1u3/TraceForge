@@ -115,7 +115,7 @@ export class DesktopBrowserSessions {
     const digest = createHash("sha256").update(JSON.stringify(input)).digest("hex");
     const prior = e.commands.get(input.commandId);
     if (prior) { if (prior.digest !== digest) throw new Error("Browser command changed"); return this.present(e, input, await prior.result); }
-    if (input.operation !== "close" && (e.busy || e.commands.size >= 1000)) throw new Error("Browser busy or command capacity exhausted");
+    if (input.operation !== "close" && e.busy) throw new Error("Browser busy");
     if (input.operation !== "close") e.check();
     const frame = e.frame;
     if (input.operation === "input" && (!frame || frame.id !== input.frameId || frame.takeoverId !== input.takeoverId || frame.expires <= Date.now()))
@@ -160,7 +160,7 @@ export class DesktopBrowserSessions {
     // Cache the small immutable receipt, not thousands of full DOM payloads.
     const observation = value as { artifactRef: string; byteSize: number; sha256: string };
     const body = e.read(observation.artifactRef);
-    if (!body || body.length !== observation.byteSize || body.length > 4194304 || createHash("sha256").update(body).digest("hex") !== observation.sha256)
+    if (!body || body.length !== observation.byteSize || body.length > 67108864 || createHash("sha256").update(body).digest("hex") !== observation.sha256)
       throw new Error("Browser observation unavailable");
     return { ...observation, document: JSON.parse(body.toString("utf8")) };
   }

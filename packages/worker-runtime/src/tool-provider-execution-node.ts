@@ -51,6 +51,8 @@ export interface ExecutionNodeToolProviderOptions {
   /** Synchronous trusted-host lifecycle sink. Throwing fails the launch closed. */
   onProcessLifecycle?: (event: ExecutionNodeToolProviderLifecycleEvent) => void;
   mcp?: McpProtocolOptions;
+  /** Trusted host-only transition for an operator-reviewed local MCP secret. */
+  operatorGrantedPlaintextSecret?: boolean;
   node: ExecutionNode;
   executable: string;
   arguments?: string[];
@@ -122,7 +124,7 @@ export class ExecutionNodeToolProviderClient implements ToolProviderRpcClient {
   constructor(private readonly options: ExecutionNodeToolProviderOptions) {
     if (options.permissions.network === "direct") throw new Error("Execution Node Tool Provider cannot use direct networking");
     if (options.permissions.process.access !== "sandboxed") throw new Error("Execution Node Tool Provider requires sandboxed process access");
-    if (options.permissions.secrets === "plaintext") throw new Error("Execution Node Tool Provider cannot receive plaintext secrets");
+    if (options.permissions.secrets === "plaintext" && (!options.operatorGrantedPlaintextSecret || !options.permissions.sources.includes("desktop-mcp-operator-grant"))) throw new Error("Execution Node Tool Provider cannot receive ungranted plaintext secrets");
     this.processTimeoutMs = positiveInteger(options.processTimeoutMs ?? 24 * 60 * 60 * 1_000, "process timeout");
     this.outputLimitBytes = positiveInteger(options.outputLimitBytes ?? 64 * 1024 * 1024, "output limit");
     this.requestTimeoutMs = positiveInteger(options.requestTimeoutMs ?? 15_000, "request timeout");

@@ -93,6 +93,68 @@ describe("workspace host network assembly", () => {
     expect(rows).toMatchObject([{ parent_key: "key", case_id: "case", run_id: "run", status: "completed", kind: "http" }]);
     expect(JSON.stringify(rows)).not.toContain("private-fixture-value"); expect(JSON.stringify(rows)).not.toContain("scoped response");
   });
+  it("brokers a reviewed stdio MCP origin and revokes its Run pin", async () => {
+    const f=await fixture(),origin=new URL(f.url).origin+"/";
+    f.db.exec(`CREATE TABLE desktop_mcp_versions(id TEXT,revision INTEGER,value_json TEXT);
+      CREATE TABLE desktop_mcp_heads(id TEXT,revision INTEGER,active INTEGER,deleted INTEGER);
+      CREATE TABLE desktop_mcp_runs(run_id TEXT,id TEXT,revision INTEGER);`);
+    f.db.prepare("INSERT INTO desktop_mcp_versions VALUES ('sample',1,?)").run(JSON.stringify({connection:{id:"sample",transport:"stdio",executable:f.request.executable,
+      arguments:[],workingDirectory:f.root,networkOrigins:[origin],destinationAddresses:["127.0.0.1"],authorizationAction:"workspace.execute"}}));
+    f.db.exec("INSERT INTO desktop_mcp_heads VALUES ('sample',1,1,0); INSERT INTO desktop_mcp_runs VALUES ('run','sample',1)");
+    f.db.exec("UPDATE tool_invocation_bindings SET tool_source='desktop.mcp.sample.r1'; CREATE TABLE process_execution_occupancy(process_key TEXT,identity_json TEXT,state TEXT)");
+    f.db.prepare("INSERT INTO process_execution_occupancy VALUES ('key',?,'dispatched')").run(JSON.stringify({source:"desktop.mcp.sample",operation:"mcp.call",parentInvocationKey:"key"}));
+    const request={...f.request,workingDirectory:f.root,attribution:{...f.request.attribution,actionId:"desktop.mcp:sample:1"}};
+    const binding=await f.host.bind(request);disposals.push(()=>binding!.release());
+    expect(await proxy(binding!,f.url)).toBe(200);
+    expect(f.db.prepare("SELECT parent_key,connection_id,revision,status FROM desktop_mcp_network_receipts").all())
+      .toEqual([{parent_key:"key",connection_id:"sample",revision:1,status:"completed"}]);
+    f.db.exec("UPDATE desktop_mcp_heads SET active=NULL WHERE id='sample'");
+    await expect(f.host.bind(request)).rejects.toThrow("not enabled");
+  });
+  it("binds a reviewed stdio MCP credential without granting network access", async () => {
+    const f=await fixture();
+    f.db.exec(`CREATE TABLE desktop_mcp_versions(id TEXT,revision INTEGER,value_json TEXT);
+      CREATE TABLE desktop_mcp_heads(id TEXT,revision INTEGER,active INTEGER,deleted INTEGER);
+      CREATE TABLE desktop_mcp_runs(run_id TEXT,id TEXT,revision INTEGER);
+      CREATE TABLE process_execution_occupancy(process_key TEXT,identity_json TEXT,state TEXT);`);
+    f.db.prepare("INSERT INTO desktop_mcp_versions VALUES ('sample',1,?)").run(JSON.stringify({connection:{id:"sample",transport:"stdio",executable:f.request.executable,
+      arguments:[],workingDirectory:f.root,secretEnvironmentVariable:"SERVICE_TOKEN",authorizationAction:"workspace.execute"},credentialRef:"secure-store-ref"}));
+    f.db.exec("INSERT INTO desktop_mcp_heads VALUES ('sample',1,1,0); INSERT INTO desktop_mcp_runs VALUES ('run','sample',1);");
+    f.db.exec("UPDATE tool_invocation_bindings SET tool_source='desktop.mcp.sample.r1'");
+    f.db.prepare("INSERT INTO process_execution_occupancy VALUES ('key',?,'dispatched')").run(JSON.stringify({source:"desktop.mcp.sample",operation:"mcp.call",parentInvocationKey:"key"}));
+    const request={...f.request,environment:{SERVICE_TOKEN:"private-fixture-value"},workingDirectory:f.root,
+      permissions:{...f.request.permissions,network:"deny" as const,secrets:"plaintext" as const},attribution:{...f.request.attribution,actionId:"desktop.mcp:sample:1"}};
+    const binding=await f.host.bind(request);
+    expect(binding).toMatchObject({secretEnvironment:{SERVICE_TOKEN:"private-fixture-value"}});
+    expect(binding?.brokerPort).toBeUndefined();
+    await binding?.release();
+    await expect(f.host.bind({...request,environment:{OTHER_TOKEN:"private-fixture-value"}})).rejects.toThrow("credential");
+  });
+  it.skipIf(process.env.TRACEFORGE_TEST_MACOS_SEATBELT !== "1")("runs a reviewed MCP credential and network request inside the native sandbox",async()=>{
+    const f=await fixture(),origin=new URL(f.url).origin+"/";
+    f.db.exec(`CREATE TABLE desktop_mcp_versions(id TEXT,revision INTEGER,value_json TEXT);
+      CREATE TABLE desktop_mcp_heads(id TEXT,revision INTEGER,active INTEGER,deleted INTEGER);
+      CREATE TABLE desktop_mcp_runs(run_id TEXT,id TEXT,revision INTEGER);
+      CREATE TABLE process_execution_occupancy(process_key TEXT,identity_json TEXT,state TEXT);`);
+    const script=`printf '%s|' "$SERVICE_TOKEN"; /usr/bin/curl --silent --show-error --max-time 2 '${f.url}'`;
+    f.db.prepare("INSERT INTO desktop_mcp_versions VALUES ('sample',1,?)").run(JSON.stringify({connection:{id:"sample",transport:"stdio",executable:f.request.executable,
+      arguments:["-c",script],workingDirectory:f.root,networkOrigins:[origin],destinationAddresses:["127.0.0.1"],
+      secretEnvironmentVariable:"SERVICE_TOKEN",authorizationAction:"workspace.execute"},credentialRef:"secure-store-ref"}));
+    f.db.exec("INSERT INTO desktop_mcp_heads VALUES ('sample',1,1,0); INSERT INTO desktop_mcp_runs VALUES ('run','sample',1);");
+    f.db.exec("UPDATE tool_invocation_bindings SET tool_source='desktop.mcp.sample.r1'");
+    f.db.prepare("INSERT INTO process_execution_occupancy VALUES ('key',?,'dispatched')").run(JSON.stringify({source:"desktop.mcp.sample",operation:"mcp.call",parentInvocationKey:"key"}));
+    const request:StartProcessRequest={...f.request,arguments:["-c",script],environment:{SERVICE_TOKEN:"private-fixture-value"},workingDirectory:f.root,
+      timeoutMs:8000,resources:{cpuTimeMs:5000,memoryBytes:128*1024*1024,maximumProcesses:8,writeBytes:1048576},
+      permissions:{...f.request.permissions,filesystem:{read:[{path:f.request.executable,scope:"exact"},{path:f.root,scope:"tree"},
+        {path:"/usr/bin/env",scope:"exact"},{path:"/usr/bin/curl",scope:"exact"},{path:"/private/etc/ssl/openssl.cnf",scope:"exact"}],write:[],deny:[]},
+        secrets:"plaintext",sources:["desktop-mcp-operator-grant"]},attribution:{...f.request.attribution,actionId:"desktop.mcp:sample:1"}};
+    const path=realpathSync("packages/execution-node/native/darwin-arm64/traceforge-macos-sandbox");
+    const sha256=createHash("sha256").update(readFileSync(path)).digest("hex");
+    const launched=await new MacosProcessLauncher({path,sha256},undefined,input=>f.host.bind(input)).launch(request);
+    let stdout="",stderr="";launched.process.onOutput((stream,bytes)=>{if(stream==="stdout")stdout+=bytes.toString();else stderr+=bytes.toString();});
+    const code=await new Promise<number|null>((resolve,reject)=>{launched.process.onExit(resolve);launched.process.onError(reject);});
+    expect({code,stdout,stderr,calls:f.calls()}).toEqual({code:0,stdout:"private-fixture-value|scoped response",stderr:"",calls:1});
+  });
   it.each([false,true])("requires distinct consent for WebSocket upgrade and keeps connection receipts (allowed=%s)", async allowed => {
     const f=await fixture(false,false,allowed), credentials=new URL(f.binding.environment!.http_proxy);
     const socket=connect(f.binding.brokerPort!,'127.0.0.1');let output='';socket.on('data',bytes=>output+=bytes);socket.on('error',()=>{});

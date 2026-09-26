@@ -8,11 +8,19 @@ export const McpConnectionSchema = z.object({
   destinationAddresses: z.array(z.string().ip({message:"请填写有效的 IPv4 或 IPv6 地址，不含端口或网段。"})).max(32).optional(),
   executable:z.string().max(4096).optional(),arguments:z.array(z.string().max(4096)).max(64).optional(),workingDirectory:z.string().max(4096).optional(),
   readPaths:z.array(z.string().max(4096)).max(32).optional(),writePaths:z.array(z.string().max(4096)).max(32).optional(),
+  networkOrigins:z.array(z.string().url().max(2048)).max(128).optional(),
+  secretEnvironmentVariable:z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/).optional(),
+  requestTimeoutMs:z.number().int().min(1000).max(2147483647).optional(),
+  processTimeoutMs:z.number().int().min(1000).max(2147483647).optional(),
   package: z.object({ id: text, version: text, schemaRevision: z.number().int().positive() }).strict(),
   authorizationAction: text, capability: text,
 }).strict().superRefine((value,ctx)=>{
   if(value.transport==="streamable-http"){try{const u=new URL(value.endpoint);if(!["https:","http:"].includes(u.protocol)||u.username||u.password||u.hash||u.search)throw new Error();}catch{ctx.addIssue({code:"custom",message:"Use an HTTP(S) endpoint without credentials, query or fragment"});}}
   else if(value.endpoint || !value.executable || !boundedPath(value.executable) || !value.workingDirectory || !boundedPath(value.workingDirectory) || [...value.readPaths??[],...value.writePaths??[]].some(p=>!boundedPath(p)))ctx.addIssue({code:"custom",message:"Stdio requires absolute executable, working directory and bounded filesystem paths without dot segments"});
+  if (value.transport==="stdio" && value.processTimeoutMs !== undefined && value.processTimeoutMs < (value.requestTimeoutMs??60_000)) ctx.addIssue({code:"custom",path:["processTimeoutMs"],message:"Process timeout must cover the request timeout"});
+  if (value.networkOrigins?.some(origin=>{try{const u=new URL(origin);return !["http:","https:"].includes(u.protocol)||u.username||u.password||u.search||u.hash||u.pathname!=="/"||u.href!==origin;}catch{return true;}})) ctx.addIssue({code:"custom",path:["networkOrigins"],message:"Use exact HTTP(S) origins with a trailing slash"});
+  if (value.secretEnvironmentVariable && value.transport!=="stdio") ctx.addIssue({code:"custom",path:["secretEnvironmentVariable"],message:"Secret environment variable is for stdio connections"});
+  if (value.secretEnvironmentVariable && /^(?:(?:DYLD|LD|__XPC|OBJC)_.*|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY|WS_PROXY|WSS_PROXY|PATH|HOME|TMPDIR|NODE_OPTIONS|JAVA_TOOL_OPTIONS|PYTHONPATH|RUBYOPT|PERL5OPT|BASH_ENV|ENV)$/i.test(value.secretEnvironmentVariable)) ctx.addIssue({code:"custom",path:["secretEnvironmentVariable"],message:"Choose a service-specific credential variable"});
 });
 export const McpToolReviewSchema = z.object({ name: text, enabled: z.boolean(),
   resources: z.array(z.object({ field: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/), kind: text }).strict()).max(32),

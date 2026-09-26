@@ -33,7 +33,7 @@ const inputSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("inspect"), authorizationAction: z.string().min(1).max(128),
     url: z.string().url().max(8192), screenshot: z.boolean().default(false) }).strict(),
   z.object({ operation: z.literal("read"), authorizationAction: z.string().min(1).max(128), artifactId: z.string().min(1).max(256),
-    offset: z.number().int().min(0).max(4194304).default(0), length: z.number().int().min(1).max(65536).default(65536) }).strict(),
+    offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0), length: z.number().int().min(1).max(65536).default(65536) }).strict(),
 ]);
 
 /** Inspect closes its browser before returning; open retains a bounded, lease-owned
@@ -88,7 +88,7 @@ export function createScenarioBrowserHandler(
       const artifact = context.artifacts.get({ packageId: installation.id, packageVersion: installation.version, caseId: attribution.caseId, artifactId: input.artifactId });
       if (!artifact || artifact.runId !== attribution.runId || !artifact.kind.startsWith("browser.")) throw new Error("Browser artifact unavailable for this invocation");
       const body = deployment.readContent?.(artifact.contentRef, attribution, artifact.id);
-      if (!body || body.length > 4194304 || body.length !== artifact.byteSize || `sha256:${createHash("sha256").update(body).digest("hex")}` !== artifact.digest)
+      if (!body || body.length > 67108864 || body.length !== artifact.byteSize || `sha256:${createHash("sha256").update(body).digest("hex")}` !== artifact.digest)
         throw new Error("Browser artifact content unavailable or corrupt");
       check();
       if (input.offset > body.length) throw new Error("Browser content offset exceeds size");
@@ -166,8 +166,9 @@ export function createScenarioBrowserHandler(
         check(); const grant = context.authorization.authorizeResource(attribution.scopeRef, attribution.caseId, input.authorizationAction, "network.url", request.url);
         return { authorizationRef: grant.id, canonicalUrl: grant.canonicalValue, expiresAt: grant.expiresAt };
       } }, artifacts: { recordDownload: value => record("download", value), recordObservation: value => record("observation", value) },
-      limits: { maximumRequestsPerSession: input.operation === "open" ? 1024 : 64, maximumConcurrentRequests: 8, maximumSessionMs: process.timeoutMs,
-        maximumRequestTimeoutMs: 30000, maximumObservationsPerSession: input.operation === "open" ? 1000 : 3, maximumActionsPerSession: input.operation === "open" ? 1000 : 1 } });
+      limits: { maximumRequestsPerSession: input.operation === "open" ? Number.MAX_SAFE_INTEGER : 64, maximumConcurrentRequests: 8, maximumSessionMs: process.timeoutMs,
+        maximumRequestTimeoutMs: 30000, maximumObservationsPerSession: input.operation === "open" ? Number.MAX_SAFE_INTEGER : 3,
+        maximumActionsPerSession: input.operation === "open" ? Number.MAX_SAFE_INTEGER : 1 } });
     } catch (error) { await deployment.release?.(attribution, true); throw error; }
     const cancel = () => { if (sessionId) void runtime.freeze(sessionId, "Invocation canceled").catch(() => undefined); };
     signal.addEventListener("abort", cancel, { once: true });

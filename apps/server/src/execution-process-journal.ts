@@ -12,7 +12,7 @@ export interface ProcessJournalLimits {
 }
 
 export const DEFAULT_PROCESS_JOURNAL_LIMITS: Readonly<ProcessJournalLimits> = {
-  maximumRecords: 10_000, maximumBytes: 512 * 1024 * 1024,
+  maximumRecords: Number.MAX_SAFE_INTEGER, maximumBytes: Number.MAX_SAFE_INTEGER,
   maximumObservationBytes: 8 * 1024 * 1024, completedHistoryRetentionMs: 24 * 60 * 60 * 1000,
 };
 

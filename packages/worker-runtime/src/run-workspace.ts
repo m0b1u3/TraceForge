@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { constants, closeSync, copyFileSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, rmdirSync, statfsSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { allowsFileSystemPath, type PermissionProfile } from "@traceforge/orchestration-core";
 import type { ExecutionToolAdapter } from "./tool-gateway.js";
 import type { ToolExecutionContext, ToolExecutionResult } from "./model.js";
 
-const FILE_BYTES = 256 * 1024;
-const TREE_BYTES = 16 * 1024 * 1024;
-const TREE_ENTRIES = 512;
+const TRANSFER_BYTES = 256 * 1024;
+const LIST_PAGE_ENTRIES = 512;
+const FREE_SPACE_FLOOR_BYTES = 64 * 1024 * 1024;
 export const MAX_WORKSPACE_EXECUTION_SECONDS = 3600;
 export function workspaceExecutionSeconds(payload: unknown): number {
   const value = (payload as Record<string, unknown> | null)?.maximumScriptSeconds ?? 60;
@@ -62,22 +62,23 @@ export class RunWorkspace {
   }
 
   tools(): ExecutionToolAdapter[] {
-    const text = { type: "string", maxLength: FILE_BYTES };
+    const text = { type: "string", maxLength: TRANSFER_BYTES };
     const schemas: Record<Operation, { properties: Record<string, unknown>; required: string[] }> = {
-      read: { properties: { path: text, metadataOnly: { type: "boolean" } }, required: ["path"] },
-      list: { properties: { recovery: { type: "boolean" } }, required: [] },
+      read: { properties: { path: text, metadataOnly: { type: "boolean" }, offset: { type: "integer", minimum: 0 }, length: { type: "integer", minimum: 1, maximum: TRANSFER_BYTES } }, required: ["path"] },
+      list: { properties: { recovery: { type: "boolean" }, offset: { type: "integer", minimum: 0 } }, required: [] },
       search: { properties: { text: { type: "string", minLength: 1, maxLength: 256 } }, required: ["text"] },
-      write: { properties: { path: text, content: text, expectedDigest: { type: ["string", "null"] } }, required: ["path", "content", "expectedDigest"] },
+      write: { properties: { path: text, content: text, expectedDigest: { type: ["string", "null"] }, append: { type: "boolean" },
+        offset: { type: "integer", minimum: 0 }, deleteBytes: { type: "integer", minimum: 0 } }, required: ["path", "content", "expectedDigest"] },
       edit: { properties: { path: text, expectedDigest: text, before: text, after: text }, required: ["path", "expectedDigest", "before", "after"] },
       remove: { properties: { path: text, expectedDigest: text, expectedIdentity: text }, required: ["path"] },
       execute: { properties: { path: text, expectedDigest: text, terminal: { type: "boolean", description: "Use a managed terminal, only with interactiveWorkspace consent; use workspace_start for later workspace_input calls." }, timeoutSeconds: { type: "integer", minimum: 1, maximum: MAX_WORKSPACE_EXECUTION_SECONDS, description: "Requested execution time; defaults to 60 seconds and cannot exceed this Run's authorized maximumScriptSeconds." }, arguments: { type: "array", maxItems: 64, items: { type: "string", maxLength: 4096 } } }, required: ["path", "expectedDigest"] },
       stage: { properties: { projectId: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,80}$" } }, required: ["projectId"] },
     };
     const descriptions: Record<Operation, string> = {
-      read: "Read a UTF-8 Run workspace file and its SHA-256 revision (maximum 256 KiB). metadataOnly=true inspects a regular file or plain directory's size and identity without reading contents, including oversized files, for explicit cleanup.",
-      list: "List relative files in this Run workspace (bounded to 512 entries / 16 MiB). recovery=true returns a bounded partial inventory even over capacity, for cleanup; inspect truncation before assuming coverage.",
+      read: "Read a UTF-8 Run workspace file and its SHA-256 revision in 256 KiB transfer pages. Supply nextOffset to continue. metadataOnly=true inspects size and identity without reading contents.",
+      list: "List relative files in this Run workspace in pages of 512 entries; supply nextOffset to continue.",
       search: "Search literal text in this Run's UTF-8 files; return at most 100 matching lines, not regex execution.",
-      write: "Create/replace a UTF-8 file in this Run. expectedDigest=null creates only; replacing requires the last read SHA-256. Parent folders are created within this workspace.",
+      write: "Create/replace a UTF-8 file in this Run. append=true adds a transfer page; offset and deleteBytes replace a byte range atomically, allowing edits to large files. expectedDigest=null creates only; changes require the last read SHA-256.",
       edit: "Replace exactly one literal occurrence in a Run file, conditional on its last read SHA-256.",
       remove: "Delete one regular Run file or one empty directory. Supply exactly one of expectedDigest (last read file SHA-256) or expectedIdentity (metadataOnly inspection identity). Works over workspace capacity but never across an unconfirmed process-cleanup fence. No recursive deletion.",
       execute: "Run a workspace Bash script pinned to its last read SHA-256 expectedDigest, without startup profiles, in the local native sandbox defaulting to 60 seconds; timeoutSeconds may request up to the separately authorized maximumScriptSeconds (at most 3600 seconds). Offline unless separately granted workspace.network; supported HTTP/SOCKS5 TCP clients then use the host-controlled destination scope. Opaque tunnels are connection-level, not per-path inspection. terminal=true requires interactiveWorkspace consent; use workspace_start and workspace_input for later interaction. No user home, other Runs or detached execution. System /bin and /usr/bin utilities are readable. Output is bounded and is not verified security evidence.",
@@ -124,26 +125,30 @@ export class RunWorkspace {
         if (current.type === "directory") rmdirSync(path); else unlinkSync(path);
         this.syncDirectory(dirname(path)); return this.result({ path: args.path, removed: true });
       }
-      const entries = ["read", "remove"].includes(op) ? [] : this.inventory(root, op === "list" && args.recovery === true);
-      if (op === "list" && args.recovery === true) return this.result({ entries, truncated: entries.length >= TREE_ENTRIES, recovery: true });
+      const entries = ["list", "search"].includes(op) ? this.inventory(root) : [];
+      if (op === "list") {
+        const offset = this.offset(args.offset);
+        const page = entries.slice(offset, offset + LIST_PAGE_ENTRIES);
+        return this.result({ entries: page, truncated: offset + page.length < entries.length,
+          nextOffset: offset + page.length < entries.length ? offset + page.length : null, recovery: args.recovery === true });
+      }
       if (op === "stage") {
         if (typeof args.projectId !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(args.projectId) || !this.loadProject) throw new Error("Invalid source project selection");
         const project = await this.loadProject(context, args.projectId);
         context.signal?.throwIfAborted(); this.authorize(context, "workspace.write");
-        if (project.id !== args.projectId || !project.files.length || project.files.length > TREE_ENTRIES) throw new Error("Invalid source project manifest");
+        if (project.id !== args.projectId || !project.files.length) throw new Error("Invalid source project manifest");
         const directory = `tools/${project.id}`, entrypoint = `tools/${project.id}.traceforge.sh`;
         const target = this.path(root, directory, context, true), entryPath = this.path(root, entrypoint, context, true);
         if (existsSync(target) || existsSync(entryPath)) throw new Error("Project is already staged; inspect it instead of overwriting Run files");
         const script = `cd -- '${directory}' || exit 1\n${this.text(project.entryScript)}\n`;
-        const directories = new Set<string>(["tools", directory]); const names = new Set<string>();
+        const names = new Set<string>();
         let bytes = Buffer.byteLength(script);
         for (const file of project.files) {
           this.path(root, `${directory}/${file.path}`, context, true);
           const key = file.path.toLowerCase(); if (names.has(key)) throw new Error("Conflicting source project paths"); names.add(key);
-          for (let parent = dirname(`${directory}/${file.path}`); parent !== "."; parent = dirname(parent)) directories.add(parent);
           bytes += file.bytes.length;
         }
-        if (entries.length + project.files.length + directories.size + 1 > TREE_ENTRIES || entries.reduce((n, e) => n + e.bytes, 0) + bytes > TREE_BYTES) throw new Error("Project exceeds Run workspace capacity");
+        this.admit(root, bytes);
         const staging = `${root}.stage-${randomUUID()}`;
         this.directory(staging);
         try {
@@ -153,33 +158,27 @@ export class RunWorkspace {
         } finally { if (existsSync(staging)) rmSync(staging, { recursive: true, force: true }); }
         return this.result({ directory, entrypoint, expectedDigest: digest(script), sourceDigest: project.digest, usage: project.usage, executed: false });
       }
-      if (op === "list") return this.result(entries);
       if (op === "search") {
         const query = this.text(args.text, 256);
         if (!query) throw new Error("Search text cannot be empty");
-        const matches: unknown[] = [];
+        const matches: Array<{path:string;line:number;text:string}> = [];
         let omittedFiles = 0;
         for (const entry of entries) {
           if (entry.type !== "file") continue;
-          if (entry.bytes > FILE_BYTES) { omittedFiles++; continue; }
-          let content: string;
-          try { content = this.read(this.path(root, entry.path, context, false)); } catch { omittedFiles++; continue; }
-          for (const [index, line] of content.split("\n").entries()) {
-            if (line.includes(query)) matches.push({ path: entry.path, line: index + 1, text: line.slice(0, 512) });
-            if (matches.length === 100) return this.result({ matches, omittedFiles, truncated: true });
-          }
+          try { this.searchFile(this.path(root, entry.path, context, false), entry.path, query, matches); } catch { omittedFiles++; }
+          if (matches.length === 100) return this.result({ matches, omittedFiles, truncated: true });
         }
         return this.result({ matches, omittedFiles, truncated: omittedFiles > 0 });
       }
       const path = this.path(root, args.path, context, actionFor(op) !== "workspace.read");
-      if (op === "read") { const content = this.read(path); return this.result({ path: args.path, content, digest: digest(content) }); }
+      if (op === "read") return this.result({ path: args.path, ...this.readPage(path, this.offset(args.offset), this.length(args.length)) });
       if (op === "execute") {
         if (args.terminal !== undefined && typeof args.terminal !== "boolean") throw new Error("Invalid terminal option");
         if (args.terminal && !permissions.process.interactive) throw new Error("Interactive workspace execution is not authorized");
         const maximum = workspaceExecutionSeconds({ maximumScriptSeconds: this.executionSeconds(context) });
         const seconds = args.timeoutSeconds ?? Math.min(60, maximum);
         if (!Number.isSafeInteger(seconds) || (seconds as number) < 1 || (seconds as number) > maximum) throw new Error(`Requested script duration exceeds authorized maximum (${maximum} seconds)`);
-        if (args.expectedDigest !== digest(this.read(path))) throw new Error("Workspace script revision conflict; read and approve the current script before execution");
+        if (args.expectedDigest !== this.fileDigest(path)) throw new Error("Workspace script revision conflict; read and approve the current script before execution");
         const argv = args.arguments ?? [];
         if (!Array.isArray(argv) || argv.length > 64 || argv.some(arg => typeof arg !== "string" || arg.length > 4096 || arg.includes("\0"))) throw new Error("Invalid script arguments");
         await this.prepareExecution?.();
@@ -193,7 +192,7 @@ export class RunWorkspace {
         const result = await this.processTool.execute({ executable: "/bin/bash", arguments: ["--noprofile", "--norc", path, ...argv], workingDirectory: root,
           environment: {}, timeoutMs: (seconds as number) * 1000, outputLimitBytes: 65_536,
           ...(args.terminal ? { terminal: { columns: 80, rows: 24 } } : {}),
-          resources: { cpuTimeMs: (seconds as number) * 1000, memoryBytes: 256 * 1024 * 1024, maximumProcesses: 8, writeBytes: TREE_BYTES } }, context);
+          resources: { cpuTimeMs: (seconds as number) * 1000, memoryBytes: 256 * 1024 * 1024, maximumProcesses: 8, writeBytes: this.available(root) } }, context);
         const enforcement = result.metadata?.enforcement as Record<string, unknown> | undefined;
         if (enforcement?.sandboxed !== true || enforcement?.filesystemPolicyApplied !== true || enforcement?.network !== permissions.network
           || enforcement?.processTreeEmptyBarrier !== true || (typeof result.metadata?.exitCode !== "number" && typeof result.metadata?.exitSignal !== "string")) {
@@ -204,33 +203,47 @@ export class RunWorkspace {
         return result;
       }
       const exists = existsSync(path);
-      const previous = exists ? this.read(path) : undefined;
-      if (args.expectedDigest !== (previous === undefined ? null : digest(previous))) throw new Error("Workspace revision conflict; read the current file before modifying it");
+      const previousDigest = exists ? this.fileDigest(path) : null;
+      if (args.expectedDigest !== previousDigest) throw new Error("Workspace revision conflict; read the current file before modifying it");
       if (op === "remove") {
-        if (previous === undefined) throw new Error("Workspace file does not exist");
+        if (!exists) throw new Error("Workspace file does not exist");
         unlinkSync(path); this.syncDirectory(dirname(path)); return this.result({ path: args.path, removed: true });
       }
       let content: string;
       if (op === "edit") {
+        const previous = exists ? this.read(path) : undefined;
         const before = this.text(args.before), after = this.text(args.after);
         if (previous === undefined || !before || previous.indexOf(before) < 0 || previous.indexOf(before) !== previous.lastIndexOf(before)) throw new Error("Edit requires exactly one matching literal occurrence");
         content = previous.replace(before, () => after);
       } else content = this.text(args.content);
-      if (Buffer.byteLength(content) > FILE_BYTES || entries.reduce((n, e) => n + e.bytes, 0) - Buffer.byteLength(previous ?? "") + Buffer.byteLength(content) > TREE_BYTES) throw new Error("Workspace byte capacity exceeded");
-      let missingDirectories = 0;
-      for (let parent = dirname(path); parent !== root && !existsSync(parent); parent = dirname(parent)) missingDirectories++;
-      if (entries.length + missingDirectories + (exists ? 0 : 1) > TREE_ENTRIES) throw new Error("Workspace entry capacity exceeded");
+      const range=args.offset!==undefined||args.deleteBytes!==undefined;
+      if (args.append !== undefined && typeof args.append !== "boolean" || args.append === true && (!exists || op !== "write" || range)
+        || range && (op!=="write" || !exists || args.offset===undefined || args.deleteBytes===undefined)) throw new Error("Invalid workspace write request");
+      const priorSize=exists?lstatSync(path).size:0;
+      const offset=range?this.offset(args.offset):0,removed=range?this.offset(args.deleteBytes):0;
+      if(range&&offset+removed>priorSize)throw new Error("Workspace byte range exceeds file size");
+      const newSize=range?priorSize-removed+Buffer.byteLength(content):args.append===true?priorSize+Buffer.byteLength(content):Buffer.byteLength(content);
+      this.admit(root,newSize);
       this.directory(dirname(path));
       const temporary = join(dirname(path), `.write-${randomUUID()}`);
-      const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-      try { writeFileSync(fd, content, "utf8"); fsyncSync(fd); } finally { closeSync(fd); }
+      if (args.append === true) copyFileSync(path, temporary, constants.COPYFILE_EXCL);
+      const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | (args.append === true ? constants.O_APPEND : constants.O_EXCL) | constants.O_NOFOLLOW, 0o600);
+      let prepared=false;
+      try {
+        if(range){const source=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+          try{const info=fstatSync(source);if(!info.isFile()||info.nlink!==1||info.size!==priorSize)throw new Error("Workspace file changed during edit");
+            this.copyRange(source,fd,0,offset);writeFileSync(fd,content,"utf8");this.copyRange(source,fd,offset+removed,priorSize);
+          }finally{closeSync(source);}}
+        else writeFileSync(fd, content, "utf8");
+        fsyncSync(fd);prepared=true;
+      } finally { closeSync(fd);if(!prepared)unlinkSync(temporary); }
       try { renameSync(temporary, path); } catch (error) { unlinkSync(temporary); throw error; }
       this.syncDirectory(dirname(path));
-      return this.result({ path: args.path, digest: digest(content), bytes: Buffer.byteLength(content) });
+      return this.result({ path: args.path, digest: this.fileDigest(path), bytes: lstatSync(path).size });
     } finally { this.active.delete(root); }
   }
 
-  private text(value: unknown, maximum = FILE_BYTES): string {
+  private text(value: unknown, maximum = TRANSFER_BYTES): string {
     if (typeof value !== "string" || Buffer.byteLength(value) > maximum || value.includes("\0")) throw new Error("Invalid workspace text");
     if (Buffer.from(value).toString("utf8") !== value) throw new Error("Workspace text must be valid UTF-8");
     return value;
@@ -257,33 +270,120 @@ export class RunWorkspace {
     const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const info = fstatSync(fd);
-      if (!info.isFile() || info.nlink !== 1 || info.size > FILE_BYTES) throw new Error("Workspace file must be a bounded, unlinked regular file");
+      if (!info.isFile() || info.nlink !== 1 || info.size > TRANSFER_BYTES) throw new Error("Use workspace_read pages for large workspace files");
       const bytes = readFileSync(fd);
-      if (bytes.length > FILE_BYTES) throw new Error("Workspace file exceeds capacity");
+      if (bytes.length > TRANSFER_BYTES) throw new Error("Use workspace_read pages for large workspace files");
       const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
       if (text.includes("\0")) throw new Error("Workspace file is not text");
       return text;
     } finally { closeSync(fd); }
+  }
+  private offset(value: unknown): number {
+    if (value === undefined) return 0;
+    if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error("Invalid workspace offset");
+    return value as number;
+  }
+  private length(value: unknown): number {
+    if (value === undefined) return TRANSFER_BYTES;
+    if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > TRANSFER_BYTES) throw new Error("Invalid workspace page length");
+    return value as number;
+  }
+  private fileDigest(path: string): string {
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const info = fstatSync(fd);
+      if (!info.isFile() || info.nlink !== 1) throw new Error("Workspace file must be an unlinked regular file");
+      const hash = createHash("sha256"), page = Buffer.allocUnsafe(TRANSFER_BYTES);
+      for (let offset = 0; offset < info.size;) {
+        const size = readSync(fd, page, 0, Math.min(page.length, info.size - offset), offset);
+        if (size <= 0) throw new Error("Workspace file changed during read");
+        hash.update(page.subarray(0, size)); offset += size;
+      }
+      if (fstatSync(fd).size !== info.size) throw new Error("Workspace file changed during read");
+      return hash.digest("hex");
+    } finally { closeSync(fd); }
+  }
+  private copyRange(source:number,target:number,start:number,end:number):void {
+    const page=Buffer.allocUnsafe(TRANSFER_BYTES);
+    for(let offset=start;offset<end;){const count=readSync(source,page,0,Math.min(page.length,end-offset),offset);
+      if(count<=0)throw new Error("Workspace file changed during edit");
+      for(let written=0;written<count;){const size=writeSync(target,page,written,count-written);if(size<=0)throw new Error("Workspace edit could not write its page");written+=size;}
+      offset+=count;}
+  }
+  private readPage(path: string, offset: number, length: number) {
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const info = fstatSync(fd);
+      if (!info.isFile() || info.nlink !== 1) throw new Error("Workspace file must be an unlinked regular file");
+      if (offset > info.size) throw new Error("Workspace offset exceeds file size");
+      const bytes = Buffer.alloc(Math.min(length, info.size - offset));
+      const count = bytes.length ? readSync(fd, bytes, 0, bytes.length, offset) : 0;
+      if (count !== bytes.length) throw new Error("Workspace file changed during read");
+      let end = count, content: string | undefined;
+      while (end >= Math.max(0, count - 3)) {
+        try { content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, end)); break; }
+        catch { end--; }
+      }
+      if (content === undefined || content.includes("\0") || count > 0 && end === 0) throw new Error("Workspace page is not valid UTF-8 text");
+      const nextOffset = offset + end < info.size ? offset + end : null;
+      return { content, digest: this.fileDigest(path), byteSize: info.size, offset, nextOffset };
+    } finally { closeSync(fd); }
+  }
+  private searchFile(path: string, relative: string, query: string, matches: Array<{path:string;line:number;text:string}>): void {
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const info = fstatSync(fd);
+      if (!info.isFile() || info.nlink !== 1) throw new Error("Workspace file must be an unlinked regular file");
+      const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+      const page = Buffer.allocUnsafe(TRANSFER_BYTES);
+      let offset = 0, line = 1, prefix = "", tail = "", found = false;
+      const part = (fragment: string, last: boolean) => {
+        if ((tail + fragment).includes(query)) found = true;
+        prefix = (prefix + fragment).slice(0, 512);
+        tail = query.length > 1 ? (tail + fragment).slice(1 - query.length) : "";
+        if (last) {
+          if (found) matches.push({ path: relative, line, text: prefix });
+          line++; prefix = ""; tail = ""; found = false;
+        }
+      };
+      while (offset < info.size && matches.length < 100) {
+        const count = readSync(fd, page, 0, Math.min(page.length, info.size - offset), offset);
+        if (count <= 0) throw new Error("Workspace file changed during search");
+        offset += count;
+        const sections = decoder.decode(page.subarray(0, count), { stream: true }).split("\n");
+        for (let i = 0; i < sections.length; i++) {
+          part(sections[i]!, i < sections.length - 1);
+          if (matches.length === 100) break;
+        }
+      }
+      if (matches.length < 100) {
+        const rest = decoder.decode(); if (rest) part(rest, false);
+        if (found) matches.push({ path: relative, line, text: prefix });
+      }
+    } finally { closeSync(fd); }
+  }
+  private available(root: string): number {
+    const fs = statfsSync(root, { bigint: true });
+    return Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Number(fs.bavail * fs.bsize) - FREE_SPACE_FLOOR_BYTES));
+  }
+  private admit(root: string, bytes: number): void {
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.available(root)) throw new Error("Insufficient free space for workspace operation");
   }
   private identity(path: string): { bytes: number; identity: string; type: "file" | "directory" } {
     const info = lstatSync(path, { bigint: true });
     if (!info.isDirectory() && (!info.isFile() || info.nlink !== 1n)) throw new Error("Workspace entry must be a plain directory or unlinked regular file");
     return { bytes: Number(info.size), type: info.isDirectory() ? "directory" : "file", identity: digest([info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(":")) };
   }
-  private inventory(root: string, partial = false): { path: string; type: "file" | "directory"; bytes: number }[] {
+  private inventory(root: string): { path: string; type: "file" | "directory"; bytes: number }[] {
     const entries: { path: string; type: "file" | "directory"; bytes: number }[] = [];
-    let total = 0;
     const visit = (relative: string, depth: number) => {
       if (depth > 16) throw new Error("Workspace directory depth exceeded");
       const directory = opendirSync(join(root, relative));
       try { for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
-        if (partial && entries.length >= TREE_ENTRIES) break;
         const name = entry.name;
         const path = relative ? `${relative}/${name}` : name, info = lstatSync(join(root, path));
         if (info.isSymbolicLink() || (!info.isDirectory() && (!info.isFile() || info.nlink !== 1))) throw new Error("Workspace contains a link or special file; reconciliation required");
-        total += info.isFile() ? info.size : 0;
         entries.push({ path, type: info.isDirectory() ? "directory" : "file", bytes: info.isFile() ? info.size : 0 });
-        if (!partial && (entries.length > TREE_ENTRIES || total > TREE_BYTES)) throw new Error("Workspace capacity exceeded; use workspace_list recovery=true, inspect files with workspace_read metadataOnly=true, then explicitly remove unwanted files");
         if (info.isDirectory()) visit(path, depth + 1);
       } } finally { directory.closeSync(); }
     };

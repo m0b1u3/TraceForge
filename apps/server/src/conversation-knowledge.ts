@@ -23,10 +23,16 @@ export const conversationKnowledgeTools:LlmToolDefinition[]=[
 export class ConversationKnowledge {
   constructor(private sql:Database.Database,private conversationId:string,private through:number){
     sql.exec(`CREATE TABLE IF NOT EXISTS desktop_knowledge_versions(conversation_id TEXT NOT NULL,key TEXT NOT NULL,revision INTEGER NOT NULL,body TEXT NOT NULL,PRIMARY KEY(conversation_id,key,revision));
-      CREATE TABLE IF NOT EXISTS desktop_knowledge_commands(conversation_id TEXT NOT NULL,command_id TEXT NOT NULL,digest TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(conversation_id,command_id));`);
+      CREATE TABLE IF NOT EXISTS desktop_knowledge_commands(conversation_id TEXT NOT NULL,command_id TEXT NOT NULL,digest TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(conversation_id,command_id));
+      CREATE TRIGGER IF NOT EXISTS desktop_knowledge_versions_physical_insert BEFORE INSERT ON desktop_knowledge_versions BEGIN
+        SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
+          length(CAST(NEW.body AS BLOB))+2048,'execution') FROM execution_physical_policy WHERE id=1; END;
+      CREATE TRIGGER IF NOT EXISTS desktop_knowledge_commands_physical_insert BEFORE INSERT ON desktop_knowledge_commands BEGIN
+        SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
+          length(CAST(NEW.result AS BLOB))+2048,'execution') FROM execution_physical_policy WHERE id=1; END;`);
   }
   private latest():Note[]{
-    return (this.sql.prepare(`SELECT v.body FROM desktop_knowledge_versions v WHERE v.conversation_id=? AND v.revision=(SELECT max(n.revision) FROM desktop_knowledge_versions n WHERE n.conversation_id=v.conversation_id AND n.key=v.key AND json_extract(n.body,'$.coveredThrough')<=?) ORDER BY v.key LIMIT 257`).all(this.conversationId,this.through) as {body:string}[]).map(row=>JSON.parse(row.body));
+    return (this.sql.prepare(`SELECT v.body FROM desktop_knowledge_versions v WHERE v.conversation_id=? AND v.revision=(SELECT max(n.revision) FROM desktop_knowledge_versions n WHERE n.conversation_id=v.conversation_id AND n.key=v.key AND json_extract(n.body,'$.coveredThrough')<=?) ORDER BY v.key`).all(this.conversationId,this.through) as {body:string}[]).map(row=>JSON.parse(row.body));
   }
   private project(note:Note){
     const missing=note.sources.filter(ref=>readConversationOriginal(this.sql,this.conversationId,ref.id,this.through,ref.part)?.digest!==ref.digest).map(ref=>ref.id);
@@ -100,8 +106,6 @@ export class ConversationKnowledge {
       const actual=(this.sql.prepare("SELECT coalesce(max(revision),0) AS revision FROM desktop_knowledge_versions WHERE conversation_id=? AND key=?").get(this.conversationId,input.key) as {revision:number}).revision;
       if(actual!==input.expectedRevision)return {error:"memory_revision_conflict",currentRevision:actual,recovery:"No memory was written. Read memory_topics for this key and reconcile the latest version before proposing an update. Do not blindly replay or claim success."};
       if(current&&current.kind!==input.kind)return {error:"memory_kind_immutable"};
-      if(!current&&this.latest().length>=256)return {error:"memory_capacity"};
-      if((this.sql.prepare("SELECT count(*) AS n FROM desktop_knowledge_versions").get() as {n:number}).n>=10000)return {error:"memory_capacity"};
       const value:Note={...input,revision:input.expectedRevision+1,coveredThrough:this.through};
       this.sql.prepare("INSERT INTO desktop_knowledge_versions VALUES(?,?,?,?)").run(this.conversationId,input.key,value.revision,JSON.stringify(value));
       const result={status:"saved",key:input.key,revision:value.revision,trust:"derived_memory_not_verified_evidence_or_authorization"};

@@ -21,9 +21,9 @@ export function contextContentDigest(content: string): `sha256:${string}` {
 
 /** Host-installed immutable text, never an implicit filesystem or network fetch. */
 export class SqlitePackageContextStore {
-  constructor(private readonly sqlite: Database.Database, private readonly maximumBytes = 8 * 1024 * 1024,
+  constructor(private readonly sqlite: Database.Database, private readonly maximumBytes?: number,
     private readonly importedTrust?: (binding: ScenarioPackageBinding) => void) {
-    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) throw new Error("Invalid context storage budget");
+    if (maximumBytes !== undefined && (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1)) throw new Error("Invalid context storage budget");
     sqlite.exec(`CREATE TABLE IF NOT EXISTS package_context_content (
       binding TEXT NOT NULL, resource_id TEXT NOT NULL, digest TEXT NOT NULL, manifest TEXT NOT NULL, content TEXT NOT NULL,
       PRIMARY KEY(binding,resource_id)
@@ -33,7 +33,10 @@ export class SqlitePackageContextStore {
       WHEN NOT EXISTS(SELECT 1 FROM package_context_content WHERE binding=NEW.binding AND resource_id=NEW.resource_id)
       BEGIN SELECT execution_physical_admit(execution_floor, maximum_database_bytes, maximum_wal_bytes,
         length(CAST(NEW.content AS BLOB))+length(NEW.binding)+length(NEW.resource_id)+512, 'execution')
-        FROM execution_physical_policy WHERE id=1; END;`);
+        FROM execution_physical_policy WHERE id=1; END;
+      CREATE TRIGGER IF NOT EXISTS package_context_revocation_physical_admission BEFORE INSERT ON package_context_revocations BEGIN
+        SELECT execution_physical_admit(execution_floor, maximum_database_bytes, maximum_wal_bytes,
+          length(NEW.digest)+length(NEW.reason)+512, 'execution') FROM execution_physical_policy WHERE id=1; END;`);
   }
 
   install(packages: ScenarioPackageRegistry, items: readonly PackageContextContent[]): void {
@@ -57,8 +60,10 @@ export class SqlitePackageContextStore {
         if (previous && (previous.digest !== resource.digest || previous.manifest !== manifest)) throw new Error("Context Package resource is immutable; install a new Package version");
         this.sqlite.prepare("INSERT OR IGNORE INTO package_context_content VALUES (?,?,?,?,?)").run(key, item.resourceId, resource.digest, manifest, item.content);
       }
-      const size = this.sqlite.prepare("SELECT count(*) AS n,coalesce(sum(length(CAST(content AS BLOB))+length(binding)+length(resource_id)+length(manifest)+128),0) AS bytes FROM package_context_content").get() as { bytes: number; n: number };
-      if (size.bytes > this.maximumBytes || size.n > 2048) throw new Error("Context storage budget exceeded");
+      if (this.maximumBytes !== undefined) {
+        const size = this.sqlite.prepare("SELECT coalesce(sum(length(CAST(content AS BLOB))+length(binding)+length(resource_id)+length(manifest)+128),0) AS bytes FROM package_context_content").get() as { bytes: number };
+        if (size.bytes > this.maximumBytes) throw new Error("Context storage budget exceeded");
+      }
     })();
   }
 
@@ -66,7 +71,6 @@ export class SqlitePackageContextStore {
     if (!/^sha256:[a-f0-9]{64}$/.test(digest) || !reason.trim() || reason.length > 512) throw new Error("Invalid context revocation");
     this.sqlite.transaction(() => {
       this.sqlite.prepare("INSERT OR IGNORE INTO package_context_revocations VALUES (?,?)").run(digest, reason);
-      if ((this.sqlite.prepare("SELECT count(*) AS n FROM package_context_revocations").get() as { n: number }).n > 8192) throw new Error("Context revocation budget exceeded");
     })();
   }
 

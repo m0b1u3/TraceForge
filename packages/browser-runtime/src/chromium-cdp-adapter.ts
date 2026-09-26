@@ -70,7 +70,7 @@ export class ChromiumCdpAdapter {
 
   constructor(private readonly options: ChromiumCdpAdapterOptions) {
     this.maximumConcurrentRequests = options.maximumConcurrentRequests ?? 16;
-    this.responseLimitBytes = options.responseLimitBytes ?? 4 * 1024 * 1024;
+    this.responseLimitBytes = options.responseLimitBytes ?? 64 * 1024 * 1024;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
     this.createRequestId = options.createRequestId ?? ((event) => `${event.sessionId ?? "browser"}:${text(event.params.requestId, "CDP request id")}`);
     this.pages = new ChromiumPageRuntime({ cdp: options.cdp, ...(options.page ?? {}) });

@@ -136,7 +136,7 @@ export class ChromiumPageRuntime {
 
   constructor(private readonly options: ChromiumPageRuntimeOptions) {
     this.maximumDomNodes = options.maximumDomNodes ?? 2_000;
-    this.maximumArtifactBytes = options.maximumArtifactBytes ?? 1024 * 1024;
+    this.maximumArtifactBytes = options.maximumArtifactBytes ?? 64 * 1024 * 1024;
     this.maximumScreenshotWidth = options.maximumScreenshotWidth ?? 2_048;
     this.maximumScreenshotHeight = options.maximumScreenshotHeight ?? 2_048;
     this.maximumScreenshotPixels = options.maximumScreenshotPixels ?? 4_194_304;

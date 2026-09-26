@@ -62,6 +62,10 @@ export class DesktopReplyService {
       tool TEXT NOT NULL,input_json TEXT NOT NULL,result_json TEXT NOT NULL,PRIMARY KEY(conversation_id,message_id,ordinal));`);
     sql.exec(`CREATE TABLE IF NOT EXISTS desktop_reply_reasoning (conversation_id TEXT NOT NULL,message_id TEXT NOT NULL,text TEXT NOT NULL,truncated INTEGER NOT NULL,
       PRIMARY KEY(conversation_id,message_id));`);
+    sql.exec(`CREATE TRIGGER IF NOT EXISTS desktop_reply_reads_physical_insert BEFORE INSERT ON desktop_reply_reads BEGIN
+      SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
+        length(CAST(NEW.input_json AS BLOB))+length(CAST(NEW.result_json AS BLOB))+2048,'execution')
+        FROM execution_physical_policy WHERE id=1; END;`);
     sql.exec(`CREATE TRIGGER IF NOT EXISTS desktop_reply_physical_insert BEFORE INSERT ON desktop_replies BEGIN
       SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
         length(CAST(NEW.text AS BLOB))+2048,'execution') FROM execution_physical_policy WHERE id=1; END;
@@ -339,8 +343,6 @@ export class DesktopReplyService {
             catch { value = { error: task ? "task_request_unavailable" : "invalid_history_request" }; }
             if (settled || abort.signal.aborted) return;
             const content = JSON.stringify(value);
-            const stored = (this.sql.prepare("SELECT coalesce(sum(length(cast(input_json AS BLOB))+length(cast(result_json AS BLOB))),0) AS bytes FROM desktop_reply_reads").get() as { bytes: number }).bytes;
-            if (stored + Buffer.byteLength(content) + Buffer.byteLength(JSON.stringify(call.input) ?? "null") > 32 * 1048576) { finish("failed", "recall_limit"); return; }
             this.sql.prepare("INSERT INTO desktop_reply_reads VALUES (?,?,?,?,?,?)").run(conversationId, messageId, calls, call.name, JSON.stringify(call.input) ?? "null", content);
             history.push({ role: "tool", toolCallId: call.id, content });
           }

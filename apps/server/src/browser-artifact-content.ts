@@ -12,12 +12,12 @@ export class SqliteBrowserArtifactContent implements BrowserArtifactPort {
     sqlite.exec(`CREATE TABLE IF NOT EXISTS browser_artifact_content (
       ref TEXT PRIMARY KEY, case_id TEXT NOT NULL, run_id TEXT NOT NULL, work_id TEXT NOT NULL,
       session_id TEXT NOT NULL, kind TEXT NOT NULL, digest TEXT NOT NULL, body BLOB NOT NULL, created_at TEXT NOT NULL);
-      CREATE TRIGGER IF NOT EXISTS browser_content_bound BEFORE INSERT ON browser_artifact_content BEGIN
-        SELECT CASE WHEN length(NEW.body)>4194304 OR length(NEW.ref)>128 OR length(NEW.case_id)>256
+      DROP TRIGGER IF EXISTS browser_content_bound;
+      DROP TRIGGER IF EXISTS browser_binding_bound;
+      CREATE TRIGGER browser_content_bound BEFORE INSERT ON browser_artifact_content BEGIN
+        SELECT CASE WHEN length(NEW.body)>67108864 OR length(NEW.ref)>128 OR length(NEW.case_id)>256
           OR length(NEW.run_id)>256 OR length(NEW.work_id)>256 OR length(NEW.session_id)>256
           OR length(NEW.digest)!=64 OR NEW.kind NOT IN ('dom','screenshot','download')
-          OR (SELECT count(*) FROM browser_artifact_content)>=10000
-          OR (SELECT coalesce(sum(length(body)),0) FROM browser_artifact_content)+length(NEW.body)>268435456
           THEN RAISE(ABORT,'Browser content capacity exceeded') END;
         SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,length(NEW.body)+8192,'execution')
           FROM execution_physical_policy WHERE id=1;
@@ -25,9 +25,9 @@ export class SqliteBrowserArtifactContent implements BrowserArtifactPort {
       CREATE TRIGGER IF NOT EXISTS browser_content_immutable BEFORE UPDATE ON browser_artifact_content
         BEGIN SELECT RAISE(ABORT,'Browser content immutable'); END;
       CREATE TABLE IF NOT EXISTS browser_content_bindings (artifact_id TEXT PRIMARY KEY, content_ref TEXT NOT NULL);
-      CREATE TRIGGER IF NOT EXISTS browser_binding_bound BEFORE INSERT ON browser_content_bindings BEGIN
-        SELECT CASE WHEN (SELECT count(*) FROM browser_content_bindings)>=100000
-          THEN RAISE(ABORT,'Browser binding capacity exceeded') END;
+      CREATE TRIGGER browser_binding_bound BEFORE INSERT ON browser_content_bindings BEGIN
+        SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
+          length(NEW.artifact_id)+length(NEW.content_ref)+512,'execution') FROM execution_physical_policy WHERE id=1;
       END;`);
   }
   recordObservation(input: Parameters<BrowserArtifactPort["recordObservation"]>[0]) { return this.record(input, input.kind); }
@@ -65,7 +65,7 @@ export class SqliteBrowserArtifactContent implements BrowserArtifactPort {
     })();
   }
   private record(input: { owner: BrowserSessionOwner; sessionId: string; bodyBase64: string; byteSize: number; sha256: string }, kind: string) {
-    if (typeof input.bodyBase64 !== "string" || input.bodyBase64.length > 5592408) throw new Error("Browser content exceeds limit");
+    if (typeof input.bodyBase64 !== "string" || input.bodyBase64.length > 89478488) throw new Error("Browser content exceeds transfer limit");
     const body = Buffer.from(input.bodyBase64, "base64");
     if (body.toString("base64") !== input.bodyBase64 || body.length !== input.byteSize || sha(body) !== input.sha256) throw new Error("Browser content digest mismatch");
     const { caseId, runId, workId } = input.owner;
@@ -80,7 +80,7 @@ export class SqliteBrowserArtifactContent implements BrowserArtifactPort {
     const row = this.sqlite.prepare("SELECT body,digest FROM browser_artifact_content WHERE ref=? AND case_id=? AND run_id=?")
       .get(ref, owner.caseId, owner.runId) as { body: Buffer; digest: string } | undefined;
     if (!row) return undefined;
-    if (row.body.length > 4194304 || sha(row.body) !== row.digest) throw new Error("Browser content is corrupt");
+    if (row.body.length > 67108864 || sha(row.body) !== row.digest) throw new Error("Browser content is corrupt");
     return Buffer.from(row.body);
   }
 }

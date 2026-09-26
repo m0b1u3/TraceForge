@@ -2,14 +2,15 @@ import type Database from "better-sqlite3";
 import { initializeExecutionArchive } from "./execution-archive.js";
 
 const MiB = 1024 * 1024;
+const UNBOUNDED_HISTORY = Number.MAX_SAFE_INTEGER;
 const stores = [
-  { kind: "receipt", table: "worker_tool_receipts", key: "idempotency_key", fields: ["idempotency_key", "result_json", "created_at"], pool: "execution", records: 100_000, bytes: 512 * MiB, entry: 8 * MiB },
-  { kind: "process", table: "execution_process_journal", key: "idempotency_key", fields: [], pool: "execution", records: 10_000, bytes: 512 * MiB, entry: 8 * MiB },
-  { kind: "command", table: "tool_recovery_commands", key: "command_id", fields: ["command_id", "fingerprint", "idempotency_key", "request_json", "created_at"], pool: "recovery", records: 50_000, bytes: 128 * MiB, entry: 513 * 1024 },
-  { kind: "evidence", table: "tool_recovery_evidence", key: "evidence_ref", fields: ["evidence_ref", "envelope_json", "created_at"], pool: "recovery", records: 50_000, bytes: 128 * MiB, entry: 65 * 1024 },
-  { kind: "reconciliation", table: "tool_invocation_reconciliation_audits", key: "command_id", fields: ["command_id", "request_fingerprint", "idempotency_key", "actor", "requested_resolution", "requested_reason", "evidence_fingerprint", "verified_assertion_json", "authorization_decision", "authorization_reason", "outcome", "failure_reason", "created_at"], pool: "recovery", records: 50_000, bytes: 128 * MiB, entry: 64 * 1024 },
-  { kind: "retry", table: "scenario_work_retry_audits", key: "command_id", fields: ["command_id", "fingerprint", "audit_json"], pool: "recovery", records: 50_000, bytes: 128 * MiB, entry: 64 * 1024 },
-  { kind: "checkpoint", table: "worker_checkpoints", key: "ref", fields: ["ref", "case_id", "run_id", "work_id", "document_json", "created_at"], pool: "checkpoint", records: 100_000, bytes: 512 * MiB, entry: 1025 * 1024 },
+  { kind: "receipt", table: "worker_tool_receipts", key: "idempotency_key", fields: ["idempotency_key", "result_json", "created_at"], pool: "execution", records: UNBOUNDED_HISTORY, bytes: UNBOUNDED_HISTORY, entry: 8 * MiB },
+  { kind: "process", table: "execution_process_journal", key: "idempotency_key", fields: [], pool: "execution", records: UNBOUNDED_HISTORY, bytes: UNBOUNDED_HISTORY, entry: 8 * MiB },
+  { kind: "command", table: "tool_recovery_commands", key: "command_id", fields: ["command_id", "fingerprint", "idempotency_key", "request_json", "created_at"], pool: "recovery", records: UNBOUNDED_HISTORY, bytes: UNBOUNDED_HISTORY, entry: 513 * 1024 },
+  { kind: "evidence", table: "tool_recovery_evidence", key: "evidence_ref", fields: ["evidence_ref", "envelope_json", "created_at"], pool: "recovery", records: UNBOUNDED_HISTORY, bytes: UNBOUNDED_HISTORY, entry: 65 * 1024 },
+  { kind: "reconciliation", table: "tool_invocation_reconciliation_audits", key: "command_id", fields: ["command_id", "request_fingerprint", "idempotency_key", "actor", "requested_resolution", "requested_reason", "evidence_fingerprint", "verified_assertion_json", "authorization_decision", "authorization_reason", "outcome", "failure_reason", "created_at"], pool: "recovery", records: UNBOUNDED_HISTORY, bytes: UNBOUNDED_HISTORY, entry: 64 * 1024 },
+  { kind: "retry", table: "scenario_work_retry_audits", key: "command_id", fields: ["command_id", "fingerprint", "audit_json"], pool: "recovery", records: UNBOUNDED_HISTORY, bytes: UNBOUNDED_HISTORY, entry: 64 * 1024 },
+  { kind: "checkpoint", table: "worker_checkpoints", key: "ref", fields: ["ref", "case_id", "run_id", "work_id", "document_json", "created_at"], pool: "checkpoint", records: UNBOUNDED_HISTORY, bytes: UNBOUNDED_HISTORY, entry: 1025 * 1024 },
 ] as const;
 
 export type ExecutionStorageKind = typeof stores[number]["kind"];
@@ -38,14 +39,29 @@ export function initializeExecutionStorage(sqlite: Database.Database): void {
       CREATE TABLE IF NOT EXISTS execution_storage_usage (
         kind TEXT PRIMARY KEY REFERENCES execution_storage_policies(kind), records INTEGER NOT NULL, bytes INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS execution_storage_migrations (version INTEGER PRIMARY KEY);
-      INSERT OR IGNORE INTO execution_storage_pools VALUES ('execution', 1073741824), ('recovery', 536870912);
-      INSERT OR IGNORE INTO execution_storage_pools VALUES ('checkpoint', 536870912);
+      INSERT OR IGNORE INTO execution_storage_pools VALUES ('execution', 9007199254740991), ('recovery', 9007199254740991);
+      INSERT OR IGNORE INTO execution_storage_pools VALUES ('checkpoint', 9007199254740991);
     `);
     for (const store of stores) {
       sqlite.prepare("INSERT OR IGNORE INTO execution_storage_policies VALUES (?, ?, ?, ?, ?)")
         .run(store.kind, store.pool, store.records, store.bytes, store.entry);
       sqlite.prepare("INSERT OR IGNORE INTO execution_storage_usage VALUES (?, 0, 0)").run(store.kind);
     }
+    // Retain per-entry bounds and explicit operator policies while lifting the
+    // former default lifetime ceiling for existing desktop databases.
+    sqlite.prepare("UPDATE execution_storage_policies SET maximum_records=?, maximum_bytes=? WHERE kind='receipt' AND maximum_records=100000 AND maximum_bytes=?")
+      .run(UNBOUNDED_HISTORY, UNBOUNDED_HISTORY, 512 * MiB);
+    sqlite.prepare("UPDATE execution_storage_policies SET maximum_records=?, maximum_bytes=? WHERE kind='process' AND maximum_records=10000 AND maximum_bytes=?")
+      .run(UNBOUNDED_HISTORY, UNBOUNDED_HISTORY, 512 * MiB);
+    sqlite.prepare("UPDATE execution_storage_pools SET maximum_bytes=? WHERE id='execution' AND maximum_bytes=1073741824")
+      .run(UNBOUNDED_HISTORY);
+    for (const kind of ["command","evidence","reconciliation","retry"])
+      sqlite.prepare("UPDATE execution_storage_policies SET maximum_records=?, maximum_bytes=? WHERE kind=? AND maximum_records=50000 AND maximum_bytes=?")
+        .run(UNBOUNDED_HISTORY,UNBOUNDED_HISTORY,kind,128*MiB);
+    sqlite.prepare("UPDATE execution_storage_policies SET maximum_records=?, maximum_bytes=? WHERE kind='checkpoint' AND maximum_records=100000 AND maximum_bytes=?")
+      .run(UNBOUNDED_HISTORY,UNBOUNDED_HISTORY,512*MiB);
+    sqlite.prepare("UPDATE execution_storage_pools SET maximum_bytes=? WHERE id IN ('recovery','checkpoint') AND maximum_bytes=536870912")
+      .run(UNBOUNDED_HISTORY);
     initializeExecutionArchive(sqlite);
     if (!sqlite.prepare("SELECT 1 FROM execution_storage_migrations WHERE version = 1").get()) {
       // Existing oversized records are preserved, not discarded to satisfy new limits.

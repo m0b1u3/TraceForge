@@ -42,28 +42,42 @@ describe("Run-owned offline workspace", () => {
     mkdirSync(join(f.root,"empty"));const empty=await f.json("read",{path:"empty",metadataOnly:true});
     await f.call("remove",{path:"empty",expectedIdentity:empty.identity});expect(existsSync(join(f.root,"empty"))).toBe(false);
   });
-  it("recovers an oversized workspace using bounded inspection and exact-file cleanup", async () => {
+  it("lists a large workspace and preserves exact-file cleanup and execution fences", async () => {
     const f=setup();await f.json("write",{path:"keep.txt",content:"keep",expectedDigest:null});
     writeFileSync(join(f.root,"large.bin"),Buffer.alloc(17*1024*1024));
-    await expect(f.call("list",{})).rejects.toThrow("capacity");
-    const partial=await f.json("list",{recovery:true});expect(partial.entries.some((e:any)=>e.path==="large.bin")).toBe(true);
+    const partial=await f.json("list",{});expect(partial.entries.some((e:any)=>e.path==="large.bin")).toBe(true);
     const info=await f.json("read",{path:"large.bin",metadataOnly:true});expect(info.bytes).toBe(17*1024*1024);
     await expect(f.call("remove",{path:"large.bin",expectedIdentity:"stale"})).rejects.toThrow("revision conflict");
     writeFileSync(`${f.root}.busy`,"unconfirmed");
     await expect(f.call("remove",{path:"large.bin",expectedIdentity:info.identity})).rejects.toThrow("cleanup is unconfirmed");
     rmSync(`${f.root}.busy`);
     await f.call("remove",{path:"large.bin",expectedIdentity:info.identity});
-    expect((await f.json("read",{path:"keep.txt"})).content).toBe("keep");expect(await f.json("list",{})).toHaveLength(1);
+    expect((await f.json("read",{path:"keep.txt"})).content).toBe("keep");expect((await f.json("list",{})).entries).toHaveLength(1);
   });
-  it("can inspect and delete known files beyond the entry limit without enabling writes", async () => {
+  it("pages a directory beyond the old entry limit and still allows writes", async () => {
     const f=setup();await f.json("write",{path:"keep",content:"value",expectedDigest:null});
     for(let i=0;i<513;i++)writeFileSync(join(f.root,`item-${i}`),"value");
     expect(await f.json("list",{recovery:true})).toMatchObject({truncated:true,recovery:true});
     expect((await f.json("list",{recovery:true})).entries).toHaveLength(512);
-    await expect(f.call("write",{path:"new",content:"x",expectedDigest:null})).rejects.toThrow("capacity");
+    const page=await f.json("list",{offset:512});expect(page.nextOffset).toBeNull();expect(page.entries).toHaveLength(2);
+    await f.call("write",{path:"new",content:"x",expectedDigest:null});
     const info=await f.json("read",{path:"item-512"});
     await f.call("remove",{path:"item-512",expectedDigest:info.digest});
     expect(existsSync(join(f.root,"item-512"))).toBe(false);
+  });
+  it("appends and reads UTF-8 pages beyond the old file size", async () => {
+    const f=setup();
+    let saved=await f.json("write",{path:"large.txt",content:"a".repeat(256*1024),expectedDigest:null});
+    saved=await f.json("write",{path:"large.txt",content:"é".repeat(100),expectedDigest:saved.digest,append:true});
+    expect(saved.bytes).toBeGreaterThan(256*1024);
+    const first=await f.json("read",{path:"large.txt"});
+    expect(first.content).toHaveLength(256*1024);
+    const second=await f.json("read",{path:"large.txt",offset:first.nextOffset});
+    expect(second.content).toBe("é".repeat(100));expect(second.nextOffset).toBeNull();
+    expect(second.digest).toBe(saved.digest);
+    saved=await f.json("write",{path:"large.txt",content:"revised",expectedDigest:saved.digest,offset:256*1024,deleteBytes:200});
+    const revised=await f.json("read",{path:"large.txt",offset:256*1024});
+    expect(revised.content).toBe("revised");expect(revised.digest).toBe(saved.digest);
   });
   it("shares only a host-selected namespace and preserves a process fence across Runs and restart",async()=>{
     const f=setup();
@@ -135,7 +149,7 @@ describe("Run-owned offline workspace", () => {
     const created = await f.json("write", { path: "scripts/inspect.sh", content: "printf first", expectedDigest: null });
     expect(await f.json("read", { path: "scripts/inspect.sh" })).toMatchObject({ content: "printf first", digest: created.digest });
     expect(await f.json("search", { text: "first" })).toMatchObject({ matches: [{ path: "scripts/inspect.sh", line: 1 }] });
-    expect(await f.json("list", {})).toHaveLength(2);
+    expect((await f.json("list", {})).entries).toHaveLength(2);
     const edited = await f.json("edit", { path: "scripts/inspect.sh", before: "first", after: "second", expectedDigest: created.digest });
     expect((await f.call("execute", { path: "scripts/inspect.sh", expectedDigest: edited.digest, arguments: ["literal; not a command"] })).raw).toBe("output");
     expect(f.execute.mock.calls[0]).toMatchObject([{ executable: "/bin/bash", arguments: ["--noprofile", "--norc", join(f.root, "scripts/inspect.sh"), "literal; not a command"], workingDirectory: f.root, environment: {} }, { runId: "run" }]);
@@ -206,10 +220,10 @@ describe("Run-owned offline workspace", () => {
     const unavailable = new RunWorkspace(join(f.base, "runs"), { execute: f.execute } as unknown as ExecutionToolAdapter, f.authorize,
       async () => { throw new Error("Native execution unavailable"); });
     await expect(unavailable.tools().find(tool => tool.name === "workspace_execute")!.execute({ path: "run.sh", expectedDigest: saved.digest }, f.context)).rejects.toThrow("unavailable");
-    expect(await f.json("list", {})).toHaveLength(1);
+    expect((await f.json("list", {})).entries).toHaveLength(1);
     const controller = new AbortController();
     const cancelled = new RunWorkspace(join(f.base, "runs"), { execute: f.execute } as unknown as ExecutionToolAdapter, f.authorize, async () => { controller.abort(); });
     await expect(cancelled.tools().find(tool => tool.name === "workspace_execute")!.execute({ path: "run.sh", expectedDigest: saved.digest }, { ...f.context, signal: controller.signal })).rejects.toThrow();
-    expect(await f.json("list", {})).toHaveLength(1); expect(f.execute).not.toHaveBeenCalled();
+    expect((await f.json("list", {})).entries).toHaveLength(1); expect(f.execute).not.toHaveBeenCalled();
   });
 });

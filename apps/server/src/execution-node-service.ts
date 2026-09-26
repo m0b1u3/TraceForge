@@ -157,6 +157,8 @@ export async function startLocalExecutionNodeService(
   const linuxRuntime = preflight.linuxRuntime, backendMeasurement = preflight.helper?.measurement ?? null;
   const processReady = preflight.processReady, backend = preflight.backend ?? "traceforge-linux-native";
   const httpBroker = new BrokeredHttpGateway({
+    limits: { maximumRequestBytes: 1024*1024, maximumResponseBytes: 64*1024*1024,
+      maximumHeaders: 128, maximumConcurrentRequests: 32, maximumTimeoutMs: 60_000 },
     authorizer: {
       authorize(input) {
         const grant = authorization.authorizeResource(
@@ -186,6 +188,9 @@ export async function startLocalExecutionNodeService(
     sandboxMeasurements: processReady && backendMeasurement ? { [backend]: backendMeasurement } : undefined,
     acceptedSampledResourceBackends: preflight.resourcePolicy === "sampled_terminate" ? [backend] : [],
     httpBroker,
+    maximumOutputBytesPerProcess:16*1024*1024,
+    maximumCpuTimeMsPerProcess:2147483647,
+    maximumWriteBytesPerProcess:Number.MAX_SAFE_INTEGER,
     capabilities: {
       process: {
         spawn: processReady,

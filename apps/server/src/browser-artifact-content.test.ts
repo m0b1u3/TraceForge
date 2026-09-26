@@ -27,14 +27,14 @@ it("persists attributed content, deduplicates, reopens and rejects cross-owner r
     expect(() => db.prepare("UPDATE browser_artifact_content SET body=? WHERE ref=?").run(Buffer.from("changed"), ref)).toThrow("immutable");
   } finally { db.close(); rmSync(directory, { recursive: true, force: true }); }
 });
-it("rejects malformed and oversized content before insertion", () => {
+it("rejects malformed content and accepts evidence beyond the old 4 MiB limit", () => {
   const db = getSqliteClient(createDb(":memory:"));
   try {
     const store = new SqliteBrowserArtifactContent(db), input = observation();
     expect(() => store.recordObservation({ ...input, sha256: "a".repeat(64) })).toThrow("digest mismatch");
     expect(() => store.recordObservation({ ...input, bodyBase64: input.bodyBase64 + "\n" })).toThrow("digest mismatch");
-    expect(() => store.recordObservation(observation(Buffer.alloc(4194305)))).toThrow(/limit|capacity/);
-    expect(db.prepare("SELECT count(*) AS n FROM browser_artifact_content").get()).toEqual({ n: 0 });
+    expect(store.recordObservation(observation(Buffer.alloc(4194305))).ref).toMatch(/^browser-content:/);
+    expect(db.prepare("SELECT count(*) AS n FROM browser_artifact_content").get()).toEqual({ n: 1 });
   } finally { db.close(); }
 });
 it("commits content and its real index atomically, rolls back failure, and only prunes unreferenced bodies", () => {

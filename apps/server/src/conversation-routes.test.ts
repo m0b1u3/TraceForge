@@ -24,6 +24,17 @@ async function fixture(path = ":memory:") {
 }
 
 describe("desktop conversation host persistence", () => {
+  it("accepts the next message beyond the old 2000-message ceiling and prepares context by page", async () => {
+    const f=await fixture(),id=(await f.create()).json().id,sql=getSqliteClient(f.db);
+    const insert=sql.prepare("INSERT INTO desktop_conversation_messages VALUES (?,?,?,?,?)");
+    sql.transaction(()=>{for(let i=1;i<=2000;i++)insert.run(id,`prior-${i}`,i,`Earlier note ${i}`,"2026-01-01");})();
+    expect((await f.send(id,"next-message","Current request")).statusCode).toBe(201);
+    const model={runTools:async()=>({done:true,text:"",toolCalls:[]}),extractJson:async()=>({})};
+    const context=prepareConversationContext(sql,id,2001,model,"Task");
+    expect(context.messages.some(message=>message.content==="Current request")).toBe(true);
+    expect(context.truncated).toBe(true);
+    expect(sql.prepare("SELECT count(*) AS n FROM desktop_conversation_messages WHERE conversation_id=?").get(id)).toEqual({n:2001});
+  });
   it("creates conversations beyond the old lifetime count and pages the full list", async () => {
     const f = await fixture(), sql = getSqliteClient(f.db);
     const insertCase = sql.prepare("INSERT INTO cases VALUES (?,'historical','active','[]','2026-01-01')");

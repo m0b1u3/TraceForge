@@ -38,9 +38,18 @@ export async function runMacosOwnedExecution(request: StartProcessRequest, helpe
   // Use the timer's representable range, not a second one-hour policy ceiling.
   // The host request/lease determines duration; cancellation and supervision remain active.
   if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > 2147483647
-    || !Number.isSafeInteger(request.outputLimitBytes) || request.outputLimitBytes < 1 || request.outputLimitBytes > 4194304) throw new Error("Invalid macOS execution bounds");
-  // No loader injection into the unsandboxed supervisor itself.
-  if (Object.keys(request.environment).length) throw new Error("macOS supervisor currently requires an empty environment");
+    || !Number.isSafeInteger(request.outputLimitBytes) || request.outputLimitBytes < 1 || request.outputLimitBytes > 16*1024*1024) throw new Error("Invalid macOS execution bounds");
+  // Only the host-bound MCP credential may cross this process request. It is
+  // delivered to the sandbox child over fd 5, never placed in process argv.
+  const secretEntries=Object.entries(request.environment);
+  if (secretEntries.length && (secretEntries.length!==1 || request.permissions.secrets!=="plaintext"
+    || !request.permissions.sources.includes("desktop-mcp-operator-grant")
+    || !binding?.secretEnvironment || JSON.stringify(request.environment)!==JSON.stringify(binding.secretEnvironment)))
+    throw new Error("macOS supervisor currently requires an empty environment or a host-bound MCP credential");
+  const secretPayload=secretEntries.length?Buffer.from(`${secretEntries[0]![0]}=${secretEntries[0]![1]}\0`):Buffer.alloc(0);
+  if(secretPayload.length>65536 || (secretEntries.length && (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(secretEntries[0]![0])
+    || /^(?:(?:DYLD|LD|__XPC|OBJC)_.*|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY|WS_PROXY|WSS_PROXY|PATH|HOME|TMPDIR|NODE_OPTIONS|JAVA_TOOL_OPTIONS|PYTHONPATH|RUBYOPT|PERL5OPT|BASH_ENV|ENV)$/i.test(secretEntries[0]![0])
+    || secretEntries[0]![1].includes("\0"))))throw new Error("Invalid host-bound MCP credential");
   const environment = sandboxEnvironmentArguments(binding?.environment ?? {});
   if (environment.length && !allowsFileSystemPath(request.permissions, "read", "/usr/bin/env"))
     throw new Error("Host environment requires an explicit sandbox env executable grant");
@@ -56,10 +65,15 @@ export async function runMacosOwnedExecution(request: StartProcessRequest, helpe
   signal.throwIfAborted();
   binding?.assertCurrent();
   return new Promise((resolve, reject) => {
-    const command = environment.length ? ["/usr/bin/env", "-i", ...environment, request.executable, ...request.arguments] : [request.executable, ...request.arguments];
+    const command = environment.length ? ["/usr/bin/env", ...(secretEntries.length?[]:["-i"]), ...environment, request.executable, ...request.arguments] : [request.executable, ...request.arguments];
     const child = spawn(helper.path, [profile.profile, ...(request.terminal ? ["--pty", `${request.terminal.columns},${request.terminal.rows}`] : []), ...command], {
-      cwd: request.workingDirectory, env: {}, stdio: [request.stdin === "closed" ? "ignore" : "pipe", "pipe", "pipe", "pipe", "pipe"],
+      cwd: request.workingDirectory, env: {}, stdio: [request.stdin === "closed" ? "ignore" : "pipe", "pipe", "pipe", "pipe", "pipe", "pipe"],
     });
+    const secretFrame=Buffer.allocUnsafe(4+secretPayload.length);
+    secretFrame.writeUInt32LE(secretPayload.length,0);secretPayload.copy(secretFrame,4);
+    const secretPipe=child.stdio.at(5) as Writable|undefined;
+    if(!secretPipe)throw new Error("macOS credential pipe is unavailable");
+    secretPipe.end(secretFrame);
     let reason: MacosOwnedExecutionResult["reason"] = "exited", limit: ResourceLimitKind | null = null;
     let settled = false, ready = false, terminal: { exitCode: number; signal: number } | undefined;
     let buffered = "", retained = 0, omitted = 0, lastTelemetry = performance.now();

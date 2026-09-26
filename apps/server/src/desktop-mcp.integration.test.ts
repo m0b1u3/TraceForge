@@ -104,7 +104,8 @@ it("rejects stale review and keeps old Run pins while disabling cuts off all rev
 
 it("discovers a new stdio program only through the sandbox and invokes it after approval",async()=>{
   const {h,node}=await setup(true);
-  await h.request("/api/desktop/mcp",{operation:"save",expectedRevision:0,connection:{...connection,transport:"stdio",endpoint:"",executable:"/fixture/tool",workingDirectory:"/fixture",readPaths:["/fixture"],writePaths:[],arguments:[]}});
+  const saved=await h.request("/api/desktop/mcp",{operation:"save",expectedRevision:0,connection:{...connection,transport:"stdio",endpoint:"",executable:"/fixture/tool",workingDirectory:"/fixture",readPaths:["/fixture"],writePaths:[],arguments:[],secretEnvironmentVariable:"MCP_TOKEN"},credential:"private-token"});
+  expect(JSON.stringify(saved)).not.toContain("private-token");
   expect(node.starts).toHaveLength(0);
   const tested=await h.request("/api/desktop/mcp",{operation:"test",id:"first",expectedRevision:1,confirmed:true});
   expect(tested.connections[0].catalog.tools[0].name).toBe("observe");expect(node.terminated()).toBe(1);
@@ -113,5 +114,6 @@ it("discovers a new stdio program only through the sandbox and invokes it after 
   const state=await h.state();await h.request("/api/scenarios/runs/run/work/work/operator-approval",{commandId:"approve",expectedRevision:state.revision,approvalId:state.workItems[0].pendingApproval.id,approved:true,reason:"Reviewed fixture"});
   await eventually(async()=>(await h.state()).workItems[0]?.status==="completed");expect(node.calls()).toBe(1);
   expect(node.starts.every(s=>s.permissions.network==="deny"&&s.permissions.process.access==="sandboxed")).toBe(true);
+  expect(node.starts.every(s=>s.permissions.secrets==="plaintext"&&s.environment.MCP_TOKEN==="private-token")).toBe(true);
   expect(node.starts).toHaveLength(node.terminated());
 });

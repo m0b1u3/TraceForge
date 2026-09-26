@@ -46,10 +46,11 @@ export class ProcessExecutionCapacity {
       CREATE TABLE IF NOT EXISTS process_cleanup_commands (command_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,proof_json TEXT NOT NULL,audit_json TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS process_occupancy_scope ON process_execution_occupancy
         (json_extract(identity_json,'$.attribution.caseId'),json_extract(identity_json,'$.attribution.runId'),id);
-      CREATE TRIGGER IF NOT EXISTS process_occupancy_bound BEFORE INSERT ON process_execution_occupancy BEGIN
+      DROP TRIGGER IF EXISTS process_occupancy_bound;
+      CREATE TRIGGER process_occupancy_bound BEFORE INSERT ON process_execution_occupancy BEGIN
         SELECT CASE WHEN NEW.state NOT IN ('reserved','unknown') OR NEW.proof_ref IS NOT NULL
           THEN RAISE(ABORT,'Invalid initial process occupancy') END;
-        SELECT CASE WHEN (SELECT count(*) FROM process_execution_occupancy)>=100000 OR length(CAST(NEW.identity_json AS BLOB))>8192
+        SELECT CASE WHEN length(CAST(NEW.identity_json AS BLOB))>8192
           OR length(CAST(NEW.process_key AS BLOB))>1024 THEN RAISE(ABORT,'Process occupancy capacity exceeded') END;
         SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,12288,'execution') FROM execution_physical_policy WHERE id=1;
       END;
@@ -59,8 +60,9 @@ export class ProcessExecutionCapacity {
           OR (NEW.state='dispatched' AND OLD.state!='reserved') OR (NEW.state='released' AND NEW.proof_ref IS NULL)
           OR NEW.state NOT IN ('dispatched','unknown','terminal_observed','released') THEN RAISE(ABORT,'Process occupancy fenced') END;
       END;
-      CREATE TRIGGER IF NOT EXISTS process_cleanup_bound BEFORE INSERT ON process_cleanup_commands BEGIN
-        SELECT CASE WHEN (SELECT count(*) FROM process_cleanup_commands)>=50000 OR length(CAST(NEW.proof_json AS BLOB))>65536
+      DROP TRIGGER IF EXISTS process_cleanup_bound;
+      CREATE TRIGGER process_cleanup_bound BEFORE INSERT ON process_cleanup_commands BEGIN
+        SELECT CASE WHEN length(CAST(NEW.proof_json AS BLOB))>65536
           OR length(CAST(NEW.audit_json AS BLOB))>8192 THEN RAISE(ABORT,'Process cleanup audit capacity exceeded') END;
         SELECT execution_physical_admit(recovery_floor,maximum_database_bytes,maximum_wal_bytes,77824,'recovery') FROM execution_physical_policy WHERE id=1;
       END;`);

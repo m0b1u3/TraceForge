@@ -7,7 +7,10 @@ export class ConversationFileStore{
   constructor(private sql:Database.Database){sql.exec(`CREATE TABLE IF NOT EXISTS desktop_attachment_files(
     id TEXT PRIMARY KEY,name TEXT NOT NULL,kind TEXT NOT NULL,bytes BLOB NOT NULL,digest TEXT NOT NULL,pages INTEGER,
     conversation_id TEXT,command_id TEXT,created_at INTEGER NOT NULL,
-    FOREIGN KEY(conversation_id,command_id) REFERENCES desktop_conversation_messages(conversation_id,command_id) ON DELETE CASCADE)`);}
+    FOREIGN KEY(conversation_id,command_id) REFERENCES desktop_conversation_messages(conversation_id,command_id) ON DELETE CASCADE);
+    CREATE TRIGGER IF NOT EXISTS desktop_attachment_files_physical_insert BEFORE INSERT ON desktop_attachment_files BEGIN
+      SELECT execution_physical_admit(execution_floor,maximum_database_bytes,maximum_wal_bytes,
+        length(NEW.bytes)+2048,'execution') FROM execution_physical_policy WHERE id=1; END;`);}
   async import(name:string,bytes:Buffer):Promise<MessageAttachment>{
     if(!name||name.length>200||bytes.length>32*1048576||!bytes.length)throw new Error("file_size_or_name_invalid");
     let pages:number|undefined;let kind:string;
@@ -17,9 +20,6 @@ export class ConversationFileStore{
     }else throw new Error("large_file_type_unsupported");
     return this.sql.transaction(()=>{
       this.sql.prepare("DELETE FROM desktop_attachment_files WHERE conversation_id IS NULL AND created_at<?").run(Date.now()-7*86400000);
-      const used=(this.sql.prepare("SELECT coalesce(sum(length(bytes)),0) AS n FROM desktop_attachment_files").get() as {n:number}).n;
-      const count=(this.sql.prepare("SELECT count(*) AS n FROM desktop_attachment_files").get() as {n:number}).n;
-      if(used+bytes.length>256*1048576||count>=4096)throw new Error("attachment_storage_full");
       const id=randomUUID();
       this.sql.prepare("INSERT INTO desktop_attachment_files VALUES(?,?,?,?,?,?,NULL,NULL,?)").run(id,name,kind,bytes,createHash("sha256").update(bytes).digest("hex"),pages??null,Date.now());
       return {kind:"reference",id,name} as const;

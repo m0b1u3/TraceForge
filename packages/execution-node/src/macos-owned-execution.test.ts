@@ -142,6 +142,18 @@ describe.skipIf(process.env.TRACEFORGE_TEST_MACOS_SEATBELT !== "1")("macOS nativ
     const input = request(""); input.environment = { DYLD_INSERT_LIBRARIES: "/untrusted" };
     await expect(runMacosOwnedExecution(input, helper, new AbortController().signal)).rejects.toThrow("empty environment");
   });
+  it("delivers only the host-bound MCP credential through a private pipe", async () => {
+    const input=request("process.stdout.write(process.env.SERVICE_TOKEN||'missing')");
+    input.environment={SERVICE_TOKEN:"private-fixture-value"};
+    input.permissions.secrets="plaintext";
+    input.permissions.sources.push("desktop-mcp-operator-grant");
+    await expect(runMacosOwnedExecution(input,helper,new AbortController().signal)).rejects.toThrow("host-bound MCP credential");
+    const binding={signal:new AbortController().signal,secretEnvironment:{SERVICE_TOKEN:"private-fixture-value"},
+      assertCurrent(){},async release(){}};
+    const result=await runMacosOwnedExecution(input,helper,new AbortController().signal,undefined,undefined,binding);
+    expect(result).toMatchObject({reason:"exited",cleanupConfirmed:true,exitCode:0});
+    expect(result.stdout.toString()).toBe("private-fixture-value");
+  });
   it("uses a host-bound endpoint only, and applies environment after entering Seatbelt", async () => {
     const allowed = createServer((_request, response) => response.end("broker"));
     const denied = createServer((_request, response) => response.end("unexpected"));

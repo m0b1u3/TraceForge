@@ -42,8 +42,8 @@ export class BrowserControllerProcessRuntime {
   private closed = false;
 
   constructor(private readonly options: BrowserControllerProcessRuntimeOptions) {
-    this.maximumFrameBytes = options.maximumFrameBytes ?? 4 * 1024 * 1024;
-    const maximumBufferedBytes = options.maximumBufferedBytes ?? 8 * 1024 * 1024;
+    this.maximumFrameBytes = options.maximumFrameBytes ?? 96 * 1024 * 1024;
+    const maximumBufferedBytes = options.maximumBufferedBytes ?? 128 * 1024 * 1024;
     this.maximumPendingRequests = options.maximumPendingRequests ?? 16;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
     this.createId = options.createId ?? randomUUID;

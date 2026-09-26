@@ -21,8 +21,10 @@ export class PackageContextLifecycle {
     sqlite.exec(`CREATE TABLE IF NOT EXISTS package_context_lifecycle (
       command_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, request_json TEXT NOT NULL, grant_ref TEXT NOT NULL,
       result_json TEXT NOT NULL, created_at TEXT NOT NULL);
-      CREATE TRIGGER IF NOT EXISTS context_lifecycle_bounded BEFORE INSERT ON package_context_lifecycle BEGIN
-        SELECT CASE WHEN (SELECT count(*) FROM package_context_lifecycle)>=2048 OR length(CAST(NEW.request_json AS BLOB))>4096
+      DROP TRIGGER IF EXISTS context_lifecycle_bounded;
+      DROP TRIGGER IF EXISTS context_retired_bounded;
+      CREATE TRIGGER context_lifecycle_bounded BEFORE INSERT ON package_context_lifecycle BEGIN
+        SELECT CASE WHEN length(CAST(NEW.request_json AS BLOB))>4096
           OR length(CAST(NEW.result_json AS BLOB))>1024 OR length(CAST(NEW.grant_ref AS BLOB))>1024
           THEN RAISE(ABORT,'Context lifecycle ledger budget exceeded') END;
         SELECT execution_physical_admit(execution_floor, maximum_database_bytes, maximum_wal_bytes, 6144, 'execution')
@@ -32,8 +34,9 @@ export class PackageContextLifecycle {
         BEGIN SELECT RAISE(ABORT,'Context lifecycle audit is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS context_lifecycle_immutable BEFORE UPDATE ON package_context_lifecycle
         BEGIN SELECT RAISE(ABORT,'Context lifecycle audit is immutable'); END;
-      CREATE TRIGGER IF NOT EXISTS context_retired_bounded BEFORE INSERT ON package_context_retired BEGIN
-        SELECT CASE WHEN (SELECT count(*) FROM package_context_retired)>=2048 THEN RAISE(ABORT,'Context retirement budget exceeded') END;
+      CREATE TRIGGER context_retired_bounded BEFORE INSERT ON package_context_retired BEGIN
+        SELECT execution_physical_admit(execution_floor, maximum_database_bytes, maximum_wal_bytes,
+          length(NEW.binding)+length(NEW.resource_id)+512, 'execution') FROM execution_physical_policy WHERE id=1;
       END;
       CREATE TRIGGER IF NOT EXISTS context_retired_keep BEFORE DELETE ON package_context_retired
         BEGIN SELECT RAISE(ABORT,'Context retirement cannot be forgotten'); END;

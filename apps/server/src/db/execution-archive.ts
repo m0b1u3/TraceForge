@@ -28,7 +28,7 @@ export function initializeExecutionArchive(sqlite: Database.Database): void {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS execution_archive_policy (id INTEGER PRIMARY KEY CHECK(id=1), maximum_bytes INTEGER NOT NULL CHECK(maximum_bytes>0),
       maximum_records INTEGER NOT NULL CHECK(maximum_records>0));
-    INSERT OR IGNORE INTO execution_archive_policy VALUES (1, 1073741824, 200000);
+    INSERT OR IGNORE INTO execution_archive_policy VALUES (1, 9007199254740991, 9007199254740991);
     CREATE TABLE IF NOT EXISTS execution_archive_usage (id INTEGER PRIMARY KEY CHECK(id=1), bytes INTEGER NOT NULL, records INTEGER NOT NULL);
     INSERT OR IGNORE INTO execution_archive_usage VALUES (1, 0, 0);
     CREATE TABLE IF NOT EXISTS execution_archives (
@@ -40,6 +40,8 @@ export function initializeExecutionArchive(sqlite: Database.Database): void {
     CREATE INDEX IF NOT EXISTS execution_archive_commands_scope ON execution_archive_commands
       (json_extract(audit_json, '$.caseId'), json_extract(audit_json, '$.runId'), command_id);
   `);
+  sqlite.prepare("UPDATE execution_archive_policy SET maximum_bytes=?,maximum_records=? WHERE id=1 AND maximum_bytes=1073741824 AND maximum_records=200000")
+    .run(Number.MAX_SAFE_INTEGER,Number.MAX_SAFE_INTEGER);
   for (const [table, size] of [["execution_archives", "length(NEW.payload) + length(CAST(NEW.entry_key AS BLOB)) + length(NEW.kind) + length(NEW.digest) + length(NEW.created_at)"],
     ["execution_archive_commands", "length(CAST(NEW.command_id AS BLOB)) + length(NEW.fingerprint) + length(CAST(NEW.audit_json AS BLOB))"]]) {
     const duplicate = table === "execution_archives" ? "kind = NEW.kind AND entry_key = NEW.entry_key" : "command_id = NEW.command_id";
@@ -48,6 +50,8 @@ export function initializeExecutionArchive(sqlite: Database.Database): void {
       SELECT CASE WHEN EXISTS (SELECT 1 FROM execution_archive_usage u JOIN execution_archive_policy p USING(id)
         WHERE u.records + 1 > p.maximum_records OR u.bytes + ${size} > p.maximum_bytes)
         THEN RAISE(ABORT, 'Execution storage capacity exhausted: archive') END;
+      SELECT execution_physical_admit(recovery_floor,maximum_database_bytes,maximum_wal_bytes,${size}+4096,'recovery')
+        FROM execution_physical_policy WHERE id=1;
     END;
     CREATE TRIGGER IF NOT EXISTS ${table}_account AFTER INSERT ON ${table} BEGIN
       UPDATE execution_archive_usage SET records = records + 1, bytes = bytes + ${size} WHERE id = 1;
