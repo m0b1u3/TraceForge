@@ -2,17 +2,15 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { DesktopBrowserCommand } from "@traceforge/shared/desktop-browser";
 import type { DesktopConversations } from "./desktop-conversation-transport";
-import {usePanelFocus} from "./panel-focus";
+import { usePanelFocus } from "./panel-focus";
 
-// Operate extension: preserve paper/ink. Native page at right, conversation at
-// left. No screenshot/pointer simulation; error and handback remain app-owned.
 export function BrowserViewport({ bridge, path, sessionId, takeoverId, send, onHide }: {
   bridge: DesktopConversations; path: string; sessionId: string; takeoverId: string | null;
   send(command: DesktopBrowserCommand): Promise<boolean>; onHide?: () => void;
 }) {
   const slot = useRef<HTMLDivElement>(null);
-  const panel=useRef<HTMLElement>(null),handingBack=useRef(false);
-  usePanelFocus(panel,sessionId,()=>{if(!handingBack.current)onHide?.();});
+  const panel = useRef<HTMLElement>(null), handingBack = useRef(false);
+  usePanelFocus(panel, sessionId, () => { if (!handingBack.current) onHide?.(); });
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState(""), [address, setAddress] = useState("正在连接页面…");
   const [busy, setBusy] = useState(false), [revision, setRevision] = useState(0);
@@ -50,25 +48,33 @@ export function BrowserViewport({ bridge, path, sessionId, takeoverId, send, onH
     catch { setError("页面连接已中断，请重新连接。"); }
   }
   async function handback() {
-    if(!takeoverId)return;
-    if(handingBack.current)return;handingBack.current=true;
+    if (!takeoverId || handingBack.current) return;
+    handingBack.current = true;
     setBusy(true);
     try {
       await bridge.presentBrowser?.({ hide: true });
       const ok = await send({ operation: "resume", sessionId, takeoverId, commandId: crypto.randomUUID() });
       if (!ok) setError("交回结果尚未确认，请在任务中重新读取状态。");
     } catch { setError("交回结果尚未确认，请在任务中重新读取状态。"); }
-    finally { handingBack.current=false;setBusy(false); }
+    finally { handingBack.current = false; setBusy(false); }
   }
-  return createPortal(<aside ref={panel} tabIndex={-1} className="native-browser-panel" aria-label="任务浏览器">
-    <header className="native-browser-toolbar"><div><strong>浏览器</strong><span>{takeoverId?"由你控制":"智能体正在操作"}</span></div>
-      {takeoverId?<button disabled={busy} onClick={() => void handback()}>交回智能体</button>:<button disabled={busy} onClick={()=>void send({operation:"takeover",sessionId,commandId:crypto.randomUUID()})}>接管</button>}
-      <button disabled={busy} onClick={onHide}>收起</button></header>
-    <div className="native-browser-address" title={address}>{address}</div>
+  return createPortal(<aside ref={panel} tabIndex={-1} className="native-browser-panel" data-control={takeoverId ? "manual" : "agent"} aria-label="任务浏览器">
+    <header className="native-browser-toolbar">
+      <div className="native-browser-identity">
+        <span className="native-browser-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3Z" /></svg></span>
+        <div className="native-browser-heading"><strong>任务浏览器</strong><span className="native-browser-control-state"><span className="native-browser-state-dot" />{takeoverId ? "由你控制" : "智能体正在操作"}</span></div>
+      </div>
+      <div className="native-browser-actions">
+        {takeoverId ? <button className="native-browser-primary" disabled={busy} onClick={() => void handback()}>交回智能体</button>
+          : <button className="native-browser-primary" disabled={busy} onClick={() => void send({ operation: "takeover", sessionId, commandId: crypto.randomUUID() })}>接管网页</button>}
+        <button className="native-browser-secondary" disabled={busy} onClick={onHide}>收起</button>
+      </div>
+    </header>
+    <div className="native-browser-address" title={address}><span className="native-browser-address-label">当前页面</span><span className="native-browser-url">{address}</span></div>
     <div className="native-browser-slot" ref={slot}>
       {error ? <div className="native-browser-message"><p role="alert">{error}</p><button onClick={() => { setConnected(false); setError(""); setRevision(n => n + 1); }}>重新连接</button></div>
         : !connected && <p role="status">正在显示网页…</p>}
     </div>
-    <footer>{takeoverId?<><button disabled={!connected || !!error || busy} onClick={() => void focusPage()}>进入网页</button> F6 返回应用 · 收起不会结束接管</>:"实时页面 · 接管后可手动操作"}</footer>
+    <footer>{takeoverId ? <><button disabled={!connected || !!error || busy} onClick={() => void focusPage()}>进入网页</button><span>F6 返回应用 · 收起后仍由你控制</span></> : <span>实时页面 · 接管后可直接操作</span>}</footer>
   </aside>, document.body);
 }

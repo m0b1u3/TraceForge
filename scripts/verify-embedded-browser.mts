@@ -17,8 +17,28 @@ const owner = { caseId: "fixture", runId: "fixture", workId: "fixture", workerId
   leaseExpiresAt: new Date(Date.now() + 120000).toISOString(), authorizationAction: "browser.request" };
 const grant = (url: string) => { if (!url.startsWith("https://embedded.fixture.invalid/")) throw new Error("Fixture scope denied");
   return { authorizationRef: "fixture", canonicalUrl: url, expiresAt: owner.leaseExpiresAt }; };
-const html = `<!doctype html><html lang="zh"><meta charset="utf-8"><title>本地浏览器验收页</title><style>body{font:16px -apple-system,sans-serif;padding:36px;color:#202329}input{padding:12px;font:inherit;width:80%;border:1px solid #bbb;border-radius:8px}button{padding:12px;margin-top:20px;font:inherit}p{line-height:1.7}</style><h1>原生网页</h1><p>这是本地验收内容，不是外部测试目标。可以直接输入、选择文字和滚动。</p><label>页面输入<input aria-label="页面输入" oninput="document.querySelector('#result').textContent=this.value"></label><p id="result">等待输入</p><button onclick="document.querySelector('#result').textContent=typeof require+' / '+typeof window.traceforgeDesktop">检查网页隔离</button><div style="height:900px"></div><p>页面底部</p></html>`;
-const broker = new BrokeredHttpGateway({ authorizer: { authorize: input => grant(input.url) }, transport: async () => ({ status: 200,
+const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>本机网页交互验收</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f8f9fa;color:#252629;font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:64px;padding:0 36px;border-bottom:1px solid #e9eaed;background:#fff}
+header strong{font-size:14px}header span{color:#687078;font-size:11px}main{max-width:800px;margin:0 auto;padding:52px 36px 80px}
+h1{margin:0 0 12px;font-size:32px;line-height:1.3;letter-spacing:-.035em}p{margin:0;line-height:1.75}.intro{max-width:52ch;color:#60656d}
+.field{margin-top:38px;padding:26px 28px 28px;border:1px solid #e5e7eb;border-radius:14px;background:#fff}
+label{display:block;margin-bottom:10px;font-size:13px;font-weight:600}input{display:block;width:100%;min-height:46px;padding:10px 14px;border:1px solid #cfd4db;border-radius:8px;background:#fff;color:#252629;font:inherit}
+input:focus-visible,button:focus-visible{outline:2px solid #606a78;outline-offset:2px}.hint{margin:9px 0 22px;color:#687078;font-size:12px}
+.value-label{font-size:11px;color:#687078}.value{min-height:26px;margin-top:2px;font-size:15px;font-weight:500;overflow-wrap:anywhere}
+button{min-height:38px;margin-top:24px;padding:7px 14px;border:1px solid #d9dce1;border-radius:8px;background:#fff;color:inherit;cursor:pointer;font:inherit;font-size:12px}
+button:hover{background:#f2f3f5}.isolation{margin-top:10px;color:#687078;font-size:12px}.scroll-check{margin-top:420px;padding-top:24px;border-top:1px solid #e2e5e9;color:#687078;font-size:12px}
+@media(max-width:600px){header{padding-inline:20px}main{padding:36px 20px}.field{padding:20px}}
+</style>
+<header><strong>网页交互验收</strong><span>本机测试内容 · 非外部目标</span></header>
+<main><h1>同一页面，持续操作</h1><p class="intro">在这里输入一段文字，再交回给智能体。它会读取这个原生网页的当前状态。</p>
+<div class="field"><label for="page-input">页面输入</label><input id="page-input" aria-label="页面输入" oninput="document.querySelector('#result').textContent=this.value"><p class="hint">输入会立即反映在下方，交回后仍保留在同一页面。</p>
+<div class="value-label">当前页面值</div><p class="value" id="result">等待输入</p><button onclick="document.querySelector('#isolation').textContent='宿主桥接：'+typeof require+' / '+typeof window.traceforgeDesktop">检查网页隔离</button><p class="isolation" id="isolation" role="status">隔离结果尚未检查</p></div>
+<p class="scroll-check">滚动到此处可确认原生网页保持独立滚动。</p></main></html>`;
+const broker = new BrokeredHttpGateway({ limits: { maximumRequestBytes: 1024*1024, maximumResponseBytes: 64*1024*1024,
+  maximumHeaders: 128, maximumConcurrentRequests: 32, maximumTimeoutMs: 60_000 },
+  authorizer: { authorize: input => grant(input.url) }, transport: async () => ({ status: 200,
   headers: [{ name: "content-type", value: "text/html; charset=utf-8" }], body: Buffer.from(html) }) });
 const runtime = new BrokeredBrowserRuntime({ executionNode: { requestHttp: request => broker.execute("fixture", request) } as ExecutionNode,
   controller: { attach: async () => { throw new Error("No external controller"); } }, chromiumProcess: deployment.chromiumProcess,

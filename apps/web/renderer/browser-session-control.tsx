@@ -47,6 +47,8 @@ export function BrowserSessionControl({ bridge, conversationId, runId }: { bridg
         nodes: DesktopBrowserDocumentSchema.parse(response.body).document.nodes });
       else setDocument(null);
       if (input.operation === "takeover") { setViewing(input.sessionId); setDetailsOpen(true); }
+      if (input.operation === "resume") setSessions(current => current.map(session => session.id === input.sessionId
+        ? { ...session, status: "active", takeoverId: null } : session));
       if (input.operation === "close") setViewing(null);
       return true;
     } catch { setDocument(null); setError("操作结果尚未确认。请重新读取状态；系统不会自动重试点击或输入。"); return false; }

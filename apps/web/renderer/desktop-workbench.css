@@ -122,19 +122,12 @@
 .host-workbench .artifact-preview { background: #fafbfc; border-left-color: var(--desktop-line); }
 .host-workbench .artifact-preview header { padding: 16px 20px; border-bottom: 1px solid var(--desktop-line); }
 .host-workbench .preview-tabs { padding-top: 12px; }
-.native-browser-panel { background: #fafbfc; }
-.native-browser-open .workbench.host-workbench { grid-template-columns: 64px minmax(0, 1fr); }
-.native-browser-open .sidebar-history, .native-browser-open .sidebar-start, .native-browser-open .rail .nav-button span { display: none; }
-.native-browser-open .host-workbench .rail { padding-inline: 10px; }
-.native-browser-open .host-workbench .rail .nav-button { justify-content: center; padding: 8px; }
-.native-browser-open .host-workbench .topbar .brand { width: auto; }
 @media (max-width: 1100px) {
   .settings-layout { grid-template-columns: 136px minmax(0, 1fr); gap: 24px; }
   .host-workbench.showing-settings .transcript { padding-inline: 24px; }
   .settings-content .configuration-editor { grid-template-columns: minmax(0, 1fr); }
   .settings-content .configuration-editor nav { flex-direction: row; flex-wrap: wrap; }
   .settings-content .storage-row { flex-direction: column; align-items: flex-start; gap: 8px; }
-  .native-browser-open .native-browser-panel { left: 64px; }
 }
 @media (max-width: 850px) {
   .workbench.host-workbench { grid-template-columns: 64px minmax(0, 1fr); }
@@ -164,7 +157,6 @@
   .host-workbench.showing-settings .transcript { padding: 24px 18px; }
   .host-workbench .topbar .brand { font-size: 14px; }
   .settings-content .model-fields { grid-template-columns: minmax(0, 1fr); }
-  .native-browser-open .native-browser-panel { inset: 50px 0 54px; }
 }
 @media (prefers-reduced-motion: reduce) { .host-workbench button { transition: none; } }
 
@@ -259,8 +251,6 @@
 .host-workbench .composer-stop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
 .host-workbench .composer-stop button { color: #fff; background: #282828; border: 0; gap: 6px; min-height: 30px; }
 .host-workbench .composer-stop button:not(:disabled):hover { background: #454545; }
-.native-browser-toolbar { flex-wrap: wrap; }
-.native-browser-panel footer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 @media(max-width:1000px) {
  .host-workbench .workspace:has(.artifact-preview) { flex-direction: row; overflow: hidden; }
  .host-workbench .workspace:has(.artifact-preview) > .dialogue { min-height: 0; flex-shrink: 1; }
