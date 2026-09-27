@@ -24,6 +24,8 @@ const revokeSchema=z.object({commandId:text,package:binding,actor:text,reason:z.
 type RevocationRequest=z.infer<typeof revokeSchema>;
 export interface ScenarioPackageTrustOptions {
   installations?:readonly ScenarioReviewedInstallation[];
+  /** Fixed application-owned packages load directly; no self-signed review bundle. */
+  builtInPackages?:readonly ScenarioPackageBinding[];
   authority?:(keyId:string)=>ScenarioReviewAuthority|undefined;
   /** Trusted host associates the already-loaded object with independently reviewed material. This is not a module loader or sandbox. */
   assertAssembly?:(installation:ScenarioPackageInstallation,review:ScenarioPackageReview)=>void;
@@ -55,6 +57,7 @@ export class ScenarioPackageTrustControl {
   readonly registry:ScenarioPackageRegistry;
   private readonly configured=new Map<string,Registration>();
   private readonly rejected=new Map<string,string>();
+  private isBuiltIn(pkg:ScenarioPackageBinding){return this.options.builtInPackages?.some(item=>canonicalJson(item)===canonicalJson(pkg))??false;}
   constructor(private readonly sqlite:Database.Database,private readonly source:ScenarioPackageRegistry,
     private readonly options:ScenarioPackageTrustOptions={},private readonly now=()=>new Date().toISOString()) {
     sqlite.exec(`CREATE TABLE IF NOT EXISTS scenario_package_materials (
@@ -92,7 +95,9 @@ export class ScenarioPackageTrustControl {
     this.registry=new ScenarioPackageRegistry(source.list(),pkg=>{
       source.assertAvailable(pkg);const key=versionKey(pkg),registration=this.configured.get(key);
       if(this.rejected.has(key))throw new Error(this.rejected.get(key));
-      if(!registration){if(options.allowUnreviewedDevelopmentPackages && !this.material(pkg))return;throw new Error("Package review material missing; explicit host review required");}
+      if(!registration){if(this.isBuiltIn(source.bindingFor(pkg)))return;
+        if(options.allowUnreviewedDevelopmentPackages && !this.material(pkg))return;
+        throw new Error("Package review material missing; explicit host review required");}
       this.verify(pkg,registration,true);
     });
   }
@@ -120,10 +125,10 @@ export class ScenarioPackageTrustControl {
     else assertScenarioPackageDescriptorAssembly(pkg,{root:registration.root,manifest,review},review);
     if(scenarioPackageContractDigest(pkg)!==registration.contract || functions(pkg).some((f,i)=>f!==registration.functions[i]))throw new Error("Package changed during assembly attestation");
   }
-  snapshot(){return {mode:this.options.allowUnreviewedDevelopmentPackages?"development_opt_in":"review_required",automaticCodeLoading:false,
+  snapshot(){return {mode:this.options.builtInPackages?.length?"built_in":this.options.allowUnreviewedDevelopmentPackages?"development_opt_in":"review_required",automaticCodeLoading:false,
     dataDescriptorLoading:this.source.list().length>0&&this.source.list().every(isScenarioPackageDescriptorAssembly),arbitraryJavaScriptIsolation:false,
     packages:this.source.list().map(pkg=>{const registration=this.configured.get(versionKey(pkg));let status="reviewed_available",reason:string|null=null;
-      try{this.registry.assertAvailable(pkg);if(!registration)status="development_unreviewed";}catch(error){status="recovery_required";reason=message(error);}
+      try{this.registry.assertAvailable(pkg);if(!registration)status=this.isBuiltIn(this.source.bindingFor(pkg))?"built_in":"development_unreviewed";}catch(error){status="recovery_required";reason=message(error);}
       return {package:this.source.bindingFor(pkg),status,reason,materialDigest:registration?.review.materialDigest??null,reviewRef:registration?.review.reviewRef??null};})};}
   inspect(commandId:string){
     const row=this.sqlite.prepare("SELECT audit_hash,audit_json FROM scenario_package_revocations WHERE command_id=?").get(text.parse(commandId)) as {audit_hash:string;audit_json:string}|undefined;

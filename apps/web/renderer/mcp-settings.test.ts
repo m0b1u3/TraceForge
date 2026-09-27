@@ -11,6 +11,7 @@ it("edits address bindings without connecting, validates input, and preserves ty
   const operations:any[]=[];const node=document.createElement("div");document.body.append(node);const root=createRoot(node);
   try{
     await act(async()=>root.render(React.createElement(McpSettings,{bridge:{protocolVersion:1,request:async input=>{if(input.method==="POST")operations.push(JSON.parse(input.body!));return{status:200,body:state};}}})));
+    expect([...node.querySelectorAll("label")].some(label=>label.textContent?.startsWith("适用场景"))).toBe(false);
     const field=node.querySelector('[aria-describedby="mcp-address-help mcp-address-error"]') as HTMLInputElement;
     const save=[...node.querySelectorAll("button")].find(b=>b.textContent==="保存连接")!;
     await act(async()=>{field.value="invalid";Simulate.change(field);});

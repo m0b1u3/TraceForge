@@ -33,7 +33,7 @@ describe("Web Scenario playbooks and passive discovery", () => {
     const ids = new Set(resources.map(item => item.id));
     for (const id of ids) expect(authorizeScenarioResource(descriptor.authorizationPolicy, {}, "context.resource", id)).toBe(id);
     expect(() => authorizeScenarioResource(descriptor.authorizationPolicy, {}, "context.resource", "unregistered")).toThrow();
-    expect(descriptor.version).toBe("0.5.25");
+    expect(descriptor.version).toBe("builtin");
     for (const resource of resources) {
       const bytes = readFileSync(resolve(root, resource.locator.slice("package://".length)));
       expect(resource.digest, resource.id).toBe(`sha256:${createHash("sha256").update(bytes).digest("hex")}`);
@@ -52,12 +52,12 @@ describe("Web Scenario playbooks and passive discovery", () => {
     for (const phase of descriptor.definition.phases) expect(phase.requiredCapabilities).toEqual(expect.arrayContaining(["tool.recall", "context.catalog", "context.read", "context.search"]));
   });
 
-  it("keeps the package identity version consistent across descriptor, runtime contract and workspace manifest", () => {
+  it("uses a fixed source identity before desktop build assigns its internal revision", () => {
     const manifest = JSON.parse(readFileSync(resolve(root, "scenario.json"), "utf8"));
     const workspace = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
     expect(manifest.package.version).toBe(PACKAGE_VERSION);
     expect(manifest.runtime.version).toBe(PACKAGE_VERSION);
-    expect(workspace.version).toBe(PACKAGE_VERSION);
+    expect(workspace).not.toHaveProperty("version");
   });
 
   it("extracts link and form metadata without credentials, scripts, comments or automatic form requests", () => {

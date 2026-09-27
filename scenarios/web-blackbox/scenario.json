@@ -1,6 +1,6 @@
 {
   "format": "traceforge.scenario-package.v1",
-  "package": { "id": "traceforge.web-blackbox", "version": "0.5.25", "schemaRevision": 1 },
+  "package": { "id": "traceforge.web-blackbox", "version": "builtin", "schemaRevision": 1 },
   "definition": {
     "kind": "web_blackbox",
     "version": 1,
@@ -236,7 +236,7 @@
   },
   "runtime": {
     "protocol": "traceforge-scenario-process-rpc", "protocolVersion": 1,
-    "id": "traceforge.web-blackbox", "version": "0.5.25", "source": "scenario:web_blackbox@1",
+    "id": "traceforge.web-blackbox", "version": "builtin", "source": "scenario:web_blackbox@1",
     "entrypoint": "package://runtime/main.mjs",
     "providedCapabilities": ["web.investigation.snapshot", "scope.read", "web.hypothesis.register", "web.validation.execute", "web.validation.review", "web.report.build", "web.request.replay", "web.validation.compare", "web.surface.explore", "web.session.use", "web.traffic.read", "web.browser.inspect", "web.browser.read"],
     "hostCapabilities": ["traceforge.scenario.authorization@1", "traceforge.scenario.execution@1", "traceforge.scenario.artifacts@1", "traceforge.scenario.state@1", "traceforge.scenario.evidence@1", "traceforge.scenario.sessions@1", "traceforge.scenario.traffic@1", "traceforge.scenario.browser@1"]

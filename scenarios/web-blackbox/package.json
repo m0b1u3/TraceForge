@@ -1,11 +1,10 @@
 {
   "name": "@traceforge/scenario-web-blackbox",
-  "version": "0.5.25",
   "type": "module",
   "main": "./src/index.ts",
   "exports": { ".": "./src/index.ts" },
   "scripts": {
-    "build:runtime": "tsc -p tsconfig.runtime.json && node ../../scripts/verify-scenario-runtime-build.mjs scenarios/web-blackbox",
+    "build:runtime": "tsc -p tsconfig.runtime.json",
     "build": "pnpm build:runtime && tsc -p tsconfig.json"
   },
   "dependencies": {

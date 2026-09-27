@@ -1,31 +1,36 @@
 import {createHash} from "node:crypto";
-import {readFileSync,realpathSync} from "node:fs";
-import {join,relative,isAbsolute} from "node:path";
-import {parseScenarioPackageDescriptor} from "@traceforge/scenario-sdk";
-import {type ScenarioHostConfiguration} from "./scenario-host-configuration.js";
-import {verifyMaterialFiles,type ScenarioReviewedInstallation,type ScenarioReviewAuthority} from "./scenario-package-trust.js";
+import {readFileSync} from "node:fs";
+import {join} from "node:path";
+import {parseScenarioPackageDescriptor,ScenarioPackageRegistry} from "@traceforge/scenario-sdk";
+import type {ScenarioPackageBinding} from "@traceforge/orchestration-core";
+import type {ScenarioProcessLaunch} from "@traceforge/worker-runtime";
+import type {PackageContextContent} from "./package-context-resources.js";
 
-/** Called only with the application's fixed resource directory. No renderer or
- * model can nominate a directory to be trusted as a built-in. */
-export function loadBundledScenarios(directory:string,helperPath:string):ScenarioHostConfiguration {
-  const root=realpathSync(directory),hash=(bytes:Buffer)=>createHash("sha256").update(bytes).digest("hex");
-  const inside=(path:string)=>{const full=realpathSync(join(root,path)),rel=relative(root,full);if(!rel||rel.startsWith("..")||isAbsolute(rel))throw new Error("Bundled material escapes application resources");return full;};
-  const catalog=JSON.parse(readFileSync(join(root,"catalog.json"),"utf8"));
-  if(catalog.version!==1||!Array.isArray(catalog.installations)||!catalog.installations.length)throw new Error("Invalid built-in Scenario catalog");
-  const executable=inside(catalog.node.file);
-  if(hash(readFileSync(executable))!==catalog.node.sha256)throw new Error("Bundled Node runtime changed");
-  const measurement=hash(readFileSync(helperPath)),installations:ScenarioReviewedInstallation[]=[],authorities=new Map<string,ScenarioReviewAuthority>();
-  const launches:Record<string,import("@traceforge/worker-runtime").ScenarioProcessLaunch>={};
-  for(const item of catalog.installations){
-    const packageRoot=inside(item.directory);verifyMaterialFiles(packageRoot,item.manifest);
-    const descriptor=parseScenarioPackageDescriptor(JSON.parse(readFileSync(join(packageRoot,"scenario.json"),"utf8")));
-    if(!descriptor.runtime||launches[descriptor.runtime.source])throw new Error("Invalid or duplicate built-in runtime");
-    installations.push({root:packageRoot,manifest:item.manifest,review:item.review});authorities.set(item.review.keyId,item.authority);
-    launches[descriptor.runtime.source]={executable,arguments:[join(packageRoot,item.manifest.entry)],workingDirectory:packageRoot,
-      attribution:{caseId:"foundation",runId:"scenario-services",workId:descriptor.id,workerId:"scenario-host",scopeRef:"host-scope",leaseId:"host-lease",leaseExpiresAt:"2098-01-01T00:00:00.000Z",actionId:"scenario.start",idempotencyKey:`scenario:${descriptor.id}:${descriptor.version}`},
-      permissions:{version:1,platform:"darwin",filesystem:{read:[{path:packageRoot,scope:"tree"},{path:executable,scope:"exact"}],write:[],deny:[]},network:"deny",process:{access:"sandboxed",interactive:false,background:false},secrets:"deny",sources:[descriptor.runtime.source]},
-      expectedSandboxBackend:"traceforge-macos-native",expectedBackendMeasurement:measurement,acceptedResourcePolicy:"sampled_terminate",
-      resources:{cpuTimeMs:60000,memoryBytes:268435456,maximumProcesses:2,writeBytes:1048576}};
+export interface BundledScenarioConfiguration {
+  registry:ScenarioPackageRegistry;
+  binding:ScenarioPackageBinding;
+  context:readonly PackageContextContent[];
+  launches:Readonly<Record<string,ScenarioProcessLaunch>>;
+}
+
+/** The path is fixed by the desktop application, never chosen by a model or web page. */
+export function loadBundledScenarios(directory:string,helperPath:string):BundledScenarioConfiguration {
+  const packageRoot=join(directory,"web-blackbox");
+  const descriptor=parseScenarioPackageDescriptor(JSON.parse(readFileSync(join(packageRoot,"scenario.json"),"utf8")));
+  const registry=new ScenarioPackageRegistry([descriptor]),binding=registry.bindingFor(descriptor);
+  const context:PackageContextContent[]=[];
+  for(const resource of descriptor.resourceManifest?.resources??[]){
+    if(!resource.context||resource.context.external)continue;
+    context.push({package:binding,resourceId:resource.id,
+      content:readFileSync(join(packageRoot,resource.locator.slice("package://".length)),"utf8")});
   }
-  return {trust:{installations,authority:key=>authorities.get(key)},launches};
+  const executable=join(directory,process.platform==="win32"?"node.exe":"node");
+  const measurement=createHash("sha256").update(readFileSync(helperPath)).digest("hex");
+  const runtime=descriptor.runtime!;
+  const launch:ScenarioProcessLaunch={executable,arguments:[join(packageRoot,runtime.entrypoint.slice("package://".length))],workingDirectory:packageRoot,
+    attribution:{caseId:"foundation",runId:"scenario-services",workId:descriptor.id,workerId:"scenario-host",scopeRef:"host-scope",leaseId:"host-lease",leaseExpiresAt:"2098-01-01T00:00:00.000Z",actionId:"scenario.start",idempotencyKey:`scenario:${descriptor.id}:${descriptor.version}`},
+    permissions:{version:1,platform:"darwin",filesystem:{read:[{path:packageRoot,scope:"tree"},{path:executable,scope:"exact"}],write:[],deny:[]},network:"deny",process:{access:"sandboxed",interactive:false,background:false},secrets:"deny",sources:[runtime.source]},
+    expectedSandboxBackend:"traceforge-macos-native",expectedBackendMeasurement:measurement,acceptedResourcePolicy:"sampled_terminate",
+    resources:{cpuTimeMs:60000,memoryBytes:268435456,maximumProcesses:2,writeBytes:1048576}};
+  return {registry,binding,context,launches:{[runtime.source]:launch}};
 }

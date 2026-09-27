@@ -49,7 +49,7 @@ export function ConfigurationSettings({ bridge, onDirty }: { bridge: DesktopConv
   async function previewVersion(from:ConfigurationSave["package"]) {
     if(locked.current||dirty||importing||pendingImport||!current)return;locked.current=true;setBusy(true);setError("");
     try{const reply=await bridge.request({path:"/api/desktop/configuration/import",method:"POST",body:JSON.stringify({package:current.package,expectedRevision:current.revision,from})});
-      if(reply.status!==200)throw new Error("旧版本导入预览失败，请重新读取。");if(alive.current)setVersionPreview(reply.body as ConfigurationImportPreview);
+      if(reply.status!==200)throw new Error("以前的设置预览失败，请重新读取。");if(alive.current)setVersionPreview(reply.body as ConfigurationImportPreview);
     }catch(cause){if(alive.current)setError((cause as Error).message);}finally{locked.current=false;if(alive.current)setBusy(false);}
   }
   useEffect(() => { alive.current = true; void perform(); return () => { alive.current = false; }; }, []);
@@ -67,31 +67,31 @@ export function ConfigurationSettings({ bridge, onDirty }: { bridge: DesktopConv
   return <section className="configuration-settings" aria-label="场景与扩展设置">
     <header><h2>场景与扩展</h2><p>调整调查指导与可用工具，不修改场景包。</p></header>
     <div className="configuration-toolbar">
-      <label>场景<select value={selected} disabled={busy || importing || pendingImport || dirty || !snapshot?.packages.length} onChange={e => { if (snapshot) select(snapshot, Number(e.target.value)); }}>
-        {snapshot?.packages.map((pkg, i) => <option key={`${pkg.package.id}@${pkg.package.version}`} value={i}>{pkg.title} · {pkg.package.version}</option>)}
-      </select></label>
+      {(snapshot?.packages.length??0)>1&&<label>场景<select value={selected} disabled={busy || importing || pendingImport || dirty} onChange={e => { if (snapshot) select(snapshot, Number(e.target.value)); }}>
+        {snapshot?.packages.map((pkg, i) => <option key={`${pkg.package.id}@${pkg.package.version}`} value={i}>{pkg.title}</option>)}
+      </select></label>}
       <button type="button" disabled={busy || importing || pendingImport} onClick={() => dirty ? setReloadConfirm(true) : void perform()}>重新读取</button>
       <button className="primary" type="button" disabled={busy || importing || pendingImport || !dirty} onClick={() => void perform(true)}>{busy ? "正在处理…" : "保存配置"}</button>
     </div>
     {reloadConfirm && <div role="group" aria-label="丢弃草稿确认"><p>重新读取会丢弃尚未保存的修改。</p><button disabled={busy || importing || pendingImport} onClick={() => void perform()}>丢弃并读取</button><button onClick={() => setReloadConfirm(false)}>保留草稿</button></div>}
     {error && <p role="alert">{error}</p>}{status && <p role="status">{status}</p>}
     {!snapshot && !error && <p role="status">正在读取配置…</p>}
-    {snapshot && !current && <p>还没有可用的已安装场景。安装并审核场景后，其指导资源会显示在这里。</p>}
+    {snapshot && !current && <p>内置场景暂不可用，请重新打开程序。</p>}
     {current && draft && <>
       <p className="configuration-meta">修订 {current.revision} · {dirty ? "有未保存的修改" : "与宿主一致"}。修改在新任务中生效。</p>
       {current.inspection&&<details><summary>配置历史与任务使用 · {current.inspection.runCount} 个绑定</summary><p>任务固定的是创建时配置，不会因修改默认值而自动更新。这里只展示最近 20 条绑定及修订。</p>{current.inspection.runs.map(run=><p key={run.runId}>{run.runId} · 配置修订 {run.revision}</p>)}{current.inspection.history.map(row=><section key={row.revision}><strong>修订 {row.revision}</strong><ul>{row.changes.map((change,i)=><li key={i}>{change}</li>)}</ul></section>)}</details>}
-      {!!current.previousVersions?.length&&<details><summary>从旧版本保留自定义配置</summary><p>旧版本配置不会删除。先预览不兼容项，再替换当前草稿；保存后才生效。</p>
-        {current.previousVersions.map(p=><button key={p.package.version} disabled={busy||dirty||importing||pendingImport||!!versionPreview} onClick={()=>void previewVersion(p.package)}>预览 {p.package.version} · 修订 {p.revision}</button>)}
+      {!!current.previousVersions?.length&&<details><summary>恢复以前的自定义设置</summary><p>以前的设置不会删除。先预览可恢复的内容，再替换当前草稿；保存后才生效。</p>
+        {current.previousVersions.map((p,i)=><button key={p.package.version} disabled={busy||dirty||importing||pendingImport||!!versionPreview} onClick={()=>void previewVersion(p.package)}>预览以前的设置 {i+1} · 修订 {p.revision}</button>)}
       </details>}
-      {versionPreview&&<div role="group" aria-label="版本配置导入确认"><p>将用旧版本的兼容项替换当前资源草稿。新版本默认内容可能已变化，请在保存前逐项核对。</p>{versionPreview.conflicts.map((text,i)=><p key={i}>{text}</p>)}
-        <button disabled={busy||importing||pendingImport} onClick={()=>{setDraft(versionPreview.draft);setDirty(true);setVersionPreview(null);setStatus("已导入草稿，请核对后保存。");}}>确认导入兼容项</button><button onClick={()=>setVersionPreview(null)}>取消导入版本</button></div>}
+      {versionPreview&&<div role="group" aria-label="旧设置导入确认"><p>将用以前保存的兼容项替换当前草稿。内置默认内容可能已变化，请在保存前逐项核对。</p>{versionPreview.conflicts.map((text,i)=><p key={i}>{text}</p>)}
+        <button disabled={busy||importing||pendingImport} onClick={()=>{setDraft(versionPreview.draft);setDirty(true);setVersionPreview(null);setStatus("已导入草稿，请核对后保存。");}}>确认导入兼容项</button><button onClick={()=>setVersionPreview(null)}>取消导入</button></div>}
       <h3>提示词与 Skills</h3>
       <div className="configuration-editor">
         <nav aria-label="场景资源">{current.resources.map(r => <button key={r.id} type="button" aria-current={resourceId === r.id ? "true" : undefined} onClick={() => { setResourceId(r.id); setRestoreConfirm(false); }}>
           <span>{r.id}</span><small>{r.type === "skill" ? "Skill / 场景指导" : "知识资源"}</small>
         </button>)}</nav>
         {resource ? <div className="configuration-document">
-          <p className="configuration-meta">来源：场景包 {current.package.id} · {current.package.version}。用户修改独立保存，不覆盖包内默认内容。</p>
+          <p className="configuration-meta">来源：内置场景。用户修改独立保存，不覆盖默认内容。</p>
           <p>{resource.summary}</p><p className="configuration-meta">角色：{resource.roles.join("、")} · 阶段：{resource.phases.join("、") || "不限阶段"}</p>
           {resource.editable && override ? <>
             <label className="configuration-check"><input type="checkbox" checked={override.enabled} disabled={busy || importing || pendingImport} onChange={e => changeResource({ enabled: e.target.checked })} />为新任务启用此资源</label>

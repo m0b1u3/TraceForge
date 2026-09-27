@@ -26,7 +26,10 @@ it("edits, saves, restores with confirmation and keeps drafts on save failure", 
   const click = async (text: string) => act(async () => { [...node.querySelectorAll("button")].find(b => b.textContent === text)!.click(); });
   const field = () => node.querySelector("textarea")!;
   const edit = async (value: string) => act(async () => { field().value = value; Simulate.change(field()); });
-  expect(calls).toEqual(["GET"]); await edit("Edited"); await click("保存配置");
+  expect(calls).toEqual(["GET"]);
+  expect(node.querySelector(".configuration-toolbar select")).toBeNull();
+  expect(node.textContent).not.toContain("Neutral · 1");
+  await edit("Edited"); await click("保存配置");
   expect(state.packages[0]!.resources[0]!.content).toBe("Edited");
   await click("恢复默认内容"); expect(field().value).toBe("Edited"); await click("确认恢复");
   expect(field().value).toBe("Default"); await click("保存配置"); expect(state.packages[0]!.resources[0]!.content).toBeNull();

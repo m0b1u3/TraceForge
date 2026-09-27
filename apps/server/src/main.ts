@@ -66,7 +66,7 @@ export async function buildServer(
   projectRoot = PROJECT_ROOT,
   webRoot?: string,
   hostOptions: Pick<SecurityAgentFoundationOptions, "backup"|"offlineMedia"|"retentionAuthorizer"|"recoveryReadiness"|"recoveryActivation"|"deployment"|"browserDeployment"|"browserInstallation"|"embeddedBrowser">
-    & { desktopTaskPreferences?:()=>string|null; bundledScenarioConfiguration?:import("./scenario-host-configuration.js").ScenarioHostConfiguration; closeActiveConnections?:boolean; diagnosticStream?: { write(line: string): void }; continuationCipher?:import("./conversation-continuations.js").ContinuationCipher; llmSecretStore?: LlmSecretStore; browserInstallationPath?: string; modelAccounts?: ModelAccounts; desktopMcp?: SecurityAgentFoundationOptions["desktopMcp"]; desktopResources?: SecurityAgentFoundationOptions["desktopResources"]; publishReplyDelta?: (event: import("./desktop-replies.js").DesktopReplyDelta) => void } = {},
+    & { desktopTaskPreferences?:()=>string|null; bundledScenarioConfiguration?:import("./bundled-scenarios.js").BundledScenarioConfiguration; closeActiveConnections?:boolean; diagnosticStream?: { write(line: string): void }; continuationCipher?:import("./conversation-continuations.js").ContinuationCipher; llmSecretStore?: LlmSecretStore; browserInstallationPath?: string; modelAccounts?: ModelAccounts; desktopMcp?: SecurityAgentFoundationOptions["desktopMcp"]; desktopResources?: SecurityAgentFoundationOptions["desktopResources"]; publishReplyDelta?: (event: import("./desktop-replies.js").DesktopReplyDelta) => void } = {},
 ) {
   const { desktopTaskPreferences,bundledScenarioConfiguration,diagnosticStream,closeActiveConnections=false,continuationCipher,llmSecretStore: suppliedLlmSecretStore, browserInstallationPath, modelAccounts, publishReplyDelta, ...foundationHostOptions } = hostOptions;
   if (browserInstallationPath !== undefined) {
@@ -134,13 +134,8 @@ export async function buildServer(
     app.log.warn({ err }, "LLM provider not initialized from config; save settings before running Agent");
   }
   const provider = llmService.getProvider();
-  const configuredScenarios = loadScenarioHostConfiguration(projectRoot === PROJECT_ROOT
+  const configuredScenarios = bundledScenarioConfiguration ? undefined : loadScenarioHostConfiguration(projectRoot === PROJECT_ROOT
     ? DEFAULT_SCENARIO_CONFIG_PATH : resolve(projectRoot, "config/scenarios.json"));
-  const bundledIds=new Set(bundledScenarioConfiguration?.trust.installations?.map(i=>i.manifest.package.id));
-  const scenarioHost = bundledScenarioConfiguration ? {trust:{
-    installations:[...(configuredScenarios.trust.installations??[]).filter(i=>!bundledIds.has(i.manifest.package.id)),...(bundledScenarioConfiguration.trust.installations??[])],
-    authority:(key:string)=>bundledScenarioConfiguration.trust.authority?.(key)??configuredScenarios.trust.authority?.(key),
-  },launches:{...configuredScenarios.launches,...bundledScenarioConfiguration.launches}} : configuredScenarios;
   let scenarioAuthorization: ScenarioAuthorizationPort | undefined;
   const authorizationProxy: ScenarioAuthorizationPort = {
     requireAction(scopeRef, caseId, action) {
@@ -158,9 +153,14 @@ export async function buildServer(
   registerSecurityAgentFoundation(app, sqlite, provider, projectRoot, () => llmService.hasProvider(), {
     ...effectiveHostOptions,
     onOperatorContinuationReady: port => { continueWork = port; },
-    scenarioPackageTrust: scenarioHost.trust,
-    loadScenarioPackageDescriptors: (scenarioHost.trust.installations?.length ?? 0) > 0,
-    scenarioProcessLaunches: scenarioHost.launches,
+    scenarioPackageTrust: bundledScenarioConfiguration
+      ? {builtInPackages:[bundledScenarioConfiguration.binding]} : configuredScenarios!.trust,
+    ...(bundledScenarioConfiguration?{
+      scenarioPackageRegistry:bundledScenarioConfiguration.registry,
+      contextResourceContents:bundledScenarioConfiguration.context,
+    }:{}),
+    loadScenarioPackageDescriptors: !bundledScenarioConfiguration && (configuredScenarios!.trust.installations?.length ?? 0) > 0,
+    scenarioProcessLaunches: bundledScenarioConfiguration?.launches ?? configuredScenarios!.launches,
     onScenarioAuthorizationReady: (authorization) => { scenarioAuthorization = authorization; },
     modelRoutes: llmService.getModelRoutes(),
     modelPolicies: llmService.getRolePolicies(),

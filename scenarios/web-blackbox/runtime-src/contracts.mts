@@ -1,6 +1,6 @@
 export const PROTOCOL_VERSION = 1;
 export const PACKAGE_ID = "traceforge.web-blackbox";
-export const PACKAGE_VERSION = "0.5.25";
+export const PACKAGE_VERSION = "builtin";
 export const SOURCE = "scenario:web_blackbox@1";
 
 export type JsonObject = Record<string, any>;

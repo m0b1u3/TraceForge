@@ -47,7 +47,7 @@ export function McpSettings({bridge,onDirty}:{bridge:DesktopConversations;onDirt
     <div className="configuration-toolbar"><button disabled={busy||dirty||reviewDirty||!!confirmation||!snapshot?.packages.length} onClick={create}>新建连接</button><button disabled={busy||!!confirmation} onClick={()=>dirty||reviewDirty?setConfirmation("reload"):void perform()}>重新读取连接</button></div>
     {error&&<p role="alert">{error}</p>}{status&&<p role="status">{status}</p>}
     {!snapshot&&!error&&<p role="status">正在读取 MCP 配置…</p>}
-    {snapshot&&!snapshot.packages.length&&<p>请先安装并审核一个场景，才能为其配置工具。</p>}
+    {snapshot&&!snapshot.packages.length&&<p>内置场景暂不可用，请重新打开程序。</p>}
     {snapshot&&!draft&&snapshot.packages.length>0&&<p>还没有 MCP 连接。新建后输入服务地址，保存不会发送网络请求。</p>}
     {draft&&<div className="configuration-editor">
       <nav aria-label="MCP 连接列表">{snapshot?.connections.map(c=><button key={c.connection.id} disabled={busy||dirty||reviewDirty||!!confirmation} aria-current={draft.id===c.connection.id?"true":undefined} onClick={()=>choose(snapshot,c.connection.id)}><span>{c.connection.name}</span><small>{c.enabled?"有启用修订":"未启用"} · 修订 {c.revision}</small></button>)}</nav>
@@ -83,7 +83,7 @@ export function McpSettings({bridge,onDirty}:{bridge:DesktopConversations;onDirt
         <label>程序最长运行时间（秒）<input type="number" min={1} max={2147483} value={Math.floor((draft.processTimeoutMs??600000)/1000)} onChange={e=>patch({processTimeoutMs:Number(e.target.value)*1000})}/></label>
         <p>本地程序只可通过宿主代理访问列出的站点来源，不继承宿主环境。配置凭证变量并单独保存凭证后，该值只在测试和调用时传给此程序。测试会执行程序并授予列出的文件及网络范围；无法确认沙箱有效时拒绝启动。</p>
         </>}
-        <label>适用场景<select value={JSON.stringify(draft.package)} onChange={e=>{const p=snapshot!.packages.find(p=>JSON.stringify(p.package)===e.target.value)!;patch({package:p.package,authorizationAction:p.actions[0]??"",capability:p.capabilities[0]??""});}}>{snapshot?.packages.map(p=><option key={JSON.stringify(p.package)} value={JSON.stringify(p.package)}>{p.title} · {p.package.version}</option>)}</select></label>
+        {(snapshot?.packages.length??0)>1&&<label>适用场景<select value={JSON.stringify(draft.package)} onChange={e=>{const p=snapshot!.packages.find(p=>JSON.stringify(p.package)===e.target.value)!;patch({package:p.package,authorizationAction:p.actions[0]??"",capability:p.capabilities[0]??""});}}>{snapshot?.packages.map(p=><option key={JSON.stringify(p.package)} value={JSON.stringify(p.package)}>{p.title}</option>)}</select></label>}
         <label>需要的授权动作<select value={draft.authorizationAction} onChange={e=>patch({authorizationAction:e.target.value})}>{pkg?.actions.map(a=><option key={a}>{a}</option>)}</select></label>
         <label>提供给工作任务的能力<select value={draft.capability} onChange={e=>patch({capability:e.target.value})}>{pkg?.capabilities.map(c=><option key={c}>{c}</option>)}</select></label>
         {(draft.transport==="streamable-http"||draft.secretEnvironmentVariable)&&<label>{draft.transport==="stdio"?"本地程序凭证":"Bearer 凭证"}（可选，仅写入安全存储）<input type="password" autoComplete="new-password" disabled={!snapshot?.secureStorage} value={credential} placeholder={current?.credentialConfigured?"已保存；留空保留":"未设置"} onChange={e=>{setCredential(e.target.value);setDirty(true);}}/></label>}

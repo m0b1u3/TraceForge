@@ -1,44 +1,10 @@
-// Test-only material, signed by an ephemeral authority inside isolated userData.
-// Does not change production trust, grant a Run scope or execute Scenario work.
-import {createHash,generateKeyPairSync} from "node:crypto";
-import {mkdirSync,readFileSync,readdirSync,writeFileSync,existsSync,realpathSync} from "node:fs";
-import {join,dirname,resolve} from "node:path";
+// Local acceptance targets only; the desktop loads its one built-in Scenario.
+import {readFileSync,writeFileSync,existsSync} from "node:fs";
+import {join} from "node:path";
 import {createRequire} from "node:module";
 import {createServer} from "node:http";
-import {parseScenarioPackageDescriptor} from "../packages/scenario-sdk/src/index.ts";
-import {scenarioMaterialDigest,scenarioPackageContractDigest,signScenarioPackageReview} from "../apps/server/src/scenario-package-trust.ts";
 
 export async function installAcceptanceFixtures(root){
-  const destination=join(root,"package"),config=join(root,"config","scenarios.json");
-  if(!existsSync(config)){
-    const source=resolve("scenarios/web-blackbox");
-    const descriptor=parseScenarioPackageDescriptor(JSON.parse(readFileSync(join(source,"scenario.json"),"utf8")));
-    const paths=["scenario.json",...readdirSync(join(source,"runtime")).filter(n=>n.endsWith(".mjs")).map(n=>`runtime/${n}`),...descriptor.resourceManifest.resources.map(r=>r.locator.slice("package://".length))];
-    const files=[...new Set(paths)].map(path=>{
-      const bytes=readFileSync(join(source,path));mkdirSync(dirname(join(destination,path)),{recursive:true});writeFileSync(join(destination,path),bytes);
-      return {path,role:path==="runtime/main.mjs"?"entry":path.startsWith("runtime/")?"dependency":"data",size:bytes.length,digest:`sha256:${createHash("sha256").update(bytes).digest("hex")}`};
-    });
-    const manifest={format:"traceforge.scenario-material.v1",package:{id:descriptor.id,version:descriptor.version,schemaRevision:descriptor.schemaRevision},entry:"runtime/main.mjs",files};
-    const keys=generateKeyPairSync("ed25519"),keyId="isolated-desktop-review";
-    const review=signScenarioPackageReview({format:"traceforge.scenario-review.v1",package:manifest.package,materialDigest:scenarioMaterialDigest(manifest),contractDigest:scenarioPackageContractDigest(descriptor),assemblyRef:"isolated-desktop",keyId,reviewRef:"test-only",issuedAt:"2026-01-01T00:00:00.000Z",expiresAt:"2098-01-01T00:00:00.000Z"},keys.privateKey.export({type:"pkcs8",format:"pem"}).toString());
-    writeFileSync(config,JSON.stringify({format:"traceforge.scenario-host.v1",installations:[{root:destination,manifest,review}],authorities:[{keyId,publicKeyPem:keys.publicKey.export({type:"spki",format:"pem"}).toString(),packageIds:[descriptor.id],validFrom:"2025-01-01T00:00:00.000Z",validUntil:"2099-01-01T00:00:00.000Z"}],launches:[]}),{mode:0o600});
-  }
-  const configured=JSON.parse(readFileSync(config,"utf8"));
-  if(configured.authorities?.[0]?.keyId==="isolated-desktop-review"&&!configured.launches.length){
-    const descriptor=parseScenarioPackageDescriptor(JSON.parse(readFileSync(join(destination,"scenario.json"),"utf8")));
-    // Electron's executable is not a standalone Node interpreter. The acceptance
-    // caller supplies an installed Node runtime; never turn on an unsandboxed fallback.
-    const nodePath=process.env.TRACEFORGE_ACCEPTANCE_NODE??(process.versions.electron?undefined:process.execPath);
-    if(!nodePath)throw new Error("Set TRACEFORGE_ACCEPTANCE_NODE to an installed standalone Node executable");
-    const executable=realpathSync(nodePath);
-    configured.launches=[{source:descriptor.runtime.source,executable,arguments:["@config/../package/runtime/main.mjs"],workingDirectory:"../package",
-      attribution:{caseId:"foundation",runId:"scenario-services",workId:descriptor.id,workerId:"scenario-host",scopeRef:"host-scope",leaseId:"host-lease",leaseExpiresAt:"2098-01-01T00:00:00.000Z",actionId:"scenario.start",idempotencyKey:`scenario:${descriptor.id}`},
-      permissions:{version:1,platform:"darwin",filesystem:{read:[{path:destination,scope:"tree"},{path:executable,scope:"exact"}],write:[],deny:[]},network:"deny",process:{access:"sandboxed",interactive:false,background:false},secrets:"deny",sources:[descriptor.runtime.source]},
-      expectedSandboxBackend:"traceforge-macos-native",acceptedResourcePolicy:"sampled_terminate",
-      expectedBackendMeasurement:createHash("sha256").update(readFileSync(process.env.TRACEFORGE_MACOS_SANDBOX_HELPER)).digest("hex"),
-      resources:{cpuTimeMs:60000,memoryBytes:268435456,maximumProcesses:2,writeBytes:1048576}}];
-    writeFileSync(config,JSON.stringify(configured),{mode:0o600});
-  }
   const pdfPath=join(root,"preview-fixture.pdf");
   if(!existsSync(pdfPath)){
     const {PDFDocument}=createRequire(new URL("../apps/server/package.json",import.meta.url))("pdf-lib");
