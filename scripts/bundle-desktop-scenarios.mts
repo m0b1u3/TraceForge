@@ -1,5 +1,5 @@
 import {createHash,generateKeyPairSync} from "node:crypto";
-import {copyFileSync,chmodSync,mkdirSync,readFileSync,readdirSync,realpathSync,writeFileSync} from "node:fs";
+import {copyFileSync,chmodSync,mkdirSync,readFileSync,readdirSync,realpathSync,rmSync,writeFileSync} from "node:fs";
 import {dirname,join,resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {parseScenarioPackageDescriptor} from "../packages/scenario-sdk/src/index.js";
@@ -31,4 +31,9 @@ for(const name of catalog.packages){
   installations.push({directory,manifest,review,authority:{keyId,publicKeyPem:keys.publicKey.export({type:"spki",format:"pem"}).toString(),packageIds:[descriptor.id],validFrom:issuedAt,validUntil:expiresAt}});
 }
 writeFileSync(join(output,"catalog.json"),JSON.stringify({version:1,node:{file:nodeName,sha256:hash(nodeBytes)},installations},null,2));
+const current=new Set(installations.map(item=>item.directory));
+for(const item of readdirSync(output,{withFileTypes:true})){
+  if(item.isDirectory()&&!current.has(item.name)&&catalog.packages.some(name=>new RegExp(`^${name}-[0-9]+[.][0-9]+[.][0-9]+-[a-f0-9]{12}$`).test(item.name)))
+    rmSync(join(output,item.name),{recursive:true});
+}
 console.log(`Bundled ${installations.length} built-in Scenario(s) and standalone Node runtime`);

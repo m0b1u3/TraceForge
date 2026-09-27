@@ -11,6 +11,7 @@ import { createDb, getSqliteClient } from "./db/client.js";
 import { SqliteProcessExecutionJournal } from "./execution-process-journal.js";
 import { SqliteToolInvocationBindingStore, SqliteToolReceiptStore } from "./worker-execution-adapters.js";
 
+const testNode = process.env.TRACEFORGE_TEST_NODE ?? process.execPath;
 const databases = new Set<Database.Database>();
 const directories: string[] = [];
 afterEach(() => {
@@ -26,10 +27,10 @@ function setup(maximumRetainedEventsPerProcess = 4096) {
   const request: StartProcessRequest = {
     requestId: "request", attribution: { caseId: "case", runId: "run", workId: "work", workerId: "worker", scopeRef: "scope",
       leaseId: "lease", leaseExpiresAt: "2099-01-01T00:00:00.000Z", actionId: "action", idempotencyKey: "effect" },
-    executable: process.execPath, arguments: ["--version"], workingDirectory: root,
+    executable: testNode, arguments: ["--version"], workingDirectory: root,
     environment: { PRIVATE_TEST_VALUE: "not-stored-in-journal" }, stdin: "closed", timeoutMs: 5000, outputLimitBytes: 1024,
     resources: { cpuTimeMs: 5000, memoryBytes: 134217728, maximumProcesses: 1, writeBytes: 1048576 },
-    permissions: { version: 1, platform, filesystem: { read: [{ path: dirname(process.execPath), scope: "tree" }, { path: root, scope: "tree" }], write: [], deny: [] },
+    permissions: { version: 1, platform, filesystem: { read: [{ path: dirname(testNode), scope: "tree" }, { path: root, scope: "tree" }], write: [], deny: [] },
       network: "deny", process: { access: "sandboxed", interactive: false, background: false }, secrets: "deny", sources: ["test"] },
   };
   // Test-only launcher: this validates real subprocess bookkeeping, NOT native sandbox isolation.

@@ -123,15 +123,35 @@ describe("WorkerHost", () => {
   });
   it("waits without inference, renews ownership and resumes after Host interaction", async () => {
     const current = assignment(); current.leaseExpiresAt = new Date(Date.now() + 10000).toISOString();
-    const control = new FakeControl(current); let held = true, renewals = 0, calls = 0;
+    const control = new FakeControl(current); let held = true, renewals = 0, calls = 0, releaseGuidance = false;
     control.renew = async value => { renewals++; control.current = { ...value, leaseExpiresAt: new Date(Date.now() + 120000).toISOString() }; return control.current; };
-    const host = new WorkerHost(worker, control, { async decide() { calls++; return { type: "complete", summary: "Done", outputs: [] }; } },
+    const host = new WorkerHost(worker, control, { async decide(request) { calls++; releaseGuidance = request.steering.some(item => item.includes("control has returned")); return { type: "complete", summary: "Done", outputs: [] }; } },
       { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("unexpected"); } }, continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(),
       { executionHoldReason: () => held ? "Host interaction" : undefined, renewBeforeMs: 30000 });
     const running = host.execute(current);
     await new Promise(resolve => setTimeout(resolve, 150));
     expect(calls).toBe(0); expect(renewals).toBe(1); expect(control.completed).toBeUndefined();
-    held = false; expect((await running).outcome).toBe("completed"); expect(calls).toBe(1);
+    held = false; expect((await running).outcome).toBe("completed"); expect(calls).toBe(1); expect(releaseGuidance).toBe(true);
+  });
+  it("can correct three failed read-only references without losing the Work", async () => {
+    const control = new FakeControl(); let reads = 0, searched = false, sawGuidance = false;
+    const spec = (name: string) => ({ name, source: "fixture", version: "1", priority: 1, description: name,
+      inputSchema: {}, providedCapabilities: [], dependencyCapabilities: [], permissionRequirements: {},
+      risk: "read_only" as const, timeoutMs: 1000 });
+    const model: WorkerModel = { async decide(request) {
+      if (reads < 3) return { type: "invoke_tool", invocation: { id: `bad-${reads}`, tool: "read", input: { ref: `unknown-${reads}` }, rationale: "Read an exact reference" } };
+      sawGuidance = request.steering.some(item => item.includes("do not infer identifiers"));
+      return searched ? { type: "complete", summary: "Recovered from missing references", outputs: [] }
+        : { type: "invoke_tool", invocation: { id: "search", tool: "search", input: {}, rationale: "Find an available reference" } };
+    } };
+    const result = await new WorkerHost(worker, control, model, {
+      async catalog() { return resolvedCatalog([spec("read"), spec("search")]); },
+      async execute(input) {
+        if (input.invocation.tool === "read") { reads++; return { status: "failed" as const, summary: "Reference unavailable", raw: "", refs: [], retryable: false }; }
+        searched = true; return { status: "succeeded" as const, summary: "Found", raw: "found", refs: [], retryable: false };
+      },
+    }, new LoopGuardObserver(), new MemoryCheckpoints(), new BoundedOutputDistiller()).execute(assignment());
+    expect(result.outcome).toBe("completed"); expect(reads).toBe(3); expect(searched).toBe(true); expect(sawGuidance).toBe(true);
   });
   it.each(["complete", "block"] as const)("discards %s when takeover begins while the terminal checkpoint is saved", async type => {
     const control = new FakeControl(); let held = false, calls = 0, release!: () => void;
@@ -371,7 +391,7 @@ describe("WorkerHost", () => {
 
   it.each(["missing-recovery", "uncertain", "changed-contract", "exhausted-budget"])("fails closed on %s without asking the model", async (failure) => {
     const { current, checkpoints, control } = suspended(); let modelCalls = 0; let executions = 0;
-    if (failure === "exhausted-budget") checkpoints.document!.consecutiveFailures = 3;
+    if (failure === "exhausted-budget") checkpoints.document!.consecutiveFailures = 8;
     const runtime = new WorkerHost(worker, control, { async decide() { modelCalls++; throw new Error("unexpected model"); } }, {
       recover: failure === "missing-recovery" ? undefined : async () => {
         if (failure === "uncertain") throw new ToolInvocationRecoveryRequiredError("Uncertain effect");

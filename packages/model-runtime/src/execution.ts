@@ -164,6 +164,9 @@ function errorMessage(error: unknown): string {
 
 function retryable(error: unknown): boolean {
   const value = error as { name?: string; status?: number; statusCode?: number; code?: string; message?: string };
+  // Function arguments are parsed before any tool dispatch. A fresh, audited
+  // model attempt can correct a malformed response within the role policy.
+  if (value.code === "MODEL_RESPONSE_FORMAT") return true;
   if (value.name === "AbortError" || value.name === "TimeoutError") return true;
   const status = value.status ?? value.statusCode;
   if (status !== undefined) return [408, 409, 425, 429, 500, 502, 503, 504].includes(status);

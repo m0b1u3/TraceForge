@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { OpenAICompatibleProvider } from "./openai-provider.js";
+import { OpenAICompatibleProvider, assembleOpenAIStreamChoice } from "./openai-provider.js";
 import { AnthropicProvider } from "./anthropic-provider.js";
 
 function upstream() {
@@ -12,6 +12,14 @@ function upstream() {
   return { fetch, send(value: object, type?: string) { controller.enqueue(new TextEncoder().encode(`${type ? `event: ${type}\n` : ""}data: ${JSON.stringify(value)}\n\n`)); }, end() { controller.close(); }, fail() { controller.error(new Error("ECONNRESET")); } };
 }
 const args = { system: "Text only", messages: [{ role: "user" as const, content: "Hello" }], tools: [] };
+it("classifies malformed native function arguments before tool dispatch without exposing their contents", () => {
+  const malformed = '{"scope":"private-value" "missingComma":true}';
+  let error: unknown;
+  try { assembleOpenAIStreamChoice([{ choices: [{ delta: { tool_calls: [{ index: 0, id: "call", function: { name: "tf_complete", arguments: malformed } }] }, finish_reason: "tool_calls" }] }]); }
+  catch (caught) { error = caught; }
+  expect(error).toMatchObject({ code: "MODEL_RESPONSE_FORMAT" });
+  expect(String(error)).not.toContain("private-value");
+});
 it("streams public reasoning separately before JSON completion", async () => {
   const u = upstream(), provider = new OpenAICompatibleProvider({ apiKey: "test", model: "neutral", fetch: u.fetch });
   const reasoning = vi.fn(); let done = false;

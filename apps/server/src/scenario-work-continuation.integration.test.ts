@@ -98,7 +98,7 @@ describe("Authorized partial Work continuation", () => {
     const upgraded = upgradeWorkerCheckpoint(c.checkpoint, { caseId: "case", workKey: "effect", sessionId: "session", workerId: "worker", leaseId: "lease" });
     upgraded.pendingInvocation = null;
     upgraded.journal.turn = kind === "turns" ? 96 : 55;
-    upgraded.journal.consecutiveFailures = kind === "failures" ? 3 : 0;
+    upgraded.journal.consecutiveFailures = kind === "failures" ? 8 : 0;
     upgraded.longTask = { policy: { segmentTurns: 24, maximumTurns: 96, maximumDurationMs: 120000 },
       startedAt: kind === "duration" ? new Date(Date.parse(at) - 120000).toISOString() : at };
     const ref = await c.store.save(upgraded);
@@ -201,7 +201,7 @@ describe("Authorized partial Work continuation", () => {
       else c.checkpoint.pendingInvocation!.contractFingerprint = "b".repeat(64);
     }
     if (kind === "wrong-case") c.checkpoint.caseId = "other";
-    if (kind === "failure-budget") c.checkpoint.consecutiveFailures = 3;
+    if (kind === "failure-budget") c.checkpoint.consecutiveFailures = 8;
     if (kind === "legacy") { c.checkpoint.version = 1; delete c.checkpoint.pendingInvocation; }
     await c.save(); c.block();
     expect((await c.continuation().continue(c.input())).audit.outcome).toBe("rejected");

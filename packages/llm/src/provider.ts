@@ -87,7 +87,7 @@ export interface EmbedArgs {
 export interface LlmProvider {
   /** Side-effect-free modality preflight; never sends a request. */
   validateInput?(messages:TurnMessage[]):void;
-  readonly contextLimits?: { contextWindowTokens?: number; maxOutputTokens?: number; inputTokenMultiplier?: number };
+  readonly contextLimits?: { contextWindowTokens?: number; maximumInputTokens?: number; maxOutputTokens?: number; inputTokenMultiplier?: number };
   extractJson(args: ExtractJsonArgs): Promise<unknown>;
   runTools(args: RunToolsArgs): Promise<RunTurn>;
   streamTools?(args: RunToolsArgs, handlers: StreamToolsHandlers): Promise<RunTurn>;

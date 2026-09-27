@@ -12,6 +12,14 @@ export type OpenAIOptions = ModelAdapterOptions;
 
 interface ToolAccumulator { id: string; name: string; args: string }
 
+function parseFunctionArguments(raw: string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(raw || "{}");
+    if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  } catch { /* A model format error is retryable before any tool dispatch. */ }
+  throw Object.assign(new Error("Model function arguments are not a valid JSON object"), { code: "MODEL_RESPONSE_FORMAT" });
+}
+
 type OpenAIStreamChunk = {
   choices?: Array<{
     delta?: {
@@ -65,7 +73,7 @@ export function assembleOpenAIStreamChoice(chunks: OpenAIStreamChunk[]): RunTurn
   const toolCalls: ToolCall[] = [...tools.values()].map((tc) => ({
     id: tc.id,
     name: tc.name,
-    input: JSON.parse(tc.args || "{}"),
+    input: parseFunctionArguments(tc.args),
   }));
   const text = contentText;
   const reasoning = reasoningText && reasoningText !== contentText ? reasoningText : undefined;
@@ -209,7 +217,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     const choice = res.choices[0];
     const toolCalls: ToolCall[] = (choice.message.tool_calls ?? []).map((tc) => {
       const fn = (tc as { function: { name: string; arguments: string } }).function;
-      return { id: tc.id, name: fn.name, input: JSON.parse(fn.arguments || "{}") };
+      return { id: tc.id, name: fn.name, input: parseFunctionArguments(fn.arguments) };
     });
     emitUsage(args.onUsage, res.usage);
     const rawReasoning = (choice.message as {reasoning_content?:string}).reasoning_content;

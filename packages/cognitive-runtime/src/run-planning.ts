@@ -45,6 +45,7 @@ const plannerDecision = z.discriminatedUnion("action", [
 
 export type RunPlannerDecision = z.infer<typeof plannerDecision>;
 export const parseRunPlannerDecision = (value: unknown): RunPlannerDecision => plannerDecision.parse(value);
+const plannerPromptRevision = "phase-local-work-v2";
 
 export interface RunPlannerSnapshot {
   contextId: string;
@@ -133,9 +134,10 @@ export class StructuredRunPlannerModel implements RunPlannerModel {
         "Authorization actions and tool capabilities are different namespaces. Use scenario.capabilityAuthorization to interpret declared mappings, not literal capability membership in an action list. A prior Work's limited tool catalog is not a Run-wide denial. Declarations and mappings do not grant permission or prove runtime readiness; actual tool dispatch still enforces the current scope.",
         "For proposal evidenceRefs, copy only exact entries from referenceCatalog.evidenceRefs; use [] when no evidence reference is needed. Work IDs, work: prefixes, result summaries and event IDs are not evidence references. Carry prior Work context in the objective without claiming it as evidence.",
         "Avoid duplicate Work. Cancel or reprioritize only queued Work when the supplied state justifies it.",
+        "Propose Work only for the active phase's objective and output kinds; do not fold a later phase's operation into setup Work. When an operation needs one live Work-owned resource, start it in the phase that can publish its result, and keep handoff, return, observation and release in that same Work. Do not propose a concurrent or follow-on Work that would need another Work's live handle.",
         "Prioritize pending Work inquiries. Use action answer with the exact workId and inquiryId to provide actionable guidance; this continues that Work without granting permissions or verifying findings. Do not replace a waiting inquiry with duplicate Work.",
         "Plan for the active Scenario phase and its objective. Concrete attack or analysis techniques come only from the Scenario Profile, never from product-wide assumptions.",
-        "Phase-required output kinds are Work completion outputs, not Knowledge Graph node kinds. Ask Workers to publish them using complete.outputs with supported references. Graph mutations are optional supporting records and never substitute for the required Run outputs.",
+        "Phase-required output kinds are Work completion outputs, not Knowledge Graph node kinds. Only outputs whose phaseId equals run.activePhaseId satisfy the current phase transition; earlier outputs remain reusable evidence but do not satisfy it. Use currentPhaseOutputs to identify what is still missing. If required phase-local outputs are missing and no Work can produce them, propose bounded Work rather than waiting. Ask Workers to publish them using complete.outputs with supported references. Graph mutations are optional supporting records and never substitute for the required Run outputs.",
         "Return only the requested JSON and never expose private chain-of-thought.",
       ].join("\n"),
       user: JSON.stringify({
@@ -146,6 +148,7 @@ export class StructuredRunPlannerModel implements RunPlannerModel {
           activePhaseId: context.run.activePhaseId, availableCapabilities: context.run.availableCapabilities,
           workItems: context.run.workItems, outputs: context.run.outputs, directives: context.run.directives,
         },
+        currentPhaseOutputs: context.run.outputs.filter(output => output.phaseId === phase.id),
         graph: context.graph, recentEvents: context.recentEvents, contextManifest: context.manifest, referenceCatalog,
       }),
       schema: snapshot.run.workItems.some(work=>work.status==="blocked"&&work.inquiry?.status==="pending")
@@ -246,7 +249,7 @@ export class RunPlannerSupervisor {
       const config = definition.agentTopology.planner;
       if (!config.enabled) continue;
       const graph = this.graphs.ensure(run.caseId, this.now());
-      const fingerprint = planningFingerprint(run, graph, config.maximumGraphNodes, config.maximumRunItems)
+      const fingerprint = `${plannerPromptRevision}:${planningFingerprint(run, graph, config.maximumGraphNodes, config.maximumRunItems)}`
         + (this.contextPolicy ? `:${await this.contextPolicy.fingerprint(run, "planner")}` : "");
       if (this.store.cursor(run.id) === fingerprint) continue;
       await this.evaluateRun(run, definition, graph, fingerprint);
@@ -281,7 +284,7 @@ export class RunPlannerSupervisor {
       throw new Error("Planner context changed during evaluation; reevaluate current state");
     }
     if (this.contextPolicy && evaluation.decision.action === "advance"
-      && fingerprint !== planningFingerprint(currentRun, currentGraph, config.maximumGraphNodes, config.maximumRunItems)
+      && fingerprint !== `${plannerPromptRevision}:${planningFingerprint(currentRun, currentGraph, config.maximumGraphNodes, config.maximumRunItems)}`
         + `:${await this.contextPolicy.fingerprint(currentRun, "planner")}`)
       throw new Error("Planner context sources changed before phase transition");
     const result = this.applyDecision(run.id, evaluation.id, evaluation.observedPhaseId, evaluation.decision);

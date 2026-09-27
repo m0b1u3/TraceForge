@@ -58,7 +58,7 @@ export interface WorkerRunResult {
 export const defaultWorkerRuntimeOptions: Readonly<WorkerHostOptions> = {
   maxDistilledCharacters: 8_000,
   renewBeforeMs: 20_000,
-  repeatedFailureLimit: 3,
+  repeatedFailureLimit: 8,
   ownershipPollMs: 1000,
 };
 
@@ -184,8 +184,8 @@ export class WorkerHost {
     let repeatedFailureCount = checkpoint.journal.consecutiveFailures;
     let activeTurnId: string | undefined;
     const waitForHost = async (): Promise<boolean> => {
-      let waited = false;
-      while (this.options.executionHoldReason?.(assignment)) {
+      let waited = false, reason = this.options.executionHoldReason?.(assignment);
+      while (reason) {
         waited = true; signal.throwIfAborted();
         assignment = await waitForCancellation(() => this.control.refresh(assignment), signal);
         if (checkpoint.longTask) {
@@ -199,6 +199,7 @@ export class WorkerHost {
           assignment = await waitForCancellation(() => this.control.renew(assignment, `renew:${assignment.leaseId}:host:${assignment.runRevision}`), signal);
         this.active.get(initialAssignment.leaseId)!.assignment = assignment;
         await waitForCancellation(() => new Promise<void>(resolve => setTimeout(resolve, 100)), signal);
+        reason = this.options.executionHoldReason?.(assignment);
       }
       signal.throwIfAborted();
       return waited;
@@ -236,7 +237,10 @@ export class WorkerHost {
         const turnId = `worker:${encodeURIComponent(this.worker.id)}:run:${encodeURIComponent(assignment.runId)}:work:${encodeURIComponent(assignment.work.id)}:lease:${encodeURIComponent(assignment.leaseId)}:attempt:${assignment.work.attempt}:evaluation:${evaluationEpoch}:turn:${turn}`;
         activeTurnId = undefined;
         assignment = await waitForCancellation(() => this.control.refresh(assignment), signal);
-        await waitForHost();
+        if (await waitForHost()) {
+          checkpoint.journal.steering.push("The host interaction has ended and control has returned. Recheck the current external state with the existing authorized tools before deciding whether this Work is complete or blocked; do not wait for another handback notification.");
+          assignment = await this.persistCheckpoint(assignment, checkpoint, turn, "Host interaction ended; current state must be observed", turnId);
+        }
         if (checkpoint.longTask) {
           const current = this.options.longTaskPolicy?.(assignment);
           if (!current || JSON.stringify(validateLongTaskPolicy(current)) !== JSON.stringify(checkpoint.longTask.policy))
@@ -465,6 +469,9 @@ export class WorkerHost {
           );
           repeatedFailureCount = observationPolicy.consecutiveFailures;
           failureLimitReached = observationPolicy.failureLimitReached;
+          if (result.status === "failed" && risk === "read_only" && !result.retryable) {
+            checkpoint.journal.steering.push("This read returned no evidence. Use exact identifiers from a current catalog, search result or retained output; do not infer identifiers from labels. Choose another authorized source or report the gap if no exact reference is available.");
+          }
           if (observationPolicy.requiresApproval) {
             await waitForHost();
             const approvalId = result.approvalRef ?? `approval:${assignment.work.id}:${decision.invocation.id}`;

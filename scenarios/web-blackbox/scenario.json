@@ -1,6 +1,6 @@
 {
   "format": "traceforge.scenario-package.v1",
-  "package": { "id": "traceforge.web-blackbox", "version": "0.5.23", "schemaRevision": 1 },
+  "package": { "id": "traceforge.web-blackbox", "version": "0.5.25", "schemaRevision": 1 },
   "definition": {
     "kind": "web_blackbox",
     "version": 1,
@@ -45,7 +45,7 @@
       { "id": "hypothesis_planning", "title": "Hypothesis planning", "objective": "Preserve distinct candidates, rank evidence gaps, and propose bounded validation work.", "allowedWorkKinds": ["research", "review"], "maxParallelWork": 3, "requiredCapabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "evidence.write"], "transitions": [{ "to": "validation", "allOf": [{ "kind": "hypothesis" }] }, { "to": "synthesis", "allOf": [{ "kind": "coverage_assessment" }], "noneOf": [{ "kind": "hypothesis" }] }] },
       { "id": "validation", "title": "Causal validation", "objective": "Execute one validation task at a time and record causal evidence, impact, refutation, or limitations.", "allowedWorkKinds": ["research", "validation", "review"], "maxParallelWork": 3, "requiredCapabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "evidence.write"], "transitions": [{ "to": "synthesis", "anyOf": [{ "kind": "validation_conclusion" }, { "kind": "limitation" }], "noOutstandingWorkKinds": ["validation"] }] },
       { "id": "synthesis", "title": "Evidence and coverage review", "objective": "Review attribution, conflicts, unresolved hypotheses, limitations, and complete evidence chains.", "allowedWorkKinds": ["review"], "maxParallelWork": 1, "requiredCapabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "evidence.write"], "transitions": [{ "to": "reporting", "allOf": [{ "kind": "evidence_review" }] }] },
-      { "id": "reporting", "title": "Report assembly", "objective": "Separate verified findings, rejected candidates, unresolved work, scope, and limitations.", "allowedWorkKinds": ["report"], "maxParallelWork": 1, "requiredCapabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "report.write"], "transitions": [{ "to": "complete", "allOf": [{ "kind": "report" }] }] }
+      { "id": "reporting", "title": "Report assembly", "objective": "Answer the user's requested deliverable directly and within its stated length. Retain detailed findings, rejected candidates, unresolved work, scope and limitations in review records and references.", "allowedWorkKinds": ["report"], "maxParallelWork": 1, "requiredCapabilities": ["tool.recall", "context.catalog", "context.read", "context.search", "report.write"], "transitions": [{ "to": "complete", "allOf": [{ "kind": "report" }] }] }
     ]
   },
   "authorizationPolicy": {
@@ -182,9 +182,9 @@
       {
         "id": "web.review-and-report",
         "kind": "skill",
-        "version": 2,
+        "version": 4,
         "locator": "package://skills/review-and-report.md",
-        "digest": "sha256:17964a6edc5f2a3f4be2921d0f1aa99373cb07971638925b173fcdab51b531bd",
+        "digest": "sha256:3ddaa794fbd282a53fe27bb83271d132a6767c1e99e32457819eae834052aa9c",
         "context": {
           "type": "skill",
           "summary": "Independent evidence review, lifecycle thresholds and honest final reporting",
@@ -236,7 +236,7 @@
   },
   "runtime": {
     "protocol": "traceforge-scenario-process-rpc", "protocolVersion": 1,
-    "id": "traceforge.web-blackbox", "version": "0.5.23", "source": "scenario:web_blackbox@1",
+    "id": "traceforge.web-blackbox", "version": "0.5.25", "source": "scenario:web_blackbox@1",
     "entrypoint": "package://runtime/main.mjs",
     "providedCapabilities": ["web.investigation.snapshot", "scope.read", "web.hypothesis.register", "web.validation.execute", "web.validation.review", "web.report.build", "web.request.replay", "web.validation.compare", "web.surface.explore", "web.session.use", "web.traffic.read", "web.browser.inspect", "web.browser.read"],
     "hostCapabilities": ["traceforge.scenario.authorization@1", "traceforge.scenario.execution@1", "traceforge.scenario.artifacts@1", "traceforge.scenario.state@1", "traceforge.scenario.evidence@1", "traceforge.scenario.sessions@1", "traceforge.scenario.traffic@1", "traceforge.scenario.browser@1"]

@@ -116,6 +116,22 @@ describe("model execution runtime integration harness", () => {
     expect(turn.toolCalls).toEqual([{ id: "call_1", name: "read_record", input: { id: "first" } }]);
     expect(store.calls).toMatchObject([{ status: "completed", usage: { totalTokens: 10 } }]);
   });
+  it("retries a malformed native function response once with a new audited call before any tool effect", async () => {
+    let calls = 0, checks = 0;
+    const route: ModelJsonProviderPort = { extractJson: async () => { throw new Error("JSON path must not run"); },
+      streamTools: async () => {
+        calls++;
+        if (calls === 1) throw Object.assign(new Error("Invalid model function arguments"), { code: "MODEL_RESPONSE_FORMAT" });
+        return { text: "", toolCalls: [{ id: "call_2", name: "read_record", input: { id: "first" } }], done: false };
+      } };
+    const { runtime, store } = setup([["primary", route]]);
+    const turn = await runtime.runTools(context(), { system: "Inspect", messages: [{ role: "user", content: "Read first" }],
+      tools: [{ name: "read_record", description: "Read", input_schema: { type: "object" } }],
+      beforeDispatch: () => { checks++; } });
+    expect(turn.toolCalls[0]?.input).toEqual({ id: "first" });
+    expect(calls).toBe(2); expect(checks).toBe(2);
+    expect(store.calls.map(call => call.status)).toEqual(["failed", "completed"]);
+  });
   it("does not invent per-call or cumulative spending caps in default role policies",async()=>{
     const {runtime,store}=setup([["primary",provider(async args=>{args.onUsage?.({promptTokens:900000,completionTokens:200000,totalTokens:1100000});return {ok:true};})]]);
     const large={system:"Task",user:"x".repeat(300000),schema:{}};

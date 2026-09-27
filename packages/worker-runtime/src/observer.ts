@@ -5,19 +5,21 @@ import type { WorkerObserver, WorkerObserverDecision, WorkerObserverSnapshot } f
 export interface LoopGuardOptions {
   steerAfterRepeats: number;
   stopAfterRepeats: number;
+  stopAfterFailures?: number;
 }
 
 export class LoopGuardObserver implements WorkerObserver {
   private readonly fingerprints = new Map<string, { fingerprint: string; repeats: number }>();
 
-  constructor(private readonly options: LoopGuardOptions = { steerAfterRepeats: 2, stopAfterRepeats: 4 }) {
-    if (options.steerAfterRepeats < 1 || options.stopAfterRepeats <= options.steerAfterRepeats) {
+  constructor(private readonly options: LoopGuardOptions = { steerAfterRepeats: 2, stopAfterRepeats: 4, stopAfterFailures: 8 }) {
+    if (options.steerAfterRepeats < 1 || options.stopAfterRepeats <= options.steerAfterRepeats
+      || (options.stopAfterFailures !== undefined && options.stopAfterFailures < 1)) {
       throw new Error("Observer stop threshold must be greater than its steering threshold");
     }
   }
 
   async review(snapshot: WorkerObserverSnapshot): Promise<WorkerObserverDecision> {
-    if (snapshot.repeatedFailureCount >= this.options.stopAfterRepeats) {
+    if (snapshot.repeatedFailureCount >= (this.options.stopAfterFailures ?? this.options.stopAfterRepeats)) {
       return { action: "stop", reason: "Observer stopped a branch with repeated execution failures" };
     }
     if (snapshot.decision.type !== "invoke_tool") return { action: "continue" };

@@ -23,9 +23,11 @@ import type {
 } from "./protocol.js";
 import { permissionProfileFingerprint, resourceLimitsFingerprint, type ResourceLimitKind } from "./protocol.js";
 
+const testNode = process.env.TRACEFORGE_TEST_NODE ?? process.execPath;
+
 function stdioLauncher(script: string, customTerminate?: SpawnLaunchSpec["terminate"]) {
   return new NodeSpawnProcessLauncher((request) => ({
-    executable: process.execPath, arguments: ["-e", script], workingDirectory: request.workingDirectory,
+    executable: testNode, arguments: ["-e", script], workingDirectory: request.workingDirectory,
     environment: {}, detached: false, windowsHide: true, terminate: customTerminate,
     enforcement: { sandboxBackend: "test-sandbox", sandboxed: true, filesystemPolicyApplied: true,
       permissionProfileFingerprint: permissionProfileFingerprint(request.permissions), resourceLimitsApplied: true,
@@ -126,7 +128,7 @@ function startRequest(workspace: string): StartProcessRequest {
   return {
     requestId: "request_1",
     attribution: attribution(),
-    executable: process.execPath,
+    executable: testNode,
     arguments: ["--version"],
     workingDirectory: workspace,
     environment: {},
@@ -134,7 +136,7 @@ function startRequest(workspace: string): StartProcessRequest {
     timeoutMs: 60_000,
     outputLimitBytes: 4,
     resources: { cpuTimeMs: 30_000, memoryBytes: 256 * 1024 * 1024, maximumProcesses: 8, writeBytes: 1024 * 1024 },
-    permissions: permissions([dirname(process.execPath), workspace]),
+    permissions: permissions([dirname(testNode), workspace]),
   };
 }
 
@@ -145,7 +147,7 @@ describe("LocalExecutionNode process lifecycle", () => {
     const {node}=createNode(launcher,{sandboxBackends:["traceforge-macos-native"],sandboxMeasurements:{"traceforge-macos-native":"a".repeat(64)},processJournal:{
       claim(value){saved=structuredClone(value);},settle(value){saved=structuredClone(value);},get(){return saved;},
     }});
-    await node.startProcess(startRequest(dirname(process.execPath)));
+    await node.startProcess(startRequest(dirname(testNode)));
     if(mode==="failed")launcher.processes[0]!.error(new Error("cleanup unconfirmed"));else launcher.processes[0]!.exit(0);
     expect(saved?.cleanup).toBe(mode==="confirmed"?"process_tree_confirmed":"unverified");
   });
@@ -153,9 +155,9 @@ describe("LocalExecutionNode process lifecycle", () => {
     const launcher = new FakeLauncher();
     Object.assign(launcher.enforcement, { resourceLimitsApplied: false, resourcePolicy: "sampled_terminate", backendMeasurement: "a".repeat(64), atomicProcessTreeAssignment: true, processTreeEmptyBarrier: true });
     const rejected = createNode(launcher);
-    await expect(rejected.node.startProcess(startRequest(dirname(process.execPath)))).rejects.toThrow("resource policy");
+    await expect(rejected.node.startProcess(startRequest(dirname(testNode)))).rejects.toThrow("resource policy");
     const accepted = createNode(launcher, { acceptedSampledResourceBackends: ["test-sandbox"], sandboxMeasurements: { "test-sandbox": "a".repeat(64) } });
-    const started = await accepted.node.startProcess(startRequest(dirname(process.execPath)));
+    const started = await accepted.node.startProcess(startRequest(dirname(testNode)));
     expect(started.process.enforcement).toMatchObject({ resourceLimitsApplied: false, resourcePolicy: "sampled_terminate" });
     launcher.processes.at(-1)!.exit(0);
   });
@@ -219,7 +221,7 @@ describe("LocalExecutionNode process lifecycle", () => {
     const node = new LocalExecutionNode(launcher, { platform, now: () => at, sandboxBackends: ["test-sandbox"],
       maximumProcesses: 1, maximumResidentProcesses: 1, terminalRetentionMs: 0,
       capabilities: { process: { spawn: true, stdio: true, tty: false, adoption: true, resourceLimits: true, signals: ["kill"] } } });
-    const request = startRequest(dirname(process.execPath));
+    const request = startRequest(dirname(testNode));
     const pending = node.startProcess(request);
     await expect.poll(() => entering).toBe(true);
     const second = { ...request, attribution: { ...request.attribution, idempotencyKey: "second" } };
@@ -234,7 +236,7 @@ describe("LocalExecutionNode process lifecycle", () => {
 
   it("bounds process observation waiters and releases them on terminal notification", async () => {
     const { node, launcher } = createNode();
-    const started = await node.startProcess(startRequest(dirname(process.execPath)));
+    const started = await node.startProcess(startRequest(dirname(testNode)));
     const query = { processId: started.process.id, adoptionToken: started.adoptionToken, afterSequence: started.process.lastEventSequence, maximumEvents: 16 };
     const waiters = Array.from({ length: 64 }, () => node.waitProcessEvents(query, 1000));
     await expect(node.waitProcessEvents(query, 1000)).rejects.toThrow("waiter capacity");
@@ -244,12 +246,12 @@ describe("LocalExecutionNode process lifecycle", () => {
 
   it("rejects oversized process metadata before dispatch", async () => {
     const { node, launcher } = createNode();
-    await expect(node.startProcess({ ...startRequest(dirname(process.execPath)), arguments: ["x".repeat(128 * 1024)] })).rejects.toThrow("size limit");
+    await expect(node.startProcess({ ...startRequest(dirname(testNode)), arguments: ["x".repeat(128 * 1024)] })).rejects.toThrow("size limit");
     expect(launcher.requests).toHaveLength(0);
   });
 
   it("bounds a real blocked stdio write without waiting forever for drain", async () => {
-    const { process: managed } = await stdioLauncher("setInterval(() => {}, 1000)").launch(startRequest(dirname(process.execPath)));
+    const { process: managed } = await stdioLauncher("setInterval(() => {}, 1000)").launch(startRequest(dirname(testNode)));
     const errors: string[] = [];
     managed.onError((error) => errors.push(error.message));
     const exit = new Promise((resolve) => managed.onExit(resolve));
@@ -260,7 +262,7 @@ describe("LocalExecutionNode process lifecycle", () => {
 
   it("bounds a termination adapter that never resolves", async () => {
     const { process: managed } = await stdioLauncher("setInterval(() => {}, 1000)", () => new Promise<void>(() => undefined))
-      .launch(startRequest(dirname(process.execPath)));
+      .launch(startRequest(dirname(testNode)));
     const exit = new Promise((resolve) => managed.onExit(resolve));
     await expect(managed.terminate(true)).rejects.toThrow(/timed out/);
     expect(await exit).toBeNull();
@@ -268,7 +270,7 @@ describe("LocalExecutionNode process lifecycle", () => {
 
   it("does not mistake termination acceptance for process exit", async () => {
     const { process: managed } = await stdioLauncher("setInterval(() => {}, 1000)", () => undefined)
-      .launch(startRequest(dirname(process.execPath)));
+      .launch(startRequest(dirname(testNode)));
     const errors: string[] = [];
     managed.onError((error) => errors.push(error.message));
     const exit = new Promise((resolve) => managed.onExit(resolve));
@@ -280,7 +282,7 @@ describe("LocalExecutionNode process lifecycle", () => {
   it("bounds pipe drain when the root exits but a descendant holds its output", async () => {
     // Finite descendant exits itself; only local transport is closed by the watchdog, not an invented tree kill.
     const script = `require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 400)'], { stdio: ['ignore', 1, 2] }); process.exit(0);`;
-    const { process: managed } = await stdioLauncher(script).launch(startRequest(dirname(process.execPath)));
+    const { process: managed } = await stdioLauncher(script).launch(startRequest(dirname(testNode)));
     const errors: string[] = [];
     managed.onError((error) => errors.push(error.message));
     expect(await new Promise((resolve) => managed.onExit(resolve))).toBeNull();
