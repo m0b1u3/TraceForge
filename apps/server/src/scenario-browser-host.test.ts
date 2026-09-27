@@ -173,7 +173,7 @@ describe("Scenario Browser host assembly", () => {
       expect(sessions.list("case", "run")).toHaveLength(1);
       const takeover = { operation: "takeover" as const, sessionId, commandId: "takeover" };
       const handoff={operation:"request_takeover",sessionId,authorizationAction:input.authorizationAction};
-      await expect(handler.execute(handoff,{...owner,workId:"foreign"},new AbortController().signal)).rejects.toThrow("ownership mismatch");
+      await expect(handler.execute(handoff,{...owner,workId:"foreign"},new AbortController().signal)).rejects.toMatchObject({executionOutcome:"not_started"});
       expect((await handler.execute(handoff,owner,new AbortController().signal)).output).toMatchObject({status:"manual_control"});
       await handler.execute(handoff,owner,new AbortController().signal);
       expect(sessions.list("case", "run")[0].status).toBe("manual_control");
@@ -255,7 +255,15 @@ describe("Scenario Browser host assembly", () => {
       attestation: { sandboxed: false, backend: "test-only", network: "deny" } }, capabilityHandlers: [f.handler,
         ...descriptor.runtime!.hostCapabilities.filter(capability => capability !== f.handler.capability).map(capability => ({ capability, actions: ["unused"], async execute(): Promise<never> { throw new Error("Unused fixture capability"); } }))], transport: { allowUnsandboxedDevelopment: true } });
     try {
-      const tool = (await runtime.discover()).find(tool => tool.name === "web.browser.inspect")!;
+      const discovered = await runtime.discover();
+      const readTool = discovered.find(tool => tool.name === "web.browser.read")!;
+      await expect(readTool.execute({artifactId:"non-browser-artifact"}, owner)).resolves.toMatchObject({
+        status:"failed", summary:expect.stringContaining("exact artifactRef"), retryable:false,
+      });
+      expect(f.startProcess).not.toHaveBeenCalled();
+      const tool = discovered.find(tool => tool.name === "web.browser.inspect")!;
+      await expect(tool.execute({operation:"observe",sessionId:"closed-session"}, owner)).resolves.toMatchObject({status:"failed",summary:expect.stringContaining("No browser operation was started"),retryable:false});
+      expect(f.startProcess).not.toHaveBeenCalled();
       const policy = new RunToolPolicy(descriptor.definition, f.context.authorization as unknown as SqliteScenarioAuthorizationService, undefined, "linux", undefined, () => true);
       const current = assignment(); current.worker.id = owner.workerId; current.worker.capabilities = [...tool.providedCapabilities];
       current.assignment.runId = owner.runId; current.assignment.leaseId = owner.leaseId; current.assignment.leaseExpiresAt = owner.leaseExpiresAt;

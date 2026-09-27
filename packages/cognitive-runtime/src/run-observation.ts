@@ -21,7 +21,6 @@ const observerDecision = z.discriminatedUnion("action", [
   z.object({ action: z.literal("continue"), rationale: z.string().min(1) }),
   z.object({ action: z.literal("steer"), workId: z.string().min(1), instruction: z.string().min(1), rationale: z.string().min(1) }),
   z.object({ action: z.literal("terminate_branch"), workId: z.string().min(1), reason: z.string().min(1) }),
-  z.object({ action: z.literal("terminate_run"), reason: z.string().min(1) }),
 ]);
 
 export type RunObserverDecision = z.infer<typeof observerDecision>;
@@ -46,7 +45,6 @@ const decisionSchema = {
     { properties: { action: { const: "continue" }, rationale: { type: "string" } }, required: ["action", "rationale"], additionalProperties: false },
     { properties: { action: { const: "steer" }, workId: { type: "string" }, instruction: { type: "string" }, rationale: { type: "string" } }, required: ["action", "workId", "instruction", "rationale"], additionalProperties: false },
     { properties: { action: { const: "terminate_branch" }, workId: { type: "string" }, reason: { type: "string" } }, required: ["action", "workId", "reason"], additionalProperties: false },
-    { properties: { action: { const: "terminate_run" }, reason: { type: "string" } }, required: ["action", "reason"], additionalProperties: false },
   ],
 } satisfies Record<string, unknown>;
 
@@ -74,7 +72,7 @@ export class StructuredRunObserverModel implements RunObserverModel {
         "You do not execute tools, create evidence, validate your own findings, or perform assigned Worker tasks.",
         "Assess global progress, repeated semantic actions, unsupported conclusions, evidence conflicts, authorization drift, and low-information branches.",
         "Prefer continue when evidence is insufficient. Steer only a non-terminal Work with a concrete state-based instruction.",
-        "Terminate a branch or Run only when the supplied state provides a traceable reason. Never invent facts, identifiers, impact, or authorization.",
+        "Terminate a redundant or unsafe Work branch when the supplied state provides a traceable reason. A satisfied user goal does not cancel the Run; the Planner advances declared phases to completion. Operator stop and authorization revocation remain host-owned.",
         "Return only the requested JSON decision and never expose private chain-of-thought.",
       ].join("\n"),
       user: JSON.stringify({ run: { ...context.run }, graph: context.graph, recentEvents: context.recentEvents, contextManifest: context.manifest }),
@@ -103,7 +101,7 @@ export class StructuredRunObserverModel implements RunObserverModel {
       },
       parse: parseRunObserverDecision,
       completion: (parsed) => ({ decisionKind: parsed.action,
-        outcome: parsed.action === "terminate_branch" || parsed.action === "terminate_run" ? "blocked" : "continue" }),
+        outcome: parsed.action === "terminate_branch" ? "blocked" : "continue" }),
     });
   }
 }
@@ -215,8 +213,6 @@ export class RunObserverSupervisor {
       if (!state || state.status !== "running") return state?.revision ?? 0;
       try {
         if (decision.action === "continue") return state.revision;
-        if (decision.action === "terminate_run") return this.runtime.execute({ runId, commandId: `observer:${evaluationId}`,
-          expectedRevision: state.revision, command: { type: "cancel_run", reason: `Observer: ${decision.reason}`, at: this.now() } }).state.revision;
         const work = state.workItems.find((candidate) => candidate.id === decision.workId);
         if (!work || ["completed", "blocked", "failed", "cancelled"].includes(work.status)) return state.revision;
         if (decision.action === "terminate_branch") return this.runtime.execute({ runId, commandId: `observer:${evaluationId}`,

@@ -40,7 +40,7 @@ export function prepareConversationContext(sql: Database.Database, conversationI
     const replies=restored??(row.response?[{role:"assistant" as const,content:row.response}]:[]);
     const size = Buffer.byteLength(row.text) + Buffer.byteLength(JSON.stringify(replies))+Buffer.byteLength(JSON.stringify(attachments)), rowTokens = estimateContextTokens({text:row.text,replies,attachments});
     if (included && (tokens + rowTokens > recentBudget || bytes + size > 4194304)) break outer;
-    if (tokens + rowTokens + estimateContextTokens(system) + 2048 > budget.input || bytes + size > 4194304) throw new ModelContextOverflowError("local_guard");
+    if ((budget.source !== "conservative_fallback" && tokens + rowTokens + estimateContextTokens(system) + 2048 > budget.input) || bytes + size > 4194304) throw new ModelContextOverflowError("local_guard");
     bytes += size; tokens += rowTokens; included++; before = Math.min(before,row.sequence);
     messages.unshift({ role: "user", content: row.text,...(attachments.length?{attachments}:{}) }, ...replies);
     if(row.sequence!==through&&references.length<16)references.push({id:row.command_id,sequence:row.sequence,excerpt:row.text.slice(0,160)});

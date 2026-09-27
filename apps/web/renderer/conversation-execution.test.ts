@@ -33,11 +33,11 @@ it("shows a newly streamed task proposal without switching pages or dispatching"
   expect(node.querySelector('[aria-label="任务授权"]')?.textContent).toContain("历史任务尚未执行");
   expect(calls.every(call=>call.method==="GET")).toBe(true);
 });
-async function mount(request: (input: { path: string; method: "GET" | "POST" }) => Promise<{ status: number; body: unknown }>) {
+async function mount(request: (input: { path: string; method: "GET" | "POST" }) => Promise<{ status: number; body: unknown }>, replies: unknown[] = []) {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const node = document.createElement("div"); document.body.append(node); const root = createRoot(node); dispose = () => root.unmount();
   await act(async () => { root.render(React.createElement(ConversationExecution, { bridge: { protocolVersion: 1, request: input => input.path.endsWith("/browser")?Promise.resolve({status:200,body:{sessions:[]}}):input.path.endsWith("/reply-queue")?Promise.resolve({status:200,body:{conversationId:"first",revision:0,paused:false,items:[]}}):input.path.includes("/replies?")
-    ? Promise.resolve({status:200,body:{conversationId:"first",replies:[],nextAfter:0,hasMore:false}}) : request(input) }, conversationId: "first", messages })); });
+    ? Promise.resolve({status:200,body:{conversationId:"first",replies,nextAfter:replies.length,hasMore:false}}) : request(input) }, conversationId: "first", messages })); });
   return node;
 }
 it("projects host-bound output after the user message and never dispatches on read", async () => {
@@ -45,6 +45,9 @@ it("projects host-bound output after the user message and never dispatches on re
   const node = await mount(request);
   expect(node.querySelector(".message-user")?.textContent).toContain(messages[0].text);
   expect(node.querySelector(".message-assistant")?.textContent).toContain(run.outputs[0].summary);
+  expect(node.querySelector<HTMLDetailsElement>(".run-inspector")?.open).toBe(false);
+  expect(node.querySelector(".run-inspector .run-saved-materials")).not.toBeNull();
+  expect(node.querySelector(".run-reply .sender")).toBeNull();
   expect(node.querySelector<HTMLDetailsElement>(".run-saved-materials")?.open).toBe(false);
   expect(node.querySelector(".run-saved-materials .run-output")?.textContent).toContain(run.outputs[0].summary);
   expect(node.textContent).toContain("执行中");
@@ -81,6 +84,19 @@ it("retains stale observations on failure, recovers and replaces rather than dup
   expect(node.querySelectorAll(".run-output")).toHaveLength(1);
   expect(node.textContent).toContain("最近 20 次运行");
   expect(request.mock.calls.every(call => (call[0] as { method: string }).method === "GET")).toBe(true);
+});
+it("shows the final report when a completed Run appends a limitation after it", async () => {
+  const report = { id: "report", kind: "report", summary: "Saved page state was read after handback.", refs: ["evidence:page"] };
+  const limitation = { id: "limitation", kind: "limitation", summary: "One handoff receipt was unavailable.", refs: [] };
+  const opening = { conversationId: "first", messageCommandId: "message", revision: 1, state: "completed", text: "The page is opening. Please enter your note.",
+    taskRequest: { scenarioKind: "neutral", definitionVersion: 1 }, createdAt: "2026-09-08T00:00:00.000Z", updatedAt: "2026-09-08T00:00:00.000Z",
+    contextMessages: 1, contextTruncated: false, error: null };
+  const node = await mount(async () => ({ status: 200, body: { runs: [{ ...run, status: "completed", outputs: [report, limitation] }], truncated: false } }), [opening]);
+  expect(node.querySelector(".run-result-preview")?.textContent).toBe(report.summary);
+  expect(node.querySelector<HTMLDetailsElement>(".task-opening-reply")?.open).toBe(false);
+  expect(node.querySelector(".task-opening-reply")?.textContent).toContain(opening.text);
+  expect(node.querySelectorAll(".run-output")).toHaveLength(2);
+  expect(node.querySelector(".run-saved-materials")?.textContent).toContain(limitation.summary);
 });
 it("does not guess message ownership for unbound runs or render upstream HTML", async () => {
   const node = await mount(async () => ({ status: 200, body: { runs: [{ ...run, messageCommandId: null,

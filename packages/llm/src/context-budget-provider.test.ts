@@ -2,10 +2,23 @@ import { expect, it, vi } from "vitest";
 import { withContextBudget } from "./context-budget-provider.js";
 import type { LlmProvider } from "./provider.js";
 import { AnthropicProvider } from "./anthropic-provider.js";
+import { ModelContextOverflowError, resolveContextBudget } from "@traceforge/shared/model-context";
 
 it("does not reject input against an invented window when supplier metadata is unknown",async()=>{
   const raw:LlmProvider={extractJson:vi.fn(async()=>({ok:true})),runTools:vi.fn()};
   await expect(withContextBudget(raw,{}).extractJson({system:"Task",user:"x".repeat(200000),schema:{}})).resolves.toEqual({ok:true});
+  expect(raw.extractJson).toHaveBeenCalledOnce();
+});
+it("learns an input ceiling only from an explicit supplier context rejection", async () => {
+  const raw:LlmProvider={extractJson:vi.fn(async()=>{ throw { status:400, code:"context_length_exceeded" }; }),runTools:vi.fn()};
+  const provider=withContextBudget(raw,{});
+  const input={system:"Task",user:"x".repeat(180000),schema:{}};
+  await expect(provider.extractJson(input)).rejects.toBeInstanceOf(ModelContextOverflowError);
+  expect(raw.extractJson).toHaveBeenCalledOnce();
+  const learned=provider.contextLimits?.maximumInputTokens;
+  expect(learned).toBeGreaterThan(32768);
+  expect(resolveContextBudget(provider.contextLimits).input).toBe(learned);
+  expect(() => provider.extractJson(input)).toThrow("context budget");
   expect(raw.extractJson).toHaveBeenCalledOnce();
 });
 it("does not manufacture a required Anthropic output value",async()=>{

@@ -31,6 +31,7 @@ const proposal = z.object({
 });
 
 const plannerDecision = z.discriminatedUnion("action", [
+  z.object({action:z.literal("advance"),to:z.string().min(1),rationale:z.string().min(1)}).strict(),
   z.object({action:z.literal("answer"),workId:z.string().min(1),inquiryId:z.string().min(1),answer:z.string().trim().min(1).max(8000),rationale:z.string().min(1)}).strict(),
   z.object({ action: z.literal("wait"), rationale: z.string().min(1) }),
   z.object({
@@ -257,7 +258,12 @@ export class RunPlannerSupervisor {
     let evaluation = this.store.find(run.id, fingerprint);
     if (!evaluation) {
       const evaluationId = this.createId();
-      const decision = await this.model.evaluate({ contextId: evaluationId, run, definition, graph,
+      // A satisfied phase is a deterministic lifecycle transition. Asking the
+      // model for another plan first can enqueue redundant Work and prevent it.
+      const ready = this.readyTransition(run, definition);
+      const decision: RunPlannerDecision = ready
+        ? { action: "advance", to: ready.to, rationale: `Declared phase requirements satisfied; advance to ${ready.to}.` }
+        : await this.model.evaluate({ contextId: evaluationId, run, definition, graph,
         recentEvents: this.scenarioEvents.recent(run.id, config.maximumRecentEvents),
         maximumGraphNodes: config.maximumGraphNodes, maximumRunItems: config.maximumRunItems });
       this.validateDecision(decision, run, definition, graph);
@@ -265,7 +271,7 @@ export class RunPlannerSupervisor {
       this.store.record({ id: evaluation.id, run, graphRevision: graph.revision, fingerprint, decision, at: this.now() });
     }
     if (evaluation.applied) return;
-    if (this.contextPolicy) await this.contextPolicy.recordDerivations(evaluation.id, evaluation.decision.action === "plan"
+    if (this.contextPolicy && evaluation.decision.action !== "advance") await this.contextPolicy.recordDerivations(evaluation.id, evaluation.decision.action === "plan"
       ? evaluation.decision.proposals.map((_, index) => ({ kind: "work", id: `planner-work-${evaluation!.id}-${index}` }))
       : evaluation.decision.action==="answer"?[{kind:"directive",id:`inquiry:${evaluation.decision.inquiryId}`}]:[]);
     const currentRun = this.runtime.load(run.id);
@@ -274,6 +280,10 @@ export class RunPlannerSupervisor {
       !== planningFingerprint(run, graph, config.maximumGraphNodes, config.maximumRunItems)) {
       throw new Error("Planner context changed during evaluation; reevaluate current state");
     }
+    if (this.contextPolicy && evaluation.decision.action === "advance"
+      && fingerprint !== planningFingerprint(currentRun, currentGraph, config.maximumGraphNodes, config.maximumRunItems)
+        + `:${await this.contextPolicy.fingerprint(currentRun, "planner")}`)
+      throw new Error("Planner context sources changed before phase transition");
     const result = this.applyDecision(run.id, evaluation.id, evaluation.observedPhaseId, evaluation.decision);
     const advanced = this.advanceIfAllowed(run.id, evaluation.id, evaluation.observedPhaseId);
     this.store.complete({ evaluationId: evaluation.id, runId: run.id, fingerprint,
@@ -285,6 +295,10 @@ export class RunPlannerSupervisor {
     if(decision.action==="answer"){
       const work=run.workItems.find(item=>item.id===decision.workId);
       if(work?.status!=="blocked"||work.inquiry?.status!=="pending"||work.inquiry.id!==decision.inquiryId)throw new Error("Planner inquiry is stale");
+      return;
+    }
+    if (decision.action === "advance") {
+      if (this.readyTransition(run, definition)?.to !== decision.to) throw new Error("Phase transition is no longer ready");
       return;
     }
     if (decision.action === "wait") return;
@@ -328,7 +342,7 @@ export class RunPlannerSupervisor {
 
   private applyDecision(runId: string, evaluationId: string, observedPhaseId: string, decision: RunPlannerDecision): number {
     let state = this.runtime.load(runId);
-    if (!state || state.status !== "running" || state.activePhaseId !== observedPhaseId || decision.action === "wait") return state?.revision ?? 0;
+    if (!state || state.status !== "running" || state.activePhaseId !== observedPhaseId || decision.action === "wait" || decision.action === "advance") return state?.revision ?? 0;
     if(decision.action==="answer")return this.applyCommand(runId,`planner:${evaluationId}:answer`,current=>{
       const work=current.workItems.find(item=>item.id===decision.workId);
       return work?.inquiry?.status==="pending"&&work.inquiry.id===decision.inquiryId?{type:"answer_inquiry",workId:work.id,inquiryId:decision.inquiryId,answer:decision.answer,at:this.now()}:undefined;
@@ -359,11 +373,18 @@ export class RunPlannerSupervisor {
     if (!state || state.status !== "running" || state.activePhaseId !== observedPhaseId) return state?.revision;
     const definition = this.definitions.require(state.definitionKind, state.definitionVersion);
     const phase = definition.phases.find((candidate) => candidate.id === state.activePhaseId)!;
-    if(state.workItems.some(work=>work.inquiry?.status==="pending"&&work.status==="blocked"))return undefined;
-    if (state.workItems.some((work) => work.phaseId === phase.id && !["completed", "blocked", "failed", "cancelled"].includes(work.status))) return undefined;
-    const transition = phase.transitions.find((candidate) => transitionAllowed(state, candidate).allowed);
+    const transition = this.readyTransition(state, definition);
     if (!transition) return undefined;
     return this.applyCommand(runId, `planner:${evaluationId}:advance:${phase.id}`, () => ({ type: "advance_phase", to: transition.to, at: this.now() })).revision;
+  }
+
+  private readyTransition(state: ScenarioRunState, definition: ScenarioDefinition) {
+    const phase = definition.phases.find(candidate => candidate.id === state.activePhaseId);
+    if (!phase || state.status !== "running") return undefined;
+    if (state.workItems.some(work => work.status === "blocked" && work.inquiry?.status === "pending")) return undefined;
+    if (state.workItems.some(work => work.phaseId === phase.id
+      && !["completed", "blocked", "failed", "cancelled"].includes(work.status))) return undefined;
+    return phase.transitions.find(candidate => transitionAllowed(state, candidate).allowed);
   }
 
   private applyCommand(runId: string, commandId: string,

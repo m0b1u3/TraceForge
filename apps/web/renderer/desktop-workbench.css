@@ -266,3 +266,27 @@
  .host-workbench .composer-tools { flex-wrap: wrap; }
  .host-workbench .dialogue:has(.host-empty) .composer-area { margin-bottom: 4vh; }
 }
+
+/* A task continues the preceding answer; technical detail has one entry. */
+.host-workbench .conversation-reply:has(+ .run-reply) { margin-bottom: 8px; }
+.host-workbench .conversation-reply:has(+ .run-reply) .reply-actions { margin-bottom: 0; }
+.host-workbench .task-opening-reply { margin: 0 0 16px; }
+.host-workbench .task-opening-reply > summary { display: flex; align-items: center; gap: 6px; width: fit-content; min-height: 32px; color: var(--desktop-muted); font-size: 12px; cursor: pointer; }
+.host-workbench .task-opening-reply > .conversation-reply { margin: 8px 0 0; padding: 12px 16px; border-left: 2px solid var(--desktop-line); }
+.host-workbench .run-reply { margin-top: 0; margin-bottom: 24px; }
+.host-workbench .run-reply .message-body { width: 100%; }
+.host-workbench .run-result { margin: 0 0 16px; }
+.host-workbench .run-result h3 { margin: 0 0 8px; color: var(--desktop-muted); font-size: 12px; font-weight: 600; }
+.host-workbench .run-result-preview { margin: 0; color: var(--desktop-ink); font-size: 15px; line-height: 1.75; overflow-wrap: anywhere; }
+.host-workbench .run-progress { margin: 8px 0; max-width: none; }
+.host-workbench .run-current-activity { display: flex; align-items: baseline; gap: 9px; margin: 0; color: var(--desktop-ink); font-size: 13px; line-height: 1.6; }
+.run-activity-dot { width: 6px; height: 6px; flex: 0 0 6px; align-self: center; border-radius: 50%; background: var(--desktop-muted); }
+.run-activity-dot[data-active="true"] { background: #39775e; }
+.host-workbench .run-inspector { margin-top: 4px; border: 0; }
+.host-workbench .run-inspector > summary, .host-workbench .reply-process-details > summary { display: flex; align-items: center; justify-content: flex-start; gap: 6px; width: fit-content; min-height: 32px; padding: 4px 0; border: 0; color: var(--desktop-muted); font-size: 12px; cursor: pointer; }
+.host-workbench .run-inspector > details { margin: 0; border: 0; padding: 0 0 0 14px; }
+.host-workbench .run-inspector[open] { padding-bottom: 12px; }
+.host-workbench .reply-process-details { margin: 0 0 10px; border: 0; }
+.host-workbench .reply-process-details > .reply-tool-activity { margin: 4px 0; }
+.host-workbench .composer-area > .run-control { gap: 8px; padding: 0 0 8px; }
+.host-workbench .composer-area > .run-control > button { border-color: transparent; min-height: 30px; padding: 4px 8px; font-size: 12px; }

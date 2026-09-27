@@ -12,6 +12,8 @@ For each claimed finding, require the actual lifecycle-verified graph record, at
 
 ## Report structure
 
+Lead the `report` output summary with the direct answer to the user's requested deliverable in the user's language. In the first one or two short sentences, state the observed outcome and the decisive saved evidence references. Put scope identifiers, tool/session details, caveats and security assessment after that answer. A narrow operational task needs a narrow report: do not lead with vulnerability headings or a long inventory of unrequested checks. Preserve uncertainty and limitations, but do not replace the result with a limitation paragraph.
+
 1. **Goal and outcome:** achieved, partially achieved, not achieved or not established, with the decisive references. Explain what remains unknown.
 2. **Authorized scope and method:** actual targets and identities used; material tool or environment limitations.
 3. **Verified findings:** only lifecycle-verified records, each with its mechanism, impact, reproduction conditions and references. Keep sensitive evidence in governed storage, not pasted credentials.

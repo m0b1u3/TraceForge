@@ -13,6 +13,7 @@ import {
   RunPlannerSupervisor,
   type RunPlannerDecision,
   type RunPlannerModel,
+  type CognitiveRunContextPolicyPort,
 } from "@traceforge/cognitive-runtime";
 import { SqliteRunPlannerStore } from "./run-planner.js";
 
@@ -33,7 +34,7 @@ class SequencePlanner implements RunPlannerModel {
   }
 }
 
-function setup(decisions: RunPlannerDecision[]) {
+function setup(decisions: RunPlannerDecision[], contextPolicy?: CognitiveRunContextPolicyPort) {
   const sqlite = getSqliteClient(createDb(":memory:"));
   open.push(sqlite);
   const definitions = new ScenarioDefinitionRegistry([WEB_BLACKBOX_SCENARIO]);
@@ -70,6 +71,8 @@ function setup(decisions: RunPlannerDecision[]) {
     3,
     () => `evaluation_${++evaluationSequence}`,
     () => at,
+    undefined,
+    contextPolicy,
   );
   return { runtime, graphs, plannerStore, model, supervisor };
 }
@@ -267,7 +270,41 @@ describe("independent Run Planner", () => {
     expect(state.activePhaseId).toBe("scope_setup");
 
     await supervisor.tick();
-    expect(model.calls).toBe(1);
+    expect(model.calls).toBe(0);
     expect(runtime.load("run_1")!.activePhaseId).toBe("surface_mapping");
   });
+  it("finishes all declared phases without another model call once outputs are persisted", async () => {
+    const { runtime, supervisor, model } = setup([], {
+      fingerprint: async () => "fixed-sources",
+      recordDerivations: async () => { throw new Error("Deterministic transitions must not require model snapshots"); },
+    } as unknown as CognitiveRunContextPolicyPort);
+    const command = (command: Parameters<typeof runtime.execute>[0]["command"]) => runtime.execute({
+      runId: "run_1", commandId: `finish:${runtime.load("run_1")!.revision}`,
+      expectedRevision: runtime.load("run_1")!.revision, command,
+    });
+    const stages = [
+      ["research", "researcher", ["scope_snapshot", "capability_inventory"]],
+      ["research", "researcher", ["surface_observation", "coverage_assessment"]],
+      ["research", "researcher", ["coverage_assessment"]],
+      ["review", "reviewer", ["evidence_review"]],
+      ["report", "reporter", ["report"]],
+    ] as const;
+    for (const [kind, role, kinds] of stages) {
+      const phase = runtime.load("run_1")!.activePhaseId;
+      command({ type: "propose_work", proposal: { id: phase, kind, title: phase,
+        objective: "Produce the requested deliverable from retained evidence", idempotencyKey: phase }, at });
+      command({ type: "claim_work", workId: phase, workerId: role, workerRoles: [role],
+        workerCapabilities: capabilities, workerCurrentWork: 0, workerMaxConcurrentWork: 1,
+        leaseId: phase, leaseExpiresAt: "2099-01-01T00:00:00.000Z", at });
+      command({ type: "complete_work", workId: phase, leaseId: phase, summary: "Deliverable retained",
+        outputs: kinds.map(kind => ({ id: `${phase}:${kind}`, kind, summary: "Recorded result", refs: ["scope_1"], createdAt: at })), at });
+      await supervisor.tick();
+    }
+    expect(model.calls).toBe(0);
+    expect(runtime.load("run_1")!.status).toBe("completed");
+    expect(runtime.load("run_1")!.workItems).toHaveLength(stages.length);
+    await supervisor.tick();
+    expect(model.calls).toBe(0);
+  });
+
 });

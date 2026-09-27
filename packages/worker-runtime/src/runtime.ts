@@ -131,12 +131,26 @@ export class WorkerHost {
       if (checking || entry.controller.signal.aborted) return;
       checking = true;
       const guard = new AbortController();
-      const deadline = setTimeout(() => guard.abort(new LeaseLostError("Execution ownership check timed out")), this.options.ownershipPollMs);
-      void waitForCancellation(() => this.control.refresh(entry.assignment), guard.signal).then((current) => {
+      const deadline = setTimeout(() => guard.abort(new LeaseLostError("Execution ownership check timed out")), Math.max(this.options.ownershipPollMs, 5_000));
+      void waitForCancellation(async () => {
+        let current = await this.control.refresh(entry.assignment);
         if (current.leaseId !== initialAssignment.leaseId || current.work.status !== "running" || current.work.workerId !== this.worker.id
           || !Number.isFinite(Date.parse(current.leaseExpiresAt)) || Date.parse(current.leaseExpiresAt) <= Date.parse(this.now())) {
           throw new LeaseLostError("Execution ownership or lease expired");
         }
+        // Model and observer calls can outlast a whole lease without reaching a
+        // turn boundary. Keep ownership alive while they are still executing.
+        if (Date.parse(current.leaseExpiresAt) - Date.parse(this.now()) <= this.options.renewBeforeMs) {
+          try { current = await this.control.renew(current, `renew:${current.leaseId}:active:${current.runRevision}`); }
+          catch (error) {
+            // A concurrent checkpoint may have advanced the Run revision.
+            // Re-read ownership before treating that conflict as lease loss.
+            current = await this.control.refresh(current);
+            if (Date.parse(current.leaseExpiresAt) <= Date.parse(this.now())) throw error;
+          }
+        }
+        return current;
+      }, guard.signal).then((current) => {
         entry.assignment = current;
       }).catch((error) => entry.controller.abort(new LeaseLostError(error instanceof Error ? error.message : "Cannot verify execution ownership")))
         .finally(() => { clearTimeout(deadline); checking = false; });
@@ -274,6 +288,8 @@ export class WorkerHost {
                 && tool.providedCapabilities.some(capability => this.options.repeatableReadCapabilities?.includes(capability))),
             }), evaluationSignal),
           });
+        assignment = await waitForCancellation(() => this.control.refresh(assignment), signal);
+        this.active.get(initialAssignment.leaseId)!.assignment = assignment;
         const decision = evaluation.intent;
         if (await waitForHost()) {
           checkpoint.journal.steering.push("Host interaction changed the current state. Observe again before acting; the prior decision was not dispatched.");
@@ -616,6 +632,7 @@ export class WorkerHost {
   ): Promise<WorkerAssignment> {
     const signal = this.active.get(assignment.leaseId)?.controller.signal;
     signal?.throwIfAborted();
+    assignment = await waitForCancellation(() => this.control.refresh(assignment), signal);
     checkpoint.journal.turn = phase === "pending" || phase === "approval" ? turn - 1 : turn;
     checkpoint.leaseId = assignment.leaseId;
     checkpoint.savedAt = this.now();

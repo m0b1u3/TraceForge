@@ -1,12 +1,12 @@
 export const PROTOCOL_VERSION = 1;
 export const PACKAGE_ID = "traceforge.web-blackbox";
-export const PACKAGE_VERSION = "0.5.20";
+export const PACKAGE_VERSION = "0.5.23";
 export const SOURCE = "scenario:web_blackbox@1";
 
 export type JsonObject = Record<string, any>;
 
 export interface ToolResult {
-  status: "succeeded";
+  status: "succeeded" | "failed";
   summary: string;
   raw: string;
   refs: string[];
@@ -50,7 +50,7 @@ export const tools = Object.freeze([
     name: "web.browser.read", source: SOURCE, version: PACKAGE_VERSION, priority: 85,
     description: "Read a bounded chunk of a retained Browser artifact from this Run; does not launch a browser or contact the target.",
     inputSchema: { type: "object", additionalProperties: false, required: ["artifactId"], properties: {
-      artifactId: { type: "string" }, offset: { type: "integer", minimum: 0, maximum: 4194304 }, length: { type: "integer", minimum: 1, maximum: 65536 },
+      artifactId: { type: "string" }, offset: { type: "integer", minimum: 0, maximum: 67108864 }, length: { type: "integer", minimum: 1, maximum: 65536 },
     } }, providedCapabilities: ["web.browser.read"], dependencyCapabilities: [], permissionRequirements: {}, risk: "read_only", timeoutMs: 10000,
   },
   {

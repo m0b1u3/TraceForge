@@ -1,6 +1,6 @@
 {
   "format": "traceforge.scenario-package.v1",
-  "package": { "id": "traceforge.web-blackbox", "version": "0.5.20", "schemaRevision": 1 },
+  "package": { "id": "traceforge.web-blackbox", "version": "0.5.23", "schemaRevision": 1 },
   "definition": {
     "kind": "web_blackbox",
     "version": 1,
@@ -97,7 +97,7 @@
     { "kind": "report", "version": 1, "format": "traceforge.scenario-output-contract.v1", "maximumSummaryBytes": 65536, "maximumRefs": 512 }
   ],
   "resourceManifest": {
-    "revision": 9,
+    "revision": 11,
     "resources": [
       {
         "id": "web.http-observation", "kind": "skill", "version": 1,
@@ -126,9 +126,9 @@
       {
         "id": "web.investigation-planning",
         "kind": "skill",
-        "version": 7,
+        "version": 8,
         "locator": "package://skills/investigation-planning.md",
-        "digest": "sha256:f5e5a1ac82f1368eab9884af314c129bd8237dcfc7829eb8c565c4561b168ad0",
+        "digest": "sha256:5a7b32287df6b09556aefcfaba887e603a2d72718c05bbfae1960d1f369e260e",
         "context": {
           "type": "skill",
           "summary": "Goal-driven phase planning, bounded discovery, separate hypotheses and durable handoff",
@@ -182,9 +182,9 @@
       {
         "id": "web.review-and-report",
         "kind": "skill",
-        "version": 1,
+        "version": 2,
         "locator": "package://skills/review-and-report.md",
-        "digest": "sha256:0946aed8db7f99fb38f2e6439e78e179649d483fc3cf8d5608a83e5210d32d82",
+        "digest": "sha256:17964a6edc5f2a3f4be2921d0f1aa99373cb07971638925b173fcdab51b531bd",
         "context": {
           "type": "skill",
           "summary": "Independent evidence review, lifecycle thresholds and honest final reporting",
@@ -236,7 +236,7 @@
   },
   "runtime": {
     "protocol": "traceforge-scenario-process-rpc", "protocolVersion": 1,
-    "id": "traceforge.web-blackbox", "version": "0.5.20", "source": "scenario:web_blackbox@1",
+    "id": "traceforge.web-blackbox", "version": "0.5.23", "source": "scenario:web_blackbox@1",
     "entrypoint": "package://runtime/main.mjs",
     "providedCapabilities": ["web.investigation.snapshot", "scope.read", "web.hypothesis.register", "web.validation.execute", "web.validation.review", "web.report.build", "web.request.replay", "web.validation.compare", "web.surface.explore", "web.session.use", "web.traffic.read", "web.browser.inspect", "web.browser.read"],
     "hostCapabilities": ["traceforge.scenario.authorization@1", "traceforge.scenario.execution@1", "traceforge.scenario.artifacts@1", "traceforge.scenario.state@1", "traceforge.scenario.evidence@1", "traceforge.scenario.sessions@1", "traceforge.scenario.traffic@1", "traceforge.scenario.browser@1"]

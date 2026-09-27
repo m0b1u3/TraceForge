@@ -511,14 +511,17 @@ describe("Brokered Browser Runtime", () => {
     const subject = fixture();
     const session = await subject.runtime.open(owner(), processConfiguration());
     subject.authorizeRequest.mockRejectedValueOnce(new Error("private authorization detail"));
-    await expect(subject.invoke(intercepted())).rejects.toThrow("private authorization detail");
+    await expect(subject.invoke(intercepted())).resolves.toMatchObject({action:"block",reason:"policy_denied"});
     expect(subject.requestHttp).not.toHaveBeenCalled();
     const records = subject.runtime.snapshot(session.id)!.records;
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ outcome: "blocked", reason: "authorization_unavailable", authorizationRef: null, receiptRef: null });
     expect(JSON.stringify(records)).not.toMatch(/private authorization detail|must-not-be-snapshotted/);
-    await expect(subject.invoke(intercepted())).rejects.toThrow("uncertain prior result");
+    await expect(subject.invoke(intercepted())).resolves.toMatchObject({action:"block",reason:"policy_denied"});
+    expect(subject.runtime.snapshot(session.id)?.status).toBe("active");
     expect(subject.runtime.snapshot(session.id)!.records).toHaveLength(1);
+    await expect(subject.invoke(intercepted({id:"authorized-next"}))).resolves.toMatchObject({action:"fulfill"});
+    expect(subject.requestHttp).toHaveBeenCalledOnce();
   });
 
   it("never returns a downloaded body when durable Artifact recording is unavailable", async () => {
@@ -658,4 +661,17 @@ describe("Brokered Browser Runtime", () => {
     expect(subject.close).toHaveBeenCalledOnce();
     expect(subject.terminateProcess).toHaveBeenCalledOnce();
   });
+});
+
+it("keeps the browser after transport failure without replaying an uncertain request", async () => {
+  const subject=fixture(), session=await subject.runtime.open(owner(),processConfiguration());
+  subject.requestHttp.mockRejectedValueOnce(new Error("TLS connection failed"));
+  await expect(subject.invoke(intercepted())).resolves.toMatchObject({action:"block",reason:"network_request_failed"});
+  expect(subject.runtime.snapshot(session.id)?.status).toBe("active");
+  expect(subject.runtime.snapshot(session.id)?.records.at(-1)).toMatchObject({outcome:"failed",reason:"network_outcome_unknown",receiptRef:null});
+  await subject.invoke(intercepted());
+  expect(subject.requestHttp).toHaveBeenCalledTimes(1);
+  await expect(subject.invoke(intercepted({id:"next-request"}))).resolves.toMatchObject({action:"fulfill"});
+  expect(subject.requestHttp).toHaveBeenCalledTimes(2);
+  await subject.runtime.close(session.id);
 });

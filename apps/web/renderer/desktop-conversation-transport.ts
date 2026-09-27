@@ -6,8 +6,8 @@ export interface DesktopConversations {
   subscribeReplyDelta?(listener: (event: { conversationId: string; messageId: string; kind: "text" | "reasoning"; offset: number; delta: string }) => void): () => void;
   selectAttachments?():Promise<unknown>;
   storage?(operation: "inspect" | "open-data" | "open-logs" | "clear-cache"): Promise<unknown>;
-  presentBrowser?(input: { hide: true } | { path: string; sessionId: string; takeoverId: string | null; focus?: boolean; navigation?: { action: "navigate" | "back" | "forward" | "reload"; url?: string };
-    bounds: { x: number; y: number; width: number; height: number } }): Promise<{ url?: string; title?: string; hidden?: boolean; canGoBack?: boolean; canGoForward?: boolean; loading?: boolean }>;
+  presentBrowser?(input: { hide: true } | { path: string; sessionId: string; takeoverId: string | null; focus?: boolean; navigation?: { action: "navigate" | "back" | "forward" | "reload" | "new-tab" | "select-tab" | "close-tab"; url?: string; pageId?: string };
+    bounds: { x: number; y: number; width: number; height: number } }): Promise<{ activePageId?: string; tabs?: Array<{id: string; title: string; url: string}>; url?: string; title?: string; hidden?: boolean; canGoBack?: boolean; canGoForward?: boolean; loading?: boolean }>;
   request(input: { path: string; method: "GET" | "POST"; body?: string }): Promise<{ status: number; body: unknown }>;
 }
 export function desktopConversationTransport(bridge: DesktopConversations): ConversationTransport {

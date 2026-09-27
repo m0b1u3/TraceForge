@@ -63,3 +63,13 @@
 .native-browser-navigation-error, .native-browser-loading { margin: 0; padding: 8px 16px; font-size: 12px; background: #fff; }
 .native-browser-navigation-error { color: #934326; }
 .native-browser-panel footer { min-height: 38px; padding: 4px 14px; }
+
+.native-browser-tabs { display:flex; gap:4px; align-items:center; padding:6px 12px 0; overflow-x:auto; background:#f4f5f6; flex-shrink:0; }
+.native-browser-tab { display:flex; align-items:center; min-width:100px; max-width:220px; border-radius:7px 7px 0 0; background:transparent; }
+.native-browser-tab[data-selected="true"] { background:#fff; box-shadow:0 -1px 3px #00000008; }
+.native-browser-tab button, .native-browser-new-tab { border:0; background:transparent; color:inherit; height:32px; cursor:pointer; }
+.native-browser-tab button[role="tab"] { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 10px; font-size:12px; text-align:left; }
+.native-browser-tab button:last-child { width:26px; flex-shrink:0; font-size:17px; }
+.native-browser-new-tab { width:30px; flex-shrink:0; font-size:21px; }
+.native-browser-tabs button:disabled { cursor:default; }
+.native-browser-tab button:last-child:hover:not(:disabled), .native-browser-new-tab:hover:not(:disabled) { background:#e5e7eb; border-radius:5px; }

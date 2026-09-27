@@ -95,6 +95,32 @@ const resolvedCatalog = (tools: Awaited<ReturnType<ExecutionToolGateway["catalog
 });
 
 describe("WorkerHost", () => {
+  it("renews an owned lease while a model call spans multiple lease periods", async () => {
+    const current = assignment(); current.leaseExpiresAt = new Date(Date.now() + 100).toISOString();
+    current.work.leaseExpiresAt = current.leaseExpiresAt;
+    const control = new FakeControl(current); let renewals = 0;
+    control.renew = async value => {
+      if (value.runRevision !== control.current.runRevision) throw new Error("stale revision");
+      renewals++;
+      const expiry = new Date(Date.now() + 100).toISOString();
+      control.current = { ...value, runRevision: value.runRevision + 1, leaseExpiresAt: expiry,
+        work: { ...value.work, leaseExpiresAt: expiry } };
+      return control.current;
+    };
+    const checkpoint = control.checkpoint.bind(control);
+    control.checkpoint = async (value, input) => {
+      if (value.runRevision !== control.current.runRevision) throw new Error("stale checkpoint revision");
+      return checkpoint(value, input);
+    };
+    const host = new WorkerHost(worker, control, { async decide() {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      return { type: "complete", summary: "Model finished", outputs: [] };
+    } }, { async catalog() { return resolvedCatalog([]); }, async execute() { throw new Error("unexpected"); } },
+    continueObserver, new MemoryCheckpoints(), new BoundedOutputDistiller(), { ownershipPollMs: 10, renewBeforeMs: 40 });
+    expect((await host.execute(current)).outcome).toBe("completed");
+    expect(renewals).toBeGreaterThanOrEqual(2);
+    expect(control.completed?.summary).toBe("Model finished");
+  });
   it("waits without inference, renews ownership and resumes after Host interaction", async () => {
     const current = assignment(); current.leaseExpiresAt = new Date(Date.now() + 10000).toISOString();
     const control = new FakeControl(current); let held = true, renewals = 0, calls = 0;

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { CaretRight, Robot, User } from "@phosphor-icons/react";
+import { CaretRight, User } from "@phosphor-icons/react";
 import type { SavedMessage } from "./conversation-client";
 import type { DesktopConversations } from "./desktop-conversation-transport";
 import { ExecutionPanel } from "./execution-panel";
@@ -19,7 +19,7 @@ export interface ConversationRun {
   runId: string; messageCommandId: string | null; goal: string; status: string; revision: number;
   workItems: Array<{ id: string; title: string; status: string; pendingApproval?: DesktopPendingApproval | null; error?: string | null;
     continuation?: { state: "review" | "budget_exhausted" | "unavailable"; checkpointRef: string | null } }>;
-  outputs: Array<{ id: string; summary: string; refs: string[] }>;
+  outputs: Array<{ id: string; kind?: string; summary: string; refs: string[] }>;
   directives?: Array<{ id: string; targetWorkId: string; instruction: string; issuedBy: "operator" | "observer" }>;
 }
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -49,7 +49,8 @@ export function parseConversationRuns(body: unknown): { runs: ConversationRun[];
         || !(work.continuation.checkpointRef === null || typeof work.continuation.checkpointRef === "string" && /^checkpoint:\/\/sha256-[a-f0-9]{64}\.json$/.test(work.continuation.checkpointRef)))) throw new Error("Invalid continuation state");
     }
     for (const output of run.outputs) {
-      if (!record(output) || !text(output.id) || outputs.has(output.id) || !text(output.summary) || !Array.isArray(output.refs)
+      if (!record(output) || !text(output.id) || outputs.has(output.id) || (output.kind !== undefined && !text(output.kind))
+        || !text(output.summary) || !Array.isArray(output.refs)
         || output.refs.length > 1000 || !output.refs.every(text)) throw new Error("Invalid output");
       outputs.add(output.id);
     }
@@ -61,15 +62,25 @@ export function executionStatus(status: string): string {
     paused: "已暂停", blocked: "需要处理", waiting_approval: "等待审批", completed: "已完成", cancelled: "已停止", failed: "执行失败" } as Record<string, string>)[status] ?? `状态：${status}`;
 }
 
+/** A completed Run may append limitations after its deliverable. */
+export function completedRunResult(run: ConversationRun): ConversationRun["outputs"][number] | undefined {
+  for (let index = run.outputs.length - 1; index >= 0; index--) {
+    if (run.outputs[index].kind === "report") return run.outputs[index];
+  }
+  return run.outputs.at(-1);
+}
+
 function RunReply({ run, bridge, conversationId, unified=false }: { run: ConversationRun; bridge: DesktopConversations; conversationId: string; unified?:boolean }) {
+  const result = run.status === "completed" ? completedRunResult(run) : undefined;
+  const previewLimit = result?.kind === "report" ? 520 : 240;
   return <article className="message message-assistant run-reply" aria-label="智能体任务进展">
-    <div className="avatar" aria-hidden="true"><Robot /></div>
-    <div className="message-body"><div className="sender">TraceForge <span className="run-state">{executionStatus(run.status)}</span></div>
-      <RunProgress key={`${conversationId}:${run.runId}`} bridge={bridge} conversationId={conversationId} runId={run.runId} run={run} terminal={["completed","cancelled","failed"].includes(run.status)} />
+    <div className="message-body">
+
       <RunInteraction bridge={bridge} conversationId={conversationId} run={run} hideInput={unified}/>
       {!['completed', 'cancelled', 'failed'].includes(run.status) && <BrowserSessionControl key={`browser:${conversationId}:${run.runId}`} bridge={bridge} conversationId={conversationId} runId={run.runId} />}
       {!run.outputs.length && ["completed", "cancelled", "failed"].includes(run.status) && <p className="run-waiting">本次运行已结束，尚无已保存的任务输出。</p>}
-      {run.status==="completed"&&run.outputs.length>0&&<p className="run-result-preview" aria-label="结果摘录，完整内容在任务材料中">{Array.from(run.outputs.at(-1)!.summary).slice(0,240).join("")}{Array.from(run.outputs.at(-1)!.summary).length>240?"…":""}</p>}
+      {result&&<section className="run-result" aria-label="任务结果"><h3>任务结果</h3><p className="run-result-preview" aria-label="结果摘录，完整内容在任务材料中">{Array.from(result.summary).slice(0,previewLimit).join("")}{Array.from(result.summary).length>previewLimit?"…":""}</p></section>}
+      <RunProgress key={`${conversationId}:${run.runId}`} bridge={bridge} conversationId={conversationId} runId={run.runId} run={run} terminal={["completed","cancelled","failed"].includes(run.status)}>
       {run.outputs.length>0&&<details className="run-saved-materials"><summary><CaretRight className="disclosure-caret" aria-hidden="true" />任务材料 · {run.outputs.length} 项</summary>
       {run.outputs.map(output => <section key={output.id} className="run-output"><p>{output.summary}</p>
         {output.refs.length > 0 && <details><summary><CaretRight className="disclosure-caret" aria-hidden="true" />查看依据 · {output.refs.length} 条引用</summary><p className="local-receipt">引用用于追溯来源，不代表结论已经验证。</p><ul>{output.refs.map((ref, index) => <li key={`${index}:${ref}`}><EvidenceReference bridge={bridge} conversationId={conversationId} runId={run.runId} reference={ref} /></li>)}</ul></details>}
@@ -78,6 +89,7 @@ function RunReply({ run, bridge, conversationId, unified=false }: { run: Convers
         {!run.workItems.length ? <p>尚无已保存的工作项。</p> : <ul>{run.workItems.map(work => <li key={work.id}>{work.title}<span>{executionStatus(work.status)}</span></li>)}</ul>}
         <small className="local-receipt">运行 {run.runId} · 版本 {run.revision}</small>
       </details>
+      </RunProgress>
       {!unified&&<RunControl bridge={bridge} conversationId={conversationId} runId={run.runId} revision={run.revision} status={run.status} />}
     </div>
   </article>;
@@ -114,17 +126,24 @@ export function ConversationExecution({ bridge, conversationId, messages, onRuns
   useEffect(()=>{onRuntime?.(runtime);},[runtime.label,runtime.ready,runtime.queued,runtime.activeMessageId,onRuntime]);
   return <>
     {runtime.label!=="可以继续对话"&&<p className="conversation-runtime-status" role="status">{runtime.label}{runtime.queued>0?` · ${runtime.queued} 条待处理`:""}</p>}
-    {messages.map(message => <React.Fragment key={message.commandId}>
+    {messages.map(message => {
+      const boundRuns = runs.filter(run => run.messageCommandId === message.commandId);
+      const reply = assistant.replies.get(message.commandId);
+      const completedTaskReply = reply?.state === "completed" && !!reply.taskRequest && boundRuns.some(run => run.status === "completed");
+      return <React.Fragment key={message.commandId}>
       <article className="message message-user"><div className="avatar user" aria-hidden="true"><User weight="fill" /></div><div className="message-body"><div className="sender">你</div><p className="user-text">{message.text}</p>{message.attachmentNames?.map((name,index)=><button type="button" className="attachment-reference" key={index} onClick={()=>preview?.open({kind:"attachment",conversationId,messageId:message.commandId,index,title:name})}>附件：{name}</button>)}<small className="local-receipt">已保存到本机会话</small></div></article>
-      <ConversationReply bridge={bridge} conversationId={conversationId} messageId={message.commandId} reply={assistant.replies.get(message.commandId)} ready={assistant.ready&&!assistant.error}
-        otherActive={[...assistant.replies.values()].some(item=>item.state==="streaming"&&item.messageCommandId!==message.commandId)} refresh={assistant.refresh} hideStop={!!onRuns}/>
-      {assistant.replies.get(message.commandId)?.taskRequest && !runs.some(run=>run.messageCommandId===message.commandId) && <section className="conversation-authorization" aria-label="任务授权">
-        {assistant.replies.get(message.commandId)!.taskRequest?.automatic
-          ? <p role="status">{assistant.replies.get(message.commandId)!.taskRequest?.startState==="started"?"任务已开始，正在同步进展…":assistant.replies.get(message.commandId)!.taskRequest?.startState==="stopped"?"任务启动已停止。":"任务启动结果未确认，请查看任务记录和设置；不会自动重复执行。"}</p>
+      {completedTaskReply ? <details className="task-opening-reply"><summary><CaretRight className="disclosure-caret" aria-hidden="true" />查看任务启动时的回复</summary>
+        <ConversationReply bridge={bridge} conversationId={conversationId} messageId={message.commandId} reply={reply} ready={assistant.ready&&!assistant.error}
+          otherActive={false} refresh={assistant.refresh} hideStop={!!onRuns}/>
+      </details> : <ConversationReply bridge={bridge} conversationId={conversationId} messageId={message.commandId} reply={reply} ready={assistant.ready&&!assistant.error}
+        otherActive={[...assistant.replies.values()].some(item=>item.state==="streaming"&&item.messageCommandId!==message.commandId)} refresh={assistant.refresh} hideStop={!!onRuns}/>}
+      {reply?.taskRequest && !boundRuns.length && <section className="conversation-authorization" aria-label="任务授权">
+        {reply.taskRequest.automatic
+          ? <p role="status">{reply.taskRequest.startState==="started"?"任务已开始，正在同步进展…":reply.taskRequest.startState==="stopped"?"任务启动已停止。":"任务启动结果未确认，请查看任务记录和设置；不会自动重复执行。"}</p>
           : <p role="status">这条历史任务尚未执行；如需开始，请重新发送任务要求。</p>}
       </section>}
-      {runs.filter(run => run.messageCommandId === message.commandId).map(run => <RunReply key={run.runId} run={run} bridge={bridge} conversationId={conversationId} unified={!!onRuns&&runs.filter(r=>["running","paused"].includes(r.status)).length===1}/>)}
-    </React.Fragment>)}
+      {boundRuns.map(run => <RunReply key={run.runId} run={run} bridge={bridge} conversationId={conversationId} unified={!!onRuns&&runs.filter(r=>["running","paused"].includes(r.status)).length===1}/>)}
+    </React.Fragment>})}
     {assistant.error&&<p role="alert" className="inline-warning">助手回复暂时无法同步。已显示文字仍保留；重连只读取记录，不重新请求模型。<button onClick={assistant.refresh}>重新读取回复</button></p>}
     {unbound.length > 0 && <section aria-label="会话关联运行"><h2 className="related-runs-title">会话关联运行</h2><p className="local-receipt">以下运行没有对应的已加载消息，不按文字相似度匹配。</p>{unbound.map(run => <RunReply key={run.runId} run={run} bridge={bridge} conversationId={conversationId} />)}</section>}
     {error ? <div className="inline-warning" role="alert">任务状态暂时无法更新，下面的操作不会自动重试。已显示内容是上次读取结果。<button onClick={() => setRefresh(value => value + 1)}>重新读取状态</button></div>

@@ -40,6 +40,7 @@ button:hover{background:#f2f3f5}.isolation{margin-top:10px;color:#687078;font-si
 const broker = new BrokeredHttpGateway({ limits: { maximumRequestBytes: 1024*1024, maximumResponseBytes: 64*1024*1024,
   maximumHeaders: 128, maximumConcurrentRequests: 32, maximumTimeoutMs: 60_000 },
   authorizer: { authorize: input => grant(input.url) }, transport: async request => {
+    if (new URL(request.url).pathname === "/transport-failure") throw new Error("Simulated TLS connection failure");
     if (new URL(request.url).hostname === "example.com" && realWebsite) {
       const response = await fetch(request.url, { redirect: "manual" });
       return { status: response.status, headers: Array.from(response.headers, ([name, value]) => ({ name, value })), body: Buffer.from(await response.arrayBuffer()) };
@@ -96,6 +97,28 @@ try {
   const backLoaded = new Promise<void>(done => activeContents.once("did-stop-loading", () => done()));
   await manager.navigate(id, takeover.takeoverId, { action: "back" });
   await backLoaded;
+  const firstPage = await manager.show(window, id, takeover.takeoverId, { x:672,y:110,width:740,height:720 });
+  await manager.navigate(id, takeover.takeoverId, {action:"new-tab"});
+  await manager.navigate(id, takeover.takeoverId, {action:"navigate",url:"https://embedded.fixture.invalid/tab-two"});
+  const secondPage = await manager.show(window, id, takeover.takeoverId, { x:672,y:110,width:740,height:720 });
+  assert.equal(secondPage.tabs.length, 2);
+  await assert.rejects(manager.navigate(id, takeover.takeoverId, {action:"navigate",url:"https://outside.fixture.invalid/"}));
+  assert.equal(runtime.snapshot(id)?.status, "manual_control", "a denied address must preserve the owned browser session");
+  await assert.rejects(manager.navigate(id, takeover.takeoverId, {action:"navigate",url:"https://embedded.fixture.invalid/transport-failure"}));
+  assert.equal(runtime.snapshot(id)?.status, "manual_control", "a transport failure must preserve other tabs and manual ownership");
+  assert.ok(runtime.snapshot(id)?.records.some(record => record.outcome === "failed" && record.reason === "network_outcome_unknown"));
+  await manager.navigate(id, takeover.takeoverId, {action:"navigate",url:"https://embedded.fixture.invalid/tab-two"});
+  const secondObservation = await runtime.observeManual(id, takeover.takeoverId, {kind:"dom"});
+  assert.equal(secondObservation.view.pageId, secondPage.activePageId, "manual observation follows the selected native tab");
+  assert.notEqual(secondPage.activePageId, firstPage.activePageId);
+  await manager.navigate(id, takeover.takeoverId, {action:"select-tab",pageId:firstPage.activePageId});
+  const restoredPage = await manager.show(window, id, takeover.takeoverId, { x:672,y:110,width:740,height:720 });
+  assert.equal(restoredPage.activePageId, firstPage.activePageId);
+  assert.equal((window.contentView.children[0] as import("electron").WebContentsView).webContents.id, activeContents.id);
+  await manager.navigate(id, takeover.takeoverId, {action:"close-tab",pageId:secondPage.activePageId});
+  const closedPage = await manager.show(window, id, takeover.takeoverId, { x:672,y:110,width:740,height:720 });
+  assert.equal(closedPage.tabs.length, 1);
+  console.log("stage: native multi-tab identity, navigation, selection and close passed");
   const guest = window.contentView.children[0] as import("electron").WebContentsView;
   const guestContents = guest.webContents;
   assert.equal(guest.webContents.getLastWebPreferences().sandbox, true);

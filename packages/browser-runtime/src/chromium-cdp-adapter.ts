@@ -114,6 +114,21 @@ export class ChromiumCdpAdapter {
     await this.options.cdp.send("Browser.setDownloadBehavior", { behavior: "deny", eventsEnabled: true });
   }
 
+  /** Register an additional native page in this already-owned embedded session. */
+  async attachEmbeddedPage(sessionId: string): Promise<void> {
+    if (!this.options.embeddedTarget || this.closed || !this.intercept) throw new Error("Embedded session unavailable");
+    await this.attachTarget({ method: "Target.attachedToTarget", params: {
+      sessionId, targetInfo: { targetId: sessionId, type: "page" },
+    } });
+  }
+
+  detachEmbeddedPage(sessionId: string): void {
+    if (!this.options.embeddedTarget) throw new Error("Not an embedded session");
+    this.targets.delete(sessionId);
+    this.readyPages.delete(sessionId);
+    this.pages.removeTarget(sessionId);
+  }
+
   activate(
     intercept: (request: InterceptedBrowserRequest) => Promise<BrowserResponseDirective>,
     onFailure: (error: Error) => void,

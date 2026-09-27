@@ -128,3 +128,27 @@ it("allows multiple slow summary batches under the bounded model deadline, not a
     expect(calls).toBeGreaterThan(1);
   } finally { vi.useRealTimers(); }
 });
+
+
+it("uses unknown-window estimates for compaction without failing a valid task at the fallback ceiling", async () => {
+  const f = fixture();
+  const runtime = new RollingContextCompaction(f.compactor, f.cache, () => ({}));
+  const anchors = { objective: "preserved objective", authorization: "a".repeat(90000) };
+  const input = { caseId: "case", runId: "run", consumer: "worker", sourceFingerprint: "source",
+    context: { work: anchors, transcript: [{ turn: 0, kind: "tool", summary: "latest observation" }] } };
+  const short = await runtime.prepare(input);
+  expect(short.context.work).toEqual(anchors);
+  expect(short.context.transcript).toEqual(input.context.transcript);
+  const transcript = Array.from({ length: 50 }, (_, turn) => ({ turn, kind: "tool", receiptKey: `receipt-${turn}`, summary: "record ".repeat(180) }));
+  const prepared = await runtime.prepare({ ...input, context: { work: anchors, transcript } });
+  expect(prepared.manifest.contextCompaction).toMatchObject({ status: "not_needed", reason: "unknown_model_window" });
+  expect(prepared.context.work).toEqual(anchors);
+  expect(prepared.context.transcript).toEqual(transcript);
+  expect(f.calls()).toBe(0);
+  expect(estimateContextTokens(prepared.context)).toBeGreaterThan(resolveContextBudget().input);
+  const learned = new RollingContextCompaction(f.compactor, f.cache, () => ({ maximumInputTokens: 50000 }));
+  const recovered = await learned.prepare({ ...input, context: { work: anchors, transcript } });
+  expect(recovered.manifest.contextCompaction).toMatchObject({ status: "completed" });
+  expect(recovered.context.work).toEqual(anchors);
+  expect(f.calls()).toBeGreaterThan(0);
+});

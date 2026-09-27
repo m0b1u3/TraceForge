@@ -15,6 +15,8 @@ export function BrowserViewport({ bridge, path, sessionId, takeoverId, send, onH
   const [error, setError] = useState(""), [address, setAddress] = useState("正在连接页面…");
   const [title, setTitle] = useState("新标签页"), [draft, setDraft] = useState("");
   const editing = useRef(false);
+  const [tabs, setTabs] = useState<Array<{id:string;title:string;url:string}>>([]);
+  const [activePage, setActivePage] = useState("");
   const [history, setHistory] = useState({ back: false, forward: false, loading: false });
   const [navigationError, setNavigationError] = useState("");
   const [busy, setBusy] = useState(false), [revision, setRevision] = useState(0);
@@ -38,6 +40,7 @@ export function BrowserViewport({ bridge, path, sessionId, takeoverId, send, onH
         if (alive) { setAddress(result.url || "about:blank");
           if (!editing.current) setDraft(result.url || "about:blank");
           setTitle(result.title || "新标签页");
+          setTabs(result.tabs ?? []); setActivePage(result.activePageId ?? "");
           setHistory({ back: !!result.canGoBack, forward: !!result.canGoForward, loading: !!result.loading });
           setConnected(true); } else hide();
       } catch { hide(); if (alive) setError("页面连接已中断。重新连接只恢复显示，不重复网页操作。"); }
@@ -49,7 +52,7 @@ export function BrowserViewport({ bridge, path, sessionId, takeoverId, send, onH
     window.addEventListener("resize", present);
     return () => { alive = false; clearInterval(timer); overlays.disconnect(); window.removeEventListener("resize", present); hide(); document.body.classList.remove("native-browser-open"); };
   }, [bridge, path, sessionId, takeoverId, revision, error]);
-  async function navigate(action: "navigate" | "back" | "forward" | "reload") {
+  async function navigate(action: "navigate" | "back" | "forward" | "reload" | "new-tab" | "select-tab" | "close-tab", pageId?: string) {
     const rect = slot.current?.getBoundingClientRect();
     if (!rect || !bridge.presentBrowser || !takeoverId || busy) return;
     let url: string | undefined;
@@ -64,7 +67,7 @@ export function BrowserViewport({ bridge, path, sessionId, takeoverId, send, onH
     }
     setBusy(true); setNavigationError(""); editing.current = false;
     try {
-      await bridge.presentBrowser({ path, sessionId, takeoverId, navigation: { action, ...(url ? { url } : {}) },
+      await bridge.presentBrowser({ path, sessionId, takeoverId, navigation: { action, ...(url ? { url } : {}), ...(pageId ? { pageId } : {}) },
         bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } });
     } catch { setNavigationError("页面未能打开，请检查地址、网络或任务授权范围后重试。"); }
     finally { setBusy(false); }
@@ -98,6 +101,16 @@ export function BrowserViewport({ bridge, path, sessionId, takeoverId, send, onH
         <button className="native-browser-secondary" disabled={busy} onClick={onHide}>收起</button>
       </div>
     </header>
+    <div className="native-browser-tabs" role="tablist" aria-label="网页标签">
+      {tabs.map(tab => <div className="native-browser-tab" key={tab.id} data-selected={tab.id === activePage}>
+        <button role="tab" aria-selected={tab.id === activePage} title={tab.url} disabled={!takeoverId || busy}
+          onClick={() => void navigate("select-tab", tab.id)}>{tab.title || "新标签页"}</button>
+        <button aria-label={`关闭标签：${tab.title || "新标签页"}`} disabled={!takeoverId || busy}
+          onClick={() => void navigate("close-tab", tab.id)}>×</button>
+      </div>)}
+      <button className="native-browser-new-tab" aria-label="新建标签页" title="新建标签页" disabled={!takeoverId || busy}
+        onClick={() => void navigate("new-tab")}>+</button>
+    </div>
     <form className="native-browser-navigation" onSubmit={event => { event.preventDefault(); void navigate("navigate"); }}>
       <button type="button" aria-label="后退" title="后退" disabled={!takeoverId || busy || !history.back} onClick={() => void navigate("back")}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6M8 12h12" /></svg></button>
       <button type="button" aria-label="前进" title="前进" disabled={!takeoverId || busy || !history.forward} onClick={() => void navigate("forward")}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6M4 12h12" /></svg></button>

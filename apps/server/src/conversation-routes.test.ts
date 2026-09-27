@@ -24,6 +24,15 @@ async function fixture(path = ":memory:") {
 }
 
 describe("desktop conversation host persistence", () => {
+  it("does not reject the current message using an unknown model's estimated window", async () => {
+    const f = await fixture(), id = (await f.create()).json().id, sql = getSqliteClient(f.db);
+    const text = "current user context ".repeat(5000);
+    sql.prepare("INSERT INTO desktop_conversation_messages VALUES (?,?,?,?,?)").run(id, "long-current", 1, text, "2026-09-27");
+    const model = { runTools: async () => ({ done: true, text: "", toolCalls: [] }), extractJson: async () => ({}) };
+    expect(prepareConversationContext(sql, id, 1, model, "Task").messages[0].content).toBe(text);
+    expect(() => prepareConversationContext(sql, id, 1, { ...model, contextLimits: { contextWindowTokens: 16000 } }, "Task")).toThrow("context budget");
+  });
+
   it("accepts the next message beyond the old 2000-message ceiling and prepares context by page", async () => {
     const f=await fixture(),id=(await f.create()).json().id,sql=getSqliteClient(f.db);
     const insert=sql.prepare("INSERT INTO desktop_conversation_messages VALUES (?,?,?,?,?)");

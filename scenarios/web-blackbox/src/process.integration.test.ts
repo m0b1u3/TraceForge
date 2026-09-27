@@ -19,8 +19,9 @@ const context:ToolExecutionContext={workerId:"worker",caseId:"case",runId:"run",
 interface SurfaceStorage {state:{revision:number;value:unknown}|null; records?:Map<string,{revision:number;value:unknown}>; failRequest?:boolean; unstable?:boolean; truncated?:boolean; deny?:boolean}
 function runtime(calls:Array<{capability:string;action:string;input:unknown}>,storage:SurfaceStorage={state:null}){
   storage.records ??= new Map();
-  const handlers:ScenarioPackageCapabilityHandler[]=[{ capability: SCENARIO_PROCESS_HOST_CAPABILITIES.browser, actions: ["inspect","request_takeover","observe"], async execute(input) {
-    if(!["request_takeover","observe"].includes((input as any).operation))throw new Error("Browser deployment unavailable in HTTP fixture");
+  const handlers:ScenarioPackageCapabilityHandler[]=[{ capability: SCENARIO_PROCESS_HOST_CAPABILITIES.browser, actions: ["inspect","open","request_takeover","observe","read"], async execute(input) {
+    if ((input as any).operation === "read") { calls.push({capability:SCENARIO_PROCESS_HOST_CAPABILITIES.browser,action:"read",input}); return {output:{offset:(input as any).offset,nextOffset:null,bodyBase64:""},refs:[]}; }
+    if(!["open","request_takeover","observe"].includes((input as any).operation))throw new Error("Browser deployment unavailable in HTTP fixture");
     calls.push({capability:SCENARIO_PROCESS_HOST_CAPABILITIES.browser,action:(input as any).operation,input});
     return {output:{status:"manual_control",sessionId:(input as any).sessionId},refs:[]};
   } },{
@@ -140,7 +141,7 @@ describe("Web black-box Scenario Process",()=>{
     }finally{await source.close();}
   });
   it("loads the package as a pure-data descriptor with local Skill and Knowledge",()=>{
-    expect(descriptor).toMatchObject({id:"traceforge.web-blackbox",version:"0.5.20",
+    expect(descriptor).toMatchObject({id:"traceforge.web-blackbox",version:"0.5.23",
       runtime:{hostCapabilities:expect.arrayContaining([SCENARIO_PROCESS_HOST_CAPABILITIES.authorization,SCENARIO_PROCESS_HOST_CAPABILITIES.execution,
         SCENARIO_PROCESS_HOST_CAPABILITIES.artifacts,SCENARIO_PROCESS_HOST_CAPABILITIES.state,SCENARIO_PROCESS_HOST_CAPABILITIES.evidence,
         SCENARIO_PROCESS_HOST_CAPABILITIES.sessions,SCENARIO_PROCESS_HOST_CAPABILITIES.traffic])}});
@@ -198,4 +199,41 @@ describe("Web black-box Scenario Process",()=>{
       expect(JSON.stringify(calls.filter(item=>item.capability===SCENARIO_PROCESS_HOST_CAPABILITIES.sessions))).not.toContain("Bearer");
     }finally{await source.close?.();}
   });
+});
+
+it("reads retained browser evidence beyond the first four MiB through the actual Scenario process", async () => {
+  const calls:Array<{capability:string;action:string;input:unknown}>=[]; const subject=runtime(calls);
+  try {
+    const tool=(await subject.discover()).find(item=>item.name==="web.browser.read")!;
+    const result=await tool.execute({artifactId:"retained-browser-evidence",offset:5*1024*1024,length:65536},context);
+    expect(result.status).toBe("succeeded");
+    expect(calls).toContainEqual(expect.objectContaining({action:"read",input:expect.objectContaining({offset:5*1024*1024})}));
+  } finally { await subject.close(); }
+});
+
+it("returns correctable input failures before dispatch and accepts a corrected call in the same process", async () => {
+  const calls:Array<{capability:string;action:string;input:unknown}>=[]; const subject=runtime(calls);
+  try {
+    const tools=await subject.discover(), browser=tools.find(item=>item.name==="web.browser.inspect")!;
+    await expect(browser.execute({operation:"open",url:"https://authorized.example/",sessionId:"existing-session"},context)).resolves.toMatchObject({status:"failed",summary:expect.stringContaining("No operation was started"),retryable:false});
+    expect(calls).toEqual([]);
+    await expect(browser.execute({operation:"request_takeover",sessionId:"existing-session"},{...context,idempotencyKey:"corrected"})).resolves.toMatchObject({status:"succeeded"});
+    expect(calls).toHaveLength(1);
+  } finally { await subject.close(); }
+});
+
+it("ignores empty optional fields on browser open and keeps populated incompatible fields correctable", async () => {
+  const calls:Array<{capability:string;action:string;input:unknown}>=[]; const subject=runtime(calls);
+  try {
+    const browser=(await subject.discover()).find(item=>item.name==="web.browser.inspect")!;
+    const opened=await browser.execute({operation:"open",url:"https://authorized.example/",pageId:"",sessionId:""},context);
+    expect(opened.status).toBe("succeeded");
+    expect(calls).toEqual([expect.objectContaining({action:"open",input:expect.objectContaining({url:"https://authorized.example/"})})]);
+    const invalid=await browser.execute({operation:"open",url:"https://authorized.example/",pageId:"other-page"},{...context,idempotencyKey:"invalid-page"});
+    expect(invalid).toMatchObject({status:"failed",summary:expect.stringContaining("No operation was started")});
+    expect(calls).toHaveLength(1);
+    const observed=await browser.execute({operation:"observe",sessionId:"owned-session",pageId:"page-1"},{...context,idempotencyKey:"observed-page"});
+    expect(observed.status).toBe("succeeded");
+    expect(calls.at(-1)?.input).toMatchObject({operation:"observe",sessionId:"owned-session",pageId:"page-1"});
+  } finally { await subject.close(); }
 });

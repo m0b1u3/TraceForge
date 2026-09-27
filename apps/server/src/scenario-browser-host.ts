@@ -71,12 +71,19 @@ export function createScenarioBrowserHandler(
     };
     check();
     if (input.operation === "observe" || input.operation === "act" || input.operation === "close" || input.operation === "request_takeover") {
-      if (!sessions) throw new Error("Browser sessions unavailable");
-      const active = sessions.agent(input.sessionId, attribution, installation.id, installation.version);
-      if (input.operation === "close") { await sessions.close(input.sessionId); return { output: { status: "closed" }, refs: [] }; }
+      let active: BrokeredBrowserRuntime;
+      try {
+        if (!sessions) throw new Error("Browser sessions unavailable");
+        active = sessions.agent(input.sessionId, attribution, installation.id, installation.version);
+      } catch (error) {
+        // Registry validation precedes any page operation. A stale handle is
+        // not evidence that an external action may have executed.
+        throw Object.assign(error instanceof Error ? error : new Error("Browser session unavailable for this invocation"), { executionOutcome: "not_started" as const });
+      }
+      if (input.operation === "close") { await sessions!.close(input.sessionId); return { output: { status: "closed" }, refs: [] }; }
       if (active.snapshot(input.sessionId)?.status === "manual_control") return { output: { status: "manual_control", instruction: "User controls this session; do not act or open a replacement." }, refs: [] };
       if(input.operation === "request_takeover") {
-        await sessions.command(attribution.caseId,attribution.runId,{operation:"takeover",sessionId:input.sessionId,
+        await sessions!.command(attribution.caseId,attribution.runId,{operation:"takeover",sessionId:input.sessionId,
           commandId:`agent-handoff:${createHash("sha256").update(attribution.idempotencyKey).digest("hex")}`});
         return {output:{status:"manual_control",sessionId:input.sessionId,instruction:"Control handed to the desktop user. Wait for handback; do not close, complete this Work, or open a replacement."},refs:[]};
       }
@@ -86,12 +93,13 @@ export function createScenarioBrowserHandler(
     }
     if (input.operation === "read") {
       const artifact = context.artifacts.get({ packageId: installation.id, packageVersion: installation.version, caseId: attribution.caseId, artifactId: input.artifactId });
-      if (!artifact || artifact.runId !== attribution.runId || !artifact.kind.startsWith("browser.")) throw new Error("Browser artifact unavailable for this invocation");
+      if (!artifact || artifact.runId !== attribution.runId || !artifact.kind.startsWith("browser."))
+        throw Object.assign(new Error("Browser artifact unavailable: use the exact artifactRef returned by web.browser.inspect for this Run; HTTP observations are not browser artifacts"), { executionOutcome: "not_started" as const });
       const body = deployment.readContent?.(artifact.contentRef, attribution, artifact.id);
       if (!body || body.length > 67108864 || body.length !== artifact.byteSize || `sha256:${createHash("sha256").update(body).digest("hex")}` !== artifact.digest)
-        throw new Error("Browser artifact content unavailable or corrupt");
+        throw Object.assign(new Error("Browser artifact content unavailable or corrupt"), { executionOutcome: "not_started" as const });
       check();
-      if (input.offset > body.length) throw new Error("Browser content offset exceeds size");
+      if (input.offset > body.length) throw Object.assign(new Error("Browser content offset exceeds size"), { executionOutcome: "not_started" as const });
       const end = Math.min(body.length, input.offset + input.length);
       return { output: { artifactId: artifact.id, bodyBase64: body.subarray(input.offset, end).toString("base64"), byteSize: body.length,
         offset: input.offset, nextOffset: end < body.length ? end : null, digest: artifact.digest }, refs: [artifact.id, artifact.contentRef] };

@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import type { JsonObject, ToolResult } from "./contracts.mjs";
 
+export class ToolInputError extends Error {}
+
 export function plainObject(value: unknown, label: string): JsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
-    throw new Error(`${label} must be an object`);
+    throw new ToolInputError(`${label} must be an object`);
   }
   return value as JsonObject;
 }
@@ -11,17 +13,17 @@ export function plainObject(value: unknown, label: string): JsonObject {
 export function exact(value: JsonObject, allowed: readonly string[]): void {
   const keys = new Set(allowed);
   const unknown = Object.keys(value).filter((key) => !keys.has(key));
-  if (unknown.length) throw new Error(`Unknown input field: ${unknown.join(", ")}; allowed fields are: ${allowed.join(", ")}`);
+  if (unknown.length) throw new ToolInputError(`Unknown input field: ${unknown.join(", ")}; allowed fields are: ${allowed.join(", ")}`);
 }
 
 export function requiredText(value: unknown, label: string): string {
-  if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > 1024) throw new Error(`${label} is invalid`);
+  if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > 1024) throw new ToolInputError(`${label} is invalid`);
   return value.trim();
 }
 
 export function boundedInteger(value: unknown, minimum: number, maximum: number, label: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) {
-    throw new Error(`${label} must be an integer between ${minimum} and ${maximum}`);
+    throw new ToolInputError(`${label} must be an integer between ${minimum} and ${maximum}`);
   }
   return value as number;
 }
@@ -29,14 +31,14 @@ export function boundedInteger(value: unknown, minimum: number, maximum: number,
 export function stringRecord(value: unknown, label: string): Record<string, string> {
   const record = plainObject(value, label);
   if (Object.keys(record).length > 128 || Object.entries(record).some(([key, item]) => !key || typeof item !== "string")) {
-    throw new Error(`${label} are invalid`);
+    throw new ToolInputError(`${label} are invalid`);
   }
   return record as Record<string, string>;
 }
 
 export function requiredBase64(value: unknown): string {
   if (typeof value !== "string" || Buffer.byteLength(value) > 2 * 1024 * 1024 || Buffer.from(value, "base64").toString("base64") !== value) {
-    throw new Error("HTTP body is invalid");
+    throw new ToolInputError("HTTP body is invalid");
   }
   return value;
 }
@@ -44,10 +46,10 @@ export function requiredBase64(value: unknown): string {
 export function canonicalHttpUrl(value: unknown, label: string): string {
   const text = requiredText(value, label);
   let url: URL;
-  try { url = new URL(text); } catch { throw new Error(`${label} must be an absolute HTTP URL`); }
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error(`${label} must be an HTTP URL without credentials`);
+  try { url = new URL(text); } catch { throw new ToolInputError(`${label} must be an absolute HTTP URL`); }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new ToolInputError(`${label} must be an HTTP URL without credentials`);
   url.hash = "";
-  if (Buffer.byteLength(url.href) > 1024) throw new Error(`${label} canonical URL is too long`);
+  if (Buffer.byteLength(url.href) > 1024) throw new ToolInputError(`${label} canonical URL is too long`);
   return url.href;
 }
 

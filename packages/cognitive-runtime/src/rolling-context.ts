@@ -20,7 +20,10 @@ export class RollingContextCompaction implements ContextCompactionPolicy {
     input.signal?.throwIfAborted();
     const timeoutMs = typeof this.timeoutMs === "function" ? this.timeoutMs(input.consumer) : this.timeoutMs;
     if (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)) throw new Error("Invalid compaction deadline");
-    const budget = resolveContextBudget(this.limits(input.consumer));
+    const limits = this.limits(input.consumer);
+    const budget = resolveContextBudget(limits);
+    // Unknown-window fallback guides compaction; it is not a provider limit.
+    const hasInputLimit = budget.source !== "conservative_fallback" || limits.maximumInputTokens !== undefined;
     const original = structuredClone(input.context);
     const transcript = Array.isArray(original.transcript) ? original.transcript : [];
     const estimatedBefore = estimateContextTokens(original);
@@ -30,12 +33,14 @@ export class RollingContextCompaction implements ContextCompactionPolicy {
     const target = Math.max(128, budget.target - overhead);
     const manifest = { version: 1, budget, timeoutMs, estimatedBefore, sourceFingerprint: input.sourceFingerprint,
       semanticQualityVerified: false, originalRecordsPreserved: true };
+    if (!hasInputLimit && Buffer.byteLength(JSON.stringify(original)) <= 1048576)
+      return { context: original, manifest: { contextCompaction: { ...manifest, status: "not_needed", reason: "unknown_model_window" } } };
     if (estimatedBefore <= trigger && Buffer.byteLength(JSON.stringify(original)) <= 1048576)
       return { context: original, manifest: { contextCompaction: { ...manifest, status: "not_needed" } } };
 
     if (!transcript.length && this.narrative) {
       const result = await this.narrative(Math.min(16000, target), timeoutMs).prepare(input);
-      if (estimateContextTokens(result.context) + overhead > budget.input) throw new Error("Required context anchors exceed model input budget");
+      if (hasInputLimit && estimateContextTokens(result.context) + overhead > budget.input) throw new Error("Required context anchors exceed model input budget");
       return { ...result, manifest: { ...result.manifest, contextBudget: manifest } };
     }
 
@@ -63,7 +68,7 @@ export class RollingContextCompaction implements ContextCompactionPolicy {
       recent.unshift(...recalledTurn);
     }
     if (!historical.length) {
-      if (estimatedBefore + overhead > budget.input || Buffer.byteLength(JSON.stringify(original)) > 1048576)
+      if ((hasInputLimit && estimatedBefore + overhead > budget.input) || Buffer.byteLength(JSON.stringify(original)) > 1048576)
         throw new Error("Required context anchors or latest turn exceed model input budget");
       return { context: original, manifest: { contextCompaction: { ...manifest, status: "not_needed", reason: "no_safe_history_boundary" } } };
     }
@@ -90,13 +95,13 @@ export class RollingContextCompaction implements ContextCompactionPolicy {
         receiptKeys, omittedReceiptKeys: keys.length - receiptKeys.length,
         coverage: "ordered historical records excluding retained turns",
         firstTurn: (historical[0] as { turn?: number }).turn, lastTurn: (historical.at(-1) as { turn?: number }).turn } };
-      if (estimateContextTokens(result) + overhead > budget.input || Buffer.byteLength(JSON.stringify(result)) > 1048576)
+      if ((hasInputLimit && estimateContextTokens(result) + overhead > budget.input) || Buffer.byteLength(JSON.stringify(result)) > 1048576)
         throw new Error("Protected context exceeds model input budget after history compaction");
       return { context: result, manifest: { contextCompaction: { ...manifest, status: "completed", coveredEntries: history.covered,
         retainedEntries: recent.length, estimatedAfter: estimateContextTokens(result) } } };
     } catch (error) {
       input.signal?.throwIfAborted();
-      if (estimatedBefore + overhead > budget.input || Buffer.byteLength(JSON.stringify(original)) > 1048576) throw error;
+      if ((hasInputLimit && estimatedBefore + overhead > budget.input) || Buffer.byteLength(JSON.stringify(original)) > 1048576) throw error;
       return { context: original, manifest: { contextCompaction: { ...manifest, status: "fallback", reason: "summary_unavailable" } } };
     } finally { clearTimeout(timer); controller.signal.removeEventListener("abort", rejectAbort); input.signal?.removeEventListener("abort", abort); controller.abort(); }
   }

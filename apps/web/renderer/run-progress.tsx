@@ -33,7 +33,7 @@ function description(event: ScenarioAgentEvent) {
   if (item.type === "modelAdmission") return `模型资源 · ${statusLabel(item.status)}`;
   return item.summary;
 }
-export function RunProgress({ bridge, conversationId, runId, terminal = false, run }: { bridge: DesktopConversations; conversationId: string; runId: string; terminal?: boolean; run?: ConversationRun }) {
+export function RunProgress({ bridge, conversationId, runId, terminal = false, run, children }: { bridge: DesktopConversations; conversationId: string; runId: string; terminal?: boolean; run?: ConversationRun; children?: React.ReactNode }) {
   const [events, setEvents] = useState<ScenarioAgentEvent[]>([]), [error, setError] = useState(false), [retry, setRetry] = useState(0);
   const [older, setOlder] = useState(false);
   const [trace, setTrace] = useState<ScenarioAgentEvent[]>([]);
@@ -69,8 +69,10 @@ export function RunProgress({ bridge, conversationId, runId, terminal = false, r
     void poll(); return () => { active = false; clearTimeout(timer); };
   }, [bridge, conversationId, runId, retry, terminal]);
   return <section className="run-progress" aria-label="执行进展">
-    <p className="local-receipt" role="status">{error ? "状态连接中断，当前显示上次保存的记录" : syncing ? "正在同步任务进度…" : activity.label(run)}</p>
+    <p className="run-current-activity" role="status"><span className="run-activity-dot" data-active={!terminal} aria-hidden="true" />{error ? "状态连接中断，当前显示上次保存的记录" : syncing ? "正在同步任务进度…" : activity.label(run)}</p>
     {error && <p role="alert">进展读取中断，已显示记录保留；不会重跑操作。<button onClick={() => setRetry(value => value + 1)}>重新读取进展</button></p>}
+    <details className="run-inspector"><summary><CaretRight className="disclosure-caret" aria-hidden="true" />查看任务详情</summary>
+    {children}
     <details className="run-execution-details"><summary><CaretRight className="disclosure-caret" aria-hidden="true" />思考与工具过程</summary><ExecutionTrace events={trace} bridge={bridge} conversationId={conversationId}/></details>
     {events.length > 0 && <details><summary><CaretRight className="disclosure-caret" aria-hidden="true" />执行记录 · {older ? "最近 " : ""}{events.length} 条</summary>
       <ol>{events.map(event => {
@@ -81,5 +83,6 @@ export function RunProgress({ bridge, conversationId, runId, terminal = false, r
       })}</ol>
       <p className="local-receipt">这是已记录的执行事实，不是模型内部推理；工具完成不代表安全结论已验证。审批以当前待处理卡片为准，历史事件不会触发批准。</p>
     </details>}
+    </details>
   </section>;
 }

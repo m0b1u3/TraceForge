@@ -72,6 +72,8 @@ describe("package-owned Run decision supervision", () => {
     } });
     const observer = new StructuredRunObserverModel({ extractJson: async (request) => {
       requests.push(request.user);
+      expect(JSON.stringify(request.schema)).not.toContain("terminate_run");
+      expect(request.system).toContain("A satisfied user goal does not cancel the Run");
       return { action: "continue", rationale: "The run remains healthy" };
     } });
 
@@ -90,5 +92,6 @@ describe("package-owned Run decision supervision", () => {
   it("rejects malformed decisions at the package boundary", () => {
     expect(() => parseRunPlannerDecision({ action: "plan", rationale: "missing changes" })).toThrow();
     expect(() => parseRunObserverDecision({ action: "steer", workId: "first", instruction: "" })).toThrow();
+    expect(() => parseRunObserverDecision({ action: "terminate_run", reason: "Goal satisfied" })).toThrow();
   });
 });

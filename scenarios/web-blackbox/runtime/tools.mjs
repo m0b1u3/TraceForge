@@ -3,12 +3,23 @@ import { compareHttp } from "./comparison.mjs";
 import { investigation } from "./workflow.mjs";
 import { reserveRequest } from "./budgets.mjs";
 import { observationHighlights, observationTerms } from "./observations.mjs";
-import { boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, requiredText, sha, stringRecord, succeeded } from "./validation.mjs";
+import { ToolInputError, boundedInteger, canonicalHttpUrl, exact, plainObject, requiredBase64, requiredText, sha, stringRecord, succeeded } from "./validation.mjs";
 export async function callTool(request, host) {
+    let dispatched = false;
+    try {
+        return await executeTool(request, host, () => { dispatched = true; });
+    }
+    catch (error) {
+        if (dispatched || !(error instanceof ToolInputError))
+            throw error;
+        return { status: "failed", summary: `No operation was started. Correct the tool input: ${error.message.slice(0, 1024)}`, raw: "", refs: [], retryable: false };
+    }
+}
+async function executeTool(request, host, beforeDispatch) {
     const params = plainObject(request.params, "Tool call"), context = plainObject(params.context, "Tool context");
     if (typeof context.idempotencyKey !== "string" || !context.idempotencyKey)
-        throw new Error("Tool context idempotency key is required");
-    const rawCapability = (name, action, input, suffix) => host.capability(request.id, context, name, action, input, suffix);
+        throw new ToolInputError("Tool context idempotency key is required");
+    const rawCapability = (name, action, input, suffix) => { beforeDispatch(); return host.capability(request.id, context, name, action, input, suffix); };
     const capability = async (name, action, input, suffix) => {
         if (name === "traceforge.scenario.execution@1" && ["request_http", "request_http_session"].includes(action))
             await reserveRequest(rawCapability, `${context.idempotencyKey}:${suffix}`);
@@ -33,40 +44,60 @@ export async function callTool(request, host) {
     if (params.tool === "web.browser.read") {
         const input = plainObject(params.input, "Browser artifact input");
         exact(input, ["artifactId", "offset", "length"]);
-        const receipt = await capability("traceforge.scenario.browser@1", "read", { operation: "read", authorizationAction: "web.traffic.read",
-            artifactId: requiredText(input.artifactId, "Artifact id"), offset: boundedInteger(input.offset ?? 0, 0, 4194304, "Content offset"),
-            length: boundedInteger(input.length ?? 65536, 1, 65536, "Content length"),
-        }, "browser-read");
-        return succeeded("Retained Browser artifact chunk loaded", receipt.output, receipt.refs);
+        try {
+            const receipt = await capability("traceforge.scenario.browser@1", "read", { operation: "read", authorizationAction: "web.traffic.read",
+                artifactId: requiredText(input.artifactId, "Artifact id"), offset: boundedInteger(input.offset ?? 0, 0, 67108864, "Content offset"),
+                length: boundedInteger(input.length ?? 65536, 1, 65536, "Content length"),
+            }, "browser-read");
+            return succeeded("Retained Browser artifact chunk loaded", receipt.output, receipt.refs);
+        }
+        catch (error) {
+            if (!error || typeof error !== "object" || !("executionOutcome" in error) || error.executionOutcome !== "not_started")
+                throw error;
+            return { status: "failed", summary: "Browser evidence could not be read. Use the exact artifactRef from web.browser.inspect in this Run; HTTP observations require their original tool receipt. Check the requested offset before retrying.", raw: "", refs: [], retryable: false };
+        }
     }
     if (params.tool === "web.browser.inspect") {
-        const input = plainObject(params.input, "Browser input");
-        exact(input, ["operation", "url", "screenshot", "sessionId", "pageId", "action", "durationMs"]);
+        const rawInput = plainObject(params.input, "Browser input");
+        exact(rawInput, ["operation", "url", "screenshot", "sessionId", "pageId", "action", "durationMs"]);
+        // Unified tool schemas expose fields used by other browser operations.
+        // Empty optional text fields carry no identity or navigation intent.
+        const input = { ...rawInput };
+        for (const field of ["url", "sessionId", "pageId"])
+            if (input[field] === "")
+                delete input[field];
         const operation = input.operation ?? "inspect";
         if (!["inspect", "open", "observe", "act", "close", "request_takeover"].includes(operation))
-            throw new Error("Invalid browser operation");
+            throw new ToolInputError("Invalid browser operation");
         if (["observe", "act", "close", "request_takeover"].includes(operation)) {
             exact(input, ["operation", "sessionId", ...(operation === "act" ? ["action"] : operation === "observe" ? ["pageId", "screenshot"]
                     : operation === "request_takeover" ? ["url"] : [])]);
             if (input.screenshot !== undefined && typeof input.screenshot !== "boolean")
-                throw new Error("Screenshot option must be boolean");
+                throw new ToolInputError("Screenshot option must be boolean");
             // Models commonly repeat the currently visible URL when handing a live
             // browser to the user. It is context only: validate it, then keep the
             // opaque sessionId as the sole authority so handoff cannot navigate or
             // expand the granted network scope.
             if (operation === "request_takeover" && input.url !== undefined)
                 canonicalHttpUrl(input.url, "Browser URL");
-            const receipt = await capability("traceforge.scenario.browser@1", operation, { operation, authorizationAction: "web.request.replay",
-                sessionId: requiredText(input.sessionId, "Browser session"), ...(operation === "act" ? { action: plainObject(input.action, "Browser action") } : {}),
-                ...(input.pageId ? { pageId: requiredText(input.pageId, "Browser page") } : {}),
-                ...(operation === "observe" && input.screenshot !== undefined ? { screenshot: input.screenshot } : {}),
-            }, `browser-${operation}`);
-            return succeeded("Browser session operation returned; inspect status before continuing", receipt.output, receipt.refs);
+            try {
+                const receipt = await capability("traceforge.scenario.browser@1", operation, { operation, authorizationAction: "web.request.replay",
+                    sessionId: requiredText(input.sessionId, "Browser session"), ...(operation === "act" ? { action: plainObject(input.action, "Browser action") } : {}),
+                    ...(input.pageId ? { pageId: requiredText(input.pageId, "Browser page") } : {}),
+                    ...(operation === "observe" && input.screenshot !== undefined ? { screenshot: input.screenshot } : {}),
+                }, `browser-${operation}`);
+                return succeeded("Browser session operation returned; inspect status before continuing", receipt.output, receipt.refs);
+            }
+            catch (error) {
+                if (!error || typeof error !== "object" || !("executionOutcome" in error) || error.executionOutcome !== "not_started")
+                    throw error;
+                return { status: "failed", summary: "No browser operation was started: the session is unavailable for this Work. Check current ownership and retained evidence before deciding how to continue; do not replay prior actions.", raw: "", refs: [], retryable: false };
+            }
         }
         exact(input, ["operation", "url", "screenshot", ...(operation === "open" ? ["durationMs"] : [])]);
         const url = canonicalHttpUrl(input.url, "Browser URL");
         if (input.screenshot !== undefined && typeof input.screenshot !== "boolean")
-            throw new Error("Screenshot option must be boolean");
+            throw new ToolInputError("Screenshot option must be boolean");
         const receipt = await capability("traceforge.scenario.browser@1", operation, {
             operation, authorizationAction: "web.request.replay", url, screenshot: input.screenshot ?? false,
             ...(operation === "open" ? { durationMs: boundedInteger(input.durationMs ?? 0, 0, 2147483647, "Browser session duration") } : {}),
@@ -111,7 +142,7 @@ async function requestHttp(input, capability) {
     exact(input, ["url", "method", "headers", "bodyBase64", "timeoutMs", "responseLimitBytes", "interestTerms"]);
     const terms = observationTerms(input.interestTerms);
     if (typeof input.url !== "string" || !input.url.trim())
-        throw new Error("HTTP URL is required");
+        throw new ToolInputError("HTTP URL is required");
     const method = input.method === undefined ? "GET" : requiredText(input.method, "HTTP method").toUpperCase();
     const headers = input.headers === undefined ? {} : stringRecord(input.headers, "HTTP headers");
     const bodyBase64 = input.bodyBase64 === undefined ? "" : requiredBase64(input.bodyBase64);
@@ -127,7 +158,7 @@ async function requestSession(input, capability) {
     exact(input, ["sessionId", "url", "method", "headers", "bodyBase64", "secretBody", "captures", "timeoutMs", "responseLimitBytes", "interestTerms"]);
     const terms = observationTerms(input.interestTerms);
     if (input.bodyBase64 !== undefined && input.secretBody !== undefined)
-        throw new Error("Session HTTP body forms are mutually exclusive");
+        throw new ToolInputError("Session HTTP body forms are mutually exclusive");
     const sessionId = requiredText(input.sessionId, "Session id"), url = canonicalHttpUrl(input.url, "Session HTTP URL");
     const method = requiredText(input.method ?? "GET", "HTTP method").toUpperCase();
     const headers = input.headers === undefined ? {} : stringRecord(input.headers, "HTTP headers");

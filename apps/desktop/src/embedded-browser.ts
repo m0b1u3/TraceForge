@@ -6,7 +6,7 @@ import { ChromiumCdpAdapter, type ChromiumCdpPort, type ChromiumCdpEvent,
 
 type Owned = Awaited<ReturnType<NonNullable<BrokeredBrowserRuntimeOptions["chromiumProcess"]>>>;
 type Bounds = { x: number; y: number; width: number; height: number };
-interface Entry { view: WebContentsView; manual: boolean; closed: boolean; viewport: {width:number;height:number}; takeoverId?: string; window?: BrowserWindow; displayTimer?: ReturnType<typeof setTimeout>; destroy?: () => Promise<void>; }
+interface Entry { pages: Map<string, WebContentsView>; activePage: string; createPage?: () => Promise<string>; closePage?: (pageId: string) => Promise<void>; view: WebContentsView; manual: boolean; closed: boolean; viewport: {width:number;height:number}; takeoverId?: string; window?: BrowserWindow; displayTimer?: ReturnType<typeof setTimeout>; destroy?: () => Promise<void>; }
 
 /** Native views belong to the same session as the agent, never a second browser.
  * No preload, Node, application session, external opener or renderer CDP bridge. */
@@ -53,17 +53,20 @@ export class EmbeddedBrowser {
       webSecurity: true, allowRunningInsecureContent: false, webviewTag: false, devTools: false,
       navigateOnDragDrop: false, safeDialogs: true, disableDialogs: true } });
     view.setBounds({ x: 0, y: 0, width: 1024, height: 720 }); view.setVisible(false);
-    const entry: Entry = { view, manual: false, closed: false, viewport:{width:1024,height:720} }; this.entries.set(id, entry);
+    const entry: Entry = { pages: new Map(), activePage: `embedded:${view.webContents.id}`, view, manual: false, closed: false, viewport:{width:1024,height:720} }; this.entries.set(id, entry);
     const wc = view.webContents, listeners = new Set<(event: ChromiumCdpEvent) => void>(), failures = new Set<(error: Error) => void>();
     const root = `embedded:${wc.id}`;
+    entry.pages.set(root, view);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let adapter: ChromiumCdpAdapter | undefined;
     let cleanup: Promise<void> | undefined;
     const destroy = (): Promise<void> => cleanup ??= (async () => {
       clearTimeout(timer); this.hide(id); entry.closed = true;
-      if (!wc.isDestroyed()) {
-        const destroyed = new Promise<void>(done => wc.once("destroyed", () => done()));
-        wc.close({ waitForBeforeUnload: false });
+      for (const page of entry.pages.values()) {
+        const contents = page.webContents;
+        if (contents.isDestroyed()) continue;
+        const destroyed = new Promise<void>(done => contents.once("destroyed", () => done()));
+        contents.close({ waitForBeforeUnload: false });
         await Promise.race([destroyed, new Promise<never>((_, reject) => {
           const wait = setTimeout(() => reject(new Error("Embedded page destruction unconfirmed")), 5000); wait.unref();
         })]);
@@ -72,19 +75,34 @@ export class EmbeddedBrowser {
     })().catch(error => { cleanup = undefined; throw error; });
     entry.destroy = destroy;
     const fail = (error: Error) => { for (const listener of failures) listener(error); };
-    wc.setWindowOpenHandler(() => ({ action: "deny" }));
-    wc.on("will-attach-webview", event => event.preventDefault());
-    wc.on("will-frame-navigate", event => { if (!/^https?:\/\//i.test(event.url) && event.url !== "about:blank") event.preventDefault(); });
-    wc.on("before-input-event", (event, input) => {
-      if (!entry.manual) event.preventDefault();
-      else if (input.type === "keyDown" && input.key === "F6") { event.preventDefault(); entry.window?.webContents.focus(); }
-    });
-    wc.on("before-mouse-event", event => { if (!entry.manual) event.preventDefault(); });
-    wc.on("render-process-gone", () => fail(new Error("Embedded page renderer exited")));
-    wc.debugger.on("detach", () => { if (!entry.closed) { this.hide(id); fail(new Error("Embedded page control detached")); } });
-    wc.debugger.on("message", (_event, method, params, sessionId) => {
-      for (const listener of listeners) listener({ method, params, sessionId: sessionId || root });
-    });
+    const configurePage = (page: WebContentsView, pageId: string) => {
+      const contents = page.webContents;
+      contents.setWindowOpenHandler(({ url }) => {
+        // Create only inside this session, after attaching interception.
+        if (/^https?:\/\//i.test(url)) void (async () => {
+          const id = await entry.createPage?.();
+          if (id && !entry.closed) await entry.pages.get(id)!.webContents.loadURL(url).catch(() => undefined);
+        })().catch(error => fail(error));
+        return { action: "deny" };
+      });
+      contents.on("will-attach-webview", event => event.preventDefault());
+      contents.on("will-frame-navigate", event => { if (!/^https?:\/\//i.test(event.url) && event.url !== "about:blank") event.preventDefault(); });
+      contents.on("before-input-event", (event, input) => {
+        if (!entry.manual) event.preventDefault();
+        else if (input.type === "keyDown" && input.key === "F6") { event.preventDefault(); entry.window?.webContents.focus(); }
+      });
+      contents.on("before-mouse-event", event => { if (!entry.manual) event.preventDefault(); });
+      contents.on("render-process-gone", () => fail(new Error("Embedded page renderer exited")));
+      contents.debugger.on("detach", () => {
+        if (!entry.closed && entry.pages.has(pageId)) { this.hide(id); fail(new Error("Embedded page control detached")); }
+      });
+      contents.debugger.on("message", (_event, method, params, sessionId) => {
+        const mapped = { ...params };
+        if (typeof mapped.sessionId === "string") mapped.sessionId = `${pageId}/${mapped.sessionId}`;
+        for (const listener of listeners) listener({ method, params: mapped, sessionId: sessionId ? `${pageId}/${sessionId}` : pageId });
+      });
+    };
+    configurePage(view, root);
     try {
       await wc.loadURL("about:blank"); wc.debugger.attach("1.3");
       // An unattached WebContentsView has a zero-sized renderer viewport even
@@ -95,7 +113,12 @@ export class EmbeddedBrowser {
           if (entry.closed) return Promise.reject(new Error("Embedded page closed"));
           return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error(`Embedded CDP timed out: ${method}`)), 10000);
-            wc.debugger.sendCommand(method, params, sessionId === root ? undefined : sessionId)
+            const [pageId, childId] = (sessionId ?? entry.activePage).split("/");
+            const target = entry.pages.get(pageId!);
+            if (!target || target.webContents.isDestroyed()) { clearTimeout(timeout); reject(new Error("Embedded page unavailable")); return; }
+            const mapped = { ...params };
+            if (typeof mapped.sessionId === "string") mapped.sessionId = mapped.sessionId.split("/").slice(1).join("/");
+            target.webContents.debugger.sendCommand(method, mapped, childId)
               .then(resolve, reject).finally(() => clearTimeout(timeout));
           });
         },
@@ -107,11 +130,43 @@ export class EmbeddedBrowser {
         embeddedTarget: { sessionId: root, targetId: root } });
       await adapter.initialize();
       const current = adapter;
+      entry.createPage = async () => {
+        if (entry.closed) throw new Error("Embedded session closed");
+        const page = new WebContentsView({ webPreferences: { session: isolated, sandbox: true, contextIsolation: true,
+          nodeIntegration: false, nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false,
+          webSecurity: true, allowRunningInsecureContent: false, webviewTag: false, devTools: false,
+          navigateOnDragDrop: false, safeDialogs: true, disableDialogs: true } });
+        const pageId = `embedded:${page.webContents.id}`;
+        page.setBounds({ x: 0, y: 0, width: 1024, height: 720 }); page.setVisible(false);
+        entry.pages.set(pageId, page); configurePage(page, pageId);
+        try {
+          await page.webContents.loadURL("about:blank");
+          if (entry.closed) throw new Error("Embedded session closed");
+          page.webContents.debugger.attach("1.3");
+          await page.webContents.debugger.sendCommand("Emulation.setDeviceMetricsOverride", {width:1024,height:720,deviceScaleFactor:1,mobile:false});
+          await current.attachEmbeddedPage(pageId);
+          this.selectPage(id, pageId);
+          return pageId;
+        } catch (error) {
+          entry.pages.delete(pageId); current.detachEmbeddedPage(pageId);
+          if (!page.webContents.isDestroyed()) page.webContents.close({waitForBeforeUnload:false});
+          throw error;
+        }
+      };
+      entry.closePage = async pageId => {
+        const page = entry.pages.get(pageId);
+        if (!page) throw new Error("Unknown browser tab");
+        if (entry.pages.size === 1) await entry.createPage!();
+        if (entry.activePage === pageId) this.selectPage(id, [...entry.pages.keys()].find(key => key !== pageId)!);
+        entry.pages.delete(pageId); current.detachEmbeddedPage(pageId);
+        if (!page.webContents.isDestroyed()) page.webContents.close({waitForBeforeUnload:false});
+      };
       if(configuration.timeoutMs>0)timer = setTimeout(() => { this.hide(id); fail(new Error("Embedded browser deadline reached")); void destroy().catch(() => undefined); }, configuration.timeoutMs);
       const connection: BrowserControllerConnection = { proof: current.proof,
         start: (intercept, failure) => current.activate(intercept, failure),
-        observe: request => current.observe(request), act: action => current.act(action),
-        observeManual: (takeover, request) => current.observeManual(takeover, request),
+        observe: request => current.observe({ ...request, pageId: request.pageId ?? entry.activePage }),
+        act: action => { this.selectPage(id, "view" in action ? action.view.pageId : action.element.view.pageId); return current.act(action); },
+        observeManual: (takeover, request) => current.observeManual(takeover, {...request,pageId:request.pageId??entry.activePage}),
         actManual: (takeover, action) => current.actManual(takeover, action),
         beginTakeover: async () => { const result = await current.beginTakeover(); if (entry.closed) throw new Error("Embedded page closed during takeover"); entry.manual = true; entry.takeoverId = result.takeoverId; return result; },
         resumeTakeover: async takeover => { entry.manual = false; this.hide(id); const result = await current.resumeTakeover(takeover); entry.takeoverId = undefined; return result; },
@@ -137,14 +192,20 @@ export class EmbeddedBrowser {
     const viewport={width:Math.floor(bounds.width),height:Math.floor(bounds.height)};
     const resized=viewport.width!==entry.viewport.width||viewport.height!==entry.viewport.height;
     const ready=resized?entry.view.webContents.debugger.sendCommand("Emulation.setDeviceMetricsOverride",{...viewport,deviceScaleFactor:1,mobile:false}):Promise.resolve();
-    return ready.then(()=>{entry.viewport=viewport;return { url: safeAddress(entry.view.webContents.getURL()), title: entry.view.webContents.getTitle(), canGoBack: entry.view.webContents.navigationHistory.canGoBack(), canGoForward: entry.view.webContents.navigationHistory.canGoForward(), loading: entry.view.webContents.isLoading() };});
+    return ready.then(()=>{entry.viewport=viewport;return { activePageId: entry.activePage, tabs: [...entry.pages].map(([id, page]) => ({ id, title: page.webContents.getTitle() || "新标签页", url: safeAddress(page.webContents.getURL()) })), url: safeAddress(entry.view.webContents.getURL()), title: entry.view.webContents.getTitle(), canGoBack: entry.view.webContents.navigationHistory.canGoBack(), canGoForward: entry.view.webContents.navigationHistory.canGoForward(), loading: entry.view.webContents.isLoading() };});
   }
   async navigate(id: string, takeoverId: string | null, input: unknown) {
     const entry = this.entries.get(id);
     if (!entry || entry.closed || !entry.manual || !takeoverId || entry.takeoverId !== takeoverId)
       throw new Error("Browser takeover unavailable");
     if (!input || typeof input !== "object") throw new Error("Invalid navigation");
-    const { action, url } = input as { action?: unknown; url?: unknown };
+    const { action, url, pageId } = input as { action?: unknown; url?: unknown; pageId?: unknown };
+    if (action === "new-tab") { await entry.createPage!(); return; }
+    if (action === "select-tab" || action === "close-tab") {
+      if (typeof pageId !== "string" || !entry.pages.has(pageId)) throw new Error("Unknown browser tab");
+      if (action === "select-tab") this.selectPage(id, pageId); else await entry.closePage!(pageId);
+      return;
+    }
     const wc = entry.view.webContents;
     if (action === "navigate") {
       if (typeof url !== "string" || url.length > 8192) throw new Error("Invalid address");
@@ -157,6 +218,16 @@ export class EmbeddedBrowser {
       if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
     } else if (action === "reload") wc.reload();
     else throw new Error("Invalid navigation action");
+  }
+
+  private selectPage(id: string, pageId: string) {
+    const entry = this.entries.get(id), page = entry?.pages.get(pageId);
+    if (!entry || !page) throw new Error("Unknown browser tab");
+    if (entry.activePage === pageId) return;
+    this.hide(id);
+    entry.activePage = pageId; entry.view = page;
+    // Each page has its own metrics; force the next presentation to resize.
+    entry.viewport = {width:0,height:0};
   }
 
   hide(id?: string) {

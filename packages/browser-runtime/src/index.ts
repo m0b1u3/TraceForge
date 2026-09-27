@@ -86,7 +86,7 @@ export interface BrowserControllerIdentity {
 export type BrowserResponseDirective =
   | { action: "fulfill"; requestId: string; status: number; headers: Array<{ name: string; value: string }>;
       bodyBase64: string; receiptRef: string; artifactRef: string | null }
-  | { action: "block"; requestId: string; reason: "websocket_streaming_unavailable" | "unsupported_scheme" | "policy_denied" };
+  | { action: "block"; requestId: string; reason: "websocket_streaming_unavailable" | "unsupported_scheme" | "policy_denied" | "network_request_failed" };
 
 export interface BrowserControllerConnection {
   proof: BrowserControllerProof;
@@ -171,7 +171,7 @@ export interface BrowserNetworkRecord {
   authorizationRef: string | null;
   receiptRef: string | null;
   artifactRef: string | null;
-  outcome: "fulfilled" | "blocked";
+  outcome: "fulfilled" | "blocked" | "failed";
   reason: string | null;
   at: string;
 }
@@ -634,7 +634,13 @@ export class BrokeredBrowserRuntime {
         // No HTTP request has been dispatched. Record the denied channel without
         // fabricating a grant or leaking authorizer errors/URL query secrets.
         this.record(session, request, null, null, null, "blocked", "authorization_unavailable");
-        throw error;
+        // A denied URL is a terminal result for this request, not a controller
+        // failure. Keep other tabs and their state. Revocation still tears down
+        // the session through the independent ownership check.
+        await this.assertCurrentOrFreeze(sessionId, session);
+        const blocked: BrowserResponseDirective = { action: "block", requestId: request.id, reason: "policy_denied" };
+        session.responses.set(request.id, structuredClone(blocked));
+        return blocked;
       }
       if (request.kind === "websocket") {
         const blocked: BrowserResponseDirective = { action: "block", requestId: request.id, reason: "websocket_streaming_unavailable" };
@@ -642,18 +648,30 @@ export class BrokeredBrowserRuntime {
         session.responses.set(request.id, structuredClone(blocked));
         return blocked;
       }
-      const response = await this.options.executionNode.requestHttp({
-        requestId: `browser-http:${sessionId}:${request.id}`,
-        attribution: this.attribution(session.snapshot.owner, `browser-http:${sessionId}:${request.id}`),
-        permissions: structuredClone(session.hostPermissions),
-        authorizationAction: session.snapshot.owner.authorizationAction,
-        url: grant.canonicalUrl,
-        method: request.method,
-        headers: structuredClone(request.headers),
-        ...(request.bodyBase64 === undefined ? {} : { bodyBase64: request.bodyBase64 }),
-        timeoutMs: request.timeoutMs,
-        responseLimitBytes: request.responseLimitBytes,
-      });
+      let response: BrokeredHttpResponse;
+      try {
+        response = await this.options.executionNode.requestHttp({
+          requestId: `browser-http:${sessionId}:${request.id}`,
+          attribution: this.attribution(session.snapshot.owner, `browser-http:${sessionId}:${request.id}`),
+          permissions: structuredClone(session.hostPermissions),
+          authorizationAction: session.snapshot.owner.authorizationAction,
+          url: grant.canonicalUrl,
+          method: request.method,
+          headers: structuredClone(request.headers),
+          ...(request.bodyBase64 === undefined ? {} : { bodyBase64: request.bodyBase64 }),
+          timeoutMs: request.timeoutMs,
+          responseLimitBytes: request.responseLimitBytes,
+        });
+      } catch {
+        // A transport error has no usable HTTP response; it does not mean the
+        // browser controller failed. Do not infer that the remote side had no
+        // effect, and never redispatch this request identity automatically.
+        await this.assertCurrentOrFreeze(sessionId, session);
+        const failed: BrowserResponseDirective = { action: "block", requestId: request.id, reason: "network_request_failed" };
+        this.record(session, request, grant.authorizationRef, null, null, "failed", "network_outcome_unknown");
+        session.responses.set(request.id, structuredClone(failed));
+        return failed;
+      }
       this.assertResponse(response, session, request, grant.canonicalUrl);
       await this.assertCurrentOrFreeze(sessionId, session);
       let artifactRef: string | null = null;

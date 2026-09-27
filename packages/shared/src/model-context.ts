@@ -22,7 +22,11 @@ export function estimateContextTokens(value: unknown): number {
   return Math.ceil((text.length - other.length) / 3) + new TextEncoder().encode(other).length;
 }
 export function resolveContextBudget(limits: ModelContextLimits = {}) {
-  const window = limits.contextWindowTokens ?? 32768;
+  const fallbackWindow = 32768;
+  // An independently configured or provider-learned input ceiling must not be
+  // silently reduced by the unknown-window fallback estimate.
+  const window = limits.contextWindowTokens ?? (limits.maximumInputTokens === undefined ? fallbackWindow
+    : Math.max(fallbackWindow, Math.ceil((limits.maximumInputTokens + (limits.maxOutputTokens ?? 4096)) / 0.95)));
   // Unknown-window sizing is a compaction estimate, not a wire-level cap.
   const output = limits.contextWindowTokens === undefined
     ? Math.min(limits.maxOutputTokens ?? 4096, Math.floor(window / 8))
