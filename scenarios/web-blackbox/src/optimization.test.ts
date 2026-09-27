@@ -13,7 +13,11 @@ function fixture(){const states=new Map<string,any>();let calls=0;
     if(action==="compare_and_set"){const previous=states.get(input.key);if((previous?.revision??0)!==input.expectedRevision)throw new Error("CAS conflict");const output={revision:input.expectedRevision+1,value:structuredClone(input.value)};states.set(input.key,output);return {output,refs:[]};}
     return {output:{},refs:[`node:${input.node?.id}`]};
   };
-  const request=async(spec:any)=>{calls++;return {status:"succeeded" as const,summary:"Observation",raw:JSON.stringify({status:200,responseBytes:spec.url.length,bodyBase64:Buffer.from(spec.url).toString("base64"),bodyTruncated:false,receipt:{id:`receipt-${calls}`}}),refs:[],retryable:false as const};};
+  const request=async(spec:any)=>{
+    calls++;
+    const output={status:200,responseBytes:spec.url.length,bodyBase64:Buffer.from(spec.url).toString("base64"),bodyTruncated:false,receipt:{id:`receipt-${calls}`}};
+    return {output,result:{status:"succeeded" as const,summary:"Observation",raw:JSON.stringify(output),refs:[],retryable:false as const}};
+  };
   return {states,capability,request,count:()=>calls};}
 const input={experimentId:"matrix",hypothesisId:"hypothesis",baseline:{url:"https://first.example/"},candidates:[{url:"https://first.example/one"},{url:"https://first.example/two"}],expectedSignals:["bodyChanged"],stopOn:"never"};
 it("bounds shared experiment fields and distinguishes body/header changes",()=>{

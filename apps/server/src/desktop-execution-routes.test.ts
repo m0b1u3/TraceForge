@@ -31,7 +31,7 @@ it("starts the saved user request through real scope and Run routes without anot
   expect(result).toMatchObject({state:"started",executed:true});
   const catalog=(await f.call(`${f.base}/execution`)).json();expect(catalog.runs).toHaveLength(1);
   expect(catalog.runs[0]).toMatchObject({messageCommandId:"message"});
-  expect(catalog.scopes[0].scope.payload??catalog.scopes[0].scope).toMatchObject({asynchronousWorkspace:true});
+  expect(catalog.scopes[0].scope.payload??catalog.scopes[0].scope).toMatchObject({asynchronousWorkspace:true,directWorkspaceNetwork:true});
   await port.execute(conversationId,"message",call,new AbortController().signal);
   expect((await f.call(`${f.base}/execution`)).json().runs).toHaveLength(1);
 });

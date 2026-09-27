@@ -84,6 +84,7 @@ export const TaskPresetSchema = z.object({identity:z.string(),revision:z.number(
 export const TaskPresetsSchema = z.array(z.object({kind:z.string(),preset:TaskPresetSchema,default:z.boolean().optional()}).strict());
 /** Selection belongs to desktop settings, never to model-generated task arguments. */
 export function selectedTaskKind(raw:string|null,available:readonly {kind:string}[]):string|undefined {
+  if(available.length===1)return available[0]!.kind;
   const selected=raw===null?[]:TaskPresetsSchema.parse(JSON.parse(raw)).filter(row=>row.default);
   if(selected.length>1)throw new Error("请在设置中选择一个默认场景。");
   if(selected.length)return selected[0]!.kind;
@@ -99,6 +100,25 @@ export function resolveTaskConfiguration(d:TaskDefinition,raw:string|null):TaskP
   const saved=raw===null?undefined:TaskPresetsSchema.parse(JSON.parse(raw)).find(row=>row.kind===d.kind)?.preset;
   if(saved&&saved.identity!==taskDefinitionIdentity(d))throw new Error("场景配置已变化，请在设置 → 任务执行中核对并保存偏好。");
   return saved??defaultTaskConfiguration(d);
+}
+/** Prepare a settings draft only. A changed contract stays unusable by a Run
+ * until the operator reviews and explicitly saves the new revision. */
+export function prepareTaskConfigurationReview(d:TaskDefinition,raw:string|null):{preset:TaskPreset;reviewRequired:boolean} {
+  const saved=raw===null?undefined:TaskPresetsSchema.parse(JSON.parse(raw)).find(row=>row.kind===d.kind)?.preset;
+  if(!saved)return {preset:defaultTaskConfiguration(d),reviewRequired:false};
+  if(saved.identity===taskDefinitionIdentity(d))return {preset:saved,reviewRequired:false};
+  const prior=z.tuple([z.number(),AuthorizationFormSchema,AuthorizationReviewSchema]).parse(JSON.parse(saved.identity));
+  const oldFields=prior[1].fields;
+  const oldActions=new Set(prior[2].allowedActions.filter(action=>!prior[2].deniedActions.includes(action)));
+  const preset:TaskPreset={identity:taskDefinitionIdentity(d),revision:saved.revision,
+    inputs:d.authorizationForm.fields.map(field=>{
+      const index=oldFields.findIndex(old=>old.type===field.type&&old.path.join(".")===field.path.join("."));
+      if(index>=0&&typeof saved.inputs[index]==="string")return saved.inputs[index]!;
+      return field.type==="boolean"?"false":field.type==="integer"?String(field.defaultValue??""):"";
+    }),
+    actions:d.authorizationReview.allowedActions.filter(action=>saved.actions.includes(action)&&oldActions.has(action)
+      &&!d.authorizationReview.deniedActions.includes(action))};
+  return {preset,reviewRequired:true};
 }
 export function taskConfigurationScope(d:TaskDefinition,p:TaskPreset,inputs=p.inputs) {
   if(p.identity!==taskDefinitionIdentity(d)||inputs.length!==d.authorizationForm.fields.length||p.actions.some(a=>!d.authorizationReview.allowedActions.includes(a)||d.authorizationReview.deniedActions.includes(a)))throw new Error("任务配置不匹配，请重新读取设置。");

@@ -31,23 +31,12 @@ it("requires current-checkpoint confirmation to continue and preserves the same 
   expect(JSON.parse(request.mock.calls[0][0].body!)).toMatchObject({confirmed:true,workId:"work",expectedRevision:4,checkpointRef:stopped.workItems[0].continuation!.checkpointRef});
   await act(async()=>button(node,"核对待处理请求").click());expect(request.mock.calls[1]).toEqual(request.mock.calls[0]);
 });
-it("loads exact input automatically and asks only for a single explicit decision", async () => {
-  const { node, request, render } = await mount();
-  expect(request).not.toHaveBeenCalled(); expect(node.querySelector("b")).toBeNull();
-  const dialog=node.querySelector('[role="dialog"]')!;
-  expect(dialog.querySelectorAll("textarea,input")).toHaveLength(0);
-  expect(dialog.textContent).toContain('"resource":"neutral"');
-  expect(button(node,"允许").disabled).toBe(false);
-  await render({...run,revision:4});
-  await act(async()=>button(node,"允许").click());
-  expect(JSON.parse(request.mock.calls[0][0].body!)).toMatchObject({approved:true,reviewedInputRef:"ref",expectedRevision:4});
-});
-it("permits explicit rejection without approval consent and keeps unknown result for reconciliation", async () => {
+it("does not render an operation approval prompt for a legacy pending Work", async () => {
   const { node, request } = await mount();
-  await act(async () => button(node, "拒绝").click());
-  expect(JSON.parse(request.mock.calls[0]![0].body!)).toMatchObject({ approved: false, runId: "run", workId: "work", approvalId: "approval" });
-  expect(node.textContent).toContain("核对待处理请求"); expect(document.querySelector('[role="dialog"]')).toBeNull();
-  await act(async () => button(node, "核对待处理请求").click()); expect(request.mock.calls[1]).toEqual(request.mock.calls[0]);
+  expect(request).not.toHaveBeenCalled();
+  expect(node.querySelector('[role="dialog"]')).toBeNull();
+  expect(button(node,"允许")).toBeUndefined();
+  expect(button(node,"拒绝")).toBeUndefined();
 });
 it("sends selected-work context without approval fields and preserves text on failure", async () => {
   const { node, request } = await mount();
@@ -56,11 +45,6 @@ it("sends selected-work context without approval fields and preserves text on fa
   await act(async () => button(node, "提交补充信息").click());
   expect(JSON.parse(request.mock.calls[0]![0].body!)).toMatchObject({ workId: "work", instruction: input.value });
   expect(request.mock.calls[0]![0].path).toMatch(/\/input$/); expect(input.value).toContain("unverified");
-});
-it("keeps approval disabled when exact input cannot be verified", async () => {
-  const { node } = await mount(vi.fn(async()=>{throw new Error("missing");}));
-  expect(node.textContent).toContain("暂不能批准"); expect(button(node, "允许").disabled).toBe(true);
-  expect(button(node, "拒绝").disabled).toBe(false);
 });
 it.each([false, true])("clears the matching whitespace-padded draft after success (recovery=%s)", async (lose) => {
   const { node, request } = await mount(); let first = true;

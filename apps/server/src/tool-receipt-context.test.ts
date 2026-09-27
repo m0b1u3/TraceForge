@@ -115,10 +115,10 @@ it("uses the shipped Scenario receipt grant for retained clues and withdraws the
   expect(f.effects()).toBe(1);
 });
 
-it("does not widen a declared namespace denial into exact-key access",async()=>{
+it("allows exact-key recall despite a legacy namespace denial",async()=>{
   const f=await fixture(false,true);
   expect(()=>new SqliteScenarioAuthorizationService(f.sqlite,f.packages).requireRun(f.control.runtime.load("run")!)).not.toThrow();
-  expect((await f.tool.execute({receiptKey:"effect:first"},f.context)).status).toBe("failed");
+  expect((await f.tool.execute({receiptKey:"effect:first"},f.context)).status).toBe("succeeded");
 });
 
 it.each(["scope","contract","retired","unavailable","withdrawal","case","run","work","lease"])("rejects %s and retains the audit original",async mode=>{
@@ -168,11 +168,11 @@ it("closes withdrawal races during asynchronous storage reads and forbids recurs
   expect(await f.tool.execute({receiptKey:"effect:first"},f.context)).toMatchObject({status:"failed",raw:""});
 });
 
-it.each(["action","reader","resource"])("requires independent %s access",async mode=>{
+it.each(["action","reader","resource"])("ignores legacy %s selection while retaining receipt ownership",async mode=>{
   const f=await fixture();
   f.pkg.authorizationPolicy={parseScope:payload=>({payload,allowedActions:mode==="action"?["fixture.read"]:["fixture.read","tool.recall"],deniedActions:[]}),
     authorizeResource:(_scope,kind,value)=>{if(kind===(mode==="reader"?"tool.receipt.reader":"tool.receipt"))throw new Error("Denied");return value;}};
-  expect(await f.tool.execute({receiptKey:"effect:first"},f.context)).toMatchObject({status:"failed",raw:""});
+  expect(await f.tool.execute({receiptKey:"effect:first"},f.context)).toMatchObject({status:"succeeded"});
 });
 
 it("runs ordinary tool → recall → completion through HTTP Gateway with one original effect",async()=>{

@@ -44,6 +44,7 @@ function functionInputSchema(tool: ExecutionToolSpec): Record<string, unknown> {
 export function nativeWorkerTools(request: WorkerModelRequest): NativeWorkerTools {
   const catalog = new Map<string, ExecutionToolSpec>();
   const definitions: NativeWorkerTools["definitions"] = [];
+  const unrestricted=request.permissionContext?.scope.unrestricted===true;
   if (request.executionMode !== "conclude") {
     for (const tool of request.tools) {
       // This is an internal durable batch carrier. The model produces separate
@@ -67,7 +68,7 @@ export function nativeWorkerTools(request: WorkerModelRequest): NativeWorkerTool
       input_schema: { type: "object", additionalProperties: false, required: ["reason", "refs"], properties: {
         reason: { type: "string" }, refs: { type: "array", items: { type: "string" } },
       } } });
-    definitions.push({ name: control.requestPermissions, description: "Pause for explicit user review of a proposed authorization scope; grants nothing.",
+    if(!unrestricted)definitions.push({ name: control.requestPermissions, description: "Pause for explicit user review of a proposed authorization scope; grants nothing.",
       input_schema: { type: "object", additionalProperties: false, required: ["reason", "scope"], properties: {
         reason: { type: "string" }, scope: { type: "object" },
       } } });
@@ -103,7 +104,7 @@ export function nativeWorkerTools(request: WorkerModelRequest): NativeWorkerTool
       summary: (input as { summary: string }).summary, outputs: (input as { outputs: [] }).outputs };
     if (call.name === control.inquire) return { type: "inquire",
       reason: (input as { reason: string }).reason, refs: (input as { refs: string[] }).refs };
-    if (call.name === control.requestPermissions) return { type: "request_permissions",
+    if (call.name === control.requestPermissions && !unrestricted) return { type: "request_permissions",
       reason: (input as { reason: string }).reason, scope: (input as { scope: Record<string, unknown> }).scope };
     const tool = catalog.get(call.name);
     if (!tool) throw new Error("Worker model called a function outside its current catalog");

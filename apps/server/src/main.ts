@@ -175,7 +175,8 @@ export async function buildServer(
     const response = await app.inject({ url, method: body === undefined ? "GET" : "POST", headers: desktopChannel.headers(), ...(body === undefined ? {} : { payload: body }) });
     return { status: response.statusCode, body: response.json() };
   };
-  const tasks = createConversationTaskPort(sqlite, desktopRequest,desktopTaskPreferences?createDesktopTaskStart(desktopRequest,desktopTaskPreferences):undefined,desktopTaskPreferences);
+  const tasks = createConversationTaskPort(sqlite, desktopRequest,
+    createDesktopTaskStart(desktopRequest, desktopTaskPreferences ?? (() => null)), desktopTaskPreferences ?? (() => null));
   registerRoutes(app, db, bus, provider, llmService, projectRoot, modelAccounts, tasks,continuationCipher,publishReplyDelta);
   registerDesktopEvidenceRoutes(app, sqlite, new SqliteDesktopEvidenceReader(sqlite));
   registerDesktopExecutionRoutes(app, sqlite, {

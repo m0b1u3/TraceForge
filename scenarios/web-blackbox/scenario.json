@@ -53,22 +53,23 @@
     "actionSelection": true,
     "form": {
       "version": 1,
-      "description": "发出任务后自动在隔离工作区执行；涉及宿主敏感资源时询问，可随时停止。",
-      "actionLabels": {"tool.recall":"回读本次任务已保存的工具结果（不重新执行）","scope.read":"读取授权范围","web.request.replay":"发送受控请求","web.session.use":"使用已授权身份","web.traffic.read":"读取流量记录","evidence.write":"保存证据","report.write":"生成报告","workspace.read":"读取本次任务工作目录","workspace.write":"修改本次任务工作目录","workspace.execute":"运行任务脚本（仍需审批）","workspace.network":"工具联网","research.search":"查询公开网页搜索服务","research.repositories":"搜索公开 GitHub 项目","research.fetch":"读取公开资料网页","tools.use":"读取并装配已启用的源码工具"},
+      "description": "桌面输入目标后自动启动，已安装工具直接执行；工作区脚本默认直连网络。停止或撤权后不能继续。",
+      "actionLabels": {"tool.recall":"回读本次任务已保存的工具结果（不重新执行）","scope.read":"读取本次任务执行配置","web.request.replay":"发送受控请求","web.session.use":"使用已保存身份","web.traffic.read":"读取流量记录","evidence.write":"保存证据","report.write":"生成报告","workspace.read":"读取本次任务工作目录","workspace.write":"修改本次任务工作目录","workspace.execute":"运行任务工作区脚本","workspace.network":"工作区网络访问","research.search":"查询公开网页搜索服务","research.repositories":"搜索公开 GitHub 项目","research.fetch":"读取公开资料网页","tools.use":"读取并装配已启用的源码工具"},
       "fields": [
-        {"path":["asynchronousWorkspace"],"label":"允许脚本异步运行","description":"启动后返回本次工作的执行句柄，可查询输出和停止。仍受脚本时长及原权限限制；任务停止会终止进程，未知结果不会自动重跑。工作目录在脚本结束前保持锁定。","type":"boolean","required":false,"defaultEnabled":true},
-        {"path":["interactiveWorkspace"],"label":"允许本任务持续终端交互","description":"明确授权模型向本任务已批准启动的受管终端持续输入命令、发送中断或调整大小，不逐次询问。输入可能执行命令，但不会扩大文件、网络、凭证或安装权限；新脚本启动仍走执行审批。需同时允许异步运行，停止或撤销后终止进程。","type":"boolean","required":false,"defaultEnabled":true},
-        {"path":["workspaceWebSocket"],"label":"允许工作区 WebSocket 连接","description":"仅对已授权的工作区网络目标允许 HTTP 升级为双向连接；记录连接及字节量，不把消息内容当作已验证证据。未授权网络时此选项无效。加密隧道仍按原连接范围授权。","type":"boolean","required":false,"defaultEnabled":true},
-        {"path":["maximumScriptSeconds"],"label":"单次脚本最长执行时间（秒）","description":"默认 60 秒，可授权更长操作，最高 3600 秒。模型仍须在工具参数中请求所需时长；不会扩大文件、网络、安装或后台运行权限。停止任务仍会终止对应进程。","type":"integer","required":false,"advanced":true,"minimum":1,"maximum":3600,"defaultValue":60},
-        {"path":["continuousExecution"],"label":"允许长任务自动续接","description":"在本次授权范围内自动接续内部执行段，无需反复点击继续；完成、依赖阻塞、停滞、预算耗尽或你停止时结束。不会新增工具、联网或文件权限。","type":"boolean","required":false,"defaultEnabled":true},
+        {"path":["asynchronousWorkspace"],"label":"脚本异步运行","description":"启动后返回本次工作的执行句柄，可查询输出和停止。任务停止会终止进程，未知结果不会自动重跑。工作目录在脚本结束前保持锁定。","type":"boolean","required":false,"defaultEnabled":true},
+        {"path":["interactiveWorkspace"],"label":"持续终端交互","description":"可向本任务已启动的受管终端持续输入命令、发送中断或调整大小，不逐次询问；停止任务后终止进程。","type":"boolean","required":false,"defaultEnabled":true},
+        {"path":["directWorkspaceNetwork"],"label":"工作区直接联网","description":"本次任务的工作区脚本可访问网络、下载并运行工作区文件，无逐站点审批；停止、撤权或到期后不能继续。","type":"boolean","required":false,"defaultEnabled":true},
+        {"path":["workspaceWebSocket"],"label":"工作区 WebSocket 连接","description":"受控代理模式下可使用双向连接，并记录连接及字节量。","type":"boolean","required":false,"defaultEnabled":true},
+        {"path":["maximumScriptSeconds"],"label":"单次脚本最长执行时间（秒）","description":"当前桌面 Run 的脚本预算为 3600 秒；工具默认请求 60 秒，可在参数中请求更长时长。停止任务会终止进程。","type":"integer","required":false,"advanced":true,"minimum":1,"maximum":3600,"defaultValue":60},
+        {"path":["continuousExecution"],"label":"长任务自动续接","description":"在本次任务中自动接续内部执行段；完成、依赖阻塞、停滞、预算耗尽或你停止时结束。","type":"boolean","required":false,"defaultEnabled":true},
         {"path":["maximumWorkTurns"],"label":"每项工作的累计回合上限（可选）","description":"留空不设置回合上限；填写后包括恢复前已使用的回合。","type":"integer","required":false,"advanced":true,"minimum":24,"maximum":9007199254740991},
         {"path":["maximumWorkMinutes"],"label":"每项工作的累计时长（分钟，可选）","description":"留空不设置总时长；填写后从首次执行开始计算，包含暂停时间。停止、撤权和单次工具的执行控制始终有效。","type":"integer","required":false,"advanced":true,"minimum":1,"maximum":150119987579},
-        {"path":["budgets","urls"],"label":"每个发现会话的 URL 上限","description":"控制发现范围；不会增加目标授权。","type":"integer","required":false,"advanced":true,"minimum":1,"maximum":512,"defaultValue":64},
+        {"path":["budgets","urls"],"label":"每个发现会话的 URL 上限","description":"控制单次发现的记录数量。","type":"integer","required":false,"advanced":true,"minimum":1,"maximum":512,"defaultValue":64},
         {"path":["budgets","hypotheses"],"label":"任务假设上限","description":"保留的独立假设数量；仍逐一验证。","type":"integer","required":false,"advanced":true,"minimum":1,"maximum":128,"defaultValue":16},
         {"path":["budgets","variants"],"label":"单个实验的变体上限","description":"同一假设内顺序执行的对照变体。","type":"integer","required":false,"advanced":true,"minimum":1,"maximum":16,"defaultValue":1},
-        {"path":["budgets","requestsPerCall"],"label":"单次实验调用的请求上限","description":"每条请求仍独立检查授权并记录回执。","type":"integer","required":false,"advanced":true,"minimum":1,"maximum":100,"defaultValue":6},
+        {"path":["budgets","requestsPerCall"],"label":"单次实验调用的请求上限","description":"每条请求独立记录回执。","type":"integer","required":false,"advanced":true,"minimum":1,"maximum":100,"defaultValue":6},
         {"path":["budgets","totalRequests"],"label":"任务 HTTP 工具累计请求上限","description":"包括发现、会话和验证请求；未知结果也占用额度。不包含浏览器内部子资源。","type":"integer","required":false,"advanced":true,"minimum":1,"maximum":4096,"defaultValue":128},
-        {"path":["identityHandles"],"label":"允许使用的身份句柄","description":"每行一个宿主已保存的身份句柄，不要输入密码或令牌。留空不授予身份使用权限。","type":"string-list","required":false,"advanced":true,"maximumItems":128,"maximumLength":4096}
+        {"path":["identityHandles"],"label":"身份句柄提示","description":"每行一个宿主已保存的身份句柄，不要输入密码或令牌；留空不限制本次任务读取已保存身份。","type":"string-list","required":false,"advanced":true,"maximumItems":128,"maximumLength":4096}
       ]
     },
     "allowedActions": ["tool.recall","scope.read","web.request.replay","web.session.use","web.traffic.read","evidence.write","report.write","workspace.read","workspace.write","workspace.execute","workspace.network","research.search","research.repositories","research.fetch","tools.use"],
@@ -101,7 +102,7 @@
     "resources": [
       {
         "id": "web.http-observation", "kind": "skill", "version": 1,
-        "locator": "package://skills/http-observation.md", "digest": "sha256:0e69b2762f310b4d94ecebb3bf308bf1dac83d60be97999e37dc0f56d0d8266d",
+        "locator": "package://skills/http-observation.md", "digest": "sha256:cf551f1fa29297a71259e13b4c46b381dcddf0111c5fa343926f8d52ee4c65bb",
         "context": {
           "type": "skill", "summary": "End-to-end bounded HTTP investigation: discovery, hypotheses, validation, review and report", "authorizationAction": "scope.read",
           "requiredCapabilities": [], "phaseIds": ["scope_setup", "surface_mapping", "hypothesis_planning", "validation", "synthesis", "reporting"], "references": ["web.verification-criteria"],
@@ -128,7 +129,7 @@
         "kind": "skill",
         "version": 8,
         "locator": "package://skills/investigation-planning.md",
-        "digest": "sha256:5a7b32287df6b09556aefcfaba887e603a2d72718c05bbfae1960d1f369e260e",
+        "digest": "sha256:2e2c9d6e057d36af33be8f9a6857a288550a70f06ac434deff6d79cdde41e701",
         "context": {
           "type": "skill",
           "summary": "Goal-driven phase planning, bounded discovery, separate hypotheses and durable handoff",

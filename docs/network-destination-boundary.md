@@ -1,10 +1,12 @@
 # 宿主网络目的地边界
 
-本规则用于 Execution Node 默认 HTTP Broker、Workspace HTTP/CONNECT/SOCKS/WebSocket、公共资源读取与桌面 HTTP MCP。连接机制由 `packages/execution-node` 提供，Scenario 只负责授权策略，Server 保留任务归属、撤权检查和持久回执装配。
+本规则用于 Execution Node 默认 HTTP Broker、使用受控代理的 Workspace HTTP/CONNECT/SOCKS/WebSocket、公共资源读取与桌面 HTTP MCP。连接机制由 `packages/execution-node` 提供，Scenario 只负责授权策略，Server 保留任务归属、撤权检查和持久回执装配。
+
+当前桌面任务默认把已安装工作区工具设为 `directWorkspaceNetwork`，旧 Scope 的同字段取值也不再阻止直连。沙箱脚本可以直接联网、下载并执行工作区文件，目的地址不受任务范围列表约束。宿主持续检查 Run、执行租约和撤销状态，停止或撤权时终止进程。执行回执标记 `network: direct`，没有逐连接目的地回执；结构化 Web 工具、公共资源读取和桌面 MCP 仍执行下述传输规则。
 
 ## 连接顺序
 
-1. 对逻辑 URL 按原有任务 scope / MCP endpoint / 公共资源策略授权。
+1. 检查逻辑 URL 的格式和当前 Run 归属；MCP endpoint 与公共资源继续使用各自策略。任务 Scope 不再按目标列表筛选 URL。
 2. 只解析一次，检查返回的全部 A/AAAA 地址。内网、回环、链路本地、保留及转换地址不因域名已授权而自动放行。
 3. 非公网目的地必须另以字面 IP URL 通过同一授权端口；公共资源读取则始终拒绝非公网目的地。解析后再次检查逻辑 URL，防止解析等待期间撤权。
 4. 固定一个已检查地址建立连接，保留逻辑 Host 和 TLS 服务器名；不使用环境代理，不复用环境连接，不二次解析，不自动跟随重定向。重定向由上层逐跳重新授权。
@@ -12,13 +14,13 @@
 
 ## 用户可见影响
 
-- 内网测试没有被禁止。若授权的是内网域名，还需在目标范围中明确加入实际 IP 目标（包含相应协议、端口和路径范围）；授权域名不是授权任意 DNS 返回地址。
+- 受控代理的内网地址仍需遵守传输端的地址分类和显式字面 IP 规则；任务目标列表不再是额外的许可门槛。工作区直连不经过该代理。
 - HTTP MCP 的“绑定的目标 IP”在客户端编辑，支持 IPv4/IPv6。填写后，全部解析结果必须属于绑定集合；非公网字面地址仅在原 endpoint 的协议、端口和路径下获得授权，不允许重定向或变更路径。保留逻辑域名与 TLS 校验。留空仍拒绝域名解析到非公网，直接配置的 IP endpoint 沿用明确的 endpoint 授权。保存不联网，测试/审核启用仍是独立操作；已有 Run 保持原修订，停用仍会阻断旧修订。
 - 单一地址连接失败不会自动尝试第二地址或重试有副作用的请求。是否重新执行仍由原有任务及幂等纪律决定。
 
 ## 验证与边界
 
-地址分类、混合 A/AAAA、解析中撤权、DNS 超时、固定 socket、Host、重定向、响应限额、MCP SSE 与真实本地 Broker 回执都有定向测试。现有 Workspace 套件验证连接生命周期。`scripts/verify-network-boundary.mjs` 防止指定宿主入口和 Scenario runtime 源码重新引入直连；它是有限范围的静态回归门禁，不是操作系统防火墙，也不证明任意进程/任意协议全部受控。
+地址分类、混合 A/AAAA、解析中撤权、DNS 超时、固定 socket、Host、重定向、响应限额、MCP SSE 与真实本地 Broker 回执都有定向测试。Workspace 套件分别验证代理连接生命周期与显式直连的进程归属。`scripts/verify-network-boundary.mjs` 防止指定宿主入口和 Scenario runtime 源码自行引入直连；它是有限范围的静态回归门禁，不是操作系统防火墙，也不证明任意进程/任意协议全部受控。
 
 HTTP 目的地事实随 `execution_network_receipts.destination_json` 与流量原子保存；缺失字段表示该回执没有目的地记录，不推断为已校验。保存前校验回执与流量的 Case/Run、URL、方法及响应状态一致。桌面既有网络回执读取入口可读取该字段，Workspace 继续使用原连接日志。
 
@@ -29,7 +31,7 @@ HTTP 目的地事实随 `execution_network_receipts.destination_json` 与流量�
 | 层 | 权威职责 | 不承担的职责 |
 | --- | --- | --- |
 | Execution Node | DNS/地址分类、固定 HTTP/TCP/WebSocket 建连、传输取消及限额 | 不知道黑盒流程、Case 数据库或桌面表单 |
-| Server 网络适配器 | 注入当前任务授权、存活检查、持久回执 | 不再独立解析 DNS 或实现另一个直连分支 |
+| Server 网络适配器 | 代理模式注入目的地授权和持久回执；直连工作区进程检查当前 Run、租约和撤权 | 不自行解析 DNS，不把直连进程回执当作逐连接证据 |
 | Server 来源适配器 | 从原有回执/流量/附件读取同 Case/Run 的原始来源、时间和摘要 | 不新建第二套来源账本，不负责漏洞成立判定 |
 | Scenario | 声明能力、工作流和资源授权语义 | 不自行建 socket，不绕过底座授权 |
 | Desktop MCP 设置 | 管理地址绑定修订、显式测试和工具激活 | 保存不是联网，表单文本不是运行时授权的替代品 |

@@ -147,7 +147,7 @@ export function ConversationReply({ bridge, conversationId, messageId, reply, re
   }
   if (!reply) return <div className="reply-actions">
     <button disabled={!ready || busy} onClick={() => void command()}>{busy ? "正在核对回复…" : otherActive ? "加入待处理消息" : "请求助手回复"}</button>
-    <small className="local-receipt">使用已配置模型 · 执行前核对授权范围</small>
+    <small className="local-receipt">使用已配置模型 · 输入目标后自动启动</small>
     {error && <p role="alert">{error}</p>}
   </div>;
   if (reply.state === "queued") return <article className="message message-assistant conversation-reply" aria-label="待处理消息">

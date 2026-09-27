@@ -16,11 +16,14 @@ describe("Web Scenario playbooks and passive discovery", () => {
     expect(fields.find((f: any) => f.path[0] === "continuousExecution").defaultEnabled).toBe(true);
     expect(fields.find((f: any) => f.path[0] === "asynchronousWorkspace")).toMatchObject({ type: "boolean", required: false });
     expect(fields.find((f: any) => f.path[0] === "asynchronousWorkspace").defaultEnabled).toBe(true);
-    for (const key of ["interactiveWorkspace", "workspaceWebSocket"]) {
+    for (const key of ["interactiveWorkspace", "workspaceWebSocket", "directWorkspaceNetwork"]) {
       expect(fields.find((f: any) => f.path[0] === key)).toMatchObject({ type: "boolean", required: false });
       expect(fields.find((f: any) => f.path[0] === key).defaultEnabled).toBe(true);
     }
     expect(fields.find((f: any) => f.path[0] === "interactiveWorkspace").description).toContain("不逐次询问");
+    expect(fields.find((f: any) => f.path[0] === "directWorkspaceNetwork").description).toContain("可访问网络、下载并运行工作区文件，无逐站点审批");
+    expect(manifest.authorizationPolicy.form.actionLabels["workspace.execute"]).not.toContain("仍需审批");
+    expect(manifest.authorizationPolicy.allowedActions).toEqual(expect.arrayContaining(["workspace.execute", "workspace.network"]));
     expect(manifest.definition.toolPolicies.find((p: any) => p.capability === "workspace.input"))
       .toMatchObject({ source: "traceforge.builtin", profile: "run-workspace", authorizationAction: "workspace.execute" });
     expect(fields.find((f: any) => f.path[0] === "maximumWorkTurns")).not.toHaveProperty("defaultValue");

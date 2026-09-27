@@ -18,7 +18,8 @@ export function readWorkspaceNetworkReceipts(sqlite: Database.Database, owner: {
 }
 
 /** Local composition adapter. Networking is tied to the exact running tool, not
- * merely a live Run. HTTPS receipts describe a connection, never decrypted HTTP. */
+ * merely a live Run. Direct sockets have no destination receipts; the process
+ * receipt records that direct access was granted. */
 export class WorkspaceNetworkHost {
   private readonly workspaces: ConversationWorkspaces;
   constructor(private readonly sqlite: Database.Database, private readonly authorization: ScenarioAuthorizationPort, private readonly projectRoot: string) {
@@ -44,13 +45,17 @@ export class WorkspaceNetworkHost {
   }
   async bind(request: Readonly<StartProcessRequest>): Promise<MacosExecutionBinding | undefined> {
     if (request.attribution.actionId.startsWith("desktop.mcp:")) return this.bindMcp(request);
-    if (request.permissions.network !== "brokered") return undefined;
+    if (request.permissions.network !== "brokered" && request.permissions.network !== "direct") return undefined;
+    const direct = request.permissions.network === "direct";
     const owner = request.attribution;
     const root = this.workspaces.root(owner.caseId,owner.runId);
-    if (request.workingDirectory !== root || request.executable !== "/bin/bash") throw new Error("Brokered workspace execution requires its exact owned directory and supported launcher");
+    if (request.workingDirectory !== root || request.executable !== "/bin/bash") throw new Error("Networked workspace execution requires its exact owned directory and supported launcher");
     const current = () => {
       const now = new Date().toISOString();
-      if (!Number.isFinite(Date.parse(owner.leaseExpiresAt)) || Date.parse(owner.leaseExpiresAt) <= Date.now()) throw new Error("Workspace network lease expired");
+      // Direct execution follows the current durable lease, which may be
+      // renewed while an asynchronous owned process remains active.
+      if (!direct && (!Number.isFinite(Date.parse(owner.leaseExpiresAt)) || Date.parse(owner.leaseExpiresAt) <= Date.now()))
+        throw new Error("Workspace network lease expired");
       const row = this.sqlite.prepare(`SELECT b.tool_name,e.status FROM scenario_work_leases l JOIN scenario_event_streams r ON r.run_id=l.run_id
         JOIN tool_invocation_bindings b ON b.run_id=l.run_id AND b.work_id=l.work_id JOIN tool_invocation_executions e USING(idempotency_key)
         WHERE l.run_id=? AND l.work_id=? AND l.lease_id=? AND l.worker_id=? AND r.case_id=? AND r.status='running'
@@ -67,8 +72,20 @@ export class WorkspaceNetworkHost {
       const scope = this.sqlite.prepare("SELECT 1 FROM scenario_events WHERE run_id=? AND event_type='run_started' AND json_extract(payload_json,'$.state.scopeRef')=? LIMIT 1").get(owner.runId, owner.scopeRef);
       if (!scope) throw new Error("Workspace network scope does not belong to the Run");
       this.authorization.requireAction(owner.scopeRef, owner.caseId, "workspace.execute");
-      this.authorization.requireAction(owner.scopeRef, owner.caseId, "workspace.network");
+      const grant = this.authorization.requireAction(owner.scopeRef, owner.caseId, "workspace.network");
+      if (direct && (grant.scopePayload as Record<string, unknown>)?.directWorkspaceNetwork !== true)
+        throw new Error("Direct workspace network access is not granted by this Run scope");
     };
+    if (direct) {
+      current();
+      const cancellation = new AbortController();
+      const monitor = setInterval(() => {
+        try { current(); } catch { cancellation.abort(); }
+      }, 500);
+      monitor.unref();
+      return { signal: cancellation.signal, assertCurrent: current,
+        release: async () => { clearInterval(monitor); cancellation.abort(); } };
+    }
     const authorize = (url: URL, signal: AbortSignal) => resolveNetworkDestination(url.href, {
       signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]), authorize: target => {
         current();

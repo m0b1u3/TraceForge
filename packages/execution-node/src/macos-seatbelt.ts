@@ -23,9 +23,9 @@ export interface MacosSystemServicePolicy {
 export function compileMacosSeatbeltPolicy(permissions: EffectivePermissionProfile, executable: string, cwd: string,
   services?: MacosSystemServicePolicy, brokerPort?: number): MacosSeatbeltPolicy {
   if (permissions.platform !== "darwin" || permissions.process.access !== "sandboxed") throw new Error("macOS policy requires darwin sandboxed permissions");
-  if (permissions.network !== "deny" && permissions.network !== "brokered") throw new Error("macOS Seatbelt requires network deny or a host-bound Broker");
+  if (!["deny", "brokered", "direct"].includes(permissions.network)) throw new Error("Invalid macOS network permission");
   if (permissions.network === "brokered" ? !Number.isSafeInteger(brokerPort) || brokerPort! < 1 || brokerPort! > 65535 : brokerPort !== undefined)
-    throw new Error("macOS brokered execution requires an exclusive host-bound port; deny cannot supply a port");
+    throw new Error("macOS brokered execution requires an exclusive host-bound port; deny and direct cannot supply a port");
   if (permissions.process.background) throw new Error("macOS detached background execution is not accepted");
   const path = (value: string) => {
     if (!isAbsolute(value) || normalize(value) !== value || /[\x00-\x1f\x7f]/.test(value) || value.length > 4096) throw new Error("macOS policy requires canonical absolute paths");
@@ -77,10 +77,26 @@ export function compileMacosSeatbeltPolicy(permissions: EffectivePermissionProfi
   for (const grant of permissions.filesystem.read) lines.push(`(allow file-read* file-map-executable ${filter(grant)})`);
   for (const grant of permissions.filesystem.write) lines.push(`(allow file-write* ${filter(grant)})`);
   for (const grant of permissions.filesystem.deny) lines.push(`(deny file-read* file-write* file-map-executable ${filter(grant)})`);
-  lines.push("(deny network*)");
-  // Verified on Apple Silicon: numeric loopback hosts are rejected by Seatbelt.
-  // This permits only TCP to this localhost port, not general loopback or DNS.
-  if (brokerPort !== undefined) lines.push(`(allow network-outbound (remote tcp "localhost:${brokerPort}"))`);
+  if (permissions.network === "direct") {
+    // The effective grant is captured in the process receipt. Direct sockets
+    // bypass the host broker, so their individual destinations are unobserved.
+    // macOS resolves hostnames through its directory/DNS services and these
+    // system files.
+    // This does not expose the user's files or grant additional process rights.
+    lines.push('(allow mach-lookup (global-name "com.apple.mDNSResponder") (global-name "com.apple.dnssd.service") (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.SystemConfiguration.configd"))');
+    lines.push('(allow file-read-metadata (literal "/etc") (literal "/private/etc") (literal "/private/var/run"))');
+    lines.push('(allow file-read* (literal "/etc/hosts") (literal "/etc/resolv.conf") (literal "/private/etc/hosts") (literal "/private/etc/resolv.conf") (literal "/private/var/run/resolv.conf") (literal "/private/var/run/mDNSResponder"))');
+    // The system resolver stats paths outside the fixed DNS file list on this
+    // macOS host. Metadata alone is sufficient; file contents remain governed
+    // by the explicit read grants above.
+    lines.push('(allow file-read-metadata)');
+    lines.push("(allow network*)");
+  } else {
+    lines.push("(deny network*)");
+    // Verified on Apple Silicon: numeric loopback hosts are rejected by Seatbelt.
+    // This permits only TCP to this localhost port, not general loopback or DNS.
+    if (brokerPort !== undefined) lines.push(`(allow network-outbound (remote tcp "localhost:${brokerPort}"))`);
+  }
   const profile = lines.join("\n");
   if (Buffer.byteLength(profile) > 65536) throw new Error("macOS policy exceeds byte capacity");
   return { profile, permissionFingerprint: permissionProfileFingerprint(permissions), resourceLimitsApplied: false, processTreeCleanupProven: false };

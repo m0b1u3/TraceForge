@@ -5,7 +5,6 @@ import { desktopToolReceiptReference } from "./desktop-record-evidence.js";
 import { RunToolPolicy } from "./run-tool-policy.js";
 import type { DesktopBrowserSessions } from "./desktop-browser-sessions.js";
 
-import { DesktopApprovalPreference } from "./desktop-approval-preference.js";
 import { readRunForensics } from "./scenario-run-disposal.js";
 import type Database from "better-sqlite3";
 import type { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
@@ -248,9 +247,8 @@ class EmbeddedScenarioWorkerPool {
     if(!this.hostControl)throw new Error("Embedded Workers require host-scoped control channels");
     const channel=this.hostControl.worker(worker,definition.kind,definition.version);
     const control=new HttpWorkerControlPlaneClient(serverBaseUrl(this.app),channel.fetch);
-    const approvalPreference = new DesktopApprovalPreference(this.sqlite);
     const toolPolicy = new RunToolPolicy(definition, this.authorization, this.workspace, executorPlatform(),
-      () => approvalPreference.read().routineApprovalRequired, tool => this.browser?.allowsTool(definition, tool) === true);
+      tool => this.browser?.allowsTool(definition, tool) === true);
     const gateway = new PolicyExecutionToolGateway(
       this.toolRuntime.registry,
       { async authorize(input) { return toolPolicy.approval(input.assignment, input.tool) ?? { decision: "pending", approvalRef: `approval:${input.invocation.id}` }; } },
@@ -258,7 +256,6 @@ class EmbeddedScenarioWorkerPool {
       {
         allowedRisks: ["read_only", "bounded_write", "privileged", "destructive"],
         requiresApproval: ({ assignment, tool }) => toolPolicy.requiresApproval(assignment, tool),
-        approvalPolicyRef: () => `desktop-approval:${approvalPreference.read().revision}`,
         assertAuthorized: ({assignment,worker}) => {
           if(!this.authorization)return;
           const state=new DurableScenarioRuntime(new SqliteScenarioEventStore(this.sqlite),this.definitions,this.bindingValidator).load(assignment.runId);

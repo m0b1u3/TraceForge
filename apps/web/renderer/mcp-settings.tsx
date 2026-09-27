@@ -21,7 +21,7 @@ export function McpSettings({bridge,onDirty}:{bridge:DesktopConversations;onDirt
     const entry=value.connections.find(c=>c.connection.id===id)??value.connections[0];
     setSnapshot(value);setDraft(entry?.connection??null);setCredential("");setClearCredential(false);setDirty(false);setReviewDirty(false);setConfirmation(null);
     setAddressText((entry?.connection.destinationAddresses??[]).join(", "));
-    setReviews(entry?.catalog?.tools.map(t=>entry.reviewedTools.find(r=>r.name===t.name)??{name:t.name,enabled:false,resources:[]})??[]);
+    setReviews(entry?.catalog?.tools.map(t=>entry.reviewedTools.find(r=>r.name===t.name)??{name:t.name,enabled:true,resources:[]})??[]);
   }
   async function perform(operation?:DesktopMcpOperation) {
     if(locked.current)return;locked.current=true;setBusy(true);setError("");setStatus("");
@@ -84,7 +84,6 @@ export function McpSettings({bridge,onDirty}:{bridge:DesktopConversations;onDirt
         <p>本地程序只可通过宿主代理访问列出的站点来源，不继承宿主环境。配置凭证变量并单独保存凭证后，该值只在测试和调用时传给此程序。测试会执行程序并授予列出的文件及网络范围；无法确认沙箱有效时拒绝启动。</p>
         </>}
         {(snapshot?.packages.length??0)>1&&<label>适用场景<select value={JSON.stringify(draft.package)} onChange={e=>{const p=snapshot!.packages.find(p=>JSON.stringify(p.package)===e.target.value)!;patch({package:p.package,authorizationAction:p.actions[0]??"",capability:p.capabilities[0]??""});}}>{snapshot?.packages.map(p=><option key={JSON.stringify(p.package)} value={JSON.stringify(p.package)}>{p.title}</option>)}</select></label>}
-        <label>需要的授权动作<select value={draft.authorizationAction} onChange={e=>patch({authorizationAction:e.target.value})}>{pkg?.actions.map(a=><option key={a}>{a}</option>)}</select></label>
         <label>提供给工作任务的能力<select value={draft.capability} onChange={e=>patch({capability:e.target.value})}>{pkg?.capabilities.map(c=><option key={c}>{c}</option>)}</select></label>
         {(draft.transport==="streamable-http"||draft.secretEnvironmentVariable)&&<label>{draft.transport==="stdio"?"本地程序凭证":"Bearer 凭证"}（可选，仅写入安全存储）<input type="password" autoComplete="new-password" disabled={!snapshot?.secureStorage} value={credential} placeholder={current?.credentialConfigured?"已保存；留空保留":"未设置"} onChange={e=>{setCredential(e.target.value);setDirty(true);}}/></label>}
         {!snapshot?.secureStorage&&<p>当前宿主未提供操作系统安全存储，不能保存凭证。</p>}
@@ -92,17 +91,17 @@ export function McpSettings({bridge,onDirty}:{bridge:DesktopConversations;onDirt
         <div className="configuration-actions"><button disabled={!dirty&&!reviewDirty} onClick={()=>void perform({operation:"save",expectedRevision:current?.revision??0,connection:draft,...(credential?{credential}:{}),clearCredential})}>保存连接</button>
           <button disabled={dirty||reviewDirty||!current} onClick={()=>setConfirmation("test")}>测试并发现工具</button></div>
         {current?.effective&&<details><summary>当前生效：修订 {current.effective.revision}</summary><pre tabIndex={0}>{JSON.stringify(current.effective,null,2)}</pre></details>}
-        {reviewDirty&&<p>{current?.reviewedTools.length?"已审核修订不能直接修改工具选择。请先保存新修订，再测试并重新选择工具。":"选择所需工具和资源授权后，点击“审核并启用”完成接入。"}</p>}
-        {current?.catalog&&<><h3>审核工具</h3><p>{current.catalog.serverName} · {current.catalog.serverVersion}。远端描述不是授权依据。所有调用均保留宿主审批；只有勾选的工具能进入新任务。</p>
-          <p className="configuration-meta">当前输入适配支持封闭的扁平文本、数字、布尔值及文本列表。资源参数必须绑定场景资源种类；不支持的输入契约会拒绝启用。</p>
+        {reviewDirty&&<p>{current?.reviewedTools.length?"工具选择已修改。请先保存新修订，再测试并启用。":"选择需要的工具，然后启用连接。"}</p>}
+        {current?.catalog&&<><h3>可用工具</h3><p>{current.catalog.serverName} · {current.catalog.serverVersion}。启用后，新任务可以直接调用已选择的工具。</p>
+          <p className="configuration-meta">当前输入适配支持扁平文本、数字、布尔值及文本列表；不支持的输入格式会提示错误。</p>
           {current.catalog.tools.map(tool=>{const r=reviews.find(r=>r.name===tool.name);if(!r)return null;const fields=Object.keys((tool.inputSchema.properties as object)??{});return <details key={tool.name}><summary>{tool.name} · {r.enabled?"已选择":"未选择"}</summary>
             <label className="configuration-check"><input type="checkbox" checked={r.enabled} onChange={e=>review(r.name,{enabled:e.target.checked})}/>允许此工具</label>
             <pre tabIndex={0} aria-label={`${tool.name} 输入契约`}>{JSON.stringify(tool.inputSchema,null,2)}</pre>
-            {fields.map(field=><label key={field}>{field} 的资源授权<select value={r.resources.find(v=>v.field===field)?.kind??""} onChange={e=>review(r.name,{resources:[...r.resources.filter(v=>v.field!==field),...(e.target.value?[{field,kind:e.target.value}]:[])]})}><option value="">普通参数（不代表资源授权）</option>{pkg?.resourceKinds.map(kind=><option key={kind}>{kind}</option>)}</select></label>)}
-          </details>;})}<button disabled={dirty||!!(reviewDirty&&current.reviewedTools.length)||!reviews.some(r=>r.enabled)} onClick={()=>setConfirmation("activate")}>审核并启用</button></>}
+            {fields.map(field=><span key={field} className="configuration-meta">参数：{field}</span>)}
+          </details>;})}<button disabled={dirty||!!(reviewDirty&&current.reviewedTools.length)||!reviews.some(r=>r.enabled)} onClick={()=>setConfirmation("activate")}>启用连接</button></>}
         {current&&<div className="configuration-actions"><button disabled={!current.enabled||dirty||reviewDirty} onClick={()=>void perform({operation:"disable",id:draft.id,expectedRevision:current.revision})}>停用连接</button><button onClick={()=>setConfirmation("delete")}>删除连接</button></div>}
       </fieldset>
-      {confirmation&&<div role="group" aria-label="MCP 操作确认"><p>{confirmation==="test"?(draft.transport==="stdio"?`将在沙箱中执行 ${draft.executable}，授予所列文件访问范围，读取工具目录；不会调用工具。`:`将连接 ${draft.endpoint}，发送凭证（如有），读取服务身份和工具目录；不会调用工具。`):confirmation==="activate"?"确认信任此服务及选定工具的执行能力？工具调用会把参数发送给该服务，场景授权与宿主审批仍然有效。":confirmation==="delete"?"确认删除并立即停止此连接的新调用？历史修订与审计保留。":"重新读取会丢弃未保存的连接和工具选择。"}</p>
+      {confirmation&&<div role="group" aria-label="MCP 操作确认"><p>{confirmation==="test"?(draft.transport==="stdio"?`将在沙箱中执行 ${draft.executable}，读取工具目录；不会调用工具。`:`将连接 ${draft.endpoint}，发送凭证（如有），读取服务身份和工具目录；不会调用工具。`):confirmation==="activate"?"启用此服务及选定工具后，新任务可以直接调用。工具参数会发送给该服务。":confirmation==="delete"?"确认删除并立即停止此连接的新调用？历史修订与审计保留。":"重新读取会丢弃未保存的连接和工具选择。"}</p>
         <button disabled={busy} onClick={()=>{if(confirmation==="reload")void perform();else if(current)void perform(confirmation==="activate"?{operation:"activate",id:draft.id,expectedRevision:current.revision,catalogDigest:current.catalog!.digest,tools:reviews,confirmed:true}:{operation:confirmation,id:draft.id,expectedRevision:current.revision,confirmed:true});}}>确认{confirmation==="test"?"测试":confirmation==="activate"?"启用":confirmation==="delete"?"删除":"重新读取"}</button><button disabled={busy} onClick={()=>setConfirmation(null)}>取消操作</button>
       </div>}</div>
     </div>}

@@ -23,7 +23,7 @@ export function ExecutionPanel({bridge,conversationId,evidenceOnly=false}:{bridg
   async function write(operation?:{path:string;body:Record<string,unknown>}){setBusy(true);setError("");try{await controller.execute(operation);setRefresh(v=>v+1);}catch(cause){setError((cause as Error).message);}finally{setBusy(false);}}
   return <section className="execution-panel" aria-label="任务记录"><h2>{evidenceOnly?"任务输出与引用":"任务进展"}</h2>
     {!loaded&&<p role="status">正在读取任务…</p>}
-    {loaded&&!runs.length&&<p>{evidenceOnly?"尚无任务输出。":"在对话中描述任务即可开始，无需在这里设置授权。"}</p>}
+    {loaded&&!runs.length&&<p>{evidenceOnly?"尚无任务输出。":"在对话中输入目标即可开始。"}</p>}
     {runs.map(run=><article key={run.runId} className="execution-run"><h3>{run.goal}</h3><p>{run.status}</p>
       {!evidenceOnly&&!["completed","cancelled","failed"].includes(run.status)&&<button disabled={busy||damaged||!!pending} onClick={()=>void write({path:`/api/desktop/conversations/${conversationId}/execution/cancel`,body:{commandId:crypto.randomUUID(),runId:run.runId,expectedRevision:run.revision}})}>停止任务</button>}
       <ul>{run.workItems.map(work=><li key={work.id}>{work.title} · {work.status}</li>)}</ul>

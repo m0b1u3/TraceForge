@@ -1,13 +1,12 @@
 import { DesktopEvidenceReadSchema } from "@traceforge/shared/desktop-evidence";
 import { DesktopBrowserCommandSchema } from "@traceforge/shared/desktop-browser";
-import { ApprovalPreferenceUpdateSchema } from "@traceforge/shared/desktop-approval-preference";
 import { RequestScheduler } from "./request-scheduler.js";
 import { DesktopReplyCommandSchema } from "@traceforge/shared/desktop-replies";
 import {ReplyQueueCommandSchema} from "@traceforge/shared/desktop-reply-queue";
 import { ConfigurationSaveSchema, ConfigurationImportSchema } from "@traceforge/shared/desktop-configuration";
 import { DesktopMcpOperationSchema } from "@traceforge/shared/desktop-mcp";
 import { DesktopResourceOperationSchema } from "@traceforge/shared/desktop-resources";
-import { parseDesktopExecutionOperation, DesktopApprovalReadSchema, DesktopPermissionChangeSchema } from "@traceforge/shared/desktop-execution";
+import { parseDesktopExecutionOperation } from "@traceforge/shared/desktop-execution";
 
 /** Narrow host-management IPC; credentials are write-only, never an arbitrary HTTP proxy. */
 export interface ConversationBridgeRequest { path: string; method: "GET" | "POST"; body?: string }
@@ -46,11 +45,6 @@ export function validateConversationRequest(value: unknown): ConversationBridgeR
     if (method !== "GET" || input.body !== undefined) throw new Error("Invalid memory read");
     return { path, method };
   }
-  if (path === "/api/desktop/approval-preference") {
-    if (method === "GET" && input.body === undefined) return { path, method };
-    if (method !== "POST" || typeof input.body !== "string" || Buffer.byteLength(input.body) > 1024) throw new Error("Invalid approval preference");
-    return { path, method, body: JSON.stringify(ApprovalPreferenceUpdateSchema.parse(JSON.parse(input.body))) };
-  }
   if (path === "/api/desktop/resources") {
     if (method === "GET" && input.body === undefined) return { path, method };
     if (method !== "POST" || typeof input.body !== "string" || Buffer.byteLength(input.body) > 96 * 1024) throw new Error("Invalid resource operation");
@@ -80,10 +74,6 @@ export function validateConversationRequest(value: unknown): ConversationBridgeR
     if (method !== "POST" || typeof input.body !== "string" || Buffer.byteLength(input.body) > 600 * 1024) throw new Error("Invalid configuration request");
     return { path, method, body: JSON.stringify(ConfigurationSaveSchema.parse(JSON.parse(input.body))) };
   }
-  if (/^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/execution\/approval-input$/.test(path)) {
-    if (method !== "POST" || typeof input.body !== "string" || Buffer.byteLength(input.body) > 4096) throw new Error("Invalid approval preview");
-    return { path, method, body: JSON.stringify(DesktopApprovalReadSchema.parse(JSON.parse(input.body))) };
-  }
   if (/^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/execution\/[a-zA-Z0-9_-]{1,100}\/events\?after=(0|[1-9][0-9]{0,14})$/.test(path)) {
     if (method !== "GET" || input.body !== undefined) throw new Error("Invalid progress read");
     return { path, method };
@@ -92,12 +82,7 @@ export function validateConversationRequest(value: unknown): ConversationBridgeR
     if (method !== "POST" || typeof input.body !== "string" || Buffer.byteLength(input.body) > 2048) throw new Error("Invalid evidence read");
     return { path, method, body: JSON.stringify(DesktopEvidenceReadSchema.parse(JSON.parse(input.body))) };
   }
-  if (/^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/execution\/[a-zA-Z0-9_-]{1,100}\/permissions$/.test(path)) {
-    if(method==="GET" && input.body===undefined)return {path,method};
-    if(method!=="POST" || typeof input.body!=="string" || Buffer.byteLength(input.body)>40000)throw new Error("Invalid permission change");
-    return {path,method,body:JSON.stringify(DesktopPermissionChangeSchema.parse(JSON.parse(input.body)))};
-  }
-  const execution = /^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/execution(\/(authorize|cancel|pause|resume|continue|approval|input))?$/.exec(path);
+  const execution = /^\/api\/desktop\/conversations\/[a-zA-Z0-9_-]{1,100}\/execution(\/(authorize|cancel|pause|resume|continue|input))?$/.exec(path);
   if (execution) {
     if (method === "GET") {
       if (execution[1] || input.body !== undefined) throw new Error("Invalid execution read");
@@ -145,7 +130,7 @@ export function createConversationBridge(options: { webContentsId: number; origi
       if (!active || sender.webContentsId !== options.webContentsId || !sender.mainFrame || url.origin !== expected.origin ||
           url.username || url.password || url.pathname !== "/") throw new Error("Untrusted conversation sender");
       const input = validateConversationRequest(value);
-      const read = input.method === "GET" || /\/(evidence\/read|attachments\/preview|execution\/approval-input)$/.test(input.path);
+      const read = input.method === "GET" || /\/(evidence\/read|attachments\/preview)$/.test(input.path);
       const urgent = input.method === "POST" && /\/(cancel|pause|resume|approval)$/.test(input.path);
       return scheduler.schedule(!read, async () => {
         if (!active) throw new Error("Conversation bridge closed");

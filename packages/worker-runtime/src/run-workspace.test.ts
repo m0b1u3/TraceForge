@@ -101,6 +101,18 @@ describe("Run-owned offline workspace", () => {
     expect(f.execute.mock.calls[0]).toMatchObject([{ timeoutMs: 1200000, resources: { cpuTimeMs: 1200000 }, environment: {} }, { effectivePermissions: { network: "deny" } }]);
     expect(f.workspace.tools().find(t => t.name === "workspace_execute")!.timeoutMs).toBeGreaterThan(3600000);
   });
+  it("passes direct networking only to an authorized owned script and checks the grant again", async () => {
+    const f = setup(), file = await f.json("write", { path: "run.sh", content: "printf ok", expectedDigest: null });
+    f.execute.mockImplementation(async () => ({ status: "succeeded", summary: "done", raw: "output", refs: ["execution-process:one"], retryable: false,
+      metadata: { exitCode: 0, enforcement: { sandboxed: true, filesystemPolicyApplied: true, network: "direct", processTreeEmptyBarrier: true } } }));
+    f.context.effectivePermissions.network = "direct";
+    f.authorize.mockClear();
+    await f.call("execute", { path: "run.sh", expectedDigest: file.digest });
+    expect(f.authorize).toHaveBeenCalledWith(f.context, "workspace.network");
+    expect(f.execute).toHaveBeenCalledWith(expect.objectContaining({ executable: "/bin/bash", environment: {} }),
+      expect.objectContaining({ effectivePermissions: expect.objectContaining({ network: "direct" }) }));
+    expect(f.workspace.profile("case", "run", "workspace_read", true, "direct").network).toBe("deny");
+  });
   it.each([61, 0, 1.5, "120", 3601])("rejects invalid or ungranted duration %s before process dispatch", async timeoutSeconds => {
     const f = setup(), file = await f.json("write", { path: "run.sh", content: "printf ok", expectedDigest: null });
     await expect(f.call("execute", { path: "run.sh", expectedDigest: file.digest, timeoutSeconds })).rejects.toThrow("duration");

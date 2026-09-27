@@ -27,7 +27,7 @@ export class RunActivity {
     if (run?.status === "completed") return "本次任务已完成";
     if (run?.status === "cancelled") return "本次任务已停止";
     if (run?.status === "failed") return "本次运行失败，请查看保存的进展和原因";
-    if (run?.workItems.some(work => work.pendingApproval)) return "等待你确认操作";
+    if (run?.workItems.some(work => work.pendingApproval)) return "正在恢复旧任务";
     if (run?.workItems.some(work => work.continuation?.state === "budget_exhausted")) return "工作预算或失败次数已用尽，不能直接继续";
     if (run?.workItems.some(work => work.status === "blocked")) return "有工作需要处理，请查看下方中断原因";
     const items = [...this.active.values()].flatMap(event => "item" in event.params ? [event.params.item] : []);

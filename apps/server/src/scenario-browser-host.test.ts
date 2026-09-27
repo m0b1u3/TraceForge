@@ -264,7 +264,7 @@ describe("Scenario Browser host assembly", () => {
       const tool = discovered.find(tool => tool.name === "web.browser.inspect")!;
       await expect(tool.execute({operation:"observe",sessionId:"closed-session"}, owner)).resolves.toMatchObject({status:"failed",summary:expect.stringContaining("No browser operation was started"),retryable:false});
       expect(f.startProcess).not.toHaveBeenCalled();
-      const policy = new RunToolPolicy(descriptor.definition, f.context.authorization as unknown as SqliteScenarioAuthorizationService, undefined, "linux", undefined, () => true);
+      const policy = new RunToolPolicy(descriptor.definition, f.context.authorization as unknown as SqliteScenarioAuthorizationService, undefined, "linux", () => true);
       const current = assignment(); current.worker.id = owner.workerId; current.worker.capabilities = [...tool.providedCapabilities];
       current.assignment.runId = owner.runId; current.assignment.leaseId = owner.leaseId; current.assignment.leaseExpiresAt = owner.leaseExpiresAt;
       current.assignment.runContext.caseId = owner.caseId; current.assignment.runContext.scopeRef = owner.scopeRef;

@@ -26,7 +26,7 @@ export class ExecutionController {
       const value = response.body as { desktopReceipt?: unknown; error?: unknown; runId?: unknown } | null;
       if ([400, 401, 403, 404, 409, 422].includes(response.status) && value && typeof value.error === "string") {
         this.storage.removeItem(key);
-        throw new Error("宿主明确拒绝了操作。请核对授权、模型和任务状态后重新确认。");
+        throw new Error("宿主明确拒绝了操作。请核对模型连接和任务状态后重试。");
       }
       const parsed = DesktopExecutionReceiptSchema.safeParse(value?.desktopReceipt);
       const operation = next.path.endsWith("/authorize") ? "authorize" : next.path.endsWith("/cancel") ? "cancel"

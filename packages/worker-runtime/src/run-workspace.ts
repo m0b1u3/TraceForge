@@ -49,7 +49,7 @@ export class RunWorkspace {
   }
 
   /** Pure calculation: catalog reads never create directories or launch processes. */
-  profile(caseId: string, runId: string, tool: string, enabled: boolean, network = false, interactive = false): PermissionProfile {
+  profile(caseId: string, runId: string, tool: string, enabled: boolean, network: boolean | "direct" = false, interactive = false): PermissionProfile {
     const action = workspaceAction(tool), root = this.root(caseId, runId);
     // First supported native platform; no unrestricted fallback on other hosts.
     enabled = enabled && process.platform === "darwin" && process.arch === "arm64" && !!action;
@@ -58,7 +58,8 @@ export class RunWorkspace {
       filesystem: { read: enabled ? [{ path: root, scope: "tree" }, ...(execute ? [{ path: "/bin", scope: "tree" as const }, { path: "/usr/bin", scope: "tree" as const },
         ...(network ? [{ path: "/private/etc/ssl/openssl.cnf", scope: "exact" as const }, { path: "/private/etc/ssl/cert.pem", scope: "exact" as const }] : [])] : [])] : [],
         write: enabled && action !== "workspace.read" ? [{ path: root, scope: "tree" }] : [], deny: [] },
-      network: enabled && execute && network ? "brokered" : "deny", process: { access: enabled ? "sandboxed" : "deny", interactive: enabled && execute && interactive, background: false }, secrets: "deny" };
+      network: enabled && execute && network ? network === "direct" ? "direct" : "brokered" : "deny",
+      process: { access: enabled ? "sandboxed" : "deny", interactive: enabled && execute && interactive, background: false }, secrets: "deny" };
   }
 
   tools(): ExecutionToolAdapter[] {
@@ -71,7 +72,7 @@ export class RunWorkspace {
         offset: { type: "integer", minimum: 0 }, deleteBytes: { type: "integer", minimum: 0 } }, required: ["path", "content", "expectedDigest"] },
       edit: { properties: { path: text, expectedDigest: text, before: text, after: text }, required: ["path", "expectedDigest", "before", "after"] },
       remove: { properties: { path: text, expectedDigest: text, expectedIdentity: text }, required: ["path"] },
-      execute: { properties: { path: text, expectedDigest: text, terminal: { type: "boolean", description: "Use a managed terminal, only with interactiveWorkspace consent; use workspace_start for later workspace_input calls." }, timeoutSeconds: { type: "integer", minimum: 1, maximum: MAX_WORKSPACE_EXECUTION_SECONDS, description: "Requested execution time; defaults to 60 seconds and cannot exceed this Run's authorized maximumScriptSeconds." }, arguments: { type: "array", maxItems: 64, items: { type: "string", maxLength: 4096 } } }, required: ["path", "expectedDigest"] },
+      execute: { properties: { path: text, expectedDigest: text, terminal: { type: "boolean", description: "Use a managed terminal; use workspace_start for later workspace_input calls." }, timeoutSeconds: { type: "integer", minimum: 1, maximum: MAX_WORKSPACE_EXECUTION_SECONDS, description: "Requested execution time; defaults to 60 seconds and may extend to the active Run's script budget." }, arguments: { type: "array", maxItems: 64, items: { type: "string", maxLength: 4096 } } }, required: ["path", "expectedDigest"] },
       stage: { properties: { projectId: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,80}$" } }, required: ["projectId"] },
     };
     const descriptions: Record<Operation, string> = {
@@ -81,8 +82,8 @@ export class RunWorkspace {
       write: "Create/replace a UTF-8 file in this Run. append=true adds a transfer page; offset and deleteBytes replace a byte range atomically, allowing edits to large files. expectedDigest=null creates only; changes require the last read SHA-256.",
       edit: "Replace exactly one literal occurrence in a Run file, conditional on its last read SHA-256.",
       remove: "Delete one regular Run file or one empty directory. Supply exactly one of expectedDigest (last read file SHA-256) or expectedIdentity (metadataOnly inspection identity). Works over workspace capacity but never across an unconfirmed process-cleanup fence. No recursive deletion.",
-      execute: "Run a workspace Bash script pinned to its last read SHA-256 expectedDigest, without startup profiles, in the local native sandbox defaulting to 60 seconds; timeoutSeconds may request up to the separately authorized maximumScriptSeconds (at most 3600 seconds). Offline unless separately granted workspace.network; supported HTTP/SOCKS5 TCP clients then use the host-controlled destination scope. Opaque tunnels are connection-level, not per-path inspection. terminal=true requires interactiveWorkspace consent; use workspace_start and workspace_input for later interaction. No user home, other Runs or detached execution. System /bin and /usr/bin utilities are readable. Output is bounded and is not verified security evidence.",
-      stage: "Copy an enabled source project from this Run's pinned tool library into its workspace, without running it or installing dependencies. Read tools_catalog first. Returns the saved entry script and digest for a separately approved workspace_execute call; missing dependencies must be reported, not installed through an unrestricted fallback.",
+      execute: "Run a workspace Bash script pinned to its last read SHA-256 expectedDigest, without startup profiles, in the local native sandbox. The default is 60 seconds; timeoutSeconds can request up to this Run's script budget (at most 3600 seconds). Current desktop Runs permit direct sockets, downloads and running downloaded files inside the workspace without per-site or per-call approval. Direct connections have no per-destination receipt. terminal=true opens a managed terminal; use workspace_start and workspace_input for later interaction. Host files outside this Run's workspace and detached execution remain unavailable. System /bin and /usr/bin utilities are readable. Output is bounded and is not verified security evidence.",
+      stage: "Copy an enabled source project from this Run's pinned tool library into its workspace, without running it or installing dependencies. Read tools_catalog first. Returns the saved entry script and digest for a workspace_execute call; prepare needed dependencies inside this Run's workspace.",
     };
     return operations.filter(op => op !== "stage" || this.loadProject).map(op => ({ name: `workspace_${op}`, source: "traceforge.builtin", version: "1.0.0", priority: 100,
       description: descriptions[op], inputSchema: { type: "object", additionalProperties: false, ...schemas[op] },
@@ -100,13 +101,13 @@ export class RunWorkspace {
     if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some(key => !keys.includes(key))) throw new Error("Invalid workspace input");
     const args = input as Record<string, unknown>, root = this.root(context.caseId, context.runId);
     const permissions = context.effectivePermissions;
-    if (!["deny", "brokered"].includes(permissions.network) || permissions.process.access !== "sandboxed" || permissions.secrets !== "deny"
+    if (!["deny", "brokered", "direct"].includes(permissions.network) || permissions.process.access !== "sandboxed" || permissions.secrets !== "deny"
       || !allowsFileSystemPath(permissions, "read", root)
       || (actionFor(op) !== "workspace.read" && !allowsFileSystemPath(permissions, "write", root))) throw new Error("Workspace permissions are unavailable");
     if (this.active.has(root)) throw new Error("Run workspace is busy; wait for the active operation");
     this.active.add(root);
     try {
-      if (permissions.network === "brokered") this.authorize(context, "workspace.network");
+      if (permissions.network !== "deny") this.authorize(context, "workspace.network");
       this.directory(root);
       const marker = `${root}.busy`;
       if (existsSync(marker)) throw new Error("Workspace requires reconciliation: previous process cleanup is unconfirmed");

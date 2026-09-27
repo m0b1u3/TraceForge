@@ -26,7 +26,7 @@ export function mergeTrace(previous: ScenarioAgentEvent[], incoming: ScenarioAge
   return [...rows.values()].slice(-100);
 }
 const key = (event: ScenarioAgentEvent) => `${event.turnId}:${"item" in event.params ? `${event.params.item.type}:${event.params.item.id}` : event.id}`;
-const state = (value: string) => ({ inProgress: "进行中", completed: "已完成", failed: "失败", timedOut: "已超时", cancelled: "已停止", interrupted: "已中断", waitingApproval: "等待确认" } as Record<string,string>)[value] ?? value;
+const state = (value: string) => ({ inProgress: "进行中", completed: "已完成", failed: "失败", timedOut: "已超时", cancelled: "已停止", interrupted: "已中断", waitingApproval: "正在恢复" } as Record<string,string>)[value] ?? value;
 
 export function ReasoningText({ text, active = false, truncated = false }: { text: string; active?: boolean; truncated?: boolean }) {
   const [expanded, setExpanded] = useState(false);
@@ -58,7 +58,7 @@ function TraceEntry({ event,bridge,conversationId }: { event: ScenarioAgentEvent
       </> : <>
         {item.rationale && <p className="trace-rationale">{item.rationale}</p>}
         {item.commandPreview ? <><small>执行命令 · 受控进程</small><pre tabIndex={0}>{item.commandPreview}</pre></> : item.inputPreview && <><small>调用参数</small><pre tabIndex={0}>{item.inputPreview}</pre></>}
-        {item.outputPreview ? <><small>{active ? "输出持续更新" : "返回内容"}</small><pre tabIndex={0}>{item.outputPreview}</pre></> : <p className="local-receipt">{active ? item.dispatchState === "requested" ? "正在核对授权，尚未确认派发。" : "正在执行，等待输出…" : item.summary || "没有可展示的返回内容。"}</p>}
+        {item.outputPreview ? <><small>{active ? "输出持续更新" : "返回内容"}</small><pre tabIndex={0}>{item.outputPreview}</pre></> : <p className="local-receipt">{active ? item.dispatchState === "requested" ? "正在准备工具调用…" : "正在执行，等待输出…" : item.summary || "没有可展示的返回内容。"}</p>}
         {preview&&conversationId&&item.outputPreview&&<button onClick={()=>preview.open({kind:"text",conversationId,title:`${item.tool} · 输出`,sourceId:`${event.runId}:${event.turnId}:${item.id}:${event.sequence}`,text:item.outputPreview!})}>在侧栏查看输出</button>}
         {item.previewTruncated && <p className="local-receipt">此处为有界输出预览，完整结果以原始回执为准。</p>}
         {bridge&&conversationId&&item.refs.map(reference=><EvidenceReference key={reference} bridge={bridge} conversationId={conversationId} runId={event.runId} reference={reference}/>)}

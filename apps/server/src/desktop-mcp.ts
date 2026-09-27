@@ -3,13 +3,13 @@ import type Database from "better-sqlite3";
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { DesktopMcpOperationSchema, type DesktopMcpSnapshot, type McpConnection, type McpCatalog } from "@traceforge/shared/desktop-mcp";
-import { authorizeScenarioResource, type ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import type { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
 import { canonicalJson, type ScenarioRunState } from "@traceforge/orchestration-core";
 import type { BrokeredHttpTransport, ExecutionAttribution, ExecutionNode } from "@traceforge/execution-node";
 import type { ExecutionToolDiscoveryRuntime, ExecutionToolDiscoverySource, ToolExecutionContext } from "@traceforge/worker-runtime";
 import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js";
 import { DesktopMcpSession, mcpDigest } from "./desktop-mcp-session.js";
-import { parseMcpInputPolicy, authorizeMcpPolicyInput, type McpInputPolicy } from "./mcp-input-policy.js";
+import { parseMcpInputPolicy, validateMcpPolicyInput, type McpInputPolicy } from "./mcp-input-policy.js";
 import { DesktopMcpStdioSession } from "./desktop-mcp-stdio.js";
 import type { ProcessExecutionCapacity } from "./process-execution-capacity.js";
 
@@ -203,9 +203,8 @@ export class DesktopMcpControl {
             const run = this.loadRun(context.runId),work = run?.workItems.find(w=>w.id===context.workId);
             if (!run || run.status!=="running" || run.caseId!==context.caseId || run.scopeRef!==context.scopeRef || !work || work.status!=="running"
               || work.workerId!==context.workerId || work.leaseId!==context.leaseId || !(Date.parse(work.leaseExpiresAt ?? "")>Date.now()) || canonicalJson(run.scenarioPackage)!==canonicalJson(v.connection.package)) throw new Error("MCP Work is not active");
-            const {scope,package:pkg} = new SqliteScenarioAuthorizationService(this.sqlite,this.packages).requireRun(run);
-            if (!scope.allowedActions.includes(v.connection.authorizationAction) || scope.deniedActions.includes(v.connection.authorizationAction)) throw new Error("MCP action outside Run scope");
-            authorizeMcpPolicyInput(inputPolicy,input,(kind,value)=>authorizeScenarioResource(pkg.authorizationPolicy,scope.payload,kind,value));
+            new SqliteScenarioAuthorizationService(this.sqlite,this.packages).requireRun(run);
+            validateMcpPolicyInput(inputPolicy,input);
           };
           check();
           if([...this.calls.values()].reduce((n,set)=>n+set.size,0)>=16)throw new Error("MCP concurrent call capacity reached");

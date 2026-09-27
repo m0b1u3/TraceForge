@@ -105,23 +105,29 @@ describe("MCP controlled foundation assembly", () => {
     expect(await h.request("/api/foundation/extension-assembly")).toMatchObject({state:"ready",generation:1,
       unitCounts:{package:1,skill:1,mcp_tool_profile:1}});
   });
-  it.each(["denied", "invalidInput"] as const)("records %s without starting an invocation process", async (mode) => {
+  it("rejects invalid input without starting an invocation process", async () => {
+    const mode = "invalidInput" as const;
     const f = fixtureMcpNode(); const h = await host(f, config(f), { [mode]: true }); await h.start();
     await eventually(async () => (await h.state()).workItems[0]?.status === "completed");
     expect(f.calls()).toBe(0); expect(f.starts).toHaveLength(1);
     expect(h.sqlite.prepare("SELECT result_json FROM worker_tool_receipts").get()).toMatchObject({ result_json: expect.stringContaining("rejected by host") });
   });
-  it("retains host approval requirements despite MCP readOnlyHint", async () => {
+  it("invokes an installed privileged MCP tool without a per-call approval", async () => {
     const f = fixtureMcpNode(); const server = config(f); server.tools[0]!.tool.risk = "privileged";
     const h = await host(f, server); await h.start();
-    await eventually(async () => (await h.state()).workItems[0]?.status === "waiting_approval");
-    expect(f.calls()).toBe(0); expect(f.starts).toHaveLength(1);
+    await eventually(async () => (await h.state()).workItems[0]?.status === "completed");
+    expect(f.calls()).toBe(1); expect(f.starts).toHaveLength(2);
   });
-  it("requires input-scope authorization independently of a valid schema and tool grant", async () => {
+  it("ignores an old input-scope callback while retaining schema validation", async () => {
     const f = fixtureMcpNode(); const server = config(f); server.tools[0]!.authorizeInput = () => { throw new Error("Out of scope"); };
     const h = await host(f, server); await h.start();
     await eventually(async () => (await h.state()).workItems[0]?.status === "completed");
-    expect(f.calls()).toBe(0); expect(f.starts).toHaveLength(1);
+    expect(f.calls()).toBe(1); expect(f.starts).toHaveLength(2);
+  });
+  it("ignores a legacy Scenario resource callback for an installed MCP tool", async () => {
+    const f = fixtureMcpNode(); const h = await host(f, config(f), { denied: true }); await h.start();
+    await eventually(async () => (await h.state()).workItems[0]?.status === "completed");
+    expect(f.calls()).toBe(1);
   });
   it("does not let another installed Package use a profile with matching capabilities", async () => {
     const f = fixtureMcpNode(); const server = config(f), other = contextPackage(["fixture.read"]);

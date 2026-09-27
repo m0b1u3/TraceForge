@@ -40,8 +40,6 @@ import { registerRunObserverRoutes, SqliteRunObserverStore } from "./run-observe
 import { registerRunPlannerRoutes, SqliteRunPlannerStore } from "./run-planner.js";
 import { SqliteCognitiveContextCursorStore } from "./cognitive-context-distiller.js";
 import { createInstalledBrowserDeployment } from "./browser-installation.js";
-import { DesktopPermissionChange, registerDesktopPermissionChange } from "./desktop-permission-change.js";
-import { DesktopApprovalPreference, registerDesktopApprovalPreference } from "./desktop-approval-preference.js";
 import { SqliteBrowserArtifactContent } from "./browser-artifact-content.js";
 import { BrowserScratchStore } from "./browser-scratch.js";
 import { registerCognitiveSnapshotRoutes, SqliteCognitiveSnapshotStore } from "./cognitive-context-snapshots.js";
@@ -290,10 +288,6 @@ export function registerSecurityAgentFoundation(
   const scenarioEvents = new SqliteScenarioEventStore(sqlite, changes);
   const workers = new SqliteWorkerRegistry(sqlite);
   const scenarioRuntime = new DurableScenarioRuntime(scenarioEvents, definitions, scenarioPackages);
-  // Permission resolution commits inside the scope/audit transaction. Do not
-  // publish in-process wakeups before its outer commit; durable polling observes it.
-  registerDesktopPermissionChange(app, new DesktopPermissionChange(sqlite, authorization,
-    new DurableScenarioRuntime(new SqliteScenarioEventStore(sqlite), definitions, scenarioPackages)));
   const processCapacity=new ProcessExecutionCapacity(sqlite,new ToolProviderFairScheduler(options.executionSchedulingLimits,
     new SqliteToolProviderSchedulingAuditStore(sqlite)));
   const scenarioProcessSupervision=new SqliteScenarioProcessSupervisionStore(sqlite);
@@ -366,7 +360,6 @@ export function registerSecurityAgentFoundation(
   registerDesktopResourceRoutes(app, desktopResources);
   const desktopConfiguration = new DesktopConfigurationStore(sqlite, scenarioPackages, contextStore, options.mcpServers);
   registerDesktopConfigurationRoutes(app, desktopConfiguration);
-  registerDesktopApprovalPreference(app, new DesktopApprovalPreference(sqlite));
   registerContextLifecycleRoutes(app, new PackageContextLifecycle(sqlite, scenarioPackages, contextStore, options.contextLifecycleAuthorizer));
   if (new Set(contextServers.map((server) => server.source)).size !== contextServers.length) throw new Error("Duplicate MCP context source");
   const contextSource = new PackageContextDiscoverySource(scenarioPackages, contextStore, sqlite, (id) => scenarioRuntime.load(id) ?? null,

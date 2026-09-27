@@ -1,4 +1,4 @@
-import { buildAuthorizationScope, TaskPresetsSchema, selectedTaskKind,taskDefinitionIdentity,defaultTaskConfiguration,resolveTaskConfiguration,taskConfigurationScope, type TaskDefinition, type TaskPreset } from "@traceforge/shared/authorization-form";
+import { buildAuthorizationScope, TaskPresetsSchema, selectedTaskKind,taskDefinitionIdentity,defaultTaskConfiguration,prepareTaskConfigurationReview,resolveTaskConfiguration,taskConfigurationScope, type TaskDefinition, type TaskPreset } from "@traceforge/shared/authorization-form";
 export {TaskDefinitionSchema,TaskDefinitionsSchema,type TaskDefinition,type TaskPreset} from "@traceforge/shared/authorization-form";
 import { desktopJournalStorage } from "./desktop-journal-storage";
 
@@ -18,17 +18,26 @@ export function readTaskPreset(d:TaskDefinition):TaskPreset {
   const raw=desktopJournalStorage().getItem(key);
   return resolveTaskConfiguration(d,raw);
 }
+export function reviewTaskPreset(d:TaskDefinition) {
+  return prepareTaskConfigurationReview(d,desktopJournalStorage().getItem(key));
+}
 export function taskScope(d:TaskDefinition,p:TaskPreset,inputs=p.inputs) {
   return taskConfigurationScope(d,p,inputs);
 }
-export function saveTaskPreset(d:TaskDefinition,p:TaskPreset) {
+export function saveTaskPreset(d:TaskDefinition,p:TaskPreset,recoverUnreadable=false) {
   // Task-specific required targets are supplied at launch, not required for saving preferences.
+  if(p.identity!==taskIdentity(d)||p.inputs.length!==d.authorizationForm.fields.length)throw new Error("任务配置不匹配，请重新读取设置。");
   buildAuthorizationScope({...d.authorizationForm,fields:d.authorizationForm.fields.map(f=>({...f,required:false}))},p.inputs);
   if(p.actions.some(a=>!d.authorizationReview.allowedActions.includes(a)||d.authorizationReview.deniedActions.includes(a)))throw new Error("操作配置无效。");
-  const storage=desktopJournalStorage(),raw=storage.getItem(key),rows=raw===null?[]:storedSchema.parse(JSON.parse(raw));
+  const storage=desktopJournalStorage(),raw=storage.getItem(key);
+  let rows: ReturnType<typeof storedSchema.parse>;
+  try { rows=raw===null?[]:storedSchema.parse(JSON.parse(raw)); }
+  catch (cause) { if(!recoverUnreadable)throw cause;rows=[]; }
   const previous=rows.find(row=>row.kind===d.kind);
   const next={...p,identity:taskIdentity(d),revision:(previous?.preset.revision??0)+1};
-  storage.setItem(key,JSON.stringify([...rows.filter(row=>row.kind!==d.kind),{kind:d.kind,preset:next,...(previous?.default?{default:true}:{})}]));
+  const ambiguousDefault=recoverUnreadable&&rows.filter(row=>row.default).length>1;
+  storage.setItem(key,JSON.stringify([...rows.filter(row=>row.kind!==d.kind).map(row=>ambiguousDefault?{...row,default:false}:row),
+    {kind:d.kind,preset:next,...(ambiguousDefault||previous?.default?{default:true}:{})}]));
   return next;
 }
 export function readDefaultTaskKind(definitions:TaskDefinition[]) {
@@ -36,7 +45,9 @@ export function readDefaultTaskKind(definitions:TaskDefinition[]) {
   return selectedTaskKind(raw,definitions)??"";
 }
 export function saveDefaultTask(d:TaskDefinition) {
-  const storage=desktopJournalStorage(),raw=storage.getItem(key),rows=raw===null?[]:storedSchema.parse(JSON.parse(raw));
-  const preset=resolveTaskConfiguration(d,raw);
+  const storage=desktopJournalStorage(),raw=storage.getItem(key);
+  let rows:ReturnType<typeof storedSchema.parse>;
+  try{rows=raw===null?[]:storedSchema.parse(JSON.parse(raw));}catch{rows=[];}
+  const preset=defaultTaskConfiguration(d);
   storage.setItem(key,JSON.stringify([...rows.filter(row=>row.kind!==d.kind).map(row=>({...row,default:false})),{kind:d.kind,preset,default:true}]));
 }

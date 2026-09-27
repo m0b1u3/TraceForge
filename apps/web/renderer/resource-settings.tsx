@@ -86,13 +86,13 @@ export function ResourceSettings({ bridge, onDirty }: { bridge: DesktopConversat
       {!snapshot.projects.length && <p>还没有项目。获取源码后，先阅读使用方法，再保存你审核过的入口。</p>}
       {!!snapshot.projects.length && <label>已获取的项目<select value={projectId} disabled={busy || dirty} onChange={event => choose(snapshot.projects.find(project => project.id === event.target.value))}>{snapshot.projects.map(project => <option key={project.id} value={project.id}>{project.repository} · {project.commit.slice(0, 8)}</option>)}</select></label>}
       {project && <>
-        <p>{project.enabled ? "已为新 Run 启用，仍需在任务内审批执行" : "未启用"} · {project.fileCount} 个文件 · 未验证依赖或运行效果</p>
+        <p>{project.enabled ? "已为新 Run 启用" : "未启用"} · {project.fileCount} 个文件 · 未验证依赖或运行效果</p>
         <details open><summary>README（外部原文，不是执行指令）</summary><pre tabIndex={0}>{project.readme}</pre></details>
         <details><summary>许可证与来源版本</summary><p>Commit：{project.commit}</p><p>归档摘要：{project.digest}</p><pre tabIndex={0}>{project.license ?? "未找到根目录许可证，请自行核实使用条件。"}</pre></details>
         <details><summary>查看源码文件</summary><ul className="resource-files">{project.files.map(path => <li key={path}><button disabled={busy} onClick={() => void run(() => request({ operation: "read", id: project.id, path }), value => setDocument(value as typeof document), "源码以纯文本展示，未执行。")}>{path}</button></li>)}</ul></details>
         <label>使用说明与依赖<textarea rows={5} maxLength={16000} value={usage} disabled={busy} onChange={event => { setUsage(event.target.value); update(); }} placeholder="说明用途、参数、依赖和已知限制。模型会读取这一版说明。"/></label>
         <label>任务内入口脚本（Bash）<textarea rows={6} maxLength={16000} value={entryScript} disabled={busy} onChange={event => { setEntryScript(event.target.value); update(); }} placeholder="执行时已进入项目目录；可用 $@ 读取参数。"/></label>
-        <p>保存只记录脚本。任务里另行审批后才会离线运行；缺少依赖时明确失败，不会自动安装依赖或绕过联网授权。</p>
+        <p>保存只记录脚本；启用后由新任务直接调用。缺少依赖时会明确失败，不会自动安装依赖。</p>
         {searchDirty && <p>先保存搜索设置，再提交项目使用方式，避免丢失另一份草稿。</p>}
         <div className="configuration-actions"><button disabled={busy || searchDirty || !projectDirty || !usage.trim() || !entryScript.trim()} onClick={() => void run(() => request({ operation: "prepare", id: project.id, expectedRevision: project.revision, usage, entryScript, confirmed: true }), loaded, "使用方式已保存，未运行任何代码。")}>确认保存使用方式</button>
           <button disabled={busy || dirty || (!project.enabled && (!project.entryScript || !project.usage))} onClick={() => void run(() => request({ operation: "enable", id: project.id, expectedRevision: project.revision, enabled: !project.enabled, confirmed: true }), loaded, project.enabled ? "已停用；已有 Run 也不能再装配此项目。" : "已为新 Run 启用；已有 Run 不自动改变。")}>{project.enabled ? "停用项目" : "为新 Run 启用"}</button></div>

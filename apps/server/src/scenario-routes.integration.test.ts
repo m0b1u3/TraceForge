@@ -78,6 +78,39 @@ afterEach(() => {
 });
 
 describe("scenario control-plane routes", () => {
+  it("settles a legacy pending tool approval automatically while the Run stays active", async () => {
+    const app = await setup(100);
+    try {
+      expect((await authorize(app)).statusCode).toBe(201);
+      expect((await app.inject({method:"POST",url:"/api/scenarios/workers",payload:{id:"worker_1",roles:["researcher"],
+        capabilities:Object.values(WEB_BLACKBOX_CAPABILITIES),maxConcurrentWork:1,status:"online"}})).statusCode).toBe(201);
+      expect((await app.inject({method:"POST",url:"/api/scenarios/runs",payload:{commandId:"start",runId:"run_1",caseId:"case_1",
+        goal:"Review neutral target",scopeRef:"scope_1",scenarioKind:"web_blackbox",definitionVersion:1}})).statusCode).toBe(201);
+      expect((await app.inject({method:"POST",url:"/api/scenarios/runs/run_1/work",payload:{commandId:"propose",expectedRevision:1,
+        proposal:{id:"work_scope",kind:"research",title:"Review",objective:"Review target",idempotencyKey:"effect_scope"}}})).statusCode).toBe(200);
+      const load=async()=> (await app.inject({method:"GET",url:"/api/scenarios/runs/run_1"})).json();
+      let state=await load();
+      for(let attempt=0;attempt<30&&state.workItems[0]?.status!=="running";attempt++){
+        await new Promise(resolve=>setTimeout(resolve,100));state=await load();
+      }
+      expect(state.workItems[0]?.status).toBe("running");
+      const work=state.workItems[0];
+      expect((await app.inject({method:"POST",url:"/api/scenarios/runs/run_1/work/work_scope/checkpoint",payload:{
+        commandId:"old-checkpoint",expectedRevision:state.revision,workerId:work.workerId,leaseId:work.leaseId,
+        checkpointId:"old-checkpoint",progressSummary:"Ready",payloadRef:"artifact://old-input"}})).statusCode).toBe(200);
+      state=await load();
+      expect((await app.inject({method:"POST",url:"/api/scenarios/runs/run_1/work/work_scope/request-approval",payload:{
+        commandId:"old-request",expectedRevision:state.revision,workerId:work.workerId,leaseId:work.leaseId,
+        approvalId:"old-approval",actionKey:"effect_scope:call",toolName:"neutral.tool",risk:"privileged",
+        rationale:"Legacy review",inputRef:"artifact://old-input"}})).statusCode).toBe(200);
+      for(let attempt=0;attempt<30;attempt++){
+        state=await load();if(state.workItems[0]?.grantedActionKeys?.includes("effect_scope:call"))break;
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      expect(state.workItems[0]?.grantedActionKeys).toContain("effect_scope:call");
+      expect(state.workItems[0]?.pendingApproval).toBeNull();
+    } finally { await app.close(); }
+  });
   it("rejects omitted or forged action grants before persistence and returns the selectable policy", async () => {
     const app = await setup();
     try {
@@ -92,13 +125,12 @@ describe("scenario control-plane routes", () => {
       expect((await app.inject({url:"/api/scenarios/authorizations?caseId=case_1"})).json()[0].scope.authorizedActions).toEqual(["scope.read"]);
     } finally { await app.close(); }
   });
-  it("persists explicit inquiry preference in the authorization and rejects malformed consent", async () => {
+  it("starts without an inquiry preference and keeps the authorization identity", async () => {
     const app = await setup();
-    const invalid = await authorize(app, "false"); expect(invalid.statusCode).toBe(400);
-    const created = await authorize(app, false); expect(created.statusCode).toBe(201);
-    expect(created.json().scope.routineApprovalRequired).toBe(false);
+    const created = await authorize(app); expect(created.statusCode).toBe(201);
+    expect(created.json().scope).not.toHaveProperty("routineApprovalRequired");
     const list = await app.inject({ method: "GET", url: "/api/scenarios/authorizations?caseId=case_1" });
-    expect(list.json()[0].scope.routineApprovalRequired).toBe(false);
+    expect(list.json()[0].scope).not.toHaveProperty("routineApprovalRequired");
     expect(list.json()[0].policyBinding.status).toBe("available");
     await app.close();
   });
@@ -126,6 +158,21 @@ describe("scenario control-plane routes", () => {
       authorizationActions: expect.arrayContaining(["scope.read", "web.request.replay", "report.write"]),
       agentTopology: expect.objectContaining({ planner: expect.objectContaining({ enabled: true }) }),
     })]);
+  });
+
+  it("preserves Scenario planning capabilities when a Run starts before its Workers register", async () => {
+    const app = await setup();
+    try {
+      expect((await authorize(app)).statusCode).toBe(201);
+      const started = await app.inject({method:"POST",url:"/api/scenarios/runs",payload:{commandId:"cold-start",
+        runId:"cold-run",caseId:"case_1",goal:"Inspect the authorized target",scopeRef:"scope_1",
+        scenarioKind:"web_blackbox",definitionVersion:1}});
+      expect(started.statusCode).toBe(201);
+      expect(started.json().state.availableCapabilities).toEqual(expect.arrayContaining([
+        "context.catalog","context.read","context.search","scope.read",
+      ]));
+      expect(started.json().state.workItems).toEqual([]);
+    } finally { await app.close(); }
   });
 
   it("keeps an unavailable Package binding diagnosable without silently using the installed version", async () => {

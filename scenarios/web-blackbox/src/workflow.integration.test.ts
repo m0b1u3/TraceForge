@@ -27,6 +27,7 @@ class Fixture {
   failEvidence = false;
   failCheckpoint = false;
   truncated = false;
+  truncatedPaths = new Set<string>();
   denied = false;
   budgets: Record<string, number> = {};
   async start() {
@@ -76,7 +77,8 @@ class Fixture {
           if (this.failAfterRequest) throw new Error("response receipt lost after delivery");
           const id = `request-${this.requests.length}`;
           return { output: { receipt: { id }, status: response.status, headers: [...response.headers].map(([name, value]) => ({ name, value })),
-            bodyBase64: bytes.toString("base64"), responseBytes: bytes.length, bodyTruncated: this.truncated }, refs: [`network-receipt:${id}`] };
+            bodyBase64: bytes.toString("base64"), responseBytes: bytes.length,
+            bodyTruncated: this.truncated || this.truncatedPaths.has(new URL(input.url).pathname) }, refs: [`network-receipt:${id}`] };
         }
         if (capability.includes("evidence")) {
           if (this.failEvidence) throw new Error("graph write failed");
@@ -141,6 +143,67 @@ describe("Web HTTP investigation workflow", () => {
     expect(f.requests.slice(start).map(item=>item.body)).toEqual(["first","second","first","second","first","third","first","third"].map(value=>JSON.stringify({value})));
     await f.call(tool,input);expect(f.requests.length-start).toBe(8);
     expect(JSON.stringify([...f.state.values()])).not.toContain(baseline.bodyBase64);
+  });
+
+  it.each(["web.validation.compare", "web.validation.execute"].flatMap(tool => [
+    { tool, quality: "truncated", firstPath: "/next", assessment: "truncated_observations" },
+    { tool, quality: "unstable", firstPath: "/unstable", assessment: "unstable_observations" },
+  ]))("$tool keeps $quality observations ahead of a later repeatable difference", async ({ tool, quality, firstPath, assessment }) => {
+    const f = await fixture();
+    f.budgets = { variants: 2, requestsPerCall: 8, totalRequests: 32 };
+    if (quality === "truncated") f.truncatedPaths.add(firstPath);
+    if (tool === "web.validation.execute") await f.register();
+    const baseline = { url: `${f.base}/` };
+    const candidates = [{ url: `${f.base}${firstPath}` }, { url: `${f.base}/candidate` }];
+    const input = tool === "web.validation.execute"
+      ? { candidateId: "first", plan: { prepare: [], baseline, candidates, rounds: 2, changedCondition: "Change one URL at a time" } }
+      : { experimentId: `quality-${quality}`, hypothesisId: "neutral", baseline, candidates, rounds: 2 };
+    const start = f.requests.length;
+    const partial = await f.call(tool, { ...input, maxRequests: 4 });
+    expect(partial.observations).toHaveLength(4);
+    expect(f.requests.length - start).toBe(4);
+
+    await f.restart();
+    const completed = await f.call(tool, { ...input, maxRequests: 8 });
+    expect(completed.observations).toHaveLength(8);
+    expect(f.requests.length - start).toBe(8);
+    expect(completed.assessment).toBe(assessment);
+    if (tool === "web.validation.execute") {
+      expect(completed.variantAssessments).toEqual([
+        { variantIndex: 0, assessment },
+        { variantIndex: 1, assessment: "repeatable_difference" },
+      ]);
+    } else {
+      expect(completed.groups[1]).toMatchObject({ complete: true, stable: true, different: true });
+    }
+    await f.call(tool, { ...input, maxRequests: 8 });
+    expect(f.requests.length - start).toBe(8);
+  });
+
+  it.each(["web.validation.compare", "web.validation.execute"])("%s gives truncation precedence over instability and repeatable difference", async tool => {
+    const f = await fixture();
+    f.budgets = { variants: 3, requestsPerCall: 12, totalRequests: 32 };
+    f.truncatedPaths.add("/next");
+    if (tool === "web.validation.execute") await f.register();
+    const baseline = { url: `${f.base}/` };
+    const candidates = ["/next", "/unstable", "/candidate"].map(path => ({ url: `${f.base}${path}` }));
+    const input = tool === "web.validation.execute"
+      ? { candidateId: "first", plan: { prepare: [], baseline, candidates, rounds: 2, changedCondition: "Change one URL at a time" } }
+      : { experimentId: "quality-precedence", hypothesisId: "neutral", baseline, candidates, rounds: 2 };
+    const start = f.requests.length;
+    expect((await f.call(tool, { ...input, maxRequests: 8 })).observations).toHaveLength(8);
+    await f.restart();
+    const completed = await f.call(tool, { ...input, maxRequests: 12 });
+    expect(completed.observations).toHaveLength(12);
+    expect(completed.assessment).toBe("truncated_observations");
+    expect(f.requests.length - start).toBe(12);
+    if (tool === "web.validation.execute") {
+      expect(completed.variantAssessments.map((item: { assessment: string }) => item.assessment)).toEqual([
+        "truncated_observations", "unstable_observations", "repeatable_difference",
+      ]);
+    } else {
+      expect(completed.groups[2]).toMatchObject({ complete: true, stable: true, different: true });
+    }
   });
 
   it.each(["web.validation.compare","web.validation.execute"])("%s preserves the unknown-result fence for a POST comparison",async(tool)=>{

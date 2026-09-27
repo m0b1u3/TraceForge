@@ -27,10 +27,10 @@ it("shows a newly streamed task proposal without switching pages or dispatching"
   }};
   const node=document.createElement("div");document.body.append(node);const root=createRoot(node);dispose=()=>root.unmount();
   await act(async()=>root.render(React.createElement(ConversationExecution,{bridge,conversationId:"first",messages})));
-  expect(node.querySelector('[aria-label="任务授权"]')).toBeNull();
+  expect(node.querySelector('[aria-label="任务启动"]')).toBeNull();
   proposed=true;await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
-  expect(node.querySelector('[aria-label="任务授权"] textarea')).toBeNull();
-  expect(node.querySelector('[aria-label="任务授权"]')?.textContent).toContain("历史任务尚未执行");
+  expect(node.querySelector('[aria-label="任务启动"] textarea')).toBeNull();
+  expect(node.querySelector('[aria-label="任务启动"]')?.textContent).toContain("历史任务尚未执行");
   expect(calls.every(call=>call.method==="GET")).toBe(true);
 });
 async function mount(request: (input: { path: string; method: "GET" | "POST" }) => Promise<{ status: number; body: unknown }>, replies: unknown[] = []) {
@@ -62,7 +62,7 @@ it("does not show authorization merely because a message was saved", async () =>
       authorizationForm: { version: 1, description: "Enter literal resources", fields: [{ path: ["resources"], label: "Resources", description: "One per line", type: "string-list", required: true, maximumItems: 8, maximumLength: 100 }] },
       authorizationReview: { allowedActions: ["resource.read"], deniedActions: [], resources: [] } }] } }));
   const node = await mount(request);
-  expect(node.querySelector('[aria-label="任务授权"]')).toBeNull();
+  expect(node.querySelector('[aria-label="任务启动"]')).toBeNull();
   expect(node.querySelector("textarea")).toBeNull();
   expect(request.mock.calls.every(([input]) => input.method === "GET")).toBe(true);
   expect(node.querySelectorAll(".authorization-form")).toHaveLength(0);

@@ -69,7 +69,7 @@ export function BrowserViewport({ bridge, path, sessionId, takeoverId, send, onH
     try {
       await bridge.presentBrowser({ path, sessionId, takeoverId, navigation: { action, ...(url ? { url } : {}), ...(pageId ? { pageId } : {}) },
         bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } });
-    } catch { setNavigationError("页面未能打开，请检查地址、网络或任务授权范围后重试。"); }
+    } catch { setNavigationError("页面未能打开，请检查地址或网络后重试。"); }
     finally { setBusy(false); }
   }
   async function focusPage() {

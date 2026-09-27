@@ -20,19 +20,19 @@ it("accepts opaque file references but never exposes the host import endpoint or
   expect(()=>validateConversationRequest({path:"/api/desktop/attachment-import",method:"POST",body:JSON.stringify({name:"book.pdf",data:"AAAA"})})).toThrow();
   expect(()=>validateConversationRequest({path,method:"POST",body:JSON.stringify({...body,attachments:[{...attachment,path:"/private/file.pdf"}]})})).toThrow();
 });
-it("allows only a narrow live approval preference operation", () => {
+it("does not expose the retired approval preference operation", () => {
   const path = "/api/desktop/approval-preference";
-  expect(validateConversationRequest({ path, method: "GET" })).toEqual({ path, method: "GET" });
-  expect(validateConversationRequest({ path, method: "POST", body: JSON.stringify({ expectedRevision: 0, routineApprovalRequired: false }) }).method).toBe("POST");
+  expect(() => validateConversationRequest({ path, method: "GET" })).toThrow();
+  expect(() => validateConversationRequest({ path, method: "POST", body: JSON.stringify({ expectedRevision: 0, routineApprovalRequired: false }) })).toThrow();
   expect(() => validateConversationRequest({ path, method: "POST", body: JSON.stringify({ expectedRevision: 0, routineApprovalRequired: false, bypassSandbox: true }) })).toThrow();
 });
 describe("narrow desktop conversation bridge", () => {
-  it("allows only explicitly confirmed bounded permission changes on a fixed Run route",()=>{
+  it("does not expose the retired Run permission-change route",()=>{
     const path="/api/desktop/conversations/first/execution/run/permissions";
     const body={commandId:"change",runId:"run",expectedRevision:1,expectedScopeRevision:1,scope:{autonomous:true},reason:"Reviewed"};
-    expect(validateConversationRequest({path,method:"GET"})).toEqual({path,method:"GET"});
+    expect(()=>validateConversationRequest({path,method:"GET"})).toThrow();
     expect(()=>validateConversationRequest({path,method:"POST",body:JSON.stringify(body)})).toThrow();
-    expect(validateConversationRequest({path,method:"POST",body:JSON.stringify({...body,confirmed:true})}).method).toBe("POST");
+    expect(()=>validateConversationRequest({path,method:"POST",body:JSON.stringify({...body,confirmed:true})})).toThrow();
     expect(()=>validateConversationRequest({path,method:"POST",body:JSON.stringify({...body,confirmed:true,execute:"shell"})})).toThrow();
   });
   it("permits bounded pause and explicitly confirmed resume without policy overrides",()=>{
@@ -52,12 +52,13 @@ describe("narrow desktop conversation bridge", () => {
       expect(() => validateConversationRequest({ path, method: "POST", body: JSON.stringify({ ...body, ...extra }) })).toThrow();
     expect(() => validateConversationRequest({ path, method: "GET", body: "{}" })).toThrow();
   });
-  it("validates operator commands and forbids arbitrary action input", () => {
+  it("accepts bounded operator input but closes retired approval commands", () => {
     const common = { commandId: "command", runId: "run", workId: "work", expectedRevision: 3 };
     const path = "/api/desktop/conversations/first/execution/approval";
     const body = { ...common, approvalId: "approval:work:call", approved: true, reason: "Reviewed", reviewedInputRef: "checkpoint://digest" };
-    expect(validateConversationRequest({ path, method: "POST", body: JSON.stringify(body) }).path).toBe(path);
+    expect(() => validateConversationRequest({ path, method: "POST", body: JSON.stringify(body) })).toThrow();
     expect(validateConversationRequest({ path: path.replace("approval", "input"), method: "POST", body: JSON.stringify({ ...common, instruction: "Additional context" }) }).method).toBe("POST");
+    expect(() => validateConversationRequest({ path: `${path}-input`, method: "POST", body: JSON.stringify({ approvalId: body.approvalId }) })).toThrow();
     for (const change of [{ reason: "" }, { actionKey: "different" }, { approved: "yes" }, { expectedRevision: -1 }])
       expect(() => validateConversationRequest({ path, method: "POST", body: JSON.stringify({ ...body, ...change }) })).toThrow();
     expect(() => validateConversationRequest({ path, method: "GET" })).toThrow();

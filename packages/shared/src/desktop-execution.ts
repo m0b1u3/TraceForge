@@ -10,9 +10,6 @@ export const DesktopCancelSchema = z.object({ commandId: id, runId: id, expected
 export const DesktopResumeSchema = DesktopCancelSchema.extend({confirmed:z.literal(true)}).strict();
 export const DesktopContinueSchema = DesktopResumeSchema.extend({ workId: opaqueId,
   checkpointRef: z.string().regex(/^checkpoint:\/\/sha256-[a-f0-9]{64}\.json$/), reason: z.string().trim().min(1).max(1024) }).strict();
-export const DesktopPermissionChangeSchema = DesktopCancelSchema.extend({ expectedScopeRevision: z.number().int().positive(), scope: z.record(z.unknown()), reason: z.string().trim().min(1).max(2000), confirmed: z.literal(true),
-  resolution: z.object({ workId: opaqueId, requestId: opaqueId, approved: z.boolean() }).strict().optional(),
-}).strict();
 export const DesktopApprovalSchema = DesktopCancelSchema.extend({ workId: opaqueId, approvalId: opaqueId, approved: z.boolean(), reason: z.string().trim().min(1).max(4000), reviewedInputRef: z.string().min(1).max(4000).optional() }).strict()
   .refine(value => !value.approved || !!value.reviewedInputRef, "Review exact input before approving");
 export const DesktopInputSchema = DesktopCancelSchema.extend({ workId: opaqueId, instruction: z.string().trim().min(1).max(8000) }).strict();

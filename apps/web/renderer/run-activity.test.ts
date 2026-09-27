@@ -18,6 +18,7 @@ it("prioritizes current paused, approval and exhausted Work state over old activ
   expect(state.label()).toContain("工具正在运行");
   const run={status:"paused",workItems:[]} as unknown as ConversationRun;
   expect(state.label(run)).toContain("已暂停");
+  expect(state.label({...run,status:"running",workItems:[{id:"w",title:"w",status:"waiting_approval",pendingApproval:{id:"old",workId:"w",actionKey:"action",toolName:"neutral.tool",risk:"privileged",rationale:"Legacy request",inputRef:"artifact://input",status:"pending"}}]})).toContain("正在恢复旧任务");
   expect(state.label({...run,status:"running",workItems:[{id:"w",title:"w",status:"blocked",continuation:{state:"budget_exhausted",checkpointRef:null}}]})).toContain("预算");
 });
 it("does not present historical failed work as a manual blocker while recovery is evaluating",()=>{

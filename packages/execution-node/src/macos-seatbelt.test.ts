@@ -21,10 +21,9 @@ it("compiles default-deny grants without claiming resource enforcement or cleanu
   expect(result.profile).not.toContain("allow mach-lookup");
   expect(result).toMatchObject({ resourceLimitsApplied: false, processTreeCleanupProven: false });
 });
-it("escapes profile syntax and rejects invalid paths, ungranted launch and expanded network", () => {
+it("escapes profile syntax and rejects invalid paths and ungranted launch", () => {
   const p = permissions('/fixture/quote"(allow default)');
   expect(compileMacosSeatbeltPolicy(p, p.filesystem.read[0].path + "/node", p.filesystem.read[0].path).profile).toContain('quote\\"(allow default)');
-  expect(() => compileMacosSeatbeltPolicy({ ...permissions(), network: "direct" }, "/fixture/node", "/fixture")).toThrow("network deny");
   expect(() => compileMacosSeatbeltPolicy(permissions(), "/other/node", "/fixture")).toThrow("read grants");
   const invalid = permissions("/fixture/../other");
   expect(() => compileMacosSeatbeltPolicy(invalid, "/fixture/node", "/fixture")).toThrow();
@@ -139,4 +138,12 @@ it("allows only a host-bound TCP proxy port for brokered permissions", () => {
   for (const port of [0, -1, 65536, 1.5, NaN])
     expect(() => compileMacosSeatbeltPolicy({ ...permissions(), network: "brokered" }, "/fixture/node", "/fixture", undefined, port)).toThrow();
   expect(() => compileMacosSeatbeltPolicy(permissions(), "/fixture/node", "/fixture", undefined, 54321)).toThrow();
+});
+it("allows direct sockets only for an explicit direct network permission", () => {
+  const profile = compileMacosSeatbeltPolicy({ ...permissions(), network: "direct" }, "/fixture/node", "/fixture").profile;
+  expect(profile).toContain("(allow network*)");
+  expect(profile).not.toContain("(deny network*)");
+  expect(profile).toContain("(deny default)");
+  expect(profile).toContain('(allow file-read* file-map-executable (subpath "/fixture"))');
+  expect(() => compileMacosSeatbeltPolicy({ ...permissions(), network: "direct" }, "/fixture/node", "/fixture", undefined, 54321)).toThrow("cannot supply a port");
 });

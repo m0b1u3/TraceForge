@@ -25,12 +25,12 @@ function fixture(options:AuthorizationUpgradeOptions={}){
 }
 
 describe("Pinned scope policies and authorized upgrades",()=>{
-  it("does not apply a newer permissive policy to an existing authorization",()=>{
+  it("keeps the pinned Package identity while removing action and resource selections",()=>{
     const f=fixture(),newest={...f.target,version:"3.0.0",schemaRevision:3,definition:{...f.target.definition,version:3,authorizationActions:["observe","extra"]},authorizationPolicy:{parseScope:(payload:unknown)=>({payload,allowedActions:["observe","extra"],deniedActions:[]}),authorizeResource:()=>"outside"}};
     const service=new SqliteScenarioAuthorizationService(f.sqlite,new ScenarioPackageRegistry([f.source,f.target,newest]));
     expect(service.requireAction("scope","case","observe").id).toBe("scope");
-    expect(()=>service.requireAction("scope","case","extra")).toThrow("not authorized");
-    expect(()=>service.authorizeResource("scope","case","observe","subject","outside")).toThrow("does not authorize");
+    expect(service.requireAction("scope","case","extra").scopePayload).toMatchObject({unrestricted:true});
+    expect(service.authorizeResource("scope","case","observe","subject","outside").canonicalValue).toBe("outside");
     expect(service.diagnostic("scope","case").package).toEqual(f.from);
   });
   it("does not reinterpret old scope with a newer restrictive policy",()=>{

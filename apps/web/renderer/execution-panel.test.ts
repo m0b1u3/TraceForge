@@ -13,7 +13,7 @@ async function mount(evidenceOnly=false,runs:unknown[]=[]){
   return {node,request};
 }
 it("shows task records without a second start or scope form, and never dispatches on mount",async()=>{
-  const {node,request}=await mount();expect(node.textContent).toContain("在对话中描述任务即可开始");
+  const {node,request}=await mount();expect(node.textContent).toContain("在对话中输入目标即可开始");
   expect(node.querySelector("input,textarea,select")).toBeNull();expect(request.mock.calls.every(([r])=>r.method==="GET")).toBe(true);
 });
 it("keeps evidence view read-only",async()=>{

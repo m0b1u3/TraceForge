@@ -3,11 +3,11 @@ import { SqliteScenarioAuthorizationService } from "./scenario-authorization.js"
 import { randomUUID } from "node:crypto";
 import type { ExecutionNode } from "@traceforge/execution-node";
 import { canonicalJson, type ScenarioPackageBinding, type ScenarioRunState } from "@traceforge/orchestration-core";
-import { authorizeScenarioResource, type ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
+import type { ScenarioPackageRegistry } from "@traceforge/scenario-sdk";
 import { ExecutionNodeToolProviderClient, type ExecutionNodeToolProviderOptions, type ExecutionToolAdapter,
   type ExecutionToolDiscoverySource, type McpToolPolicy, type ToolExecutionContext, toolInvocationInputFingerprint } from "@traceforge/worker-runtime";
 import type { ProcessExecutionCapacity, ProcessCapacityLease } from "./process-execution-capacity.js";
-import { parseMcpInputPolicy, validateMcpPolicyInput, authorizeMcpPolicyInput, type McpInputPolicy } from "./mcp-input-policy.js";
+import { parseMcpInputPolicy, validateMcpPolicyInput, type McpInputPolicy } from "./mcp-input-policy.js";
 
 export interface FoundationMcpServer {
   source: string;
@@ -21,7 +21,7 @@ export interface FoundationMcpServer {
   tools: Array<McpToolPolicy & {
     authorizationAction: string;
     validateInput?(input: unknown): void;
-    /** Trusted adapter must enforce target/resource restrictions; schema validity alone is not authorization. */
+    /** Legacy adapter hook retained in the profile shape; no longer used to gate task inputs. */
     authorizeInput?(scopePayload: unknown, input: unknown): void;
     /** Serializable alternative; execution/sandbox policy remains host-reviewed and independent. */
     inputPolicy?: McpInputPolicy;
@@ -55,8 +55,7 @@ export function createFoundationMcpSource(config: FoundationMcpServer, node: Exe
       return !packages.list().some((candidate) => canonicalJson(packages.bindingFor(candidate)) === canonicalJson(binding));
     })
     || config.tools.some((p) => p.tool.source !== config.source || !p.authorizationAction.trim()
-    || (p.inputPolicy ? p.validateInput !== undefined || p.authorizeInput !== undefined
-      : typeof p.validateInput !== "function" || typeof p.authorizeInput !== "function"))) throw new Error("Invalid MCP host policy");
+    || (p.inputPolicy ? p.validateInput !== undefined : typeof p.validateInput !== "function"))) throw new Error("Invalid MCP host policy");
   const inputPolicies = new Map(config.tools.filter(p => p.inputPolicy).map(p => [p.tool.name, parseMcpInputPolicy(p.inputPolicy)]));
   const { diagnosticWriter, ...serializableProcess } = config.process;
   const processOptions = { ...structuredClone(serializableProcess), diagnosticWriter };
@@ -100,12 +99,8 @@ export function createFoundationMcpSource(config: FoundationMcpServer, node: Exe
             || !work || work.status !== "running" || work.workerId !== context.workerId || work.leaseId !== context.leaseId
             || !work.leaseExpiresAt || !(Date.parse(work.leaseExpiresAt) > Date.now()) || context.signal?.aborted) throw new Error("Inactive MCP Work");
           assertRunToolAvailable(run, tool.name);
-          const {scope,package:pkg} = new SqliteScenarioAuthorizationService(sqlite,packages).requireRun(run);
-          if (!allowedPackageKeys.has(canonicalJson(packages.bindingFor(pkg)))
-            || !scope.allowedActions.includes(policy.authorizationAction) || scope.deniedActions.includes(policy.authorizationAction)
-            || authorizeScenarioResource(pkg.authorizationPolicy,scope.payload,"mcp.tool",policy.remoteName) !== policy.remoteName) throw new Error("MCP action not authorized");
-          if (inputPolicy) authorizeMcpPolicyInput(inputPolicy, input, (kind, value) => authorizeScenarioResource(pkg.authorizationPolicy, scope.payload, kind, value));
-          else policy.authorizeInput!(scope.payload, input);
+          const {package:pkg} = new SqliteScenarioAuthorizationService(sqlite,packages).requireRun(run);
+          if (!allowedPackageKeys.has(canonicalJson(packages.bindingFor(pkg)))) throw new Error("MCP profile is unavailable for this Run");
         };
         try { authorize(); }
         catch { return { status: "failed", summary: "MCP request rejected by host input or authorization policy", raw: "", refs: [], retryable: false }; }

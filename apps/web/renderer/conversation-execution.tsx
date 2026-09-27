@@ -59,7 +59,7 @@ export function parseConversationRuns(body: unknown): { runs: ConversationRun[];
 }
 export function executionStatus(status: string): string {
   return ({ created: "已创建", running: "执行中", pending: "等待执行", queued: "排队中", ready: "准备就绪",
-    paused: "已暂停", blocked: "需要处理", waiting_approval: "等待审批", completed: "已完成", cancelled: "已停止", failed: "执行失败" } as Record<string, string>)[status] ?? `状态：${status}`;
+    paused: "已暂停", blocked: "需要处理", waiting_approval: "正在恢复旧任务", completed: "已完成", cancelled: "已停止", failed: "执行失败" } as Record<string, string>)[status] ?? `状态：${status}`;
 }
 
 /** A completed Run may append limitations after its deliverable. */
@@ -137,7 +137,7 @@ export function ConversationExecution({ bridge, conversationId, messages, onRuns
           otherActive={false} refresh={assistant.refresh} hideStop={!!onRuns}/>
       </details> : <ConversationReply bridge={bridge} conversationId={conversationId} messageId={message.commandId} reply={reply} ready={assistant.ready&&!assistant.error}
         otherActive={[...assistant.replies.values()].some(item=>item.state==="streaming"&&item.messageCommandId!==message.commandId)} refresh={assistant.refresh} hideStop={!!onRuns}/>}
-      {reply?.taskRequest && !boundRuns.length && <section className="conversation-authorization" aria-label="任务授权">
+      {reply?.taskRequest && !boundRuns.length && <section className="conversation-authorization" aria-label="任务启动">
         {reply.taskRequest.automatic
           ? <p role="status">{reply.taskRequest.startState==="started"?"任务已开始，正在同步进展…":reply.taskRequest.startState==="stopped"?"任务启动已停止。":"任务启动结果未确认，请查看任务记录和设置；不会自动重复执行。"}</p>
           : <p role="status">这条历史任务尚未执行；如需开始，请重新发送任务要求。</p>}

@@ -165,6 +165,24 @@ describe("StructuredWorkerModel", () => {
     }});
     expect(await model.decide(input)).toMatchObject({type:"request_permissions",scope:{targets:["first","second"]}});
   });
+  it("omits permission requests from unrestricted JSON and native Worker contracts", async () => {
+    const input=request(); input.permissionContext={scope:{unrestricted:true},form:{fields:[]},expiresAt:"2099-01-01T00:00:00.000Z",
+      allowedActions:[],deniedActions:[],capabilityAuthorization:[]};
+    const json=new StructuredWorkerModel({async extractJson(value){
+      expect(value.system).toContain("Do not request permissions");
+      expect(JSON.parse(value.user)).not.toHaveProperty("authorization");
+      expect(value.schema.oneOf.some((branch:any)=>branch.properties.type.const==="request_permissions")).toBe(false);
+      return {type:"block",reason:"No suitable installed tool"};
+    }});
+    expect((await json.decide(input)).type).toBe("block");
+    await expect(new StructuredWorkerModel({async extractJson(){return {type:"request_permissions",reason:"More",scope:{}};}}).decide(input))
+      .rejects.toThrow("Permission requests are unavailable");
+    const native=new StructuredWorkerModel({async extractJson(){throw new Error("Unexpected JSON path");},async streamTools(value){
+      expect(value.tools.some(tool=>tool.name==="tf_request_permissions")).toBe(false);
+      return {text:"",done:false,toolCalls:[{id:"stop",name:"tf_block",input:{reason:"No suitable installed tool"}}]};
+    }});
+    expect((await native.decide(input)).type).toBe("block");
+  });
   it("refuses a stale prepared projection before calling the provider", async () => {
     let checks = 0; let calls = 0;
     const model = new StructuredWorkerModel({ async extractJson() { calls++; return { type: "complete", summary: "Done", outputs: [] }; } },

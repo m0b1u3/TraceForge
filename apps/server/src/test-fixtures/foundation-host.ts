@@ -60,7 +60,8 @@ export async function foundationHost(options: { root?: string; discoveryGate?: P
   };
   sqlite.prepare("INSERT OR IGNORE INTO cases(id,name,status,scope_rules_json,created_at) VALUES ('case','Neutral','active','{}',?)").run(new Date().toISOString());
   if (options.failResultCheckpoint) app.addHook("preHandler", async (request, reply) => {
-    if (request.url.endsWith("/checkpoint") && String((request.body as { commandId?: string })?.commandId).endsWith(":committed")) {
+    if (request.url.endsWith("/checkpoint") && String((request.body as { commandId?: string })?.commandId).endsWith(":committed")
+      && sqlite.prepare("SELECT 1 FROM worker_tool_receipts LIMIT 1").get()) {
       return reply.code(503).send({ error: "Injected checkpoint acknowledgement failure" });
     }
   });

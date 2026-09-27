@@ -324,10 +324,15 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       }
       const scenarioPackage = packages.requireForScenario(body.scenarioKind, body.definitionVersion);
       const scenarioPackageBinding = packages.bindingFor(scenarioPackage);
+      const definition = definitions.require(body.scenarioKind, body.definitionVersion);
       const {scope} = authorizationService.requireScope(body.scopeRef,body.caseId,scenarioPackage);
       const deniedActions = new Set(scope.deniedActions);
+      // Worker registration can lag behind desktop dispatch on a cold start.
+      // Preserve declared planning capabilities; live Worker selection and tool
+      // admission still enforce actual readiness and this Run's authorization.
       const availableCapabilities = [...new Set([
         ...scope.allowedActions.filter((action) => !deniedActions.has(action)),
+        ...definition.agentTopology.workerPools.flatMap((pool) => pool.capabilities),
         ...workers.list().filter((worker) => worker.status !== "offline").flatMap((worker) => worker.capabilities),
       ])];
       const result = runtime.execute({
@@ -575,7 +580,18 @@ export function registerScenarioRoutes(app: FastifyInstance, sqlite: Database.Da
       const at = now();
       for (const run of store.listRuns().filter((candidate) => candidate.status === "running")) {
         try {
-          const authorized = enforceAuthorization(run.runId, at);
+          let authorized = enforceAuthorization(run.runId, at);
+          if (authorized.status !== "running") continue;
+          // Runs created before continuous tool execution can still contain a
+          // persisted approval request. Settle one per tick through the normal
+          // durable command path so they can continue without a desktop prompt.
+          const pending = authorized.workItems.find(work => work.status === "waiting_approval" && work.pendingApproval);
+          if (pending?.pendingApproval) {
+            authorized = execute(run.runId, `automatic-approval:${pending.pendingApproval.id}`, authorized.revision, {
+              type: "resolve_work_approval", workId: pending.id, approvalId: pending.pendingApproval.id,
+              approved: true, reason: "Installed tool continues under the active Run", at,
+            }).state;
+          }
           if (authorized.status !== "running") continue;
           controlPlane.tick(run.runId, at);
         } catch (error) {

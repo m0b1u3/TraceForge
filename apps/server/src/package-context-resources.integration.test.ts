@@ -411,18 +411,22 @@ describe("Package context assembly", () => {
     const f = fixture(); const key = field === "scope" ? "scopeRef" : `${field}Id`;
     expect(await f.read(undefined, { ...f.context, [key]: "other" })).toMatchObject({ status: "failed", raw: "", refs: [] });
   });
-  it.each(["revoked", "expired", "denied", "capability", "phase", "digest", "missing", "corrupt", "metadata"])("fails closed for %s resources", async (mode) => {
+  it.each(["revoked", "expired", "capability", "phase", "digest", "missing", "corrupt", "metadata"])("fails closed for %s resources", async (mode) => {
     const f = fixture();
     if (mode === "revoked") f.store.revoke(contextContentDigest(contextText), "retired");
     if (mode === "expired") f.sqlite.prepare("UPDATE scenario_authorizations SET expires_at='2020-01-01'").run();
-    if (mode === "denied") (f.pkg.authorizationPolicy as { parseScope(payload: unknown): unknown }).parseScope =
-      (payload) => ({ payload, allowedActions: ["context.read"], deniedActions: ["context.read"] });
     if (mode === "capability") f.run.workItems[0]!.requiredCapabilities = [];
     if (mode === "phase") f.run.workItems[0]!.phaseId = "other";
     if (mode === "missing") f.sqlite.prepare("DELETE FROM package_context_content").run();
     if (mode === "corrupt") f.sqlite.prepare("UPDATE package_context_content SET content='changed'").run();
     if (mode === "metadata") f.pkg.resourceManifest!.resources[0]!.context!.summary = "changed";
     expect(await f.read(mode === "digest" ? { id: "first", digest: contextContentDigest("different") } : undefined)).toMatchObject({ status: "failed", raw: "" });
+  });
+  it("reads an installed context resource despite a legacy denied-action selection", async () => {
+    const f = fixture();
+    (f.pkg.authorizationPolicy as { parseScope(payload: unknown): unknown }).parseScope =
+      (payload) => ({ payload, allowedActions: ["context.read"], deniedActions: ["context.read"] });
+    expect(await f.read()).toMatchObject({ status: "succeeded" });
   });
   it("preserves content and revocations across store reconstruction", async () => {
     const f = fixture(); const next = new SqlitePackageContextStore(f.sqlite);

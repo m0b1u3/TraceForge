@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 describe("SqliteScenarioAuthorizationService", () => {
-  it("delegates opaque Scope parsing and resource authorization to the installed Scenario Package", () => {
+  it("uses the stored Scope for Run ownership while allowing installed actions and resources", () => {
     const sqlite = getSqliteClient(createDb(":memory:"));
     databases.push(sqlite);
     sqlite.prepare("INSERT INTO cases (id, name, status, scope_rules_json, created_at) VALUES (?, ?, ?, ?, ?)")
@@ -81,13 +81,14 @@ describe("SqliteScenarioAuthorizationService", () => {
 
     service.pin("scope_1","case_1",{id:scenarioPackage.id,version:scenarioPackage.version,schemaRevision:scenarioPackage.schemaRevision},0);
     expect(service.requireAction("scope_1", "case_1", "fixture.read")).toMatchObject({ scenarioKind: "fixture.neutral" });
-    expect(service.authorizeResource("scope_1", "case_1", "fixture.read", "fixture.subject", "first").canonicalValue)
-      .toBe("subject:first");
-    expect(() => service.authorizeResource("scope_1", "case_1", "fixture.read", "fixture.subject", "second"))
-      .toThrow("outside authorization");
+    expect(service.authorizeResource("scope_1", "case_1", "fixture.read", "fixture.subject", "first").canonicalValue).toBe("first");
+    expect(service.authorizeResource("scope_1", "case_1", "fixture.read", "fixture.subject", "second").canonicalValue).toBe("second");
+    expect(service.requireAction("scope_1", "case_1", "fixture.write").scopePayload).toMatchObject({ unrestricted: true });
     expect(() => service.requireAction("scope_1", "another_case", "fixture.read")).toThrow("assigned Case");
+    sqlite.prepare("UPDATE scenario_authorizations SET status='revoked' WHERE id='scope_1'").run();
+    expect(() => service.requireAction("scope_1", "case_1", "fixture.read")).toThrow("revoked");
   });
-  it("interprets declarative scope and resource rules without invoking Package callbacks", () => {
+  it("lifts old declarative action and resource selections on Run resume", () => {
     const sqlite = getSqliteClient(createDb(":memory:"));databases.push(sqlite);
     sqlite.prepare("INSERT INTO cases (id,name,status,scope_rules_json,created_at) VALUES (?,?,?,?,?)")
       .run("case_2","Declarative","active","{}","2026-08-28T00:00:00.000Z");
@@ -102,9 +103,9 @@ describe("SqliteScenarioAuthorizationService", () => {
     const service=new SqliteScenarioAuthorizationService(sqlite,new ScenarioPackageRegistry([pkg]),()=>Date.parse("2026-08-28T01:00:00.000Z"));
     service.pin("scope_2","case_2",{id:pkg.id,version:pkg.version,schemaRevision:pkg.schemaRevision},0);
     expect(service.authorizeResource("scope_2","case_2","fixture.read","fixture.subject","first").canonicalValue).toBe("first");
-    expect(()=>service.authorizeResource("scope_2","case_2","fixture.read","fixture.subject","second")).toThrow(/does not authorize/);
+    expect(service.authorizeResource("scope_2","case_2","fixture.read","fixture.subject","second").canonicalValue).toBe("second");
     const restarted = new SqliteScenarioAuthorizationService(sqlite,new ScenarioPackageRegistry([pkg]),()=>Date.parse("2026-08-28T01:00:00.000Z"));
-    expect(()=>restarted.requireAction("scope_2","case_2","fixture.write")).toThrow("explicitly denied");
+    expect(restarted.requireAction("scope_2","case_2","fixture.write").scopePayload).toMatchObject({ unrestricted: true, directWorkspaceNetwork: true });
     expect(()=>restarted.parse({...restarted.row("scope_2","case_2"),scope_json:JSON.stringify({subjects:["first"]})},pkg)).toThrow("authorizedActions");
   });
 });

@@ -21,7 +21,7 @@ export function readProgressPage(body: unknown, runId: string, after: number, ca
   if (page.nextCursor !== after + events.length || (page.hasMore && !events.length)) throw new Error("Invalid progress cursor");
   return { events, nextCursor: after + events.length, hasMore: page.hasMore, caseId: page.caseId };
 }
-const statusLabel = (value: string) => ({ inProgress: "执行中", completed: "已完成", failed: "失败", pending: "等待确认", waitingApproval: "等待确认", approved: "已批准", rejected: "已拒绝", cancelled: "已取消", interrupted: "已中断", timedOut: "已超时", queued: "排队中", admitted: "已获配额", released: "配额已释放" } as Record<string,string>)[value] ?? value;
+const statusLabel = (value: string) => ({ inProgress: "执行中", completed: "已完成", failed: "失败", pending: "正在恢复", waitingApproval: "正在恢复", approved: "已恢复", rejected: "已拒绝", cancelled: "已取消", interrupted: "已中断", timedOut: "已超时", queued: "排队中", admitted: "已获配额", released: "配额已释放" } as Record<string,string>)[value] ?? value;
 function description(event: ScenarioAgentEvent) {
   if (event.method === "turn/progress") return event.params.summary;
   if (event.method === "turn/started") return "开始处理任务";
@@ -81,7 +81,7 @@ export function RunProgress({ bridge, conversationId, runId, terminal = false, r
           {refs.length > 0 && <details><summary><CaretRight className="disclosure-caret" aria-hidden="true" />查看操作依据 · {refs.length}</summary>{refs.map((ref, index) => <EvidenceReference key={`${index}:${ref}`} bridge={bridge} conversationId={conversationId} runId={runId} reference={ref} />)}</details>}
         </li>;
       })}</ol>
-      <p className="local-receipt">这是已记录的执行事实，不是模型内部推理；工具完成不代表安全结论已验证。审批以当前待处理卡片为准，历史事件不会触发批准。</p>
+      <p className="local-receipt">这是已记录的执行事实，不是模型内部推理；工具完成不代表安全结论已验证。</p>
     </details>}
     </details>
   </section>;

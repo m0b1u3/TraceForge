@@ -8,7 +8,6 @@
     "./desktop-browser": "./src/desktop-browser.ts",
     "./message-attachments": "./src/message-attachments.ts",
     "./model-context": "./src/model-context.ts",
-    "./desktop-approval-preference": "./src/desktop-approval-preference.ts",
     ".": "./src/index.ts",
     "./model-protocol": "./src/model-protocol.ts",
     "./model-profile": "./src/model-profile.ts",

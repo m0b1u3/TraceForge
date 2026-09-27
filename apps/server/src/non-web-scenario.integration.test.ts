@@ -29,7 +29,6 @@ it.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("runs a non
     return { type: "complete", summary: "Local file observed", outputs: [] };
   } });
   try {
-    await h.request("/api/desktop/approval-preference", { expectedRevision: 0, routineApprovalRequired: false });
     await h.start();
     try { await eventually(async () => (await h.state()).workItems[0]?.status === "completed"); }
     catch (error) { throw new Error(JSON.stringify({ state: await h.state(), requests: h.requests }), { cause: error }); }

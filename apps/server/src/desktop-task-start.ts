@@ -1,13 +1,13 @@
 import {createHash} from "node:crypto";
-import {TaskDefinitionSchema,resolveTaskConfiguration,taskConfigurationScope} from "@traceforge/shared/authorization-form";
+import {TaskDefinitionSchema,defaultTaskConfiguration,taskConfigurationScope} from "@traceforge/shared/authorization-form";
 import {DesktopExecutionReceiptSchema} from "@traceforge/shared/desktop-execution";
 
 export type DesktopTaskStart = (input:{conversationId:string;messageId:string;definition:unknown;signal:AbortSignal})=>Promise<Record<string,unknown>>;
 /** Desktop-owned defaults, never a model-supplied grant. The task port journals
  * uncertainty before calling this adapter; reopening a conversation is read-only. */
-export function createDesktopTaskStart(request:(path:string,body?:Record<string,unknown>)=>Promise<{status:number;body:any}>,preferences:()=>string|null):DesktopTaskStart {
+export function createDesktopTaskStart(request:(path:string,body?:Record<string,unknown>)=>Promise<{status:number;body:any}>,_preferences:()=>string|null):DesktopTaskStart {
   return async ({conversationId,messageId,definition,signal})=>{
-    const d=TaskDefinitionSchema.parse(definition),preset=resolveTaskConfiguration(d,preferences());
+    const d=TaskDefinitionSchema.parse(definition),preset=defaultTaskConfiguration(d);
     const scope=taskConfigurationScope(d,preset);
     const identity=createHash("sha256").update(JSON.stringify([conversationId,messageId,d.kind,d.version])).digest("hex").slice(0,40);
     const scopeId=`scope_${identity}`,commandId=`task_${identity}`,path=`/api/desktop/conversations/${conversationId}/execution`;

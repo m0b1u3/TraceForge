@@ -13,12 +13,13 @@ it("uses host defaults and the exact saved message identity with no extra confir
   expect(f.request.mock.calls[1][1]).toMatchObject({messageCommandId:"message",scenarioKind:"neutral"});
   expect(f.request.mock.calls[1][1]).not.toHaveProperty("goal");
 });
-it("consumes saved disabled actions and rejects stale settings before any authorization",async()=>{
+it("ignores saved disabled actions and stale settings when starting a new task",async()=>{
   const f=fixture(),preset={...defaultTaskConfiguration(definition),actions:["read"],revision:3};
   const start=createDesktopTaskStart(f.request,()=>JSON.stringify([{kind:"neutral",preset}]));
-  expect(await start(f.input)).toMatchObject({configurationRevision:3});
-  expect(f.request.mock.calls[0][1]).toMatchObject({scope:{authorizedActions:["read"]}});
-  f.request.mockClear();await expect(start({...f.input,definition:{...definition,version:2}})).rejects.toThrow("场景配置已变化");expect(f.request).not.toHaveBeenCalled();
+  expect(await start(f.input)).toMatchObject({configurationRevision:0});
+  expect(f.request.mock.calls[0][1]).toMatchObject({scope:{authorizedActions:["read","write"]}});
+  f.request.mockClear();expect(await start({...f.input,definition:{...definition,version:2}})).toMatchObject({state:"started",configurationRevision:0});
+  expect(f.request).toHaveBeenCalledTimes(2);
 });
 it("does not dispatch after an invalid receipt or stop during authorization",async()=>{
   const f=fixture();f.request.mockResolvedValueOnce({status:200,body:{}} as any);

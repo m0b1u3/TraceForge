@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import { canonicalJson, type ScenarioPackageBinding, type ScenarioRunState } from "@traceforge/orchestration-core";
-import { authorizeScenarioResource, parseScenarioScope, ScenarioPackageRegistry, type ActiveScenarioAuthorization, type ScenarioAuthorizationPort,
+import { parseScenarioScope, ScenarioPackageRegistry, type ActiveScenarioAuthorization, type ScenarioAuthorizationPort,
   type ScenarioPackageInstallation, type ScenarioResourceAuthorization } from "@traceforge/scenario-sdk";
 
 export const authorizationHash=(value:unknown)=>createHash("sha256").update(canonicalJson(value)).digest("hex");
@@ -38,11 +38,17 @@ export class SqliteScenarioAuthorizationService implements ScenarioAuthorization
     if(Buffer.byteLength(row.scope_json)>1024*1024)throw new Error("Authorization scope budget exceeded");
     if(pkg.definition.kind!==row.scenario_kind)throw new AuthorizationRecoveryRequired("Authorization scenario mismatch");
     const scope=parseScenarioScope(pkg.authorizationPolicy,JSON.parse(row.scope_json));
-    if (scope.payload && typeof scope.payload === "object" && Object.hasOwn(scope.payload, "routineApprovalRequired")
-      && typeof (scope.payload as Record<string, unknown>).routineApprovalRequired !== "boolean") throw new Error("Invalid routine approval preference");
     const declared=new Set(pkg.definition.authorizationActions);
     if([...scope.allowedActions,...scope.deniedActions].some(a=>!declared.has(a)))throw new Error("Authorization contains undeclared actions");
-    return scope;
+    // Desktop investigations run without operation or destination grants. Keep
+    // the stored Scope as a Run identity and revocation handle, while exposing
+    // every installed action to the current Run. This also lifts old saved
+    // selections when an existing Run resumes.
+    const payload=scope.payload && typeof scope.payload==="object" && !Array.isArray(scope.payload)
+      ? scope.payload as Record<string,unknown> : {};
+    return {payload:{...payload,unrestricted:true,asynchronousWorkspace:true,interactiveWorkspace:true,
+      directWorkspaceNetwork:true,workspaceWebSocket:true,continuousExecution:true,maximumScriptSeconds:3600},
+      allowedActions:[...declared],deniedActions:[] as string[]};
   }
   requireScope(scopeRef:string,caseId:string,expected?:ScenarioPackageInstallation) {
     const row=this.row(scopeRef,caseId),binding=this.binding(scopeRef);
@@ -72,15 +78,13 @@ export class SqliteScenarioAuthorizationService implements ScenarioAuthorization
     try {this.requireScope(scopeRef,caseId);return {status:"available",revision:saved!.revision,package:JSON.parse(saved!.package_json)};}
     catch(error){return {status:"recovery_required",revision:saved?.revision??0,package:saved?JSON.parse(saved.package_json):null,reason:error instanceof Error?error.message:"Authorization unavailable"};}
   }
-  requireAction(scopeRef:string,caseId:string,action:string):ActiveScenarioAuthorization {
+  requireAction(scopeRef:string,caseId:string,_action:string):ActiveScenarioAuthorization {
     const {row,scope}=this.requireScope(scopeRef,caseId);
-    if(scope.deniedActions.includes(action))throw new Error(`Action ${action} is explicitly denied by ${scopeRef}`);
-    if(!scope.allowedActions.includes(action))throw new Error(`Action ${action} is not authorized by ${scopeRef}`);
     return {id:row.id,caseId:row.case_id,scenarioKind:row.scenario_kind,scopePayload:scope.payload,expiresAt:row.expires_at};
   }
-  authorizeResource(scopeRef:string,caseId:string,action:string,resourceKind:string,value:string):ScenarioResourceAuthorization {
-    const authorization=this.requireAction(scopeRef,caseId,action),{package:pkg}=this.requireScope(scopeRef,caseId);
-    return {...authorization,canonicalValue:authorizeScenarioResource(pkg.authorizationPolicy,authorization.scopePayload,resourceKind,value)};
+  authorizeResource(scopeRef:string,caseId:string,action:string,_resourceKind:string,value:string):ScenarioResourceAuthorization {
+    const authorization=this.requireAction(scopeRef,caseId,action);
+    return {...authorization,canonicalValue:value};
   }
 }
 export function sameAuthorizationPolicy(a:ScenarioPackageInstallation,b:ScenarioPackageInstallation):boolean {

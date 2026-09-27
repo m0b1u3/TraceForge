@@ -39,7 +39,7 @@ describe("workspace host network assembly", () => {
       workspaces.bind("conversation","case","run");
     }
     db.exec("INSERT INTO scenario_event_streams VALUES ('run','case','running');");
-    let calls = 0;
+    let calls = 0, directConsent = false;
     if (tls) execFileSync("/usr/bin/openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(root, "key.pem"), "-out", join(root, "cert.pem"),
       "-days", "1", "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"], { stdio: "ignore", timeout: 10000 });
     const certificate = tls ? readFileSync(join(root, "cert.pem"), "utf8") : null;
@@ -55,7 +55,7 @@ describe("workspace host network assembly", () => {
     const authorization = {
       requireAction(scope: string, _case: string, action: string) {
         if (scope !== "scope" || !["workspace.execute", "workspace.network"].includes(action)) throw new Error("denied");
-        return { id: "grant", caseId: "case", scenarioKind: "neutral", scopePayload: { workspaceWebSocket: allowWebSocket }, expiresAt: "2099-01-01T00:00:00.000Z" };
+        return { id: "grant", caseId: "case", scenarioKind: "neutral", scopePayload: { workspaceWebSocket: allowWebSocket, directWorkspaceNetwork: directConsent }, expiresAt: "2099-01-01T00:00:00.000Z" };
       },
       authorizeResource(scope: string, caseId: string, action: string, kind: string, target: string) {
         if (kind !== "workspace.network" || (target !== url && !(allowTunnel && target === new URL(url).origin.replace("http:", "https:") + "/"))) throw new Error("outside scope");
@@ -69,7 +69,8 @@ describe("workspace host network assembly", () => {
       timeoutMs: 3000, outputLimitBytes: 4096, resources: { cpuTimeMs: 1000, memoryBytes: 1048576, maximumProcesses: 1, writeBytes: 1048576 },
       permissions: { version: 1, platform: "darwin", filesystem: { read: [], write: [], deny: [] }, process: { access: "sandboxed", background: false, interactive: false }, network: "brokered", secrets: "deny", sources: [] } };
     const binding = await host.bind(request); disposals.push(() => binding!.release());
-    return { db, host, root, certificate, authorization, request, binding: binding!, url, calls: () => calls };
+    return { db, host, root, certificate, authorization, request, binding: binding!, url, calls: () => calls,
+      grantDirect: (value: boolean) => { directConsent = value; } };
   }
   async function proxy(binding: MacosExecutionBinding, url: string) {
     const credentials = new URL(binding.environment!.http_proxy);
@@ -92,6 +93,26 @@ describe("workspace host network assembly", () => {
     const rows = f.db.prepare("SELECT * FROM workspace_network_receipts").all();
     expect(rows).toMatchObject([{ parent_key: "key", case_id: "case", run_id: "run", status: "completed", kind: "http" }]);
     expect(JSON.stringify(rows)).not.toContain("private-fixture-value"); expect(JSON.stringify(rows)).not.toContain("scoped response");
+  });
+  it.each(["revoke", "stop"])("binds direct sockets only to the current explicit Run grant and cancels on %s", async closure => {
+    const f = await fixture();
+    const request: StartProcessRequest = { ...f.request,
+      attribution: { ...f.request.attribution, leaseExpiresAt: "2000-01-01T00:00:00.000Z" },
+      permissions: { ...f.request.permissions, network: "direct" } };
+    await expect(f.host.bind(request)).rejects.toThrow("Direct workspace network access is not granted");
+    f.grantDirect(true);
+    const binding = await f.host.bind(request); disposals.push(() => binding!.release());
+    expect(binding?.brokerPort).toBeUndefined();
+    expect(binding?.environment).toBeUndefined();
+    expect(binding!.signal.aborted).toBe(false);
+    expect(f.db.prepare("SELECT * FROM workspace_network_receipts").all()).toHaveLength(0);
+    if (closure === "revoke") f.grantDirect(false);
+    else f.db.prepare("UPDATE scenario_event_streams SET status='completed' WHERE run_id='run'").run();
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Direct network binding did not cancel")), 1500);
+      binding!.signal.addEventListener("abort", () => { clearTimeout(timeout); resolve(); }, { once: true });
+    });
+    expect(() => binding!.assertCurrent()).toThrow();
   });
   it("brokers a reviewed stdio MCP origin and revokes its Run pin", async () => {
     const f=await fixture(),origin=new URL(f.url).origin+"/";
@@ -238,5 +259,32 @@ describe("workspace host network assembly", () => {
     expect(result).toMatchObject({ status: "succeeded", metadata: { exitCode: 0, enforcement: { network: "brokered", processTreeEmptyBarrier: true } } });
     expect(result.raw).toContain("scoped response"); expect(result.raw).toContain("direct-denied"); expect(f.calls()).toBe(1);
     expect(f.db.prepare("SELECT status FROM workspace_network_receipts").all()).toEqual([{ status: tls ? "closed" : "completed" }]);
+  });
+  it.skipIf(process.env.TRACEFORGE_TEST_MACOS_SEATBELT !== "1")("runs a direct download through the actual workspace adapter without a destination broker", async () => {
+    const f = await fixture();
+    f.grantDirect(true);
+    const path = realpathSync("packages/execution-node/native/darwin-arm64/traceforge-macos-sandbox");
+    const sha256 = createHash("sha256").update(readFileSync(path)).digest("hex");
+    const node = new LocalExecutionNode(new MacosProcessLauncher({ path, sha256 }, undefined, request => f.host.bind(request)), {
+      platform: "darwin", architecture: "arm64", sandboxBackends: ["traceforge-macos-native"],
+      sandboxMeasurements: { "traceforge-macos-native": sha256 }, acceptedSampledResourceBackends: ["traceforge-macos-native"],
+      capabilities: { process: { spawn: true, stdio: true, tty: false, adoption: true, resourceLimits: false,
+        resourcePolicy: "sampled_terminate", signals: ["terminate", "kill"] } },
+    });
+    disposals.push(() => node.shutdown());
+    const workspace = new RunWorkspace(join(f.root, "data/run-workspaces"), new ExecutionNodeProcessTool(node), () => {});
+    const context: ToolExecutionContext = { ...f.request.attribution,
+      effectivePermissions: { ...workspace.profile("case", "run", "workspace_execute", true, "direct"), sources: ["fixture"] } };
+    const saved = await workspace.tools().find(tool => tool.name === "workspace_write")!.execute({
+      path: "download.sh", content: `/usr/bin/curl --noproxy '*' --fail --silent --show-error '${f.url}' -o download.txt\n/bin/cat download.txt`, expectedDigest: null,
+    }, context);
+    const result = await workspace.tools().find(tool => tool.name === "workspace_execute")!.execute({
+      path: "download.sh", expectedDigest: JSON.parse(saved.raw).digest,
+    }, context);
+    expect(result).toMatchObject({ status: "succeeded", metadata: { exitCode: 0,
+      enforcement: { network: "direct", processTreeEmptyBarrier: true } } });
+    expect(result.raw).toBe("scoped response");
+    expect(f.calls()).toBe(1);
+    expect(f.db.prepare("SELECT * FROM workspace_network_receipts").all()).toHaveLength(0);
   });
 });

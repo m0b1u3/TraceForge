@@ -113,6 +113,8 @@ export function parseScenarioScope(policy: ScenarioAuthorizationPolicy, input: u
   return isDeclarativeScopePolicy(policy) ? parseDeclarativeScope(policy, input) : policy.parseScope(input);
 }
 export function authorizeScenarioResource(policy: ScenarioAuthorizationPolicy, payload: unknown, kind: string, value: string): string {
+  if(payload && typeof payload==="object" && !Array.isArray(payload)
+    && (payload as Record<string,unknown>).unrestricted===true)return value;
   if (isDeclarativeScopePolicy(policy)) return authorizeDeclarativeResource(policy, payload, kind, value);
   if (!policy.authorizeResource) throw new Error(`Scenario does not authorize ${kind} resources`);
   return policy.authorizeResource(payload, kind, value);

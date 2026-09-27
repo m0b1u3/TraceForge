@@ -66,16 +66,25 @@ describe("Pinned external context through the foundation Worker", () => {
     expect(h.sqlite.prepare("SELECT count(*) AS n FROM worker_tool_receipts").get()).toEqual({ n: 1 });
     expect(JSON.stringify(h.sqlite.prepare("SELECT result_json FROM worker_tool_receipts").all())).toContain(kind === "resource" ? "neutral reference" : "neutral prompt");
   });
-  it.each(["denied", "profile", "expired"])("rejects %s context before starting a process", async (mode) => {
+  it.each(["profile", "expired"])("rejects %s context before starting a process", async (mode) => {
     const f = fixtureMcpNode(); const s = settings(f);
-    if (mode === "denied") (s.pkg.authorizationPolicy as { authorizeResource?: (scope: unknown, kind: string, value: string) => string })
-      .authorizeResource = (_scope, kind, value) => kind === "mcp.resource" ? "denied" : value;
     if (mode === "profile") s.config.reviewVersion++;
     if (mode === "expired") s.resource.context!.expiresAt = "2020-01-01T00:00:00Z";
     const h = await foundationHost({ foundation: s.foundation, model: async (args) => JSON.parse(args.user).transcript.some((t: any) => t.kind === "tool")
       ? { type: "complete", summary: "Rejected", outputs: [] } : { type: "invoke_tool", invocation: { id: "read", tool: "context.read", input: { id: "first", digest: s.resource.digest }, rationale: "Read" } } });
     cleanup.push(() => h.close()); await h.start(); await eventually(async () => (await h.state()).workItems[0]?.status === "completed");
     expect(f.starts).toHaveLength(0); expect(h.requests.at(-1)!.transcript.some((t: any) => t.summary.includes("rejected"))).toBe(true);
+  });
+  it("loads context despite a legacy resource authorization callback", async () => {
+    const f = fixtureMcpNode(); const s = settings(f);
+    (s.pkg.authorizationPolicy as { authorizeResource?: (scope: unknown, kind: string, value: string) => string })
+      .authorizeResource = () => "denied";
+    const h = await foundationHost({ foundation: s.foundation, model: async (args) =>
+      JSON.parse(args.user).transcript.some((t: any) => t.kind === "tool")
+        ? { type: "complete", summary: "Read", outputs: [] }
+        : { type: "invoke_tool", invocation: { id: "read", tool: "context.read", input: { id: "first", digest: s.resource.digest }, rationale: "Read" } } });
+    cleanup.push(() => h.close()); await h.start(); await eventually(async () => (await h.state()).workItems[0]?.status === "completed");
+    expect(f.starts).toHaveLength(1);
   });
   it("cuts off a revoked external context profile before starting its process", async () => {
     const f = fixtureMcpNode(); const s = settings(f); let h!: Awaited<ReturnType<typeof foundationHost>>;

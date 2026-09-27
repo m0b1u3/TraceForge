@@ -116,7 +116,7 @@ export function ConfigurationSettings({ bridge, onDirty }: { bridge: DesktopConv
           <details><summary>选择工具 · {choice.tools.length} / {m.tools.length}</summary>{m.tools.map(t => <label key={t.name} className="configuration-check"><input type="checkbox" disabled={busy || importing || pendingImport || !choice.enabled} checked={choice.tools.includes(t.name)} onChange={e => update({ tools: e.target.checked ? [...choice.tools, t.name] : choice.tools.filter(name => name !== t.name) })} />{t.name}</label>)}</details>
         </div>;
       })}
-      <footer><p>配置不能扩大授权范围或绕过沙箱。禁用依赖资源时，需要同时禁用依赖它的资源。</p><button className="primary" type="button" disabled={busy || importing || pendingImport || !dirty} onClick={() => void perform(true)}>{busy ? "正在处理…" : "保存配置"}</button></footer>
+      <footer><p>新 Run 使用保存时的工具和资源配置；禁用依赖资源时，需要同时禁用依赖它的资源。</p><button className="primary" type="button" disabled={busy || importing || pendingImport || !dirty} onClick={() => void perform(true)}>{busy ? "正在处理…" : "保存配置"}</button></footer>
     </>}
   </section>;
 }

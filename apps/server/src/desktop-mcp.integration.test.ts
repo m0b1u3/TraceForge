@@ -8,7 +8,7 @@ import { DesktopMcpControl } from "./desktop-mcp.js";
 const cleanup: Array<()=>Promise<void>>=[];
 it("keeps the previously active revision when replacement activation fails",async()=>{
   const {h,f,secrets}=await setup();await enable(h);await h.start();
-  await eventually(async()=>!!(await h.state()).workItems[0]?.pendingApproval);
+  await eventually(async()=>(await h.state()).workItems[0]?.status==="completed");
   const control=new DesktopMcpControl(h.sqlite,new ScenarioPackageRegistry([contextPackage(["fixture.read","context.read"])]),()=>null,{transport:f.transport,secrets:{async read(ref){return secrets.get(ref);},async write(ref,value){secrets.set(ref,value);}}});
   control.attach({async activateSource(){
     expect(control.snapshot().connections[0].effective?.revision).toBe(1);
@@ -71,7 +71,7 @@ it("records safe diagnostics and invalidates an old successful catalog after a f
   expect(JSON.stringify(failed)).not.toContain("private-token");
   await expect(h.request("/api/desktop/mcp",{operation:"activate",id:"first",expectedRevision:1,catalogDigest:tested.connections[0].catalog.digest,tools:[{name:"observe",enabled:true,resources:[]}],confirmed:true})).rejects.toThrow();
 });
-it("saves without networking, explicitly discovers, activates through the tool runtime and preserves approval",async()=>{
+it("saves without networking, explicitly discovers and invokes an installed tool",async()=>{
   const {h,f}=await setup();
   const saved=await h.request("/api/desktop/mcp",{operation:"save",expectedRevision:0,connection,credential:"private-token"});
   expect(f.methods).toEqual([]);expect(JSON.stringify(saved)).not.toContain("private-token");
@@ -80,10 +80,7 @@ it("saves without networking, explicitly discovers, activates through the tool r
   expect(JSON.stringify(tested)).not.toContain("DO_NOT_TRUST");
   await h.request("/api/desktop/mcp",{operation:"activate",id:"first",expectedRevision:1,catalogDigest:tested.connections[0].catalog.digest,tools:[{name:"observe",enabled:true,resources:[]}],confirmed:true});
   expect(f.methods).toHaveLength(3);
-  await h.start();await eventually(async()=>(await h.state()).workItems[0]?.status==="waiting_approval");
-  expect(f.methods).not.toContain("tools/call");
-  const state=await h.state();
-  await h.request("/api/scenarios/runs/run/work/work/operator-approval",{commandId:"approve",expectedRevision:state.revision,approvalId:state.workItems[0].pendingApproval.id,approved:true,reason:"Reviewed test invocation"});
+  await h.start();
   await eventually(async()=>(await h.state()).workItems[0]?.status==="completed");
   expect(f.methods.filter(m=>m==="tools/call")).toHaveLength(1);
   const usage=(await h.request("/api/desktop/mcp")).connections[0].inspection;
@@ -91,18 +88,19 @@ it("saves without networking, explicitly discovers, activates through the tool r
   expect(JSON.stringify(h.requests)).not.toContain("private-token");
   expect((await h.request("/api/foundation/extension-assembly")).unitCounts.mcp_tool_profile).toBe(1);
 });
-it("rejects stale review and keeps old Run pins while disabling cuts off all revisions",async()=>{
+it("rejects stale activation and keeps old Run pins while disabling future use",async()=>{
   const {h,f}=await setup();await enable(h);await h.start();
-  await eventually(async()=>(await h.state()).workItems[0]?.status==="waiting_approval");
+  await eventually(async()=>(await h.state()).workItems[0]?.status==="completed");
   await h.request("/api/desktop/mcp",{operation:"save",expectedRevision:1,connection:{...connection,name:"Edited"}});
   expect(h.sqlite.prepare("SELECT revision FROM desktop_mcp_runs WHERE run_id='run'").get()).toEqual({revision:1});
   await expect(h.request("/api/desktop/mcp",{operation:"activate",id:"first",expectedRevision:2,catalogDigest:"stale",tools:[{name:"observe",enabled:true,resources:[]}],confirmed:true})).rejects.toThrow();
   await h.request("/api/desktop/mcp",{operation:"disable",id:"first",expectedRevision:2});
-  const state=await h.state();await h.request("/api/scenarios/runs/run/work/work/operator-approval",{commandId:"approve",expectedRevision:state.revision,approvalId:state.workItems[0].pendingApproval.id,approved:true,reason:"Already disabled"});
-  await eventually(async()=>["completed","blocked","failed"].includes((await h.state()).workItems[0]?.status));expect(f.methods).not.toContain("tools/call");
+  await h.start("next");
+  await eventually(async()=>(await h.state("next")).workItems[0]?.status==="completed");
+  expect(f.methods.filter(method=>method==="tools/call")).toHaveLength(1);
 });
 
-it("discovers a new stdio program only through the sandbox and invokes it after approval",async()=>{
+it("discovers a new stdio program only through the sandbox and invokes it directly",async()=>{
   const {h,node}=await setup(true);
   const saved=await h.request("/api/desktop/mcp",{operation:"save",expectedRevision:0,connection:{...connection,transport:"stdio",endpoint:"",executable:"/fixture/tool",workingDirectory:"/fixture",readPaths:["/fixture"],writePaths:[],arguments:[],secretEnvironmentVariable:"MCP_TOKEN"},credential:"private-token"});
   expect(JSON.stringify(saved)).not.toContain("private-token");
@@ -110,8 +108,7 @@ it("discovers a new stdio program only through the sandbox and invokes it after 
   const tested=await h.request("/api/desktop/mcp",{operation:"test",id:"first",expectedRevision:1,confirmed:true});
   expect(tested.connections[0].catalog.tools[0].name).toBe("observe");expect(node.terminated()).toBe(1);
   await h.request("/api/desktop/mcp",{operation:"activate",id:"first",expectedRevision:1,catalogDigest:tested.connections[0].catalog.digest,tools:[{name:"observe",enabled:true,resources:[]}],confirmed:true});
-  await h.start();await eventually(async()=>(await h.state()).workItems[0]?.status==="waiting_approval");
-  const state=await h.state();await h.request("/api/scenarios/runs/run/work/work/operator-approval",{commandId:"approve",expectedRevision:state.revision,approvalId:state.workItems[0].pendingApproval.id,approved:true,reason:"Reviewed fixture"});
+  await h.start();
   await eventually(async()=>(await h.state()).workItems[0]?.status==="completed");expect(node.calls()).toBe(1);
   expect(node.starts.every(s=>s.permissions.network==="deny"&&s.permissions.process.access==="sandboxed")).toBe(true);
   expect(node.starts.every(s=>s.permissions.secrets==="plaintext"&&s.environment.MCP_TOKEN==="private-token")).toBe(true);

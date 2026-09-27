@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { AuthorizationFormSchema, buildAuthorizationScope, type AuthorizationForm } from "./authorization-form.js";
+import { AuthorizationFormSchema, buildAuthorizationScope, defaultTaskConfiguration, prepareTaskConfigurationReview, resolveTaskConfiguration, TaskDefinitionSchema, type AuthorizationForm } from "./authorization-form.js";
 
 const form: AuthorizationForm = { version: 1, description: "Reviewed resources", fields: [
   { path: ["scope", "items"], label: "资源", description: "Literal identifiers", type: "string-list", required: true, maximumItems: 2, maximumLength: 100 },
@@ -29,4 +29,22 @@ it("rejects executable, unknown, overlapping and prototype paths", () => {
     expect(AuthorizationFormSchema.safeParse({ ...form, fields: [{ ...form.fields[0], path }] }).success).toBe(false);
   expect(AuthorizationFormSchema.safeParse({ ...form, fields: [...form.fields, { ...form.fields[0], path: ["scope"] }] }).success).toBe(false);
   expect(AuthorizationFormSchema.safeParse({ ...form, version: 2 }).success).toBe(false);
+});
+it("prepares changed preferences for explicit review without enabling new grants",()=>{
+  const old=TaskDefinitionSchema.parse({kind:"neutral",version:1,authorizationForm:{version:1,description:"Scope",fields:[
+    {path:["target"],label:"Target",description:"Exact",type:"string-list",required:false},
+    {path:["continue"],label:"Continue",description:"Prior consent",type:"boolean",required:false},
+  ]},authorizationReview:{actionSelection:true,allowedActions:["read","write"],deniedActions:[],resources:[]}});
+  const saved={...defaultTaskConfiguration(old),revision:2,inputs:["first","true"],actions:["read","new-action"]};
+  const current=TaskDefinitionSchema.parse({...old,version:2,authorizationForm:{...old.authorizationForm,fields:[
+    {path:["direct"],label:"Direct",description:"New grant",type:"boolean",required:false,defaultEnabled:true},
+    ...old.authorizationForm.fields,
+  ]},authorizationReview:{...old.authorizationReview,allowedActions:["read","write","new-action"]}});
+  const raw=JSON.stringify([{kind:old.kind,preset:saved}]);
+  expect(()=>resolveTaskConfiguration(current,raw)).toThrow("场景配置已变化");
+  const draft=prepareTaskConfigurationReview(current,raw);
+  expect(draft.reviewRequired).toBe(true);
+  expect(draft.preset.inputs).toEqual(["false","first","true"]);
+  expect(draft.preset.actions).toEqual(["read"]);
+  expect(prepareTaskConfigurationReview(current,null).preset.inputs[0]).toBe("true");
 });

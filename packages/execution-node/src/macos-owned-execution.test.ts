@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -208,6 +208,57 @@ describe.skipIf(process.env.TRACEFORGE_TEST_MACOS_SEATBELT !== "1")("macOS nativ
       expect(requests).toEqual(["http://fixture.invalid/tool-input"]);
       expect(endpoint.signal.aborted).toBe(true);
     } finally { await endpoint.close(); }
+  });
+  it("downloads and executes a file over a direct socket while retaining the owned sandbox", async () => {
+    const workspace = join(root, "direct-workspace");
+    await mkdir(workspace);
+    const server = createServer((_request, response) => response.end("#!/bin/bash\nprintf downloaded-executed"));
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Missing test listener");
+      const script = `const http=require('node:http'),fs=require('node:fs'),cp=require('node:child_process');
+        http.get('http://localhost:${address.port}/tool',response=>{
+          const bytes=[];response.on('data',chunk=>bytes.push(chunk));response.on('end',()=>{
+            fs.writeFileSync('downloaded-tool.sh',Buffer.concat(bytes),{mode:0o700});
+            try { fs.readFileSync('/private/etc/passwd'); throw new Error('Host file contents were exposed'); }
+            catch (error) { if (error.message === 'Host file contents were exposed') throw error; }
+            process.stdout.write(cp.execFileSync('./downloaded-tool.sh',[],{env:{}}));
+          });
+        }).on('error',error=>{console.error(error);process.exitCode=1});`;
+      const input = request(script);
+      input.workingDirectory = workspace;
+      input.permissions.network = "direct";
+      input.permissions.filesystem.read.push({ path: "/bin/bash", scope: "exact" });
+      input.permissions.filesystem.write.push({ path: workspace, scope: "tree" });
+      const launched = await new MacosProcessLauncher(helper).launch(input);
+      let stdout = "", stderr = "";
+      launched.process.onOutput((stream, bytes) => {
+        if (stream === "stdout") stdout += bytes.toString();
+        else stderr += bytes.toString();
+      });
+      const code = await new Promise<number | null>((resolve, reject) => {
+        launched.process.onExit(code => resolve(code));
+        launched.process.onError(reject);
+      });
+      expect({ code, stdout, stderr }).toEqual({ code: 0, stdout: "downloaded-executed", stderr: "" });
+      expect(launched.enforcement).toMatchObject({ network: "direct", sandboxed: true, filesystemPolicyApplied: true,
+        atomicProcessTreeAssignment: true, processTreeEmptyBarrier: true });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+  it.skipIf(process.env.TRACEFORGE_TEST_PUBLIC_DNS !== "1")("resolves a public hostname with direct network permission", async () => {
+    const input = request(`require('node:dns').lookup('example.com',(error,address)=>{
+      if(error){console.error(error);process.exitCode=1;return;}
+      process.stdout.write(address);
+    })`);
+    input.permissions.network = "direct";
+    input.timeoutMs = 10000;
+    const result = await runMacosOwnedExecution(input, helper, new AbortController().signal);
+    expect(result, result.stderr.toString()).toMatchObject({ reason: "exited", cleanupConfirmed: true, exitCode: 0 });
+    expect(result.stdout.toString()).toMatch(/^[0-9a-f:.]+$/i);
   });
   it("terminates real CPU excess", async () => {
     const input = request("while(true){}"); input.resources.cpuTimeMs = 30;
