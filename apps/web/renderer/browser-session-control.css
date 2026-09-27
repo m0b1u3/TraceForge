@@ -33,9 +33,6 @@
 .native-browser-panel button:focus-visible { outline: 2px solid #626875; outline-offset: 2px; }
 .native-browser-panel .native-browser-primary { color: #fff; background: #292b30; border-color: #292b30; }
 .native-browser-panel .native-browser-primary:hover { color: #fff; background: #44474e; border-color: #44474e; }
-.native-browser-address { display: flex; align-items: center; gap: 14px; min-width: 0; height: 42px; margin: 0 22px 14px; padding: 0 13px; border: 1px solid #e8e9ec; border-radius: 9px; background: #f7f8f9; }
-.native-browser-address-label { color: #626875; font-size: 11px; white-space: nowrap; }
-.native-browser-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #373b42; font-size: 12px; }
 .native-browser-slot { position: relative; flex: 1; min-height: 100px; background: #fff; border-top: 1px solid #e9eaed; }
 .native-browser-slot > p, .native-browser-message { padding: 24px; }
 .native-browser-panel footer { display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 8px 22px; border-top: 1px solid #e9eaed; color: #626875; font-size: 11px; }
@@ -47,7 +44,22 @@
 @media (max-width: 650px) {
   .native-browser-panel { inset: 50px 0 0; }
   .native-browser-toolbar { align-items: flex-start; flex-wrap: wrap; gap: 12px; padding: 12px 16px; }
-  .native-browser-address { margin-inline: 16px; }
   .native-browser-panel footer { padding-inline: 16px; flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { .native-browser-panel button { transition: none; } }
+/* Browser chrome keeps navigation next to the current address. */
+.native-browser-panel:focus { outline: none; }
+.native-browser-toolbar { min-height: 54px; padding: 8px 14px; background: #f3f4f6; gap: 12px; }
+.native-browser-identity { flex: 1; overflow: hidden; }
+.native-browser-icon { width: 28px; height: 28px; flex-basis: 28px; background: transparent; }
+.native-browser-heading { flex: 1; overflow: hidden; }
+.native-browser-heading strong { overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.native-browser-navigation { display: flex; align-items: center; gap: 4px; margin: 0; padding: 8px 12px; background: #f3f4f6; border-bottom: 1px solid #e0e2e6; }
+.native-browser-navigation button { min-width: 32px; padding: 6px; border-color: transparent; background: transparent; }
+.native-browser-navigation button[type=submit] { padding-inline: 10px; }
+.native-browser-navigation svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.native-browser-navigation input { min-width: 0; flex: 1; height: 34px; margin-left: 6px; padding: 6px 12px; border: 1px solid #e0e2e6; border-radius: 7px; background: #fff; color: #35383d; font: inherit; }
+.native-browser-navigation input:focus-visible { outline: 2px solid #626875; outline-offset: 1px; }
+.native-browser-navigation-error, .native-browser-loading { margin: 0; padding: 8px 16px; font-size: 12px; background: #fff; }
+.native-browser-navigation-error { color: #934326; }
+.native-browser-panel footer { min-height: 38px; padding: 4px 14px; }

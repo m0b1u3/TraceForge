@@ -223,7 +223,7 @@ async function start(): Promise<void> {
     if (event.sender.id !== window.webContents.id || event.senderFrame !== event.sender.mainFrame
       || new URL(event.senderFrame?.url ?? "").origin !== localOrigin) throw new Error("Invalid browser view sender");
     if (!input || typeof input !== "object") throw new Error("Invalid browser view request");
-    const value = input as { path?: unknown; sessionId?: unknown; takeoverId?: unknown; bounds?: unknown; hide?: unknown; focus?: unknown };
+    const value = input as { path?: unknown; sessionId?: unknown; takeoverId?: unknown; bounds?: unknown; hide?: unknown; focus?: unknown; navigation?: unknown };
     if (value.hide === true) { embeddedBrowser.hide(); return { hidden: true }; }
     if (typeof value.path !== "string" || !/^\/api\/desktop\/conversations\/[\w-]+\/execution\/[\w-]+\/browser$/.test(value.path)
       || typeof value.sessionId !== "string" || (value.takeoverId!==null&&typeof value.takeoverId !== "string") || !value.bounds || typeof value.bounds !== "object") throw new Error("Invalid browser view request");
@@ -232,6 +232,7 @@ async function start(): Promise<void> {
     if (response.status !== 200 || !sessions?.some(s => s.id === value.sessionId && (value.takeoverId===null?s.status==="active":s.status === "manual_control" && s.takeoverId === value.takeoverId))) {
       embeddedBrowser.hide(); throw new Error("Browser ownership is no longer current");
     }
+    if (value.navigation !== undefined) await embeddedBrowser.navigate(value.sessionId, value.takeoverId, value.navigation);
     return embeddedBrowser.show(window, value.sessionId, value.takeoverId, value.bounds as { x: number; y: number; width: number; height: number }, value.focus === true);
   });
   window.on("hide", () => embeddedBrowser.hide());

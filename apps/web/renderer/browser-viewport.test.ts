@@ -14,7 +14,7 @@ it("presents an owned native page without screenshot polling, and hands back onc
   const root = createRoot(element); dispose = () => root.unmount();
   await act(async () => root.render(React.createElement(BrowserViewport, { bridge: { protocolVersion: 1, request, presentBrowser }, path: "/fixture", sessionId: "session", takeoverId: "manual", send, onHide })));
   expect(document.querySelector("img,iframe,webview")).toBeNull();
-  expect(document.body.textContent).toContain("https://fixture.invalid/page"); expect(request).not.toHaveBeenCalled();
+  expect(document.querySelector<HTMLInputElement>('[aria-label="网页地址"]')?.value).toBe("https://fixture.invalid/page"); expect(request).not.toHaveBeenCalled();
   expect(document.querySelector('[role="status"]')).toBeNull();
   await act(async () => [...document.querySelectorAll("button")].find(b => b.textContent === "进入网页")!.click());
   expect(presentBrowser).toHaveBeenCalledWith(expect.objectContaining({ focus: true }));
@@ -32,4 +32,24 @@ it("reports missing native support rather than silently falling back to screensh
   const root = createRoot(element); dispose = () => root.unmount();
   await act(async () => root.render(React.createElement(BrowserViewport, { bridge: { protocolVersion: 1, request }, path: "/fixture", sessionId: "session", takeoverId: "manual", send })));
   expect(document.body.textContent).toContain("仅在桌面客户端可用"); expect(send).not.toHaveBeenCalled();
+});
+it("navigates the owned native session from the address bar and native history controls", async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  const presentBrowser = vi.fn(async (_input: unknown) => ({ url: "https://example.com/", title: "Example Domain", canGoBack: true, canGoForward: true }));
+  const node = document.createElement("div"); document.body.append(node);
+  const root = createRoot(node); dispose = () => root.unmount();
+  await act(async () => root.render(React.createElement(BrowserViewport, { bridge: { protocolVersion: 1, request: vi.fn(), presentBrowser }, path: "/fixture", sessionId: "session", takeoverId: "manual", send: vi.fn() })));
+  expect(document.querySelector("strong")?.textContent).toBe("Example Domain");
+  const input = document.querySelector<HTMLInputElement>('[aria-label="网页地址"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "example.com/next");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(presentBrowser).toHaveBeenCalledWith(expect.objectContaining({ takeoverId: "manual", navigation: { action: "navigate", url: "https://example.com/next" } }));
+  for (const [label, action] of [["后退", "back"], ["前进", "forward"], ["刷新", "reload"]]) {
+    await act(async () => document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click());
+    expect(presentBrowser).toHaveBeenCalledWith(expect.objectContaining({ navigation: { action } }));
+  }
 });

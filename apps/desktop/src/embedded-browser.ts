@@ -137,8 +137,28 @@ export class EmbeddedBrowser {
     const viewport={width:Math.floor(bounds.width),height:Math.floor(bounds.height)};
     const resized=viewport.width!==entry.viewport.width||viewport.height!==entry.viewport.height;
     const ready=resized?entry.view.webContents.debugger.sendCommand("Emulation.setDeviceMetricsOverride",{...viewport,deviceScaleFactor:1,mobile:false}):Promise.resolve();
-    return ready.then(()=>{entry.viewport=viewport;return { url: safeAddress(entry.view.webContents.getURL()), title: entry.view.webContents.getTitle() };});
+    return ready.then(()=>{entry.viewport=viewport;return { url: safeAddress(entry.view.webContents.getURL()), title: entry.view.webContents.getTitle(), canGoBack: entry.view.webContents.navigationHistory.canGoBack(), canGoForward: entry.view.webContents.navigationHistory.canGoForward(), loading: entry.view.webContents.isLoading() };});
   }
+  async navigate(id: string, takeoverId: string | null, input: unknown) {
+    const entry = this.entries.get(id);
+    if (!entry || entry.closed || !entry.manual || !takeoverId || entry.takeoverId !== takeoverId)
+      throw new Error("Browser takeover unavailable");
+    if (!input || typeof input !== "object") throw new Error("Invalid navigation");
+    const { action, url } = input as { action?: unknown; url?: unknown };
+    const wc = entry.view.webContents;
+    if (action === "navigate") {
+      if (typeof url !== "string" || url.length > 8192) throw new Error("Invalid address");
+      const target = new URL(url);
+      if (!["https:", "http:"].includes(target.protocol) || target.username || target.password) throw new Error("Invalid address");
+      await wc.loadURL(target.href);
+    } else if (action === "back") {
+      if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+    } else if (action === "forward") {
+      if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
+    } else if (action === "reload") wc.reload();
+    else throw new Error("Invalid navigation action");
+  }
+
   hide(id?: string) {
     const key = id ?? this.visible; if (!key) return;
     const entry = this.entries.get(key);

@@ -14,8 +14,9 @@ const deployment = manager.deployment({ recordObservation: save, recordDownload:
 const permissions = { version: 1 as const, platform: "darwin" as const, network: "brokered" as const, secrets: "deny" as const,
   process: { access: "sandboxed" as const, interactive: false, background: false }, filesystem: { read: [], write: [], deny: [] }, sources: ["fixture"] };
 const owner = { caseId: "fixture", runId: "fixture", workId: "fixture", workerId: "fixture", scopeRef: "fixture", leaseId: "fixture",
-  leaseExpiresAt: new Date(Date.now() + 120000).toISOString(), authorizationAction: "browser.request" };
-const grant = (url: string) => { if (!url.startsWith("https://embedded.fixture.invalid/")) throw new Error("Fixture scope denied");
+  leaseExpiresAt: new Date(Date.now() + (process.env.TRACEFORGE_EMBEDDED_VISUAL === "1" ? 3600000 : 120000)).toISOString(), authorizationAction: "browser.request" };
+const realWebsite = process.env.TRACEFORGE_BROWSER_WEBSITE === "1";
+const grant = (url: string) => { if (!url.startsWith("https://embedded.fixture.invalid/") && !(realWebsite && new URL(url).hostname === "example.com")) throw new Error("Fixture scope denied");
   return { authorizationRef: "fixture", canonicalUrl: url, expiresAt: owner.leaseExpiresAt }; };
 const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>本机网页交互验收</title>
 <style>
@@ -38,8 +39,13 @@ button:hover{background:#f2f3f5}.isolation{margin-top:10px;color:#687078;font-si
 <p class="scroll-check">滚动到此处可确认原生网页保持独立滚动。</p></main></html>`;
 const broker = new BrokeredHttpGateway({ limits: { maximumRequestBytes: 1024*1024, maximumResponseBytes: 64*1024*1024,
   maximumHeaders: 128, maximumConcurrentRequests: 32, maximumTimeoutMs: 60_000 },
-  authorizer: { authorize: input => grant(input.url) }, transport: async () => ({ status: 200,
-  headers: [{ name: "content-type", value: "text/html; charset=utf-8" }], body: Buffer.from(html) }) });
+  authorizer: { authorize: input => grant(input.url) }, transport: async request => {
+    if (new URL(request.url).hostname === "example.com" && realWebsite) {
+      const response = await fetch(request.url, { redirect: "manual" });
+      return { status: response.status, headers: Array.from(response.headers, ([name, value]) => ({ name, value })), body: Buffer.from(await response.arrayBuffer()) };
+    }
+    return { status: 200, headers: [{ name: "content-type", value: "text/html; charset=utf-8" }], body: Buffer.from(html) };
+  } });
 const runtime = new BrokeredBrowserRuntime({ executionNode: { requestHttp: request => broker.execute("fixture", request) } as ExecutionNode,
   controller: { attach: async () => { throw new Error("No external controller"); } }, chromiumProcess: deployment.chromiumProcess,
   authorization: { assertSessionCurrent() {}, authorizeRequest: async input => grant(input.url) }, artifacts: { recordObservation: save, recordDownload: save } });
@@ -83,6 +89,13 @@ try {
   assert.throws(() => manager.show(window, id!, takeover.takeoverId, { x: 0, y: 0, width: 1440, height: 920 }), /bounds/);
   await manager.show(window, id, takeover.takeoverId, { x: 672, y: 110, width: 740, height: 720 });
   assert.equal(window.contentView.children.length, 1);
+  await assert.rejects(manager.navigate(id, null, { action: "reload" }), /unavailable/);
+  await assert.rejects(manager.navigate(id, "stale", { action: "reload" }), /unavailable/);
+  await assert.rejects(manager.navigate(id, takeover.takeoverId, { action: "navigate", url: "file:///etc/hosts" }), /Invalid address/);
+  await manager.navigate(id, takeover.takeoverId, { action: "navigate", url: "https://embedded.fixture.invalid/second" });
+  const backLoaded = new Promise<void>(done => activeContents.once("did-stop-loading", () => done()));
+  await manager.navigate(id, takeover.takeoverId, { action: "back" });
+  await backLoaded;
   const guest = window.contentView.children[0] as import("electron").WebContentsView;
   const guestContents = guest.webContents;
   assert.equal(guest.webContents.getLastWebPreferences().sandbox, true);
@@ -95,8 +108,12 @@ try {
   await writeFile(resolve("output/native-browser-host-only.png"), (await window.capturePage()).toPNG());
   if (process.env.TRACEFORGE_EMBEDDED_VISUAL === "1") {
     ipcMain.handle("fixture:initialize", () => ({ sessionId: id, takeoverId: takeover.takeoverId }));
-    ipcMain.handle("fixture:present", (_event, input) => input.hide ? (manager.hide(), { hidden: true })
-      : manager.show(window, id!, takeover.takeoverId, input.bounds, input.focus === true));
+    ipcMain.handle("fixture:present", async (_event, input) => {
+      if (input.hide) { manager.hide(); return { hidden: true }; }
+      if (input.navigation?.action === "navigate") grant(input.navigation.url);
+      if (input.navigation) await manager.navigate(id!, takeover.takeoverId, input.navigation);
+      return manager.show(window, id!, takeover.takeoverId, input.bounds, input.focus === true);
+    });
     ipcMain.handle("fixture:command", async (_event, input) => {
       assert.equal(input.operation, "resume"); assert.equal(input.sessionId, id);
       await runtime.resumeManualControl(id!, input.takeoverId);
@@ -105,6 +122,7 @@ try {
       console.log(JSON.stringify({ handback: true, nativeInputVisibleToAgent: text.includes("原生输入验证"), bridgeAbsent: text.includes("undefined / undefined") }));
       return true;
     });
+    if (realWebsite) await manager.navigate(id!, takeover.takeoverId, { action: "navigate", url: "https://example.com/" });
     await window.loadFile(resolve("scripts/fixtures/embedded-browser-review.html"));
     console.log("READY: native fixture window is available for manual interaction");
     await new Promise<void>(done => window.once("closed", () => done()));
